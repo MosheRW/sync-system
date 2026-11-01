@@ -6,6 +6,7 @@ import {
   type PositionUpdateMessage,
   type ServerMessage,
 } from '@sync-system/protocol';
+import { jsonByteLength } from '../limits/json-size.js';
 import type { SlidingWindowRateLimiter } from '../limits/rate-limiter.js';
 import { type Logger, groupRef, participantRef } from '../logging/logger.js';
 import { errorMessage } from '../ws/error-messages.js';
@@ -21,6 +22,19 @@ export interface GroupServiceDeps {
   now: () => number;
   /** Leader update limiter, keyed by group (AC22). */
   rateLimiter: SlidingWindowRateLimiter;
+}
+
+/**
+ * MESSAGE_TOO_LARGE if `value` is over the app's limit, else undefined. A value
+ * exactly at the limit is accepted (AC27).
+ */
+function sizeError(
+  field: 'position' | 'metadata',
+  value: unknown,
+  limitBytes: number,
+): ServerMessage | undefined {
+  if (jsonByteLength(value) <= limitBytes) return undefined;
+  return errorMessage(ErrorCode.MESSAGE_TOO_LARGE, { details: { field, limitBytes } });
 }
 
 function rateKey(namespace: string, groupId: string): string {
@@ -42,6 +56,14 @@ export class GroupService implements GroupActions {
     if (session.groupId !== undefined) return errorMessage(ErrorCode.ALREADY_IN_GROUP);
 
     const { app } = session;
+    // Checked before anything is stored: an oversized create leaves no group.
+    const tooLarge =
+      sizeError('metadata', message.metadata, app.maxMessageBytes) ??
+      (message.position === undefined
+        ? undefined
+        : sizeError('position', message.position, app.maxMessageBytes));
+    if (tooLarge) return tooLarge;
+
     const record: GroupRecord = {
       id: newGroupId(),
       appNamespace: app.namespace,
@@ -120,6 +142,9 @@ export class GroupService implements GroupActions {
 
     const { app } = session;
     const namespace = app.namespace;
+    const tooLarge = sizeError('position', message.position, app.maxMessageBytes);
+    if (tooLarge) return tooLarge;
+
     // Checked last, so rejected updates never use rate budget. Over-rate
     // updates are rejected, never queued or coalesced (AC22).
     const rate = this.deps.rateLimiter.tryAcquire(
