@@ -2,7 +2,7 @@
 - Path: full
 - Phase: architecture
 - Branch: feat/1-sync-server-core
-- PR: none
+- PR: #2
 - Plan approved by user: no
 - QA loops: 0
 - Last updated by: architect
