@@ -16,7 +16,7 @@
 - PRD split into 9 issues worked in order; this is #1. Temporary join by group ID (join methods A-D are issue 4).
 
 ## Gate 1 decisions (user)
-- Defaults/ceilings accepted: group size 30 / 100 (leader counts); leader updates 5/s / 10/s; max message size 16 KB app default with env ceiling.
+- Defaults/ceilings accepted: group size 30 / 100 (leader counts); leader updates 5/s / 10/s; max message size 4 KB app default, env ceiling MAX_MESSAGE_SIZE_CEILING 16 KB (block list in #3 gets its own separate limit).
 - #5 timers recorded: grace 30 s / 120 s, inactivity 20 min / 60 min, keep-alive countdown 60 s / 120 s, max session 3 h / 8 h. Lock tolerance 30 s confirmed.
 - Over-ceiling app value = startup error (no clamping).
 - App versions and minimum app version are semver.
@@ -25,7 +25,7 @@
 - Add CI workflow (push + pull_request: frozen-lockfile install, lint, typecheck, test, build).
 
 ## Open questions
-- Max message size env ceiling default not specified by user; proposed 64 KB (working value).
+- none
 
 ## Deviations from plan
 - none

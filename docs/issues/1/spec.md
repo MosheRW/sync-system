@@ -27,7 +27,7 @@ Core principle carried into this issue: **the server syncs a position, not a pag
 - App versions and the configured minimum app version are semver (AC9).
 - In this issue, a leader disconnect ends the group with a "group ended" event (AC17).
 - Over-rate leader updates are rejected, not coalesced (AC22).
-- Added: max message size for position payload and group metadata (AC27).
+- Added: max message size for position payload and group metadata (AC27): 4 KB app default, 16 KB env ceiling (positions are typically under 1 KB).
 - Added: GitHub Actions CI workflow (AC28).
 - pnpm workspaces confirmed.
 
@@ -76,7 +76,7 @@ Core principle carried into this issue: **the server syncs a position, not a pag
 ### Limits
 - [ ] AC21. Max group size: the effective limit is the app's value (never above its env ceiling). A join that would exceed it is rejected with a distinguishable "group full" error; the leader counts toward the size.
 - [ ] AC22. Leader update rate limit: the effective limit is the app's value (never above its env ceiling). Updates beyond the limit are rejected with a distinguishable "rate limited" error to the leader and are not relayed; the group's stored position stays the last accepted one. Over-rate updates are never coalesced or queued.
-- [ ] AC27. Max message size: the position payload and the group metadata are each limited by a max message size, set per app (default 16 KB) and capped by an env ceiling. A create or update whose payload or metadata exceeds the effective limit is rejected with a distinguishable "message too large" error and is neither stored nor relayed; the group's stored state is unchanged.
+- [ ] AC27. Max message size: the position payload and the group metadata are each limited by a max message size, set per app (default 4 KB) and capped by an env ceiling (`MAX_MESSAGE_SIZE_CEILING`, default 16 KB). A create or update whose payload or metadata exceeds the effective limit is rejected with a distinguishable "message too large" error and is neither stored nor relayed; the group's stored state is unchanged.
 
 ### Operations, privacy and packaging
 - [ ] AC23. `GET /health` returns HTTP 200 with a JSON body that includes the server status and protocol version, and reveals no app, group or participant data.
@@ -91,7 +91,7 @@ Core principle carried into this issue: **the server syncs a position, not a pag
 | --- | --- | --- |
 | Max group size (incl. leader) | 30 | 100 (`MAX_GROUP_SIZE_CEILING`) |
 | Max leader update rate | 5 updates/second | 10 updates/second (`MAX_LEADER_UPDATE_RATE_CEILING`) |
-| Max message size (payload, metadata; each) | 16 KB | env-set (`MAX_MESSAGE_SIZE_CEILING`); default value: see Open questions |
+| Max message size (payload, metadata; each) | 4 KB | 16 KB (`MAX_MESSAGE_SIZE_CEILING`) |
 
 Timer values for issue 5 (recorded only, not implemented here):
 
@@ -107,7 +107,7 @@ Env variable names are illustrative; the architect finalizes them.
 ## Out of scope (and which later issue covers it)
 
 - Core framework-free JS client package: sockets, reconnect, client-side version checks (refusing unsupported servers) -> **issue 2**.
-- JWT tokens, restart recovery, block list / removed members, sending stored tokens to find live groups -> **issue 3**.
+- JWT tokens, restart recovery, block list / removed members, sending stored tokens to find live groups -> **issue 3**. The block list sent by the leader on recreation gets its own separate size limit in issue 3; the max message size in AC27 does not apply to it.
 - Join methods A-D (group + door code, code + approval, alphanumeric code, QR), join-method selection per app, door-code rate limiting -> **issue 4**. The group-ID join here is temporary.
 - Roles beyond leader/member (vice-leader, remove member, lock group, preview mode), timers, group lifecycle, leadership handoff, keep-alive, display names / generated names -> **issue 5**.
 - React/Next package -> **issue 6**.
@@ -118,6 +118,4 @@ Env variable names are illustrative; the architect finalizes them.
 
 ## Open questions
 
-Gate 1 resolved all earlier questions (see "Gate 1 decisions" above). One detail remains:
-
-1. **Max message size env ceiling default:** the app default is 16 KB; what should the env ceiling default to? Proposed: 64 KB. Until confirmed, the architect may treat 64 KB as the working value.
+none (all resolved at Gate 1).
