@@ -63,5 +63,16 @@ describe('SSR-safe import (AC7)', () => {
     expect(setIntervalSpy).not.toHaveBeenCalled();
     expect(microtaskSpy).not.toHaveBeenCalled();
     expect(vi.getTimerCount()).toBe(0);
+
+    // Creating a client (as SSR code might) touches nothing either.
+    const client = new mod.SyncClient({
+      url: 'wss://sync.example.com/ws',
+      apiKey: 'test-api-key-ssr-0123456789-0123456789',
+      appVersion: '1.0.0',
+    });
+    expect(client.getState()).toEqual({ status: 'idle' });
+    expect(touched).toEqual([]);
+    expect(setTimeoutSpy).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
   });
 });
