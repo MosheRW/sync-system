@@ -9,6 +9,20 @@ import {
 } from './limits.js';
 import type { ClientMessage, ServerMessage } from './messages.js';
 
+// Every schema below is built with zod's `jitless` option on. Without it,
+// building the first z.object runs zod's eval probe at import time: it reads
+// the browser global `navigator` and calls `new Function("")`, which a strict
+// CSP reports even though zod catches the error. Importing this package (and
+// the client, which depends on it) must read no browser global and never eval
+// (#3 AC7). The option is process-global in zod and is read when a schema is
+// built, so it is switched on only while these schemas are built, then the
+// previous value is put back: other zod schemas in the same process keep
+// their own setting. These schemas use zod's interpreted parser, which is
+// slower than the generated one; protocol frames are small, so this does not
+// matter next to network and JSON costs.
+const previousJitless = z.config().jitless;
+z.config({ jitless: true });
+
 // Opaque values (position, metadata) are never rebuilt by a schema: z.custom
 // returns the parsed reference unchanged, so `__proto__` keys and deep values
 // pass through untouched (M4, L6). JSON types and depth are checked separately
@@ -109,6 +123,9 @@ export const serverMessageSchema = z.union([
     details: z.record(z.string(), opaqueValue).optional(),
   }),
 ]);
+
+// End of schema construction: restore the app's zod setting (see above).
+z.config({ jitless: previousJitless });
 
 export type ParseResult<T> = { ok: true; message: T } | { ok: false; issues: string[] };
 
