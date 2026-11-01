@@ -1,4 +1,5 @@
 import {
+  type BlockListSetMessage,
   ErrorCode,
   GROUP_ID_PATTERN,
   type GroupCreateMessage,
@@ -245,6 +246,8 @@ export class GroupService implements GroupActions {
         app.maxGroupSize,
       );
       if (added.status === 'not_found') return errorMessage(ErrorCode.GROUP_NOT_FOUND);
+      // A freshly minted ID is never blocked; checked for completeness.
+      if (added.status === 'blocked') return errorMessage(ErrorCode.PARTICIPANT_BLOCKED);
       // The leader counts toward the size (AC21).
       if (added.status === 'full') {
         return errorMessage(ErrorCode.GROUP_FULL, { details: { maxGroupSize: app.maxGroupSize } });
@@ -350,6 +353,66 @@ export class GroupService implements GroupActions {
   }
 
   /**
+   * blocklist.set (#5 AC26, AC34): the leader replaces the block list.
+   * Listed members still attached are removed with group.ended `removed`;
+   * later resumes with those IDs get PARTICIPANT_BLOCKED. The list is kept
+   * in memory only and never logged (a count at most).
+   */
+  async setBlockList(session: Session, message: BlockListSetMessage): Promise<ServerMessage> {
+    if (session.parked !== undefined) return errorMessage(ErrorCode.NOT_LEADER);
+    const membership = this.owned(session);
+    if (membership === undefined) return errorMessage(ErrorCode.NOT_IN_GROUP);
+    if (membership.role !== 'leader') return errorMessage(ErrorCode.NOT_LEADER);
+    const { app } = session;
+    const { groupId } = membership;
+    return this.locks.run(groupKey(app.namespace, groupId), async () => {
+      if (this.owned(session) !== membership) return errorMessage(ErrorCode.NOT_IN_GROUP);
+      const record = await this.deps.store.get(app.namespace, groupId);
+      if (!record) return errorMessage(ErrorCode.NOT_IN_GROUP);
+      await this.applyBlockList(app, record, message.blockList);
+      return { type: 'blocklist.ack' };
+    });
+  }
+
+  /**
+   * Stores a deduplicated block list (without the leader's own ID) and
+   * removes listed members that are attached. Runs under the group lock.
+   */
+  private async applyBlockList(
+    app: AppConfig,
+    record: GroupRecord,
+    list: readonly string[],
+  ): Promise<void> {
+    const namespace = app.namespace;
+    const blockList = [...new Set(list)].filter((id) => id !== record.leaderId);
+    const result = await this.deps.store.setBlockList(namespace, record.id, blockList);
+    if (!result) return;
+    const text = JSON.stringify({
+      type: 'group.ended',
+      groupId: record.id,
+      reason: 'removed',
+    } satisfies ServerMessage);
+    for (const participantId of result.removed) {
+      const key = membershipKey(namespace, record.id, participantId);
+      const member = this.deps.notifier.get(key);
+      if (member === undefined) continue;
+      this.deps.notifier.unregister(key, member);
+      if (member.membership?.groupId === record.id) member.membership = undefined;
+      member.afterPending(() => member.deliver(text));
+    }
+    this.deps.logger.info(
+      {
+        event: 'block_list_set',
+        namespace,
+        groupRef: groupRef(record.id),
+        blocked: blockList.length,
+        removed: result.removed.length,
+      },
+      'block list set',
+    );
+  }
+
+  /**
    * group.end (#5 AC29): the leader ends the group. Members get group.ended
    * `ended_by_leader`; the leader gets the same message as its reply.
    */
@@ -444,7 +507,7 @@ export class GroupService implements GroupActions {
           return errorMessage(ErrorCode.PARTICIPANT_BLOCKED);
         case 'live':
           return claims.role === 'leader'
-            ? this.leaderReturn(session, record!, claims)
+            ? this.leaderReturn(session, record!, claims, message.blockList)
             : this.memberResume(session, record!, claims);
         case 'recoverable':
           return this.recreate(session, claims, message);
@@ -491,11 +554,14 @@ export class GroupService implements GroupActions {
     session: Session,
     record: GroupRecord,
     claims: TokenClaims,
+    blockList?: readonly string[],
   ): Promise<ServerMessage> {
     const { app } = session;
     const namespace = app.namespace;
     const now = this.now();
     this.replaceOwner(namespace, record.id, claims.pid, session);
+    // Only an explicit list replaces the server's; an omitted one keeps it (L5).
+    if (blockList !== undefined) await this.applyBlockList(app, record, blockList);
     const updated = await this.deps.store.setLeaderOnline(namespace, record.id, true, now);
     if (!updated) return errorMessage(ErrorCode.GROUP_NOT_FOUND);
     this.timers.clearFrozenEnd(groupKey(namespace, record.id));
@@ -547,7 +613,7 @@ export class GroupService implements GroupActions {
       // someone else just recreated is resumed instead.
       const existing = await this.deps.store.get(namespace, claims.gid);
       if (!existing) return errorMessage(ErrorCode.GROUP_NOT_FOUND);
-      return this.leaderReturn(session, existing, claims);
+      return this.leaderReturn(session, existing, claims, message.blockList);
     }
     this.armMaxSession(app, record);
     this.attach(session, { groupId: record.id, participantId: claims.pid, role: 'leader' });
@@ -640,7 +706,9 @@ export class GroupService implements GroupActions {
       if (added.status !== 'ok') {
         this.deliverLater(
           member,
-          errorMessage(ErrorCode.GROUP_FULL, { details: { maxGroupSize: app.maxGroupSize } }),
+          added.status === 'blocked'
+            ? errorMessage(ErrorCode.PARTICIPANT_BLOCKED)
+            : errorMessage(ErrorCode.GROUP_FULL, { details: { maxGroupSize: app.maxGroupSize } }),
         );
         continue;
       }
@@ -693,6 +761,7 @@ export class GroupService implements GroupActions {
       app.maxGroupSize,
     );
     if (added.status === 'not_found') return errorMessage(ErrorCode.GROUP_NOT_FOUND);
+    if (added.status === 'blocked') return errorMessage(ErrorCode.PARTICIPANT_BLOCKED);
     if (added.status === 'full') {
       return errorMessage(ErrorCode.GROUP_FULL, { details: { maxGroupSize: app.maxGroupSize } });
     }

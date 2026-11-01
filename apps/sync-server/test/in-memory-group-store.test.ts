@@ -147,6 +147,19 @@ describe('InMemoryGroupStore', () => {
     expect(await store.createIfAbsent(record({ appNamespace: 'app-b' }))).toBe('created');
   });
 
+  it('replaces the block list and removes listed members atomically (#5 AC26)', async () => {
+    const store = new InMemoryGroupStore();
+    await store.create(record({ participantIds: ['leader', 'm1', 'm2'] }));
+    expect(await store.setBlockList('app-a', ID, ['m1', 'x', 'leader'])).toEqual({
+      removed: ['m1'],
+    });
+    const stored = (await store.get('app-a', ID))!;
+    expect(stored.participantIds).toEqual(['leader', 'm2']);
+    expect(stored.blockList).toEqual(['m1', 'x', 'leader']);
+    expect(await store.addParticipant('app-a', ID, 'm1', 10)).toEqual({ status: 'blocked' });
+    expect(await store.setBlockList('app-b', ID, [])).toBeUndefined();
+  });
+
   it('has no way to list groups (AC20)', () => {
     expectTypeOf<keyof GroupStore>().toEqualTypeOf<
       | 'create'
@@ -156,6 +169,7 @@ describe('InMemoryGroupStore', () => {
       | 'removeParticipant'
       | 'setLeaderOnline'
       | 'setPosition'
+      | 'setBlockList'
       | 'delete'
     >();
   });

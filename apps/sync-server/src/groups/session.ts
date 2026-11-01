@@ -1,4 +1,5 @@
 import type {
+  BlockListSetMessage,
   GroupCreateMessage,
   GroupEndMessage,
   GroupJoinMessage,
@@ -64,6 +65,8 @@ export interface GroupActions {
   update(session: Session, message: PositionUpdateMessage): Promise<ServerMessage>;
   /** Rejoin or recover a group with a participant token (#5 AC17-AC28). */
   resume(session: Session, message: GroupResumeMessage): Promise<ServerMessage>;
+  /** Leader replaces the block list (#5 AC26). */
+  setBlockList(session: Session, message: BlockListSetMessage): Promise<ServerMessage>;
   /** Leader ends the group (#5 AC29). */
   end(session: Session, message: GroupEndMessage): Promise<ServerMessage>;
   /** Member leaves the group (#5 AC30). */

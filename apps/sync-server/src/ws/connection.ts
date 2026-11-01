@@ -307,6 +307,9 @@ export class Connection implements HeartbeatTarget {
       case 'group.resume':
         response = await groups.resume(session, message);
         break;
+      case 'blocklist.set':
+        response = await groups.setBlockList(session, message);
+        break;
       case 'group.end':
         response = await groups.end(session, message);
         break;
@@ -379,6 +382,7 @@ function canCarryReqId(message: ServerMessage): boolean {
     message.type === 'group.resumed' ||
     message.type === 'group.waiting' ||
     message.type === 'group.ended' ||
-    message.type === 'group.left'
+    message.type === 'group.left' ||
+    message.type === 'blocklist.ack'
   );
 }

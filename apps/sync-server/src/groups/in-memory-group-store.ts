@@ -56,6 +56,7 @@ export class InMemoryGroupStore implements GroupStore {
   ): Promise<AddParticipantResult> {
     const record = this.groups.get(keyOf(namespace, id));
     if (!record) return Promise.resolve({ status: 'not_found' });
+    if (record.blockList.includes(participantId)) return Promise.resolve({ status: 'blocked' });
     if (!record.participantIds.includes(participantId)) {
       if (record.participantIds.length >= maxSize) return Promise.resolve({ status: 'full' });
       record.participantIds.push(participantId);
@@ -96,6 +97,20 @@ export class InMemoryGroupStore implements GroupStore {
     record.position = { has: true, payload };
     record.lastActivityAt = at;
     return Promise.resolve(true);
+  }
+
+  setBlockList(
+    namespace: string,
+    id: string,
+    blockList: readonly string[],
+  ): Promise<{ removed: string[] } | undefined> {
+    const record = this.groups.get(keyOf(namespace, id));
+    if (!record) return Promise.resolve(undefined);
+    record.blockList = [...blockList];
+    const blocked = new Set(blockList);
+    const removed = record.participantIds.filter((p) => p !== record.leaderId && blocked.has(p));
+    record.participantIds = record.participantIds.filter((p) => !removed.includes(p));
+    return Promise.resolve({ removed });
   }
 
   delete(namespace: string, id: string): Promise<void> {

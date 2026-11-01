@@ -83,6 +83,8 @@ const schemas = buildJitless(() => {
     blockList: blockList.optional(),
   });
 
+  const blockListSetSchema = z.object({ type: z.literal('blocklist.set'), reqId, blockList });
+
   const groupEndSchema = z.object({ type: z.literal('group.end'), reqId });
 
   const groupLeaveSchema = z.object({ type: z.literal('group.leave'), reqId });
@@ -93,6 +95,7 @@ const schemas = buildJitless(() => {
     groupJoinSchema,
     positionUpdateSchema,
     groupResumeSchema,
+    blockListSetSchema,
     groupEndSchema,
     groupLeaveSchema,
   ]);
@@ -163,6 +166,7 @@ const schemas = buildJitless(() => {
       reason: z.enum(GROUP_ENDED_REASONS),
     }),
     z.object({ type: z.literal('group.left'), reqId, groupId: z.string() }),
+    z.object({ type: z.literal('blocklist.ack'), reqId }),
     z.object({ type: z.literal('leader.offline'), groupId: z.string() }),
     z.object({ type: z.literal('leader.online'), groupId: z.string() }),
     z.object({

@@ -80,6 +80,15 @@ export class FailingStore implements GroupStore {
     return this.inner.setPosition(namespace, id, payload, at);
   }
 
+  async setBlockList(
+    namespace: string,
+    id: string,
+    blockList: readonly string[],
+  ): Promise<{ removed: string[] } | undefined> {
+    this.check('setBlockList');
+    return this.inner.setBlockList(namespace, id, blockList);
+  }
+
   async delete(namespace: string, id: string): Promise<void> {
     this.check('delete');
     return this.inner.delete(namespace, id);

@@ -33,7 +33,10 @@ export interface GroupRecord {
  * insert, so a join never needs a second read that could fail or race.
  */
 export type AddParticipantResult =
-  { status: 'ok'; group: GroupRecord } | { status: 'not_found' } | { status: 'full' };
+  | { status: 'ok'; group: GroupRecord }
+  | { status: 'not_found' }
+  | { status: 'full' }
+  | { status: 'blocked' };
 
 /**
  * Group storage. Async and atomic per operation, so a Redis implementation
@@ -51,8 +54,9 @@ export interface GroupStore {
   /** A shallow copy (opaque values are shared, never mutated). */
   get(namespace: string, id: string): Promise<GroupRecord | undefined>;
   /**
-   * Adds a participant unless the group is missing or already has `maxSize`,
-   * and returns a snapshot of the group that includes it (one atomic step).
+   * Adds a participant unless the group is missing, the ID is on the block
+   * list, or the group already has `maxSize`, and returns a snapshot of the
+   * group that includes it (one atomic step).
    * Idempotent per participant ID: adding an ID that is already in the
    * group takes no extra slot.
    */
@@ -83,6 +87,15 @@ export interface GroupStore {
   ): Promise<GroupRecord | undefined>;
   /** Stores a leader position; it is a leader activity at `at`. */
   setPosition(namespace: string, id: string, payload: JsonValue, at: number): Promise<boolean>;
+  /**
+   * Replaces the block list and removes the listed members from the group in
+   * the same atomic step (#5 AC26). Returns the removed participant IDs.
+   */
+  setBlockList(
+    namespace: string,
+    id: string,
+    blockList: readonly string[],
+  ): Promise<{ removed: string[] } | undefined>;
   delete(namespace: string, id: string): Promise<void>;
 }
 

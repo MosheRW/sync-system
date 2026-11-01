@@ -78,6 +78,13 @@ export interface GroupResumeMessage {
   blockList?: string[];
 }
 
+/** The leader replaces its group's block list (#5 AC26, AC34). */
+export interface BlockListSetMessage {
+  type: 'blocklist.set';
+  reqId?: string;
+  blockList: string[];
+}
+
 /** The leader ends its group (#5 AC29). */
 export interface GroupEndMessage {
   type: 'group.end';
@@ -96,6 +103,7 @@ export type ClientMessage =
   | GroupJoinMessage
   | PositionUpdateMessage
   | GroupResumeMessage
+  | BlockListSetMessage
   | GroupEndMessage
   | GroupLeaveMessage;
 
@@ -218,6 +226,12 @@ export interface GroupEndedMessage {
   reason: GroupEndedReason;
 }
 
+/** Reply to blocklist.set. */
+export interface BlockListAckMessage {
+  type: 'blocklist.ack';
+  reqId?: string;
+}
+
 /** Reply to group.leave (#5 AC30). */
 export interface GroupLeftMessage {
   type: 'group.left';
@@ -256,6 +270,7 @@ export type ServerMessage =
   | PositionUpdatedMessage
   | GroupEndedMessage
   | GroupLeftMessage
+  | BlockListAckMessage
   | LeaderOfflineMessage
   | LeaderOnlineMessage
   | ErrorMessage;
