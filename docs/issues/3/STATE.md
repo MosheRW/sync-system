@@ -6,8 +6,8 @@
 - Plan approved by user: no
 - QA loops: 0
 - Security-sensitive: yes
-- Review rounds: 0
-- Last updated by: architect
+- Review rounds: 1 (security plan review: FAIL, 2 high)
+- Last updated by: security
 
 ## Notes
 - PRD item 2 of 9. "item N" in spec.md means PRD item N, not GitHub issue N.
@@ -28,10 +28,16 @@
 - AC10: unknown server message types are ignored (forward compatible); known types failing their schema, binary, non-JSON, too deep or too long frames give INVALID_SERVER_MESSAGE.
 - AC24: states idle / connecting / connected / reconnecting (attempt, delayMs, retryAt, attempting) / closed (client | fatal | gave_up).
 
+## Security (plan review, round 1)
+- Review: docs/issues/3/security.md. FAIL: 0 critical, 2 high, 5 medium, 8 low.
+- H1: backoff counter resets on every hello.ok; a flapping server gets a reconnect storm. Reset only after a stable period (stableAfterMs, 10 s).
+- H2: removing listeners from retired ws sockets lets ws emit an unhandled 'error' and crash a Node host. Keep an error listener attached.
+- Architect must revise the plan (section 5 of security.md lists the required controls) before Gate 2.
+
 ## Open questions
-- Q-A: other handshake rejections (INVALID_MESSAGE, HANDSHAKE_REQUIRED, ALREADY_AUTHENTICATED, bare 4001) are fatal (proposed).
-- Q-B: wss:// required for non-loopback hosts, opt-out allowInsecureTransport (proposed).
-- Q-C: a request timeout rejects with REQUEST_TIMEOUT and drops/reconnects the socket (proposed).
+- Q-A: other handshake rejections (INVALID_MESSAGE, HANDSHAKE_REQUIRED, ALREADY_AUTHENTICATED, bare 4001) are fatal (proposed). Security: agree; pair with M5 (no unthrottled connect() after fatal).
+- Q-B: wss:// required for non-loopback hosts, opt-out allowInsecureTransport (proposed). Security: agree strongly; exact URL rules in M2.
+- Q-C: a request timeout rejects with REQUEST_TIMEOUT and drops/reconnects the socket (proposed). Security: agree for hello/create/join; for position.update drop only if the server was fully silent (M4).
 
 ## Deviations from plan
 - none
