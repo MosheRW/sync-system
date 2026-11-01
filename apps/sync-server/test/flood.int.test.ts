@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import type { GroupRecord } from '../src/groups/group-store.js';
+import { InMemoryGroupStore } from '../src/groups/in-memory-group-store.js';
 import { Opcode, RawClient, encodeFrame } from './helpers/raw-client.js';
 import type { TestClient } from './helpers/test-client.js';
 import { KEY_A, type TestServer, TestClock, startTestServer } from './helpers/test-server.js';
-import { waitUntil } from './helpers/wait.js';
+import { sleep, waitUntil } from './helpers/wait.js';
 
 let ts: TestServer | undefined;
 
@@ -98,5 +100,34 @@ describe('inbound message limit (H3)', () => {
     expect(raw.closeCode).toBe(4008);
     const errors = raw.messages.filter((m) => (m as { type?: string }).type === 'error');
     expect(errors).toEqual([expect.objectContaining({ code: 'TOO_MANY_MESSAGES' })]);
+  });
+
+  it('closes with 4008 when more than 32 messages are queued', async () => {
+    const clock = new TestClock();
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const store = new InMemoryGroupStore();
+    const blockingStore = Object.assign(Object.create(store) as InMemoryGroupStore, {
+      create: async (group: GroupRecord) => {
+        await gate;
+        return store.create(group);
+      },
+    });
+    // Default inbound limits (20/s, burst 40) are not reached by 34 frames.
+    ts = await startTestServer({ store: blockingStore, now: clock.now });
+    const client = await ts.connectReady();
+    try {
+      // The first create blocks in the store; 31 more fill the queue to 32.
+      for (let i = 0; i < 32; i++) client.send({ type: 'group.create', metadata: {} });
+      await sleep(50);
+      expect(client.isClosed).toBe(false);
+      client.send({ type: 'group.create', metadata: {} });
+      expect(await client.next('error')).toMatchObject({ code: 'TOO_MANY_MESSAGES' });
+      expect((await client.closed()).code).toBe(4008);
+    } finally {
+      release();
+    }
   });
 });

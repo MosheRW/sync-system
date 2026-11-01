@@ -22,6 +22,8 @@ export interface Session {
 
 /** Group operations a connection dispatches to. Each returns the direct reply. */
 export interface GroupActions {
+  /** Called once on hello.ok, before any other action. */
+  attach(session: Session): void;
   create(session: Session, message: GroupCreateMessage): Promise<ServerMessage>;
   join(session: Session, message: GroupJoinMessage): Promise<ServerMessage>;
   update(session: Session, message: PositionUpdateMessage): Promise<ServerMessage>;

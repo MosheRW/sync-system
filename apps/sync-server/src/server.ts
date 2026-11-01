@@ -3,6 +3,10 @@ import type { AddressInfo } from 'node:net';
 import { CloseCode } from '@sync-system/protocol';
 import { WebSocketServer } from 'ws';
 import type { AppRegistry } from './apps/app-registry.js';
+import { GroupService } from './groups/group-service.js';
+import type { GroupStore } from './groups/group-store.js';
+import { InMemoryGroupStore } from './groups/in-memory-group-store.js';
+import { LocalNotifier } from './groups/notifier.js';
 import type { ServerEnv } from './config/env.js';
 import { handleHttpRequest } from './http/health.js';
 import {
@@ -23,6 +27,8 @@ export interface SyncServerOptions {
   logger: Logger;
   /** Clock in ms; injected by tests. */
   now?: () => number;
+  /** Defaults to a new InMemoryGroupStore. */
+  store?: GroupStore;
   /** Defaults to HANDSHAKE_TIMEOUT_MS; shortened by tests. */
   handshakeTimeoutMs?: number;
 }
@@ -73,6 +79,8 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
     logger.error({ event: 'wss_error', code: err.code, name: err.name }, 'websocket server error');
   });
 
+  const store = options.store ?? new InMemoryGroupStore();
+  const groups = new GroupService({ store, notifier: new LocalNotifier(), logger, now });
   const counter = new ConnectionCounter();
   const connections = new Set<Connection>();
 
@@ -88,6 +96,7 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
           logger,
           counter,
           registry,
+          groups,
           handshakeTimeoutMs,
           inbound: { ratePerSecond: env.maxInboundMessagesPerSecond, burst: env.maxInboundBurst },
           now,

@@ -31,8 +31,7 @@ export interface ConnectionDeps {
   /** Per-connection inbound limiter settings (H3). */
   inbound: { ratePerSecond: number; burst: number };
   now: () => number;
-  /** Group operations; wired in by the server. */
-  groups?: GroupActions;
+  groups: GroupActions;
   /** Called once when the socket has closed. */
   onClosed: (connection: Connection) => void;
 }
@@ -220,6 +219,7 @@ export class Connection {
         sendSerialized(ws, text);
       },
     };
+    this.deps.groups.attach(this.session);
     this.deps.logger.info(
       {
         event: 'handshake_ok',
@@ -247,7 +247,6 @@ export class Connection {
       this.reply(errorMessage(ErrorCode.ALREADY_AUTHENTICATED, { reqId: message.reqId }));
       return;
     }
-    if (!groups) throw new Error('group actions are not configured');
     let response: ServerMessage;
     switch (message.type) {
       case 'group.create':
@@ -288,7 +287,7 @@ export class Connection {
     this.deps.logger.debug({ event: 'ws_closed', code }, 'websocket closed');
     const session = this.session;
     const groups = this.deps.groups;
-    if (session && groups) {
+    if (session) {
       // Through the same queue, so it runs after any in-flight handler.
       this.enqueue(() => groups.disconnect(session));
     }
