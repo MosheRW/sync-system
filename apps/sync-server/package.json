@@ -8,7 +8,7 @@
     "dist"
   ],
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "tsx watch --conditions=@sync-system/source src/index.ts",
     "start": "node dist/index.js",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json",
