@@ -110,3 +110,28 @@ export interface SyncClientEvents {
   rejoined: JoinedGroup;
   error: SyncClientError;
 }
+
+/** What an app shows for the PRD's sync indicator (AC25). */
+export type SyncIndicator = 'none' | 'following' | 'leading' | 'reconnecting' | 'leader_offline';
+
+/**
+ * Maps a snapshot to the indicator (AC25, documented in the README):
+ * - group `ended` (any connection state): `leader_offline` (in #1 a leader
+ *   drop ends the group; item 5 adds a grace period), except a group the
+ *   app itself left with `close()` (reason `closed`): `none`;
+ * - connecting or reconnecting with an active or rejoining group: `reconnecting`;
+ * - connected with a rejoining group: `reconnecting`;
+ * - connected with an active group: `following` (member) or `leading` (leader);
+ * - anything else: `none`.
+ */
+export function indicatorOf(snapshot: SyncClientSnapshot): SyncIndicator {
+  const { connection, group } = snapshot;
+  if (group === null) return 'none';
+  if (group.status === 'ended') return group.reason === 'closed' ? 'none' : 'leader_offline';
+  if (connection.status === 'connecting' || connection.status === 'reconnecting') {
+    return 'reconnecting';
+  }
+  if (connection.status !== 'connected') return 'none';
+  if (group.status === 'rejoining') return 'reconnecting';
+  return group.role === 'leader' ? 'leading' : 'following';
+}

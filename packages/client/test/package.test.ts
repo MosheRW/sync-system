@@ -39,6 +39,7 @@ describe('public API (AC3)', () => {
         'SyncClient',
         'SyncClientError',
         'createSyncClient',
+        'indicatorOf',
         'isSyncClientError',
       ].sort(),
     );
