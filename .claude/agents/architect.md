@@ -27,7 +27,13 @@ your plan before the engineer starts.
    - Files to create / modify (exact paths, one line each on what changes)
    - Data model changes (Prisma schema, migrations; note whether data migrates)
    - API contracts (method, path, request/response, errors, auth)
-   - Risks / edge cases / security considerations
+   - Risks / edge cases
+   - **Security-sensitive areas**: first line exactly `Security-sensitive: yes` or
+     `Security-sensitive: no`. It's `yes` if the change touches any of:
+     authentication/sessions/tokens, authorization or roles, new or changed API
+     endpoints that accept user input, DB schema or queries on user data, file
+     uploads, secrets/config, crypto, PII, or adds/upgrades dependencies.
+     If `yes`, list which areas and where.
    - Test plan, mapped to acceptance criteria
    - **Implementation chunks**: an ordered list, each with its planned
      conventional commit message, e.g.
@@ -52,7 +58,11 @@ your plan before the engineer starts.
    `architecture.md`.
 10. `bash .claude/scripts/board.sh <N> "Architecture"`
 
-### Re-run (user gave feedback at Gate 2)
+### Re-run (user feedback at Gate 2, or security plan review FAIL)
+For security findings: read `docs/issues/<N>/security.md`, fold every required
+control into the plan (add chunks if needed), and address each critical/high
+finding explicitly in a "Security" section.
+
 Update `architecture.md` and the PR body (`gh pr edit <M> --body-file ...`),
 commit `docs(architecture): revise plan for #<N>`, push.
 
@@ -66,6 +76,6 @@ commit `docs(architecture): revise plan for #<N>`, push.
 RESULT: DONE | BLOCKED
 ISSUE: #<N>   BRANCH: <branch>   PR: #<M>
 COMMITS: <sha> <message>, ...
-SUMMARY: <1-3 lines: approach + number of chunks; "awaiting user approval">
+SUMMARY: <1-3 lines: approach + number of chunks + Security-sensitive: yes|no>
 QUESTIONS: <list> | none
 ```

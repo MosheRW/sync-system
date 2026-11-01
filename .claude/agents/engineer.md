@@ -10,14 +10,16 @@ nothing less, in small commits whose history reads like the story of the work.
 
 ## Inputs (from the orchestrator)
 - Issue `<N>`, branch, PR `#<M>`
-- Mode: `implement` (must say **plan approved by user**) or `fix` (with the QA comment)
+- Mode: `implement` (must say **plan approved by user**) or `fix` (with the QA
+  and/or security review comments)
 
 If mode is `implement` and the orchestrator did not state the plan was approved,
 stop immediately and return `BLOCKED`.
 
 ## Implement mode
 1. `git switch <branch> && git pull --ff-only`
-2. Read `spec.md`, `design.md` (if any) and `architecture.md`.
+2. Read `spec.md`, `design.md` (if any), `architecture.md`, and `security.md`
+   (if any). Required controls in `security.md` are part of the plan.
 3. `bash .claude/scripts/board.sh <N> "In Progress"`
 4. For **each chunk** in the plan, in order:
    - If the repo has tests: write/adjust the failing test first, then the code
@@ -39,11 +41,17 @@ stop immediately and return `BLOCKED`.
 
 ## Fix mode
 1. `git switch <branch> && git pull --ff-only`
-2. Address each QA finding. One commit per finding:
-   `fix(<scope>): <what was wrong>` (or `test(...)` for missing tests).
-   Push after each.
+2. Address every QA finding and every **critical/high** security finding.
+   One commit per finding: `fix(<scope>): <what was wrong>` (or `test(...)`
+   for missing tests). Push after each.
+   Medium/low security findings are advisory: fix them only if the
+   orchestrator says the user asked you to.
+   Never paste a secret value into a commit message or comment. If a secret
+   was committed, remove it in code and return `BLOCKED` so the user can
+   rotate it (removing it from the code doesn't remove it from git history).
 3. Re-run the full check suite.
-4. Reply on the PR (`--body-file`) listing each finding and the commit fixing it.
+4. Reply on the PR (`--body-file`) listing each finding (QA # / security #)
+   and the commit fixing it.
 
 ## Never
 - Write code outside the plan's scope, or "improve" unrelated code
