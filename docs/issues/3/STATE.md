@@ -8,7 +8,7 @@
 - Security-sensitive: yes
 - Review rounds: 2 (code review of PR #4; the plan had 2 security review rounds: round 1 FAIL, round 2 PASS)
 - QA verdict: PASS (round 2, 2026-11-01): https://github.com/MosheRW/sync-system/pull/4#pullrequestreview-5729356946 (round 1 FAIL: https://github.com/MosheRW/sync-system/pull/4#pullrequestreview-5729212922)
-- Last updated by: qa
+- Last updated by: engineer
 
 ## Notes
 - PRD item 2 of 9. "item N" in spec.md means PRD item N, not GitHub issue N.
@@ -96,6 +96,11 @@
 - ACs: 32/32 met. AC7 checked independently by importing client and protocol dist in plain Node with QA's own traps on browser globals, Function (and Function.prototype.constructor), eval and timers: 0 hits (a control zod schema without jitless does trigger them). zod's jitless setting is restored after import. AC11 reconnecting test present. AC28 close() from listeners tested, and reproduced against dist with a real ws server.
 - Round-2 deviations all accepted (SSR dist build in beforeAll, skipped error event, maxAttempts note, parse 0.10 -> 0.33 us: measured 0.32 us, acceptable).
 - Non-blocking notes: README does not mention the skipped error event; commit subjects of 1c0e205 (81 chars) and f5ebc4a (94 chars) exceed 72 (pushed, not amended).
+
+## Fix log (round 2, low advisories, user asked)
+- 334f92d fix(protocol): the schemas are built inside `buildJitless` (internal src/jitless.ts, try/finally), so zod's previous `jitless` value is restored even if building throws. Tests: test/jitless.test.ts (on during build, restored after; restored after a throwing build); test/import.test.ts restore check unchanged. (Security low advisory)
+- 7a61096 docs(client): README says a listener's close()/connect() during a fatal or give-up flow skips the `error` event; from a `closed` listener the closed state's error and the rejected connect() promise still carry the failure. (Security low advisory; QA round-2 note)
+- Checks: pnpm lint, typecheck, test (protocol 26, server 343, client 324), build: all exit 0. eslint/minimatch not bumped (out of scope).
 
 ## Open questions
 - none
