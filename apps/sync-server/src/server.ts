@@ -100,6 +100,7 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
           handshakeTimeoutMs,
           inbound: { ratePerSecond: env.maxInboundMessagesPerSecond, burst: env.maxInboundBurst },
           now,
+          maxBufferedBytes: env.maxBufferedBytes,
           onClosed: (closed) => connections.delete(closed),
         });
         connections.add(connection);

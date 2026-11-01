@@ -21,7 +21,7 @@ import type { ConnectionCounter } from './connection-counter.js';
 import { errorMessage } from './error-messages.js';
 import { checkHello } from './handshake.js';
 import { InboundLimiter } from './inbound-limiter.js';
-import { send, sendSerialized } from './send.js';
+import { sendSerialized } from './send.js';
 
 export interface ConnectionDeps {
   logger: Logger;
@@ -31,6 +31,8 @@ export interface ConnectionDeps {
   /** Per-connection inbound limiter settings (H3). */
   inbound: { ratePerSecond: number; burst: number };
   now: () => number;
+  /** Outbound buffer limit per socket (H2). */
+  maxBufferedBytes: number;
   groups: GroupActions;
   /** Called once when the socket has closed. */
   onClosed: (connection: Connection) => void;
@@ -89,7 +91,7 @@ export class Connection {
     this.handshakeTimer = setTimeout(() => this.onHandshakeTimeout(), deps.handshakeTimeoutMs);
     this.handshakeTimer.unref();
 
-    send(ws, {
+    this.sendMessage({
       type: 'welcome',
       protocolVersion: PROTOCOL_VERSION,
       minProtocolVersion: MIN_CLIENT_PROTOCOL_VERSION,
@@ -126,7 +128,7 @@ export class Connection {
       { event: 'flood_closed', namespace: this.session?.app.namespace },
       'inbound message limit exceeded',
     );
-    send(this.ws, errorMessage(ErrorCode.TOO_MANY_MESSAGES));
+    this.sendMessage(errorMessage(ErrorCode.TOO_MANY_MESSAGES));
     this.ws.close(CloseCode.POLICY_VIOLATION, ErrorCode.TOO_MANY_MESSAGES);
   }
 
@@ -209,14 +211,13 @@ export class Connection {
     clearTimeout(this.handshakeTimer);
     this.state = 'ready';
     this.deps.counter.authenticated(app.namespace);
-    const ws = this.ws;
     this.session = {
       participantId: this.participantId,
       app,
       groupId: undefined,
       role: undefined,
       deliver: (text) => {
-        sendSerialized(ws, text);
+        this.transmit(text);
       },
     };
     this.deps.groups.attach(this.session);
@@ -263,13 +264,27 @@ export class Connection {
   }
 
   private reply(message: ServerMessage): void {
-    send(this.ws, message);
+    this.sendMessage(message);
+  }
+
+  private sendMessage(message: ServerMessage): void {
+    this.transmit(JSON.stringify(message));
+  }
+
+  /** Every outbound frame goes through here: readyState and buffer checks (H2, H4). */
+  private transmit(text: string): void {
+    if (sendSerialized(this.ws, text, this.deps.maxBufferedBytes) === 'terminated') {
+      this.deps.logger.warn(
+        { event: 'slow_consumer_terminated', namespace: this.session?.app.namespace },
+        'outbound buffer limit exceeded',
+      );
+    }
   }
 
   private rejectHandshake(error: ErrorMessage, closeCode: number): void {
     this.state = 'closing';
     clearTimeout(this.handshakeTimer);
-    send(this.ws, error);
+    this.sendMessage(error);
     this.ws.close(closeCode, error.code);
   }
 
