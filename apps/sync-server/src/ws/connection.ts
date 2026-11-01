@@ -20,6 +20,7 @@ import { MAX_QUEUED_MESSAGES } from '../limits/constants.js';
 import type { ConnectionCounter } from './connection-counter.js';
 import { errorMessage } from './error-messages.js';
 import { checkHello } from './handshake.js';
+import { type HeartbeatTarget, heartbeatPong } from './heartbeat.js';
 import { InboundLimiter } from './inbound-limiter.js';
 import { sendSerialized } from './send.js';
 
@@ -60,10 +61,13 @@ function rawReqId(frame: unknown): string | undefined {
  * are processed strictly in order through a promise queue whose tail never
  * rejects; every handler runs inside try/catch (H4).
  */
-export class Connection {
+export class Connection implements HeartbeatTarget {
   readonly participantId = newParticipantId();
   /** Set on hello.ok. */
   session: Session | undefined;
+  awaitingPong = false;
+  pingPayload: Buffer | undefined;
+  lastBufferedAmount = 0;
   private state: State = 'awaiting_hello';
   private closed = false;
   private tail: Promise<void> = Promise.resolve();
@@ -87,6 +91,7 @@ export class Connection {
     // The client's close reason is never logged (L8).
     ws.on('close', (code: number) => this.onClose(code));
     ws.on('message', (data: RawData, isBinary: boolean) => this.onMessage(data, isBinary));
+    ws.on('pong', (data: Buffer) => heartbeatPong(this, data));
 
     this.handshakeTimer = setTimeout(() => this.onHandshakeTimeout(), deps.handshakeTimeoutMs);
     this.handshakeTimer.unref();
@@ -100,6 +105,18 @@ export class Connection {
 
   get isClosed(): boolean {
     return this.closed;
+  }
+
+  get bufferedAmount(): number {
+    return this.ws.bufferedAmount;
+  }
+
+  ping(payload: Buffer): void {
+    if (this.ws.readyState === this.ws.OPEN) this.ws.ping(payload);
+  }
+
+  terminate(): void {
+    this.ws.terminate();
   }
 
   private onMessage(data: RawData, isBinary: boolean): void {

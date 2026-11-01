@@ -11,6 +11,7 @@ import type { ServerEnv } from './config/env.js';
 import { handleHttpRequest } from './http/health.js';
 import {
   HANDSHAKE_TIMEOUT_MS,
+  HEARTBEAT_INTERVAL_MS,
   HTTP_CONNECTION_MARGIN,
   HTTP_HEADERS_TIMEOUT_MS,
   HTTP_REQUEST_TIMEOUT_MS,
@@ -19,6 +20,7 @@ import {
 import type { Logger } from './logging/logger.js';
 import { Connection } from './ws/connection.js';
 import { ConnectionCounter, type ConnectionStats } from './ws/connection-counter.js';
+import { Heartbeat } from './ws/heartbeat.js';
 import { createUpgradeHandler } from './ws/upgrade.js';
 
 export interface SyncServerOptions {
@@ -29,6 +31,8 @@ export interface SyncServerOptions {
   now?: () => number;
   /** Defaults to a new InMemoryGroupStore. */
   store?: GroupStore;
+  /** Defaults to HEARTBEAT_INTERVAL_MS; shortened by tests. */
+  heartbeatMs?: number;
   /** Defaults to HANDSHAKE_TIMEOUT_MS; shortened by tests. */
   handshakeTimeoutMs?: number;
 }
@@ -108,6 +112,14 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
     }),
   );
 
+  const heartbeat = new Heartbeat(
+    options.heartbeatMs ?? HEARTBEAT_INTERVAL_MS,
+    () => connections,
+    (result) => {
+      logger.info({ event: 'heartbeat_terminated', cause: result }, 'heartbeat terminated socket');
+    },
+  );
+
   let port = 0;
 
   async function closeConnections(): Promise<void> {
@@ -150,6 +162,7 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
         const onListening = () => {
           httpServer.off('error', onError);
           port = (httpServer.address() as AddressInfo).port;
+          heartbeat.start();
           resolve(port);
         };
         httpServer.once('error', onError);
@@ -158,6 +171,7 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
       });
     },
     async close() {
+      heartbeat.stop();
       const httpClosed = new Promise<void>((resolve) => {
         if (!httpServer.listening) {
           resolve();

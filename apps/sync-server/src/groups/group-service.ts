@@ -133,8 +133,14 @@ export class GroupService implements GroupActions {
     const { groupId } = session;
     if (groupId === undefined) return;
     const namespace = session.app.namespace;
+    const wasLeader = session.role === 'leader';
     session.groupId = undefined;
     session.role = undefined;
+
+    if (wasLeader) {
+      await this.endGroup(namespace, groupId, session.participantId);
+      return;
+    }
 
     const result = await this.deps.store.removeParticipant(
       namespace,
@@ -148,5 +154,32 @@ export class GroupService implements GroupActions {
         'group deleted',
       );
     }
+  }
+
+  /**
+   * In this issue a leader disconnect ends the group (AC17): the group is
+   * deleted, remaining members become groupless (their sockets stay open)
+   * and get group.ended.
+   */
+  private async endGroup(namespace: string, groupId: string, leaderId: string): Promise<void> {
+    const record = await this.deps.store.get(namespace, groupId);
+    await this.deps.store.delete(namespace, groupId);
+    const members = (record?.participantIds ?? []).filter((id) => id !== leaderId);
+    for (const memberId of members) {
+      const member = this.deps.notifier.get(memberId);
+      if (member && member.groupId === groupId) {
+        member.groupId = undefined;
+        member.role = undefined;
+      }
+    }
+    this.deps.notifier.broadcast(members, {
+      type: 'group.ended',
+      groupId,
+      reason: 'leader_disconnected',
+    });
+    this.deps.logger.info(
+      { event: 'group_ended', namespace, groupRef: groupRef(groupId), members: members.length },
+      'group ended',
+    );
   }
 }
