@@ -1,0 +1,13 @@
+node_modules
+**/node_modules
+**/dist
+.git
+.github
+.claude
+.claude.zip
+docs
+config/
+.env*
+**/*.log
+coverage
+**/coverage
