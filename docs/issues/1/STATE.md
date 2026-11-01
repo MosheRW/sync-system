@@ -1,11 +1,11 @@
 # State: #1 Sync server core and monorepo scaffold
 - Path: full
-- Phase: implementation
+- Phase: validation
 - Branch: feat/1-sync-server-core
 - PR: #2
 - Plan approved by user: yes
-- QA loops: 0
-- Last updated by: engineer
+- QA loops: 1
+- Last updated by: qa
 
 ## Gate 1
 - Gate 1 approved by user with edits (spec updated: AC27 max message size, AC28 CI workflow; open questions resolved).
@@ -45,6 +45,11 @@
 - AC25 (Docker), verified locally: `docker compose build` builds the image. The image contains no config or .env and runs as `node`. Run with the dev registry copied in (`docker cp`) and the compose healthcheck command: status `healthy`, `curl 127.0.0.1/health` returns 200 with the expected body, and the log shows the `dev api key in use` warning. With the image default `NODE_ENV=production` it prints the dev-key ConfigError and exits 1.
 - AC25 not verified: `docker compose up` itself. On this machine Docker Desktop hangs on every bind mount (even a plain `docker run -v`), so the compose volume `./config/apps.dev.json:/config/apps.json:ro` could not be mounted. Needs a manual `docker compose up --build` on a machine with working bind mounts.
 - Accepted audit finding: 2 moderate advisories (minimatch through eslint 9, dev-only), below the CI threshold `--audit-level=high`.
+
+## QA (round 1)
+- Verdict: PASS (review comment on PR #2). Checks: install, lint, typecheck, test (22 + 317), build all pass; CI 2/2 green.
+- ACs: 27/28 met; AC25 partly verified: image builds, container from image is healthy with the compose healthcheck (config via docker cp); `docker compose up` hangs on Docker Desktop bind mounts here. Needs a manual `docker compose up --build` check by the user before merge.
+- Gate 2 Q1-Q3 implemented as decided; all engineer deviations judged acceptable.
 
 ## Open questions
 - none
