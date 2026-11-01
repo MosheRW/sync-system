@@ -1,0 +1,16 @@
+node_modules
+**/node_modules
+**/dist
+.git
+.github
+.claude
+.claude.zip
+docs
+config/
+# Registries anywhere in the tree (never a bare config dir: src/config is code).
+**/config/apps*.json
+.env*
+**/.env*
+**/*.log
+coverage
+**/coverage

@@ -42,10 +42,21 @@
       "Bash(npm run build:*)",
       "Bash(npx tsc:*)",
       "Bash(npx prisma validate:*)",
-      "Bash(npx prisma generate:*)"
+      "Bash(npx prisma generate:*)",
+      "Bash(pnpm test:*)",
+      "Bash(pnpm run test:*)",
+      "Bash(pnpm lint:*)",
+      "Bash(pnpm run lint:*)",
+      "Bash(pnpm typecheck:*)",
+      "Bash(pnpm run typecheck:*)",
+      "Bash(pnpm build:*)",
+      "Bash(pnpm run build:*)",
+      "Bash(pnpm exec tsc:*)"
     ],
     "ask": [
       "Bash(npm install:*)",
+      "Bash(pnpm install:*)",
+      "Bash(pnpm add:*)",
       "Bash(npx prisma migrate:*)"
     ],
     "deny": [

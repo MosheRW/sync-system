@@ -1,0 +1,11 @@
+node_modules
+dist
+coverage
+*.log
+.env*
+*.tsbuildinfo
+
+# Real app registries hold API keys: never commit them (M1).
+config/*.json
+!config/apps.example.json
+!config/apps.dev.json

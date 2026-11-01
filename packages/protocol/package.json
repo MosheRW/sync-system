@@ -1,0 +1,29 @@
+{
+  "name": "@sync-system/protocol",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Wire protocol for the sync system: versions, error codes, message types and schemas.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "@sync-system/source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "typescript": "~6.0.3",
+    "vitest": "^4.1.12"
+  },
+  "dependencies": {
+    "zod": "^4.6.7"
+  }
+}
