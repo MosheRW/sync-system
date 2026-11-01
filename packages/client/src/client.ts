@@ -25,7 +25,7 @@ import {
   classifyHandshakeError,
 } from './handshake.js';
 import { type TimerHandle, clearTimer, globalWebSocket, now, setClampedTimeout } from './host.js';
-import { jsonByteLength } from './json-size.js';
+import { utf8ByteLength } from './json-size.js';
 import { maxInboundChars } from './limits.js';
 import { type LogFields, type LogLevel, log } from './logger.js';
 import { type ResolvedOptions, type SyncClientOptions, resolveOptions } from './options.js';
@@ -121,8 +121,8 @@ export class SyncClient {
   #run: Deferred<ConnectedInfo> | undefined;
   /** Last time any frame came from the server (M4). */
   #lastInboundAt = 0;
-  /** Leader throttle for the current group. */
-  #throttle: PositionThrottle | undefined;
+  /** Leader throttle for the current group; holds positions as checked JSON text. */
+  #throttle: PositionThrottle<string> | undefined;
   /** One group create/join in flight at a time (L5). */
   #groupRequestInFlight = false;
   #reconnectTimer: TimerHandle | undefined;
@@ -326,9 +326,11 @@ export class SyncClient {
     if (group.status !== 'active' || group.role !== 'leader') {
       throw new SyncClientError('NOT_LEADER');
     }
-    this.#checkPayload('position', position);
+    // Serialized once: the checked text is what goes out, even if the app
+    // mutates `position` while the update waits in the throttle.
+    const json = this.#checkPayload('position', position);
     this.#update({ group: { ...group, hasPosition: true, position } });
-    this.#throttle?.submit(position);
+    this.#throttle?.submit(json);
   }
 
   /** Current connection state (same as `getSnapshot().connection`). */
@@ -414,16 +416,28 @@ export class SyncClient {
     if (this.#groupRequestInFlight) throw new SyncClientError('REQUEST_IN_PROGRESS');
   }
 
-  /** JSON check (depth leaves room for the envelope) then size, as the server measures it (AC22). */
-  #checkPayload(field: 'metadata' | 'position', value: unknown): void {
+  /**
+   * JSON check (depth leaves room for the envelope) then size, as the server
+   * measures it (AC22). Returns the JSON text that was measured.
+   */
+  #checkPayload(field: 'metadata' | 'position', value: unknown): string {
     if (checkJson(value, { maxDepth: MAX_JSON_DEPTH - 1 }) !== 'ok') {
       throw new SyncClientError('INVALID_PAYLOAD');
     }
+    let json: unknown;
+    try {
+      json = JSON.stringify(value);
+    } catch {
+      // A toJSON or getter that throws, or one that returns a BigInt.
+      throw new SyncClientError('INVALID_PAYLOAD');
+    }
+    if (typeof json !== 'string') throw new SyncClientError('INVALID_PAYLOAD');
     const limitBytes = this.#info?.limits.maxMessageBytes ?? 0;
-    const sizeBytes = jsonByteLength(value);
+    const sizeBytes = utf8ByteLength(json);
     if (sizeBytes > limitBytes) {
       throw new SyncClientError('MESSAGE_TOO_LARGE', { details: { field, sizeBytes, limitBytes } });
     }
+    return json;
   }
 
   /**
@@ -494,8 +508,8 @@ export class SyncClient {
     this.#throttle?.cancel();
     this.#throttle =
       group.role === 'leader' && this.#info
-        ? new PositionThrottle(this.#info.limits.maxLeaderUpdatesPerSecond, (position) =>
-            this.#sendPosition(position),
+        ? new PositionThrottle<string>(this.#info.limits.maxLeaderUpdatesPerSecond, (json) =>
+            this.#sendPosition(json),
           )
         : undefined;
     this.#update({ group });
@@ -516,22 +530,24 @@ export class SyncClient {
     this.#events.emit('groupEnded', info);
   }
 
-  #sendPosition(position: JsonValue): void {
+  /** Sends a position as the exact JSON text `updatePosition` checked. */
+  #sendPosition(json: string): void {
     const reqId = this.#requests.nextId();
     this.#requests.add(reqId, {
       kind: 'position.update',
       // Twice the request timeout; drops only on a silent link (M4).
       timeoutKind: 'ack',
       timeoutMs: 2 * this.#opts.requestTimeoutMs,
-      position,
       resolve: () => {},
-      reject: (error) => this.#onPositionRejected(position, error),
+      reject: (error) => this.#onPositionRejected(json, error),
     });
-    this.#send({ type: 'position.update', reqId, position });
+    // reqId is a client-made `c<n>`; JSON.stringify quotes it all the same.
+    const text = `{"type":"position.update","reqId":${JSON.stringify(reqId)},"position":${json}}`;
+    this.#transport?.sendText(text);
   }
 
   /** Server rejections of a position update come through the `error` event (AC23). */
-  #onPositionRejected(position: JsonValue, error: SyncClientError): void {
+  #onPositionRejected(json: string, error: SyncClientError): void {
     if (
       error.source === 'client' &&
       (error.code === 'CONNECTION_LOST' || error.code === 'CLOSED')
@@ -541,7 +557,7 @@ export class SyncClient {
     this.#emitError(error);
     if (error.code === 'RATE_LIMITED') {
       const details = error.details as { retryAfterMs?: number } | undefined;
-      this.#throttle?.rateLimited(position, details?.retryAfterMs);
+      this.#throttle?.rateLimited(json, details?.retryAfterMs);
     }
   }
 

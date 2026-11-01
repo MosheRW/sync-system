@@ -316,6 +316,65 @@ describe('size checks (AC22)', () => {
   });
 });
 
+describe('positions are serialized once, when updatePosition() checks them', () => {
+  it('sends the checked JSON text even if the app mutates a throttled position', async () => {
+    const { client, socket } = await leader();
+    for (let i = 0; i < 5; i += 1) client.updatePosition({ page: i });
+    const queued: { page: number; extra?: string } = { page: 5 };
+    client.updatePosition(queued);
+    const sentBefore = socket.sent.length;
+    // Mutated while it waits for the trailing send: bigger than maxMessageBytes.
+    queued.page = 999;
+    queued.extra = 'x'.repeat(LIMITS.maxMessageBytes * 2);
+    vi.advanceTimersByTime(1_100);
+    expect(socket.sent).toHaveLength(sentBefore + 1);
+    const text = socket.sent.at(-1)!;
+    expect(text).toBe(
+      `{"type":"position.update","reqId":"${String(socket.lastMessage().reqId)}","position":{"page":5}}`,
+    );
+    expect(client.getState().status).toBe('connected');
+    client.close();
+  });
+
+  it('re-sends the checked JSON text after RATE_LIMITED, not the mutated object', async () => {
+    const { client, socket } = await leader();
+    const position: { page: number } = { page: 9 };
+    client.on('error', () => {});
+    client.updatePosition(position);
+    const update = socket.lastMessage();
+    position.page = 10;
+    socket.receive({
+      type: 'error',
+      reqId: update.reqId,
+      code: 'RATE_LIMITED',
+      message: 'x',
+      details: { retryAfterMs: 200 },
+    });
+    vi.advanceTimersByTime(200);
+    expect(socket.lastMessage()).toMatchObject({ type: 'position.update', position: { page: 9 } });
+    expect(socket.lastMessage().reqId).not.toBe(update.reqId);
+    client.close();
+  });
+
+  it('rejects a position whose toJSON throws with INVALID_PAYLOAD and sends nothing', async () => {
+    const { client, socket } = await leader();
+    const sentBefore = socket.sent.length;
+    const position = {
+      toJSON() {
+        throw new Error('no');
+      },
+    };
+    expect(
+      isSyncClientError(
+        thrown(() => client.updatePosition(position as never)),
+        'INVALID_PAYLOAD',
+      ),
+    ).toBe(true);
+    expect(socket.sent).toHaveLength(sentBefore);
+    client.close();
+  });
+});
+
 describe('server rejections of position updates (AC23)', () => {
   it('RATE_LIMITED is a typed error event, the client stays connected and re-sends', async () => {
     const { client, socket } = await leader();

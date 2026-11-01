@@ -7,5 +7,10 @@ import { textEncoder } from './host.js';
  * Only call this after `checkJson` passed (no cycles, no BigInt).
  */
 export function jsonByteLength(value: unknown): number {
-  return textEncoder().encode(JSON.stringify(value)).length;
+  return utf8ByteLength(JSON.stringify(value));
+}
+
+/** UTF-8 bytes of an already serialized string. */
+export function utf8ByteLength(text: string): number {
+  return textEncoder().encode(text).length;
 }

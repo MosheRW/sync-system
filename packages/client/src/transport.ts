@@ -135,9 +135,18 @@ export class Transport {
    * `onClose` has already run when this returns false.
    */
   send(message: object): boolean {
+    return this.#write(() => JSON.stringify(message));
+  }
+
+  /** Sends text that is already serialized JSON, exactly as given. Same contract as `send`. */
+  sendText(text: string): boolean {
+    return this.#write(() => text);
+  }
+
+  #write(serialize: () => string): boolean {
     if (this.#retired) return false;
     try {
-      this.#socket.send(JSON.stringify(message));
+      this.#socket.send(serialize());
       return true;
     } catch {
       // A socket event fired during send() may have ended the transport already.

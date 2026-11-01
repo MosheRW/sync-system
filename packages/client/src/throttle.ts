@@ -1,4 +1,3 @@
-import type { JsonValue } from '@sync-system/protocol';
 import { type TimerHandle, clearTimer, now, setClampedTimeout } from './host.js';
 
 /** The server's sliding window for leader updates. */
@@ -18,19 +17,19 @@ const WINDOW_MS = THROTTLE_WINDOW_MS + THROTTLE_SAFETY_MS;
  * pending position is kept, and it is sent as soon as the window allows
  * (trailing send). At most one timer runs at a time.
  */
-export class PositionThrottle {
+export class PositionThrottle<T> {
   readonly #limit: number;
-  readonly #send: (position: JsonValue) => void;
+  readonly #send: (position: T) => void;
   /** Send times, a ring buffer of at most `limit` entries (M1). */
   readonly #times: number[] = [];
   /** Index of the oldest entry once the ring is full. */
   #oldest = 0;
-  #pending: { value: JsonValue } | undefined;
+  #pending: { value: T } | undefined;
   #timer: TimerHandle | undefined;
-  #requeued: { value: JsonValue; count: number } | undefined;
+  #requeued: { value: T; count: number } | undefined;
 
   /** `limit` must already be checked against the client bounds (positive, at most 100). */
-  constructor(limit: number, send: (position: JsonValue) => void) {
+  constructor(limit: number, send: (position: T) => void) {
     this.#limit = limit;
     this.#send = send;
   }
@@ -41,7 +40,7 @@ export class PositionThrottle {
   }
 
   /** Stores `position` as the latest and sends it now or when the window allows. */
-  submit(position: JsonValue): void {
+  submit(position: T): void {
     this.#pending = { value: position };
     this.#requeued = undefined;
     this.#flush();
@@ -53,7 +52,7 @@ export class PositionThrottle {
    * `[next window slot, 10 s]`; a missing value means the next slot (M1, L1).
    * The same position is put back at most 3 times (L5).
    */
-  rateLimited(position: JsonValue, retryAfterMs: number | undefined): void {
+  rateLimited(position: T, retryAfterMs: number | undefined): void {
     if (this.#pending !== undefined) return;
     if (this.#requeued?.value === position) {
       this.#requeued.count += 1;

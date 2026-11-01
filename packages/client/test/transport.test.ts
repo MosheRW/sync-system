@@ -199,6 +199,17 @@ describe('Transport host safety (H2)', () => {
     expect(transport.retired).toBe(true);
   });
 
+  it('sendText() sends the given text unchanged and handles a throw like send()', () => {
+    const { transport, handlers, socket } = open();
+    expect(transport.sendText('{"type":"position.update","position":{"b":1,"a":2}}')).toBe(true);
+    expect(socket.sent).toEqual(['{"type":"position.update","position":{"b":1,"a":2}}']);
+    socket.throwOnSend = true;
+    expect(transport.sendText('{}')).toBe(false);
+    expect(handlers.onClose).toHaveBeenCalledWith(1006);
+    expect(socket.closeCalls).toHaveLength(1);
+    expect(transport.sendText('{}')).toBe(false);
+  });
+
   it('closes the socket exactly once when send() throws, before reporting the drop', () => {
     const { transport, handlers, socket } = open();
     socket.throwOnSend = true;

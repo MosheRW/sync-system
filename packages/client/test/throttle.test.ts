@@ -10,8 +10,10 @@ interface Sent {
 let sent: Sent[];
 let start: number;
 
-function makeThrottle(limit = 5): PositionThrottle {
-  return new PositionThrottle(limit, (value) => sent.push({ at: Date.now() - start, value }));
+function makeThrottle(limit = 5): PositionThrottle<JsonValue> {
+  return new PositionThrottle<JsonValue>(limit, (value) =>
+    sent.push({ at: Date.now() - start, value }),
+  );
 }
 
 /** Largest number of sends inside any window of `windowMs`. */
