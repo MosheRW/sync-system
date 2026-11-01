@@ -62,7 +62,8 @@ function rawReqId(frame: unknown): string | undefined {
  * rejects; every handler runs inside try/catch (H4).
  */
 export class Connection implements HeartbeatTarget {
-  readonly participantId = newParticipantId();
+  /** Per-connection ID, sent as `hello.ok.participantId`. */
+  readonly connectionId = newParticipantId();
   /** Set on hello.ok. */
   session: Session | undefined;
   awaitingPong = false;
@@ -249,10 +250,9 @@ export class Connection implements HeartbeatTarget {
     this.state = 'ready';
     this.deps.counter.authenticated(app.namespace);
     this.session = {
-      participantId: this.participantId,
+      connectionId: this.connectionId,
       app,
-      groupId: undefined,
-      role: undefined,
+      membership: undefined,
       deliver: (text) => {
         this.transmit(text);
       },
@@ -263,19 +263,18 @@ export class Connection implements HeartbeatTarget {
         });
       },
     };
-    this.deps.groups.attach(this.session);
     this.deps.logger.info(
       {
         event: 'handshake_ok',
         namespace: app.namespace,
-        participantRef: participantRef(this.participantId),
+        participantRef: participantRef(this.connectionId),
       },
       'handshake ok',
     );
     this.reply({
       type: 'hello.ok',
       ...(message.reqId !== undefined ? { reqId: message.reqId } : {}),
-      participantId: this.participantId,
+      participantId: this.connectionId,
       limits: {
         maxGroupSize: app.maxGroupSize,
         maxLeaderUpdatesPerSecond: app.maxLeaderUpdatesPerSecond,

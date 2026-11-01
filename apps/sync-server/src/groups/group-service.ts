@@ -11,10 +11,10 @@ import type { SlidingWindowRateLimiter } from '../limits/rate-limiter.js';
 import { type Logger, groupRef, participantRef } from '../logging/logger.js';
 import { errorMessage } from '../ws/error-messages.js';
 import type { GroupRecord, GroupStore } from './group-store.js';
-import { newGroupId } from './ids.js';
+import { newGroupId, newParticipantId } from './ids.js';
 import { KeyedLock } from './keyed-lock.js';
 import type { Notifier } from './notifier.js';
-import type { GroupActions, Session } from './session.js';
+import { type GroupActions, type Membership, type Session, membershipKey } from './session.js';
 
 export interface GroupServiceDeps {
   store: GroupStore;
@@ -38,13 +38,16 @@ function sizeError(
   return errorMessage(ErrorCode.MESSAGE_TOO_LARGE, { details: { field, limitBytes } });
 }
 
-function rateKey(namespace: string, groupId: string): string {
+function groupKey(namespace: string, groupId: string): string {
   return `${namespace}:${groupId}`;
 }
 
 /**
  * Group business rules. Never reads the fields of `position` or `metadata`:
  * they are stored and relayed as the parsed references (AC14).
+ *
+ * Participant IDs are group-scoped: a new one is minted for every create and
+ * join. They appear in replies to their owner only, and never in logs (L7).
  */
 export class GroupService implements GroupActions {
   /** Serializes join and teardown per group (namespace + ID). */
@@ -52,12 +55,24 @@ export class GroupService implements GroupActions {
 
   constructor(private readonly deps: GroupServiceDeps) {}
 
-  attach(session: Session): void {
-    this.deps.notifier.register(session);
+  /** The session's membership if the session still owns it in the notifier (M4). */
+  private owned(session: Session): Membership | undefined {
+    const membership = session.membership;
+    if (membership === undefined) return undefined;
+    const key = membershipKey(session.app.namespace, membership.groupId, membership.participantId);
+    return this.deps.notifier.get(key) === session ? membership : undefined;
+  }
+
+  private attach(session: Session, membership: Membership): void {
+    session.membership = membership;
+    this.deps.notifier.register(
+      membershipKey(session.app.namespace, membership.groupId, membership.participantId),
+      session,
+    );
   }
 
   async create(session: Session, message: GroupCreateMessage): Promise<ServerMessage> {
-    if (session.groupId !== undefined) return errorMessage(ErrorCode.ALREADY_IN_GROUP);
+    if (session.membership !== undefined) return errorMessage(ErrorCode.ALREADY_IN_GROUP);
 
     const { app } = session;
     // Checked before anything is stored: an oversized create leaves no group.
@@ -68,33 +83,28 @@ export class GroupService implements GroupActions {
         : sizeError('position', message.position, app.maxMessageBytes));
     if (tooLarge) return tooLarge;
 
+    const participantId = newParticipantId();
     const record: GroupRecord = {
       id: newGroupId(),
       appNamespace: app.namespace,
       metadata: message.metadata,
       position:
         message.position === undefined ? { has: false } : { has: true, payload: message.position },
-      leaderId: session.participantId,
-      participantIds: [session.participantId],
+      leaderId: participantId,
+      participantIds: [participantId],
       createdAt: this.deps.now(),
     };
     await this.deps.store.create(record);
-    session.groupId = record.id;
-    session.role = 'leader';
+    this.attach(session, { groupId: record.id, participantId, role: 'leader' });
     this.deps.logger.info(
       { event: 'group_created', namespace: app.namespace, groupRef: groupRef(record.id) },
       'group created',
     );
-    return {
-      type: 'group.created',
-      groupId: record.id,
-      participantId: session.participantId,
-      role: 'leader',
-    };
+    return { type: 'group.created', groupId: record.id, participantId, role: 'leader' };
   }
 
   async join(session: Session, message: GroupJoinMessage): Promise<ServerMessage> {
-    if (session.groupId !== undefined) return errorMessage(ErrorCode.ALREADY_IN_GROUP);
+    if (session.membership !== undefined) return errorMessage(ErrorCode.ALREADY_IN_GROUP);
 
     const { app } = session;
     const { groupId } = message;
@@ -106,11 +116,12 @@ export class GroupService implements GroupActions {
     // teardown sees and notifies this member) or after it (not found).
     // Without this, a slow insert reply could commit the session to a
     // group that was already deleted.
-    return this.locks.run(rateKey(app.namespace, groupId), async () => {
+    return this.locks.run(groupKey(app.namespace, groupId), async () => {
+      const participantId = newParticipantId();
       const added = await this.deps.store.addParticipant(
         app.namespace,
         groupId,
-        session.participantId,
+        participantId,
         app.maxGroupSize,
       );
       if (added.status === 'not_found') return errorMessage(ErrorCode.GROUP_NOT_FOUND);
@@ -121,27 +132,27 @@ export class GroupService implements GroupActions {
       // The snapshot comes from the same atomic insert. A second read could
       // fail after the insert and leave the participant in the group while
       // the session stays groupless.
-      return this.commitJoin(session, groupId, added.group);
+      return this.commitJoin(session, participantId, added.group);
     });
   }
 
-  private commitJoin(session: Session, groupId: string, record: GroupRecord): ServerMessage {
+  private commitJoin(session: Session, participantId: string, record: GroupRecord): ServerMessage {
     const { app } = session;
-    session.groupId = groupId;
-    session.role = 'member';
+    this.attach(session, { groupId: record.id, participantId, role: 'member' });
     this.deps.logger.info(
       {
         event: 'group_joined',
         namespace: app.namespace,
-        groupRef: groupRef(groupId),
-        participantRef: participantRef(session.participantId),
+        groupRef: groupRef(record.id),
+        // The connection-scoped ref only: never the group-scoped ID (L7).
+        participantRef: participantRef(session.connectionId),
       },
       'group joined',
     );
     const base = {
       type: 'group.joined' as const,
-      groupId,
-      participantId: session.participantId,
+      groupId: record.id,
+      participantId,
       role: 'member' as const,
       metadata: record.metadata,
     };
@@ -151,19 +162,21 @@ export class GroupService implements GroupActions {
   }
 
   async update(session: Session, message: PositionUpdateMessage): Promise<ServerMessage> {
-    const { groupId } = session;
-    if (groupId === undefined) return errorMessage(ErrorCode.NOT_IN_GROUP);
-    if (session.role !== 'leader') return errorMessage(ErrorCode.NOT_LEADER);
+    // Authorized by ownership, not by the cached role alone (M4).
+    const membership = this.owned(session);
+    if (membership === undefined) return errorMessage(ErrorCode.NOT_IN_GROUP);
+    if (membership.role !== 'leader') return errorMessage(ErrorCode.NOT_LEADER);
 
     const { app } = session;
     const namespace = app.namespace;
+    const { groupId } = membership;
     const tooLarge = sizeError('position', message.position, app.maxMessageBytes);
     if (tooLarge) return tooLarge;
 
     // Checked last, so rejected updates never use rate budget. Over-rate
     // updates are rejected, never queued or coalesced (AC22).
     const rate = this.deps.rateLimiter.tryAcquire(
-      rateKey(namespace, groupId),
+      groupKey(namespace, groupId),
       app.maxLeaderUpdatesPerSecond,
     );
     if (!rate.ok) {
@@ -181,8 +194,7 @@ export class GroupService implements GroupActions {
     const record = await this.deps.store.get(namespace, groupId);
     if (record) {
       // Members only: the leader gets position.ack, not the broadcast (AC13).
-      const members = record.participantIds.filter((id) => id !== record.leaderId);
-      this.deps.notifier.broadcast(members, {
+      this.deps.notifier.broadcast(this.memberKeys(record), {
         type: 'position.updated',
         groupId,
         position: message.position,
@@ -195,31 +207,35 @@ export class GroupService implements GroupActions {
     return { type: 'position.ack' };
   }
 
+  private memberKeys(record: GroupRecord): string[] {
+    return record.participantIds
+      .filter((id) => id !== record.leaderId)
+      .map((id) => membershipKey(record.appNamespace, record.id, id));
+  }
+
   async disconnect(session: Session): Promise<void> {
-    this.deps.notifier.unregister(session.participantId);
-    const { groupId } = session;
-    if (groupId === undefined) return;
+    const membership = session.membership;
+    if (membership === undefined) return;
     const namespace = session.app.namespace;
-    const wasLeader = session.role === 'leader';
-    session.groupId = undefined;
-    session.role = undefined;
+    const { groupId, participantId } = membership;
+    session.membership = undefined;
+    // A session that no longer owns its membership changes nothing (M4).
+    if (!this.deps.notifier.unregister(membershipKey(namespace, groupId, participantId), session)) {
+      return;
+    }
 
     // Under the group lock, so a join cannot land between the removal and
     // the delete.
-    await this.locks.run(rateKey(namespace, groupId), async () => {
-      if (wasLeader) {
-        await this.endGroup(namespace, groupId, session.participantId);
+    await this.locks.run(groupKey(namespace, groupId), async () => {
+      if (membership.role === 'leader') {
+        await this.endGroup(namespace, groupId);
         return;
       }
 
-      const result = await this.deps.store.removeParticipant(
-        namespace,
-        groupId,
-        session.participantId,
-      );
+      const result = await this.deps.store.removeParticipant(namespace, groupId, participantId);
       if (result && result.remaining === 0) {
         await this.deps.store.delete(namespace, groupId);
-        this.deps.rateLimiter.forget(rateKey(namespace, groupId));
+        this.deps.rateLimiter.forget(groupKey(namespace, groupId));
         this.deps.logger.info(
           { event: 'group_deleted', namespace, groupRef: groupRef(groupId) },
           'group deleted',
@@ -233,31 +249,30 @@ export class GroupService implements GroupActions {
    * deleted, remaining members become groupless (their sockets stay open)
    * and get group.ended. Runs under the group lock (see join).
    *
-   * Each member is cleared and notified through its own message queue, after
-   * the replies to messages it has already sent. A member whose join was in
-   * flight therefore gets group.joined first, then group.ended.
+   * Each member loses its membership at once (M4) and is notified through
+   * its own message queue, after the replies to messages it has already
+   * sent. A member whose join was in flight therefore gets group.joined
+   * first, then group.ended.
    */
-  private async endGroup(namespace: string, groupId: string, leaderId: string): Promise<void> {
+  private async endGroup(namespace: string, groupId: string): Promise<void> {
     const record = await this.deps.store.get(namespace, groupId);
     await this.deps.store.delete(namespace, groupId);
-    this.deps.rateLimiter.forget(rateKey(namespace, groupId));
-    const members = (record?.participantIds ?? []).filter((id) => id !== leaderId);
+    this.deps.rateLimiter.forget(groupKey(namespace, groupId));
+    const keys = record ? this.memberKeys(record) : [];
     const ended = JSON.stringify({
       type: 'group.ended',
       groupId,
       reason: 'leader_disconnected',
     } satisfies ServerMessage);
-    for (const memberId of members) {
-      const member = this.deps.notifier.get(memberId);
-      member?.afterPending(() => {
-        if (member.groupId !== groupId) return;
-        member.groupId = undefined;
-        member.role = undefined;
-        member.deliver(ended);
-      });
+    for (const key of keys) {
+      const member = this.deps.notifier.get(key);
+      if (member === undefined) continue;
+      this.deps.notifier.unregister(key, member);
+      if (member.membership?.groupId === groupId) member.membership = undefined;
+      member.afterPending(() => member.deliver(ended));
     }
     this.deps.logger.info(
-      { event: 'group_ended', namespace, groupRef: groupRef(groupId), members: members.length },
+      { event: 'group_ended', namespace, groupRef: groupRef(groupId), members: keys.length },
       'group ended',
     );
   }
