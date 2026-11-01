@@ -5,7 +5,7 @@
 - PR: #2
 - Plan approved by user: yes
 - QA loops: 1
-- Last updated by: qa
+- Last updated by: engineer
 
 ## Gate 1
 - Gate 1 approved by user with edits (spec updated: AC27 max message size, AC28 CI workflow; open questions resolved).
@@ -51,6 +51,19 @@
 - ACs: 27/28 met; AC25 partly verified: image builds, container from image is healthy with the compose healthcheck (config via docker cp); `docker compose up` hangs on Docker Desktop bind mounts here. Needs a manual `docker compose up --build` check by the user before merge.
 - Gate 2 Q1-Q3 implemented as decided; all engineer deviations judged acceptable.
 
+## Fixes (PR #2 review: Copilot findings 1-4, security advisories S1-S4)
+- User enabled Auto-fix on PR #2 and later asked to fix S1-S4 in this PR too. One commit per finding, each with regression tests:
+  - Copilot 1 (dev script resolved protocol from dist): 43a4401 fix(server): resolve protocol from source in the dev script. Verified None of the selected packages has a "dev" script starts and serves /health with packages/protocol/dist removed.
+  - Copilot 3 (stray participant if get failed after addParticipant): 3dccd7b fix(server): add a participant and snapshot the group atomically.
+  - Copilot 2 (join committing to a group torn down meanwhile): 7d818cf fix(server): serialize join and group teardown per group.
+  - Copilot 4 (ping/pong bypassed the inbound limiter and the outbound buffer check): 2b43041 fix(server): rate-limit ping and pong frames and buffer-check pongs.
+  - S1: 3e3fc8d fix(server): drop unresponsive closing sockets after 2 s.
+  - S2: f6a8bd9 fix(config): lower the default outbound buffer limit to 256 KiB.
+  - S3: eda6fed fix(docker): ignore env files and app registries at any depth.
+  - S4: 7211db9 fix(config): refuse the dev key unless NODE_ENV is development or test.
+- Checks: pnpm lint, typecheck, test (protocol 22, server 343), build pass; pnpm audit --audit-level=high passes (2 moderate dev-only, accepted).
+- Needs a QA re-run (round 2).
+
 ## Open questions
 - none
 
@@ -67,3 +80,9 @@
 - Server `package.json` has `files: ["dist"]`, so `pnpm deploy` ships only the build output into the image.
 - Test placement: `test/helpers/test-server.ts` landed in commit 10 (not 5) because it needs `createSyncServer`. The queue-overflow test landed in commit 14 (needs store injection), and the NOT_LEADER/random-join flood test in commit 15. The AC24 privacy test landed in commit 21, whose message became `test(server): add malformed frame, robustness and log privacy tests`.
 - Intermediate commits had temporary gaps that later commits closed: commits 12-13 answered group actions with INTERNAL_ERROR (not wired yet); commit 14 had no position updates yet and no group size limit (until 18); leader disconnect ended the group only from commit 17.
+- Review fixes:  now returns  (internal store interface, not the wire protocol), so join no longer calls .
+- Review fixes: new  (per-group async mutex for join, leader teardown and member removal) and , so group.ended is delivered through each member's own message queue (after the replies to messages it already sent; a member whose join was in flight gets group.joined, then group.ended).
+- Review fixes: ws ;  answers pings with  (src/ws/send.ts), which skips the pong if the buffer is at the limit or the pong would push it over.
+- Review fixes:  is not in @types/ws 8.18.1, so the server options are typed as ;  in limits/constants.ts. compose.yaml MAX_BUFFERED_BYTES set to the new 262144 default.
+- Review fixes: test helpers: RawClient records server pongs and can ignore close frames; vitest.config sets NODE_ENV=test.
+
