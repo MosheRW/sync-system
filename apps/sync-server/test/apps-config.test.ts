@@ -39,6 +39,8 @@ describe('parseAppsConfig', () => {
           maxLeaderUpdatesPerSecond: 3,
           maxMessageBytes: 2048,
           maxConnections: 50,
+          maxSessionMinutes: 120,
+          inactivityLimitMinutes: 10,
         }),
       ),
       env,
@@ -51,6 +53,8 @@ describe('parseAppsConfig', () => {
       maxLeaderUpdatesPerSecond: 3,
       maxMessageBytes: 2048,
       maxConnections: 50,
+      maxSessionMinutes: 120,
+      inactivityLimitMinutes: 10,
     });
     expect(JSON.stringify(loaded)).not.toContain(KEY_A);
   });
@@ -62,6 +66,8 @@ describe('parseAppsConfig', () => {
       maxLeaderUpdatesPerSecond: 5,
       maxMessageBytes: 4096,
       maxConnections: 1000,
+      maxSessionMinutes: 180,
+      inactivityLimitMinutes: 20,
     });
   });
 
@@ -77,6 +83,8 @@ describe('parseAppsConfig', () => {
       MAX_MESSAGE_SIZE_CEILING: '1024',
       MAX_APP_CONNECTIONS_CEILING: '100',
       MAX_BUFFERED_BYTES: '65536',
+      MAX_SESSION_MINUTES_CEILING: '90',
+      INACTIVITY_LIMIT_MINUTES_CEILING: '5',
     });
     const [loaded] = parseAppsConfig(config(app()), low);
     expect(loaded).toMatchObject({
@@ -84,6 +92,8 @@ describe('parseAppsConfig', () => {
       maxLeaderUpdatesPerSecond: 2,
       maxMessageBytes: 1024,
       maxConnections: 100,
+      maxSessionMinutes: 90,
+      inactivityLimitMinutes: 5,
     });
   });
 
@@ -92,6 +102,8 @@ describe('parseAppsConfig', () => {
     ['maxLeaderUpdatesPerSecond', 10, 'MAX_LEADER_UPDATE_RATE_CEILING'],
     ['maxMessageBytes', 16384, 'MAX_MESSAGE_SIZE_CEILING'],
     ['maxConnections', 10000, 'MAX_APP_CONNECTIONS_CEILING'],
+    ['maxSessionMinutes', 480, 'MAX_SESSION_MINUTES_CEILING'],
+    ['inactivityLimitMinutes', 60, 'INACTIVITY_LIMIT_MINUTES_CEILING'],
   ] as const;
 
   for (const [field, ceiling, ceilingName] of ceilingCases) {

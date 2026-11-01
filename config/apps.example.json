@@ -7,7 +7,9 @@
       "maxGroupSize": 30,
       "maxLeaderUpdatesPerSecond": 5,
       "maxMessageBytes": 4096,
-      "maxConnections": 1000
+      "maxConnections": 1000,
+      "maxSessionMinutes": 180,
+      "inactivityLimitMinutes": 20
     },
     {
       "namespace": "another-app",

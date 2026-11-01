@@ -13,6 +13,11 @@ const NUMERIC = [
   'MAX_INBOUND_MESSAGES_PER_SECOND',
   'MAX_INBOUND_BURST',
   'MAX_BUFFERED_BYTES',
+  'MAX_SESSION_MINUTES_CEILING',
+  'INACTIVITY_LIMIT_MINUTES_CEILING',
+  'TOKEN_REFRESH_ACTIVITIES',
+  'TOKEN_REFRESH_MIN_SECONDS',
+  'TOKEN_REFRESH_MAX_SECONDS',
 ];
 
 function errorOf(env: Record<string, string>): ConfigError {
@@ -42,6 +47,11 @@ describe('parseEnv', () => {
       maxInboundMessagesPerSecond: 20,
       maxInboundBurst: 40,
       maxBufferedBytes: 262144,
+      maxSessionMinutesCeiling: 480,
+      inactivityLimitMinutesCeiling: 60,
+      tokenRefreshActivities: 10,
+      tokenRefreshMinSeconds: 60,
+      tokenRefreshMaxSeconds: 300,
     });
   });
 
@@ -61,6 +71,11 @@ describe('parseEnv', () => {
       MAX_INBOUND_MESSAGES_PER_SECOND: '9',
       MAX_INBOUND_BURST: '9',
       MAX_BUFFERED_BYTES: '32768',
+      MAX_SESSION_MINUTES_CEILING: '600',
+      INACTIVITY_LIMIT_MINUTES_CEILING: '30',
+      TOKEN_REFRESH_ACTIVITIES: '4',
+      TOKEN_REFRESH_MIN_SECONDS: '30',
+      TOKEN_REFRESH_MAX_SECONDS: '120',
     });
     expect(env).toMatchObject({
       configPath: '/config/apps.json',
@@ -77,6 +92,11 @@ describe('parseEnv', () => {
       maxInboundMessagesPerSecond: 9,
       maxInboundBurst: 9,
       maxBufferedBytes: 32768,
+      maxSessionMinutesCeiling: 600,
+      inactivityLimitMinutesCeiling: 30,
+      tokenRefreshActivities: 4,
+      tokenRefreshMinSeconds: 30,
+      tokenRefreshMaxSeconds: 120,
     });
   });
 
@@ -89,6 +109,18 @@ describe('parseEnv', () => {
       });
     }
   }
+
+  it('rejects TOKEN_REFRESH_MAX_SECONDS above 3600 (#5)', () => {
+    expect(errorOf({ TOKEN_REFRESH_MAX_SECONDS: '3601' }).message).toBe(
+      'TOKEN_REFRESH_MAX_SECONDS must be between 1 and 3600',
+    );
+    expect(parseEnv({ TOKEN_REFRESH_MAX_SECONDS: '3600' }).tokenRefreshMaxSeconds).toBe(3600);
+  });
+
+  it('never reads the token secrets into ServerEnv (R4)', () => {
+    const env = parseEnv({ TOKEN_SECRET: 'x'.repeat(40), TOKEN_SECRET_PREVIOUS: 'y'.repeat(40) });
+    expect(JSON.stringify(env)).not.toMatch(/xxxx|yyyy/);
+  });
 
   it('rejects a port above 65535', () => {
     expect(errorOf({ PORT: '65536' }).message).toContain('PORT');
@@ -147,6 +179,14 @@ describe('parseEnv', () => {
       expect(err.message).toContain('MAX_BUFFERED_BYTES');
       expect(err.message).toContain('MAX_MESSAGE_SIZE_CEILING');
       expect(() => parseEnv({ MAX_BUFFERED_BYTES: '65536' })).not.toThrow();
+    });
+
+    it('TOKEN_REFRESH_MIN_SECONDS <= TOKEN_REFRESH_MAX_SECONDS (#5)', () => {
+      const err = errorOf({ TOKEN_REFRESH_MIN_SECONDS: '301' });
+      expect(err.message).toBe(
+        'TOKEN_REFRESH_MIN_SECONDS (301) must be <= TOKEN_REFRESH_MAX_SECONDS (300)',
+      );
+      expect(() => parseEnv({ TOKEN_REFRESH_MIN_SECONDS: '300' })).not.toThrow();
     });
   });
 });

@@ -11,6 +11,10 @@ export interface AppConfig {
   readonly maxMessageBytes: number;
   /** Per-app concurrent socket cap (M5). */
   readonly maxConnections: number;
+  /** Max session time from group creation (#5 AC4). */
+  readonly maxSessionMinutes: number;
+  /** Recovery window after the leader's last activity (#5 AC4). */
+  readonly inactivityLimitMinutes: number;
 }
 
 export function hashApiKey(apiKey: string): string {

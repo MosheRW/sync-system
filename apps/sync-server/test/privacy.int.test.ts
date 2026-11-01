@@ -132,6 +132,8 @@ describe('logs never contain personal or secret data (AC24, L5, L8)', () => {
           maxLeaderUpdatesPerSecond: 5,
           maxMessageBytes: 4096,
           maxConnections: 1000,
+          maxSessionMinutes: 180,
+          inactivityLimitMinutes: 20,
         },
       ],
       'development',

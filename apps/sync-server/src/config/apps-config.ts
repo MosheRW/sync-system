@@ -20,6 +20,8 @@ export const APP_DEFAULTS = {
   maxLeaderUpdatesPerSecond: 5,
   maxMessageBytes: 4096,
   maxConnections: 1000,
+  maxSessionMinutes: 180,
+  inactivityLimitMinutes: 20,
 } as const;
 
 type Ceilings = Pick<
@@ -28,6 +30,8 @@ type Ceilings = Pick<
   | 'maxLeaderUpdateRateCeiling'
   | 'maxMessageSizeCeiling'
   | 'maxAppConnectionsCeiling'
+  | 'maxSessionMinutesCeiling'
+  | 'inactivityLimitMinutesCeiling'
 >;
 
 interface LimitField {
@@ -62,6 +66,18 @@ const LIMIT_FIELDS: readonly LimitField[] = [
     ceilingName: 'MAX_APP_CONNECTIONS_CEILING',
     ceiling: (env) => env.maxAppConnectionsCeiling,
   },
+  {
+    field: 'maxSessionMinutes',
+    min: 1,
+    ceilingName: 'MAX_SESSION_MINUTES_CEILING',
+    ceiling: (env) => env.maxSessionMinutesCeiling,
+  },
+  {
+    field: 'inactivityLimitMinutes',
+    min: 1,
+    ceilingName: 'INACTIVITY_LIMIT_MINUTES_CEILING',
+    ceiling: (env) => env.inactivityLimitMinutesCeiling,
+  },
 ];
 
 const limitSchema = z.number().int();
@@ -74,6 +90,8 @@ const appEntrySchema = z.strictObject({
   maxLeaderUpdatesPerSecond: limitSchema.optional(),
   maxMessageBytes: limitSchema.optional(),
   maxConnections: limitSchema.optional(),
+  maxSessionMinutes: limitSchema.optional(),
+  inactivityLimitMinutes: limitSchema.optional(),
 });
 
 const FIELD_RULES: Record<string, string> = {
