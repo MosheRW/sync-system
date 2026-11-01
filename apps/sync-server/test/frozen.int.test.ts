@@ -125,7 +125,8 @@ describe('frozen group end (#5 AC21)', () => {
     const { leader, members } = await createGroupWithMembers(ts, 1);
     await leader.close();
     await members[0]!.next('leader.offline');
-    expect(scheduler.pending).toBe(1);
+    // Max-session and frozen-end timers.
+    expect(scheduler.pending).toBe(2);
     await members[0]!.close();
     await waitUntil(() => store.size === 0);
     // Dropping the group cancelled its timer.
@@ -164,7 +165,8 @@ describe('dropping groups nobody is connected to (#5 AC22)', () => {
     const { leader, members } = await createGroupWithMembers(server, 1);
     await leader.close();
     await members[0]!.next('leader.offline');
-    expect(scheduler.pending).toBe(1);
+    // Max-session and frozen-end timers.
+    expect(scheduler.pending).toBe(2);
     await server.close();
     ts = undefined;
     expect(scheduler.pending).toBe(0);

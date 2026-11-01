@@ -1,6 +1,6 @@
 import type { Cancel, Scheduler } from '../time/scheduler.js';
 
-type TimerKind = 'frozenEnd';
+type TimerKind = 'maxSession' | 'frozenEnd';
 
 /**
  * Per-group timers (architecture 6.3). Each group has at most one timer of
@@ -15,6 +15,11 @@ export class GroupTimers {
   /** Number of groups with at least one timer. For tests only. */
   get size(): number {
     return this.timers.size;
+  }
+
+  /** Max session end (every group, leader online or not): armed on create. */
+  armMaxSession(key: string, at: number, task: () => void): void {
+    this.arm(key, 'maxSession', at, task);
   }
 
   /** Frozen-group end (leader offline): armed on leader disconnect. */

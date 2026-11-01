@@ -127,6 +127,35 @@ export class GroupService implements GroupActions {
     return record.lastActivityAt + app.inactivityLimitMinutes * MINUTE_MS + this.deps.refreshMaxMs;
   }
 
+  private maxSessionEndAt(app: AppConfig, record: GroupRecord): number {
+    return record.createdAt + app.maxSessionMinutes * MINUTE_MS;
+  }
+
+  /**
+   * Arms the max-session timer (#5 AC21, Q2): the group ends with
+   * `max_session` at `createdAt + maxSessionMinutes`, leader online or not.
+   */
+  private armMaxSession(app: AppConfig, record: GroupRecord): void {
+    const namespace = app.namespace;
+    const groupId = record.id;
+    this.timers.armMaxSession(
+      groupKey(namespace, groupId),
+      this.maxSessionEndAt(app, record),
+      () => {
+        this.runTimer(namespace, groupId, async () => {
+          const current = await this.deps.store.get(namespace, groupId);
+          if (!current) return;
+          // Re-checked against the clock under the lock (R3).
+          if (this.maxSessionEndAt(app, current) > this.now()) {
+            this.armMaxSession(app, current);
+            return;
+          }
+          await this.endGroup(namespace, groupId, 'max_session');
+        });
+      },
+    );
+  }
+
   /** Runs a timer callback under the group lock; failures are logged, never thrown. */
   private runTimer(namespace: string, groupId: string, task: () => Promise<void>): void {
     this.locks.run(groupKey(namespace, groupId), task).catch((err: unknown) => {
@@ -162,6 +191,7 @@ export class GroupService implements GroupActions {
       blockList: [],
     };
     await this.deps.store.create(record);
+    this.armMaxSession(app, record);
     this.attach(session, { groupId: record.id, participantId, role: 'leader' });
     this.deps.logger.info(
       { event: 'group_created', namespace: app.namespace, groupRef: groupRef(record.id) },
@@ -351,10 +381,16 @@ export class GroupService implements GroupActions {
     const at = this.frozenEndAt(app, record);
     const groupId = record.id;
     const namespace = app.namespace;
+    if (this.maxSessionEndAt(app, record) <= this.now()) {
+      await this.endGroup(namespace, groupId, 'max_session');
+      return;
+    }
     if (at <= this.now()) {
       await this.endGroup(namespace, groupId, 'leader_timeout');
       return;
     }
+    // Max session comes first: its own timer ends the group.
+    if (this.maxSessionEndAt(app, record) <= at) return;
     this.timers.armFrozenEnd(groupKey(namespace, groupId), at, () => {
       this.runTimer(namespace, groupId, async () => {
         const current = await this.deps.store.get(namespace, groupId);
