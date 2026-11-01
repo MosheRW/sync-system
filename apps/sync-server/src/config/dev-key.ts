@@ -9,13 +9,17 @@ export const DEV_API_KEYS: readonly string[] = ['dev-only-insecure-api-key-chang
 
 const DEV_KEY_HASHES = new Set(DEV_API_KEYS.map(hashApiKey));
 
+/** The only NODE_ENV values (exact match) that allow a public dev key (S4). */
+export const DEV_KEY_NODE_ENVS: readonly string[] = ['development', 'test'];
+
 export interface WarnLogger {
   warn(obj: object, msg: string): void;
 }
 
 /**
- * With NODE_ENV=production any app using a public dev key is a ConfigError.
- * Otherwise each such app is logged as a warning naming only its namespace.
+ * Any app using a public dev key is a ConfigError unless NODE_ENV is exactly
+ * `development` or `test` (fail closed: unset or any other value refuses it).
+ * When allowed, each such app is logged as a warning naming only its namespace.
  */
 export function checkDevKeys(
   apps: readonly AppConfig[],
@@ -24,7 +28,7 @@ export function checkDevKeys(
 ): void {
   apps.forEach((app, index) => {
     if (!DEV_KEY_HASHES.has(app.apiKeyHash)) return;
-    if (nodeEnv === 'production') {
+    if (nodeEnv === undefined || !DEV_KEY_NODE_ENVS.includes(nodeEnv)) {
       throw new ConfigError(
         `apps[${index}] (namespace "${app.namespace}") uses the public development API key; set a real key`,
       );

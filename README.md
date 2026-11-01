@@ -38,8 +38,10 @@ SYNC_CONFIG_PATH="$PWD/config/apps.json" pnpm --filter @sync-system/server dev
 
 The `dev` script (tsx watch) runs in `apps/sync-server`, and
 `SYNC_CONFIG_PATH` is resolved relative to the working directory, so pass an
-absolute path as above. For a quick start with the public dev key, use
-`SYNC_CONFIG_PATH="$PWD/config/apps.dev.json"` instead.
+absolute path as above. For a quick start with the public dev key, run
+`NODE_ENV=development SYNC_CONFIG_PATH="$PWD/config/apps.dev.json" pnpm --filter @sync-system/server dev`
+instead: the dev key is refused unless `NODE_ENV` is exactly `development`
+or `test`.
 
 Production build: `pnpm build`, then from the repo root
 `node apps/sync-server/dist/index.js` (which reads `./config/apps.json` by
@@ -62,9 +64,9 @@ curl http://127.0.0.1:8080/health
 `config/apps.dev.json` read-only at `/config/apps.json`, sets every ceiling and
 cap to its default, health-checks `/health`, and binds the port to `127.0.0.1`
 only. It sets `NODE_ENV=development`, because the dev registry uses a public
-API key: the log shows a `dev api key in use` warning. With
-`NODE_ENV=production` (the image default) the server refuses that key and
-exits 1.
+API key: the log shows a `dev api key in use` warning. With any other
+`NODE_ENV` (the image default is `production`) the server refuses that key
+and exits 1.
 
 To run the image yourself, mount your own registry and point
 `SYNC_CONFIG_PATH` at it. The image never contains a config file:
@@ -136,7 +138,7 @@ Numeric variables must be positive integers; anything else (empty, `0`, `-1`,
 | `PORT`                            | `8080`               | Listen port, 1-65535.                                                    |
 | `HOST`                            | `0.0.0.0`            | Bind address.                                                            |
 | `LOG_LEVEL`                       | `info`               | `fatal`, `error`, `warn`, `info`, `debug`, `trace` or `silent`.          |
-| `NODE_ENV`                        | unset                | `production` refuses the public dev API key.                             |
+| `NODE_ENV`                        | unset                | The public dev API key is refused unless this is `development`/`test`.   |
 | `MAX_GROUP_SIZE_CEILING`          | `100`                | Ceiling for `maxGroupSize`.                                              |
 | `MAX_LEADER_UPDATE_RATE_CEILING`  | `10`                 | Ceiling for `maxLeaderUpdatesPerSecond`.                                 |
 | `MAX_MESSAGE_SIZE_CEILING`        | `16384`              | Ceiling for `maxMessageBytes` (bytes).                                   |

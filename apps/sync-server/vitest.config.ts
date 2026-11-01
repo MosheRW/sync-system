@@ -12,5 +12,7 @@ export default defineConfig({
   test: {
     include: ['test/**/*.test.ts'],
     setupFiles: ['test/setup.ts'],
+    // The public dev key is only accepted in development and test (S4).
+    env: { NODE_ENV: 'test' },
   },
 });

@@ -101,6 +101,14 @@ describe('run', () => {
     expect(stderr).not.toContain('dev-only-insecure');
   });
 
+  it('refuses the dev key when NODE_ENV is unset or unknown (S4)', async () => {
+    for (const env of [{}, { NODE_ENV: 'staging' }] as Array<Record<string, string>>) {
+      const { result, stderr } = await runCapture({ SYNC_CONFIG_PATH: devConfigPath, ...env });
+      expect(result).toEqual({ ok: false, exitCode: 1 });
+      expect(stderr).toContain('(namespace "dev-app") uses the public development API key');
+    }
+  });
+
   it('starts with the dev key in development and warns with the namespace (M6)', async () => {
     const { result, logs } = await runCapture({
       SYNC_CONFIG_PATH: devConfigPath,

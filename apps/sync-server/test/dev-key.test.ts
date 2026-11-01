@@ -37,9 +37,30 @@ describe('checkDevKeys (M6)', () => {
     expect((error as Error).message).not.toContain(devKey);
   });
 
-  it('only warns with the namespace outside production', () => {
+  it('refuses the dev key unless NODE_ENV is development or test (S4)', () => {
     const apps = parseAppsConfig(devText, env);
-    for (const nodeEnv of ['development', undefined, 'test']) {
+    for (const nodeEnv of [
+      undefined,
+      '',
+      'prod',
+      'staging',
+      'Production',
+      'DEVELOPMENT',
+      ' test',
+    ]) {
+      const { lines, logger } = capture();
+      expect(() => checkDevKeys(apps, nodeEnv, logger), String(nodeEnv)).toThrow(ConfigError);
+      expect(lines).toEqual([]);
+    }
+  });
+
+  it('runs the test suite with NODE_ENV=test', () => {
+    expect(process.env.NODE_ENV).toBe('test');
+  });
+
+  it('only warns with the namespace in development and test', () => {
+    const apps = parseAppsConfig(devText, env);
+    for (const nodeEnv of ['development', 'test']) {
       const { lines, logger } = capture();
       checkDevKeys(apps, nodeEnv, logger);
       expect(lines).toEqual([
