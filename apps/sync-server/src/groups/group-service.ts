@@ -72,9 +72,13 @@ export class GroupService implements GroupActions {
       app.namespace,
       groupId,
       session.participantId,
-      Number.POSITIVE_INFINITY,
+      app.maxGroupSize,
     );
-    if (added !== 'ok') return errorMessage(ErrorCode.GROUP_NOT_FOUND);
+    if (added === 'not_found') return errorMessage(ErrorCode.GROUP_NOT_FOUND);
+    // The leader counts toward the size (AC21).
+    if (added === 'full') {
+      return errorMessage(ErrorCode.GROUP_FULL, { details: { maxGroupSize: app.maxGroupSize } });
+    }
 
     const record = await this.deps.store.get(app.namespace, groupId);
     if (!record) return errorMessage(ErrorCode.GROUP_NOT_FOUND);

@@ -29,6 +29,23 @@ describe('disconnects (AC17)', () => {
     await leader.next('position.ack');
   });
 
+  it('frees the slot of a disconnected member in a size-2 group', async () => {
+    await ts.close();
+    ts = await startTestServer({
+      store,
+      apps: [{ namespace: 'app-a', apiKey: KEY_A, maxGroupSize: 2 }],
+    });
+    const { groupId, members } = await createGroupWithMembers(ts, 1);
+    const late = await ts.connectReady();
+    late.send({ type: 'group.join', groupId });
+    expect(await late.next('error')).toMatchObject({ code: 'GROUP_FULL' });
+
+    await members[0]!.close();
+    await waitUntil(async () => (await store.get('app-a', groupId))?.participantIds.length === 1);
+    late.send({ type: 'group.join', groupId });
+    expect((await late.next('group.joined')).groupId).toBe(groupId);
+  });
+
   it('ends the group when the leader disconnects', async () => {
     const { groupId, leader, members } = await createGroupWithMembers(ts, 1);
     const [member] = members as [(typeof members)[0]];
