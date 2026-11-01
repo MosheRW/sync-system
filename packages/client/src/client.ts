@@ -233,8 +233,11 @@ export class SyncClient {
     this.#endGroup('closed');
     // A groupEnded listener called close() or connect() itself.
     if (generation !== this.#generation) return;
+    // Detached before the closed state is announced: a listener's connect()
+    // starts its own run and never gets this run's CLOSED.
+    const run = this.#takeRun();
     this.#update({ connection: { status: 'closed', reason: 'client' } });
-    this.#settleRun(error);
+    run?.reject(error);
   }
 
   /**
@@ -386,13 +389,15 @@ export class SyncClient {
     log(this.#opts.logger, level, event, fields);
   }
 
-  /** Settles the pending `connect()` promise, if any. */
-  #settleRun(result: ConnectedInfo | SyncClientError): void {
+  /**
+   * Detaches the pending `connect()` run, if any. Called before the state
+   * change that ends the run is announced, so a `connect()` from a listener
+   * creates a new run, and the caller settles exactly the run it detached.
+   */
+  #takeRun(): Deferred<ConnectedInfo> | undefined {
     const run = this.#run;
-    if (run === undefined) return;
     this.#run = undefined;
-    if (result instanceof SyncClientError) run.reject(result);
-    else run.resolve(result);
+    return run;
   }
 
   // ---------------------------------------------------------------------------
@@ -668,9 +673,10 @@ export class SyncClient {
     this.#connectedAt = now();
     this.#transport?.setMaxInboundChars(maxInboundChars(limits));
     const generation = this.#generation;
+    const run = this.#takeRun();
     this.#update({ connection: { status: 'connected', ...info } });
+    run?.resolve(info);
     if (generation !== this.#generation) return;
-    this.#settleRun(info);
     this.#rejoinGroup();
   }
 
@@ -807,9 +813,12 @@ export class SyncClient {
     const group = this.#snapshot.group;
     this.#endGroup(group?.status === 'rejoining' ? 'rejoin_failed' : 'closed', error.code);
     if (generation !== this.#generation) return;
+    const run = this.#takeRun();
     this.#update({ connection: { status: 'closed', reason: 'fatal', error } });
+    run?.reject(error);
+    // A closed listener started a new run: this failure is not reported as its error.
+    if (generation !== this.#generation) return;
     this.#emitError(error);
-    this.#settleRun(error);
   }
 
   /**
@@ -902,10 +911,13 @@ export class SyncClient {
     this.#log('warn', 'reconnect_gave_up', { code: lastError.code });
     this.#endGroup('rejoin_failed', error.code);
     if (generation !== this.#generation) return;
+    const run = this.#takeRun();
     this.#update({ connection: { status: 'closed', reason: 'gave_up', error } });
+    run?.reject(error);
+    if (generation !== this.#generation) return;
     this.#emitError(lastError);
+    if (generation !== this.#generation) return;
     this.#emitError(error);
-    this.#settleRun(error);
   }
 }
 

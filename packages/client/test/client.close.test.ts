@@ -201,6 +201,81 @@ describe('close() from a listener inside an internal flow (AC28)', () => {
   });
 });
 
+describe('connect() promise ownership when a listener calls connect() or close()', () => {
+  /** Settles to 'resolved', or the error code, or 'pending' if still open after a microtask flush. */
+  async function outcome(promise: Promise<unknown>): Promise<string> {
+    let result = 'pending';
+    promise.then(
+      () => (result = 'resolved'),
+      (error: unknown) => (result = isSyncClientError(error) ? error.code : 'other'),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    return result;
+  }
+
+  it('close(): the old run rejects with CLOSED, the new run settles on its own outcome', async () => {
+    const client = makeClient();
+    const first = client.connect();
+    let second: Promise<unknown> | undefined;
+    client.on('state', (state) => {
+      if (state.status === 'closed') second ??= client.connect();
+    });
+    client.close();
+    expect(await outcome(first)).toBe('CLOSED');
+    expect(second).toBeDefined();
+    expect(await outcome(second!)).toBe('pending');
+    vi.advanceTimersByTime(500);
+    serverHandshake(FakeWebSocket.last);
+    expect(await outcome(second!)).toBe('resolved');
+    client.close();
+  });
+
+  it('fatal error: the old run rejects with the fatal code, the new run stays pending', async () => {
+    const client = makeClient();
+    const first = client.connect();
+    let second: Promise<unknown> | undefined;
+    client.on('state', (state) => {
+      if (state.status === 'closed') second ??= client.connect();
+    });
+    rejectKey();
+    expect(await outcome(first)).toBe('INVALID_API_KEY');
+    expect(client.getState().status).toBe('reconnecting');
+    expect(await outcome(second!)).toBe('pending');
+    vi.advanceTimersToNextTimer();
+    serverHandshake(FakeWebSocket.last);
+    expect(await outcome(second!)).toBe('resolved');
+    client.close();
+  });
+
+  it('gave up: the old run rejects with RECONNECT_FAILED, the new run stays pending', async () => {
+    const client = makeClient({ reconnect: { maxAttempts: 1 } });
+    const first = client.connect();
+    let second: Promise<unknown> | undefined;
+    client.on('state', (state) => {
+      if (state.status === 'closed') second ??= client.connect();
+    });
+    FakeWebSocket.last.serverClose(1006);
+    vi.advanceTimersToNextTimer();
+    FakeWebSocket.last.serverClose(1006);
+    expect(await outcome(first)).toBe('RECONNECT_FAILED');
+    expect(await outcome(second!)).toBe('pending');
+    client.close();
+    expect(await outcome(second!)).toBe('CLOSED');
+  });
+
+  it('hello.ok: close() from a connected listener still resolves the run that connected', async () => {
+    const client = makeClient();
+    const first = client.connect();
+    client.on('state', (state) => {
+      if (state.status === 'connected') client.close();
+    });
+    serverHandshake(FakeWebSocket.last);
+    expect(await outcome(first)).toBe('resolved');
+    expect(client.getState()).toEqual({ status: 'closed', reason: 'client' });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
 describe('connect() after a fatal or gave-up close (M5)', () => {
   it('20 connect() calls inside 1 s after INVALID_API_KEY open at most 1 socket', async () => {
     const client = makeClient();
