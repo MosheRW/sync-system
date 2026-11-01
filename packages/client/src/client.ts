@@ -135,6 +135,8 @@ export class SyncClient {
   #runAttempts = 0;
   /** When the current connection reached `connected` (H1). */
   #connectedAt = 0;
+  /** When the last socket was constructed (R2-L6). */
+  #lastSocketOpenAt: number | undefined;
   /** Group handling across reconnects (Q1). Item 3 swaps in token rejoin. */
   readonly #rejoin: RejoinStrategy = memberRejoinByGroupId;
 
@@ -161,6 +163,12 @@ export class SyncClient {
    * `reconnecting` or `connected` it returns the current attempt (or resolves
    * at once). Rejects on a fatal error, on `close()`, or when it gives up:
    * always `catch` it.
+   *
+   * `connect()` never resets the backoff (M5): after `closed(fatal)`,
+   * `closed(gave_up)` or recent failures it first waits the next backoff
+   * delay, so an app that reconnects on every `closed` cannot hammer the
+   * server. Two sockets are never opened less than `initialDelayMs` apart
+   * through `close()` + `connect()` (R2-L6).
    */
   connect(): Promise<ConnectedInfo> {
     const state = this.#snapshot.connection;
@@ -172,11 +180,26 @@ export class SyncClient {
     const run = deferred<ConnectedInfo>();
     this.#run = run;
     this.#runAttempts = 0;
-    this.#update({
-      connection: { status: 'connecting' },
-      group: state.status === 'closed' ? null : this.#snapshot.group,
-    });
-    this.#openSocket();
+    const group = state.status === 'closed' ? null : this.#snapshot.group;
+    const afterFailure =
+      state.status === 'closed' && (state.reason === 'fatal' || state.reason === 'gave_up');
+    if (afterFailure || this.#failureStreak > 0) {
+      this.#update({ group });
+      this.#scheduleRetry(undefined, this.#failureStreak + 1);
+      return run.promise;
+    }
+    this.#update({ connection: { status: 'connecting' }, group });
+    const sinceLastOpen =
+      this.#lastSocketOpenAt === undefined ? Infinity : now() - this.#lastSocketOpenAt;
+    const gap = this.#opts.initialDelayMs - sinceLastOpen;
+    if (gap > 0) {
+      this.#reconnectTimer = setClampedTimeout(() => {
+        this.#reconnectTimer = undefined;
+        this.#openSocket();
+      }, gap);
+    } else {
+      this.#openSocket();
+    }
     return run.promise;
   }
 
@@ -190,6 +213,10 @@ export class SyncClient {
     const error = new SyncClientError('CLOSED');
     clearTimer(this.#reconnectTimer);
     this.#reconnectTimer = undefined;
+    // A connection that stayed up long enough counts as stable here too (H1).
+    if (this.#phase === 'ready' && now() - this.#connectedAt >= this.#opts.stableAfterMs) {
+      this.#failureStreak = 0;
+    }
     this.#teardown(error);
     this.#endGroup('closed');
     this.#update({ connection: { status: 'closed', reason: 'client' } });
@@ -512,6 +539,7 @@ export class SyncClient {
     this.#phase = 'welcome';
     this.#welcome = undefined;
     this.#info = undefined;
+    this.#lastSocketOpenAt = now();
     this.#log('debug', 'socket_opening');
     let transport: Transport | undefined;
     try {
@@ -809,14 +837,9 @@ export class SyncClient {
     this.#update({ group: next });
   }
 
-  /** Waits the backoff delay, then opens a new socket (state `reconnecting`). */
-  #scheduleRetry(busy?: BusySignal): void {
-    const delayMs = nextDelay(
-      this.#failureStreak,
-      this.#opts,
-      this.#opts.random ?? Math.random,
-      busy,
-    );
+  /** Waits the backoff delay for `streak`, then opens a new socket (state `reconnecting`). */
+  #scheduleRetry(busy?: BusySignal, streak = this.#failureStreak): void {
+    const delayMs = nextDelay(streak, this.#opts, this.#opts.random ?? Math.random, busy);
     const attempt = this.#runAttempts + 1;
     this.#log('info', 'reconnect_scheduled', { attempt, delayMs });
     this.#update({

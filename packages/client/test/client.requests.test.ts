@@ -167,6 +167,8 @@ describe('one group request in flight (L5, R2-L4)', () => {
     client.close();
     expect(isSyncClientError(await rejection(joining), 'CLOSED')).toBe(true);
     const reconnecting = client.connect();
+    // close() + connect() keeps a minimum gap between sockets (R2-L6).
+    vi.advanceTimersByTime(500);
     const socket = FakeWebSocket.last;
     socket.open();
     socket.receive({ type: 'welcome', protocolVersion: 1, minProtocolVersion: 1 });
