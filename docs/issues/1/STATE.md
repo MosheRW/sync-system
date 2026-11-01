@@ -5,7 +5,7 @@
 - PR: #2
 - Plan approved by user: no
 - QA loops: 0
-- Last updated by: security
+- Last updated by: architect
 
 ## Gate 1
 - Gate 1 approved by user with edits (spec updated: AC27 max message size, AC28 CI workflow; open questions resolved).
@@ -25,7 +25,9 @@
 - Add CI workflow (push + pull_request: frozen-lockfile install, lint, typecheck, test, build).
 
 ## Architecture
-- Plan: docs/issues/1/architecture.md (ws chosen over Socket.IO; packages/protocol + apps/sync-server; 19 planned commits).
+- Plan: docs/issues/1/architecture.md (ws chosen over Socket.IO; packages/protocol + apps/sync-server).
+- Rev 2: all security findings folded in (H1-H4, M1-M6, L1-L8) per user decision; mapping in architecture.md section 10; 24 planned commits.
+- New defaults: MAX_CONNECTIONS 10000, MAX_PENDING_HANDSHAKES 1000, MAX_APP_CONNECTIONS_CEILING 10000 (app maxConnections default 1000), MAX_INBOUND_MESSAGES_PER_SECOND 20, MAX_INBOUND_BURST 40, MAX_BUFFERED_BYTES 1 MiB; handshake timeout 5 s; queue cap 32; JSON depth 64; apiKey 32-256 chars.
 - Awaiting Gate 2 approval.
 
 ## Security (plan review)
@@ -34,7 +36,9 @@
 - Architect must add the required controls (security.md section 4) before Gate 2.
 
 ## Open questions
-- none
+- Q1: close flooding connections (incl. leaders, which ends the group) with 4008 / TOO_MANY_MESSAGES? (architecture.md section 12)
+- Q2: JSON depth cap 64 acceptable vs AC14 "arbitrary" payloads?
+- Q3: confirm per-app maxConnections defaults (app 1000, ceiling 10000) widening AC5's list.
 
 ## Deviations from plan
 - none
