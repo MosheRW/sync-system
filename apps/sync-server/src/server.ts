@@ -6,6 +6,7 @@ import type { AppRegistry } from './apps/app-registry.js';
 import type { ServerEnv } from './config/env.js';
 import { handleHttpRequest } from './http/health.js';
 import {
+  HANDSHAKE_TIMEOUT_MS,
   HTTP_CONNECTION_MARGIN,
   HTTP_HEADERS_TIMEOUT_MS,
   HTTP_REQUEST_TIMEOUT_MS,
@@ -22,6 +23,8 @@ export interface SyncServerOptions {
   logger: Logger;
   /** Clock in ms; injected by tests. */
   now?: () => number;
+  /** Defaults to HANDSHAKE_TIMEOUT_MS; shortened by tests. */
+  handshakeTimeoutMs?: number;
 }
 
 export interface SyncServer {
@@ -41,7 +44,8 @@ export interface SyncServer {
 const SHUTDOWN_GRACE_MS = 1_000;
 
 export function createSyncServer(options: SyncServerOptions): SyncServer {
-  const { env, logger } = options;
+  const { env, logger, registry } = options;
+  const handshakeTimeoutMs = options.handshakeTimeoutMs ?? HANDSHAKE_TIMEOUT_MS;
 
   const httpServer = createServer(handleHttpRequest);
   // Slowloris protection and a hard socket backstop above the WS cap (H1).
@@ -82,6 +86,8 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
         const connection = new Connection(ws, {
           logger,
           counter,
+          registry,
+          handshakeTimeoutMs,
           onClosed: (closed) => connections.delete(closed),
         });
         connections.add(connection);
