@@ -29,3 +29,9 @@ export const LEADER_RATE_WINDOW_MS = 1_000;
 export function transportMaxPayload(maxMessageSizeCeiling: number): number {
   return 2 * maxMessageSizeCeiling + 8192;
 }
+
+/** Token lifetime: `exp = iat + TOKEN_TTL_SECONDS` (365 days, #5 AC5). */
+export const TOKEN_TTL_SECONDS = 365 * 86_400;
+
+/** Clock skew tolerated for token times in the future (M2). */
+export const MAX_CLOCK_SKEW_MS = 300_000;
