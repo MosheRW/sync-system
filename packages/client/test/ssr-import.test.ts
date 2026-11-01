@@ -1,8 +1,13 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { execFileSync } from 'node:child_process';
+import { createRequire } from 'node:module';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 /**
  * AC7: importing the package without window, document or a global WebSocket
- * has no side effects. Throwing getters catch any read of a browser global.
+ * has no side effects. Nothing is pre-loaded: the import covers the whole
+ * graph, including @sync-system/protocol and zod (whose eval probe reads
+ * `navigator` and calls `new Function` unless the schemas are built jitless).
  */
 const BROWSER_GLOBALS = [
   'window',
@@ -45,10 +50,6 @@ afterEach(() => {
 
 describe('SSR-safe import (AC7)', () => {
   it('imports without reading browser globals, starting timers or throwing', async () => {
-    // The protocol package is evaluated first: zod (its dependency) probes
-    // `typeof navigator` once when its first schema is built, which a throwing
-    // trap would turn into a failure. This test covers this package's own code.
-    await import('@sync-system/protocol');
     vi.useFakeTimers();
     const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
     const setIntervalSpy = vi.spyOn(globalThis, 'setInterval');
@@ -74,5 +75,61 @@ describe('SSR-safe import (AC7)', () => {
     expect(touched).toEqual([]);
     expect(setTimeoutSpy).not.toHaveBeenCalled();
     expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+/**
+ * The built package, imported by plain Node in a fresh process (no Vitest
+ * transforms, default export conditions, so protocol's dist and the real
+ * zod are loaded). Recording getters stand in for browser globals and for
+ * `Function` and `eval`, so any read or eval probe shows up.
+ */
+const IMPORT_SCRIPT = `
+const names = ['window', 'document', 'navigator', 'location', 'localStorage', 'WebSocket', 'self', 'Function', 'eval'];
+const touched = [];
+for (const name of names) {
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, name);
+  Object.defineProperty(globalThis, name, {
+    configurable: true,
+    get() {
+      touched.push(name);
+      return descriptor && 'value' in descriptor ? descriptor.value : undefined;
+    },
+  });
+}
+const mod = await import(process.argv[1]);
+process.stdout.write(JSON.stringify({ touched, hasClient: typeof mod.SyncClient === 'function' }));
+`;
+
+const require = createRequire(import.meta.url);
+const clientDir = fileURLToPath(new URL('..', import.meta.url));
+const protocolDir = fileURLToPath(new URL('../../protocol', import.meta.url));
+
+function build(projectDir: string): void {
+  execFileSync(
+    process.execPath,
+    [require.resolve('typescript/bin/tsc'), '-p', 'tsconfig.build.json'],
+    {
+      cwd: projectDir,
+      stdio: 'pipe',
+    },
+  );
+}
+
+describe('SSR-safe import of the built package (AC7)', () => {
+  beforeAll(() => {
+    // Always rebuild, so the test never checks a stale dist.
+    build(protocolDir);
+    build(clientDir);
+  }, 120_000);
+
+  it('dist/index.js reads no browser global and never touches Function or eval', () => {
+    const entry = pathToFileURL(`${clientDir}/dist/index.js`).href;
+    const output = execFileSync(
+      process.execPath,
+      ['--input-type=module', '--eval', IMPORT_SCRIPT, entry],
+      { encoding: 'utf8' },
+    );
+    expect(JSON.parse(output)).toEqual({ touched: [], hasClient: true });
   });
 });
