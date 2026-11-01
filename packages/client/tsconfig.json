@@ -1,0 +1,9 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    // Node types are for the tests only; tsconfig.build.json checks src without them (AC1).
+    "types": ["node"]
+  },
+  "include": ["src", "test", "vitest.config.ts"]
+}

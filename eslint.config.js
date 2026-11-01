@@ -22,5 +22,21 @@ export default tseslint.config(
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
     },
   },
+  {
+    // The client runs in browsers, Node and SSR: no console (AC32), no Node or
+    // framework modules (AC1), no browser globals read directly (AC7).
+    files: ['packages/client/src/**/*.ts'],
+    rules: {
+      'no-console': 'error',
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: ['ws', 'react', 'react-dom', 'vue'],
+          patterns: ['node:*'],
+        },
+      ],
+      'no-restricted-globals': ['error', 'window', 'document', 'navigator', 'localStorage'],
+    },
+  },
   prettier,
 );
