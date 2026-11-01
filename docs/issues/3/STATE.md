@@ -1,14 +1,14 @@
 # State: #3 Framework-free core client package
 - Path: full
-- Phase: implementation (fix round 1 done, awaiting review round 2)
+- Phase: validation
 - Branch: feat/3-core-client
 - PR: #4
 - Plan approved by user: yes (Gate 2, 2026-11-01)
 - QA loops: 1
 - Security-sensitive: yes
-- Review rounds: 1 (code review of PR #4; the plan had 2 security review rounds: round 1 FAIL, round 2 PASS)
-- QA verdict: FAIL (round 1, 2026-11-01): https://github.com/MosheRW/sync-system/pull/4#pullrequestreview-5729212922
-- Last updated by: engineer
+- Review rounds: 2 (code review of PR #4; the plan had 2 security review rounds: round 1 FAIL, round 2 PASS)
+- QA verdict: PASS (round 2, 2026-11-01): https://github.com/MosheRW/sync-system/pull/4#pullrequestreview-5729356946 (round 1 FAIL: https://github.com/MosheRW/sync-system/pull/4#pullrequestreview-5729212922)
+- Last updated by: qa
 
 ## Notes
 - PRD item 2 of 9. "item N" in spec.md means PRD item N, not GitHub issue N.
@@ -90,6 +90,12 @@
 - 39c30a4 fix(client): each throttle submit() has a generation kept after the send; RATE_LIMITED re-queues only the latest generation and only on the throttle that sent it. Tests: throttle.test.ts (A then B sent, late reject of A ignored; equal values; after cancel), client.requests.test.ts. (Copilot 4436536910)
 - f5ebc4a docs(client): README notes on listener reentrancy, the jitless import, and maxAttempts after closed(fatal|gave_up).
 - Checks: pnpm lint, typecheck, test (protocol 24, server 343, client 324 in 37 files), build, pnpm audit --audit-level=high: all exit 0. The security repro script now ends in closed(client) with 1 socket; dist import with traps touches nothing.
+
+## QA (round 2, head 3bc41e4)
+- Checks: install --frozen-lockfile, lint, typecheck, test (protocol 24, server 343, client 324), build: all exit 0. CI `check` pass.
+- ACs: 32/32 met. AC7 checked independently by importing client and protocol dist in plain Node with QA's own traps on browser globals, Function (and Function.prototype.constructor), eval and timers: 0 hits (a control zod schema without jitless does trigger them). zod's jitless setting is restored after import. AC11 reconnecting test present. AC28 close() from listeners tested, and reproduced against dist with a real ws server.
+- Round-2 deviations all accepted (SSR dist build in beforeAll, skipped error event, maxAttempts note, parse 0.10 -> 0.33 us: measured 0.32 us, acceptable).
+- Non-blocking notes: README does not mention the skipped error event; commit subjects of 1c0e205 (81 chars) and f5ebc4a (94 chars) exceed 72 (pushed, not amended).
 
 ## Open questions
 - none
