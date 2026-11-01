@@ -1,13 +1,13 @@
 # State: #3 Framework-free core client package
 - Path: full
-- Phase: architecture
+- Phase: implementation
 - Branch: feat/3-core-client
 - PR: #4
-- Plan approved by user: no
+- Plan approved by user: yes (Gate 2, 2026-11-01)
 - QA loops: 0
 - Security-sensitive: yes
 - Review rounds: 2 (security plan review: round 1 FAIL, round 2 PASS)
-- Last updated by: security
+- Last updated by: engineer
 
 ## Notes
 - PRD item 2 of 9. "item N" in spec.md means PRD item N, not GitHub issue N.
@@ -23,29 +23,59 @@
 - Q6: connect() is explicit; group calls while not connected/reconnecting fail fast with NOT_CONNECTED; no queueing.
 - Q7: Node-only tests (injected ws, SSR-import test, real sync server in-process); browser tests come with items 7-8.
 
+## Gate 2 decisions (user approved the plan, architecture.md revision 2)
+- Q-A: remaining handshake rejections (INVALID_MESSAGE, HANDSHAKE_REQUIRED, ALREADY_AUTHENTICATED, bare 4001) are fatal; 4002 handshake timeout, 4003, 4008 and internal errors stay retryable. Paired with M5.
+- Q-B: wss:// required except the exact loopback hosts localhost, 127.0.0.1, [::1]; strict-boolean opt-out allowInsecureTransport; M2 URL rules.
+- Q-C: hello/create/join timeouts reject with REQUEST_TIMEOUT and drop the socket; a position.update ack timeout only rejects, and drops only if nothing was received from the server for the whole window; every timeout-caused drop counts toward backoff.
+- Q-D: AC27 "successful reconnect" = stayed connected for reconnect.stableAfterMs (10 s).
+- Q-E: 30 s backoff cap for APP_CONNECTION_LIMIT (4003).
+- Round-2 low findings R2-L1..R2-L6 approved as additions to the plan.
+
 ## Architecture
-- Plan: docs/issues/3/architecture.md, revision 2 (22 planned commits).
+- Plan: docs/issues/3/architecture.md, revision 2 (22 planned commits, all done).
 - AC10: unknown server message types are ignored (forward compatible); known types failing their schema, binary, non-JSON, too deep or too long frames give INVALID_SERVER_MESSAGE.
 - AC24: states idle / connecting / connected / reconnecting (attempt, delayMs, retryAt, attempting) / closed (client | fatal | gave_up).
 
-## Security (plan review, round 1)
-- Review: docs/issues/3/security.md. FAIL: 0 critical, 2 high, 5 medium, 8 low.
-- H1: backoff counter resets on every hello.ok; a flapping server gets a reconnect storm. Reset only after a stable period (stableAfterMs, 10 s).
-- H2: removing listeners from retired ws sockets lets ws emit an unhandled 'error' and crash a Node host. Keep an error listener attached.
-- Architect must revise the plan (section 5 of security.md lists the required controls) before Gate 2.
-- Revision 2 (architect): all findings folded in. H1, H2 are required; M1-M5 and L1-L8 are listed separately so the user can drop any at Gate 2. Mapping: architecture.md section 11 "Security controls". Next: security plan review round 2.
-- New defaults in revision 2: reconnect.stableAfterMs 10 s; position.update ack timeout 2 x requestTimeoutMs (20 s), drop only after 10 s with no inbound frame; busy signals 1001/4003/4008 start at a 2 s cap; hello.ok limit bounds maxMessageBytes <= 1 MiB, maxLeaderUpdatesPerSecond <= 100, maxGroupSize <= 10000; retryAfterMs clamped to [next slot, 10 s]; RATE_LIMITED re-queue at most 3 per position; serverMessage <= 256 chars; schema issues <= 10; details strings <= 64 chars; one group request in flight (REQUEST_IN_PROGRESS); *Ms options in [0, 2^31-1].
+## Implementation
+- 22 planned commits on feat/3-core-client (d2cb373 .. bfcc639).
+- Checks: pnpm lint, typecheck, test (client 301 tests in 37 files, including 11 integration files against the real server; protocol and server suites unchanged and green), build, pnpm audit --audit-level=high (exit 0; 2 pre-existing moderate advisories in minimatch via eslint, dev only). docker build -f apps/sync-server/Dockerfile . succeeds.
 
-## Security (plan review, round 2)
-- Revision 2 (7f499d2): PASS. H1, H2, M1-M5 and L1-L8 resolved. 6 new low advisories (R2-L1..L6 in security.md): option minimums (stableAfterMs/initialDelayMs), fatal for out-of-bound hello.ok limits, connect with checked href, clear in-flight flag on every path, deterministic flapping test + runAttempts reset, close()+connect() loop.
-- Q-D: agree (required for H1). Q-E: agree, mild preference; keeping 10 s is acceptable.
+## Security controls mapping (finding -> code -> test)
+- H1 stability window: backoff.ts streakAfterDrop/streakAfterFailure; client.ts #connectionLost (timestamp at drop, no timer). Tests: backoff.test.ts, client.reconnect.test.ts "stability window", integration/flapping.int.test.ts (random injected).
+- H2 ws error listener: transport.ts #ignoreError attached before close() and kept; send/close in try/catch. Tests: transport.test.ts "host safety", integration/ws-safety.int.test.ts (injected ws against blackhole-server, attempt timeout and close() while CONNECTING).
+- M1 bounds: limits.ts (1 MiB / 100 / 10 000), errors.ts readDetailNumber (own, finite, >= 0), throttle.ts clamp to [slot, 10 s] and ring buffer, options.ts *Ms in [min, 2^31-1], host.ts setClampedTimeout. Tests: limits/transport, throttle, options, host, client.handshake.
+- M2 URL rules: url-policy.ts. Tests: url-policy.test.ts.
+- M3 busy floor: backoff.ts BUSY_STREAK_FLOOR, handshake.ts classifyClose/classifyHandshakeError. Tests: backoff.test.ts, client.reconnect.test.ts.
+- M4 position ack rule: requests.ts timeout kinds, client.ts #onRequestTimeout with #lastInboundAt. Tests: client.requests.test.ts "position ack timeout", client.reconnect.test.ts "timeout-caused drop".
+- M5 connect() after fatal/gave_up waits: client.ts connect(). Tests: client.close.test.ts.
+- L1 own-property details, fixed-key objects: errors.ts. Tests: errors.test.ts.
+- L2 string caps (serverMessage 256, issues 10 x 128, details 64, unknown type regex): errors.ts, client.ts. Tests: errors.test.ts, client.inbound.test.ts.
+- L3 no cause/raw data in errors: errors.ts; README note. Tests: errors.test.ts.
+- L4 options not stored, listener errors logged by name: options.ts, client.ts. Tests: options.test.ts, client.events.test.ts.
+- L5 one group request in flight, re-queue cap 3: client.ts, throttle.ts. Tests: client.requests.test.ts, throttle.test.ts.
+- L6 no internal unhandled rejections (callback tracker): requests.ts, client.ts. Tests: client.close.test.ts plus test/setup.ts in every file.
+- L7 README: SSR singletons, ws maxPayload wrapper (also used by the integration helper).
+- L8 welcome/hello.ok after connected ignored: client.ts #onReadyMessage. Tests: client.inbound.test.ts.
+- R2-L1 option floors (initialDelayMs >= 100, maxDelayMs >= 1000, stableAfterMs >= 1000): options.ts. Tests: options.test.ts.
+- R2-L2 out-of-bounds hello.ok limits fatal (SERVER_UNSUPPORTED with details.limit): handshake.ts checkHelloOk. Tests: handshake.test.ts, client.handshake.test.ts.
+- R2-L3 connect with the validated href: url-policy.ts returns href, options.ts stores it. Tests: url-policy.test.ts, client.handshake.test.ts.
+- R2-L4 in-flight flag cleared on every settle path: client.ts #trackGroupRequest. Tests: client.requests.test.ts, client.reconnect.test.ts, client.rejoin.test.ts.
+- R2-L5 deterministic flapping test, runAttempts reset by the stability rule: client.ts #connectionLost. Tests: flapping.int.test.ts (random: () => 1), client.reconnect.test.ts.
+- R2-L6 minimum gap between socket opens on close() + connect(): client.ts connect(). Tests: client.close.test.ts.
 
 ## Open questions
-- Q-A: other handshake rejections (INVALID_MESSAGE, HANDSHAKE_REQUIRED, ALREADY_AUTHENTICATED, bare 4001) are fatal (proposed). Security: agree; pair with M5 (no unthrottled connect() after fatal).
-- Q-B: wss:// required for non-loopback hosts, opt-out allowInsecureTransport (proposed). Security: agree strongly; exact URL rules in M2.
-- Q-C: a request timeout rejects with REQUEST_TIMEOUT and drops/reconnects the socket (proposed). Security: agree for hello/create/join; for position.update drop only if the server was fully silent (M4). Revision 2 proposes the M4 version.
-- Q-D: AC27 "backoff resets after a successful reconnect" is read as "after staying connected for stableAfterMs (10 s)" (H1, required). Confirm.
-- Q-E: 30 s backoff cap for APP_CONNECTION_LIMIT (4003) instead of the Q3 10 s (M3, proposed). Confirm or keep 10 s.
+- none
 
 ## Deviations from plan
-- none
+- packages/client typecheck also runs `tsc -p tsconfig.build.json --noEmit --customConditions @sync-system/source`, so the no-DOM/no-Node build config (AC1) is checked in CI's typecheck step, before build.
+- WebSocketLike listeners take `(event: unknown) => void` (needed so `ws` and DOM WebSocket types are assignable); the transport narrows events itself.
+- GroupEndedReason adds `closed` (group left through the app's close()); indicatorOf maps an ended group with reason `closed` to `none`. GroupEndedInfo.code is a ClientErrorCode (a rejoin can fail with REQUEST_TIMEOUT or RECONNECT_FAILED).
+- R2-L2 uses SERVER_UNSUPPORTED (four versions plus `details.limit`). A hello.ok whose limits fail the protocol schema itself (for example an unsafe integer like 2^53) stays a retryable INVALID_SERVER_MESSAGE, as for any invalid frame before hello.ok.
+- L8 lives in client.ts message dispatch (commit 14), not handshake.ts, which keeps only pure functions. The M4 drop handling landed with the group calls (commit 15); its backoff counting with reconnect (commit 16).
+- hello is not tracked in RequestTracker: the attempt timer (requestTimeoutMs) covers open + welcome + hello.ok and reports REQUEST_TIMEOUT with request 'hello'.
+- maxAttempts counts reconnect attempts after the first try (maxAttempts 3 = up to 4 sockets), and `attempt` in the reconnecting state is the reconnect attempt number.
+- close() applies the stability rule too: a connection up for at least stableAfterMs resets the streak, so close() + connect() after a long session connects at once.
+- The R2-L6 gap applies to connect() from idle/closed with streak 0: the socket opens after the remaining gap while the state is `connecting`.
+- The `error` event also fires for fatal errors and RECONNECT_FAILED (besides the connect() rejection and the closed state). Logger methods are all optional.
+- AC7 test pre-loads @sync-system/protocol before installing the global traps: zod (a protocol dependency) probes `typeof navigator` once when its first schema is built.
+- logging.test.ts (AC32) is in the integration-test commit (20), readme.test.ts in the README commit (21). Extra test helpers: test/helpers/client.ts, int.ts, wait.ts. The AC14 real-server tests wait 1.5 s instead of 2 s.
