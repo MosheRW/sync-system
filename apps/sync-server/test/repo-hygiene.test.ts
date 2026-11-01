@@ -72,3 +72,39 @@ describe('pinned supply chain (L8)', () => {
     expect(compose).toContain('/health');
   });
 });
+
+describe('CI workflow (AC28, L1, L8)', () => {
+  const workflow = read('.github/workflows/ci.yml');
+
+  it('pins every action to a 40-char commit SHA', () => {
+    const uses = workflow.split(/\r?\n/).filter((line) => /^\s*-?\s*uses:/.test(line));
+    expect(uses.length).toBeGreaterThan(0);
+    for (const line of uses) {
+      expect(line, line).toMatch(/@[0-9a-f]{40}\s+#\s*v\d/);
+    }
+  });
+
+  it('runs on push and pull_request with a read-only token and no secrets', () => {
+    expect(workflow).toMatch(/^on:\n {2}push:\n {2}pull_request:/m);
+    expect(workflow).not.toContain('pull_request_target');
+    expect(workflow).toMatch(/^permissions:\n {2}contents: read$/m);
+    expect(workflow).not.toContain('secrets.');
+  });
+
+  it('installs from the lockfile, audits, then runs every check', () => {
+    const steps = [
+      'pnpm install --frozen-lockfile',
+      'pnpm audit --audit-level=high',
+      'pnpm lint',
+      'pnpm typecheck',
+      'pnpm test',
+      'pnpm build',
+    ];
+    let last = -1;
+    for (const step of steps) {
+      const index = workflow.indexOf(`run: ${step}`);
+      expect(index, step).toBeGreaterThan(last);
+      last = index;
+    }
+  });
+});
