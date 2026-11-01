@@ -53,7 +53,7 @@
 
 ## Fixes (PR #2 review: Copilot findings 1-4, security advisories S1-S4)
 - User enabled Auto-fix on PR #2 and later asked to fix S1-S4 in this PR too. One commit per finding, each with regression tests:
-  - Copilot 1 (dev script resolved protocol from dist): 43a4401 fix(server): resolve protocol from source in the dev script. Verified None of the selected packages has a "dev" script starts and serves /health with packages/protocol/dist removed.
+  - Copilot 1 (dev script resolved protocol from dist): 43a4401 fix(server): resolve protocol from source in the dev script. Verified `pnpm --filter @sync-system/server dev` starts and serves /health with packages/protocol/dist removed.
   - Copilot 3 (stray participant if get failed after addParticipant): 3dccd7b fix(server): add a participant and snapshot the group atomically.
   - Copilot 2 (join committing to a group torn down meanwhile): 7d818cf fix(server): serialize join and group teardown per group.
   - Copilot 4 (ping/pong bypassed the inbound limiter and the outbound buffer check): 2b43041 fix(server): rate-limit ping and pong frames and buffer-check pongs.
@@ -80,9 +80,9 @@
 - Server `package.json` has `files: ["dist"]`, so `pnpm deploy` ships only the build output into the image.
 - Test placement: `test/helpers/test-server.ts` landed in commit 10 (not 5) because it needs `createSyncServer`. The queue-overflow test landed in commit 14 (needs store injection), and the NOT_LEADER/random-join flood test in commit 15. The AC24 privacy test landed in commit 21, whose message became `test(server): add malformed frame, robustness and log privacy tests`.
 - Intermediate commits had temporary gaps that later commits closed: commits 12-13 answered group actions with INTERNAL_ERROR (not wired yet); commit 14 had no position updates yet and no group size limit (until 18); leader disconnect ended the group only from commit 17.
-- Review fixes:  now returns  (internal store interface, not the wire protocol), so join no longer calls .
-- Review fixes: new  (per-group async mutex for join, leader teardown and member removal) and , so group.ended is delivered through each member's own message queue (after the replies to messages it already sent; a member whose join was in flight gets group.joined, then group.ended).
-- Review fixes: ws ;  answers pings with  (src/ws/send.ts), which skips the pong if the buffer is at the limit or the pong would push it over.
-- Review fixes:  is not in @types/ws 8.18.1, so the server options are typed as ;  in limits/constants.ts. compose.yaml MAX_BUFFERED_BYTES set to the new 262144 default.
+- Review fixes: `GroupStore.addParticipant` now returns `{ status: 'ok', group } | { status: 'not_found' } | { status: 'full' }` (internal store interface, not the wire protocol), so join no longer calls `get`.
+- Review fixes: new `src/groups/keyed-lock.ts` (per-group async mutex for join, leader teardown and member removal) and `Session.afterPending`, so group.ended is delivered through each member's own message queue (after the replies to messages it already sent; a member whose join was in flight gets group.joined, then group.ended).
+- Review fixes: ws `autoPong: false`; `Connection` answers pings with `sendPong` (src/ws/send.ts), which skips the pong if the buffer is at the limit or the pong would push it over.
+- Review fixes: `closeTimeout` is not in @types/ws 8.18.1, so the server options are typed as `ServerOptions & { closeTimeout: number }`; `CLOSE_TIMEOUT_MS = 2_000` in limits/constants.ts. compose.yaml MAX_BUFFERED_BYTES set to the new 262144 default.
 - Review fixes: test helpers: RawClient records server pongs and can ignore close frames; vitest.config sets NODE_ENV=test.
 
