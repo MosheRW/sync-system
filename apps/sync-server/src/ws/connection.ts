@@ -236,6 +236,12 @@ export class Connection implements HeartbeatTarget {
       deliver: (text) => {
         this.transmit(text);
       },
+      afterPending: (task) => {
+        this.enqueue(() => {
+          task();
+          return Promise.resolve();
+        });
+      },
     };
     this.deps.groups.attach(this.session);
     this.deps.logger.info(

@@ -12,6 +12,7 @@ import { type Logger, groupRef, participantRef } from '../logging/logger.js';
 import { errorMessage } from '../ws/error-messages.js';
 import type { GroupRecord, GroupStore } from './group-store.js';
 import { newGroupId } from './ids.js';
+import { KeyedLock } from './keyed-lock.js';
 import type { Notifier } from './notifier.js';
 import type { GroupActions, Session } from './session.js';
 
@@ -46,6 +47,9 @@ function rateKey(namespace: string, groupId: string): string {
  * they are stored and relayed as the parsed references (AC14).
  */
 export class GroupService implements GroupActions {
+  /** Serializes join and teardown per group (namespace + ID). */
+  private readonly locks = new KeyedLock();
+
   constructor(private readonly deps: GroupServiceDeps) {}
 
   attach(session: Session): void {
@@ -97,22 +101,32 @@ export class GroupService implements GroupActions {
     // A malformed ID gets the same answer as an unknown one: no oracle (L3).
     if (!GROUP_ID_PATTERN.test(groupId)) return errorMessage(ErrorCode.GROUP_NOT_FOUND);
 
-    const added = await this.deps.store.addParticipant(
-      app.namespace,
-      groupId,
-      session.participantId,
-      app.maxGroupSize,
-    );
-    if (added.status === 'not_found') return errorMessage(ErrorCode.GROUP_NOT_FOUND);
-    // The leader counts toward the size (AC21).
-    if (added.status === 'full') {
-      return errorMessage(ErrorCode.GROUP_FULL, { details: { maxGroupSize: app.maxGroupSize } });
-    }
-    // The snapshot comes from the same atomic insert. A second read could
-    // fail after the insert and leave the participant in the group while the
-    // session stays groupless.
-    const record = added.group;
+    // Serialized with the group's teardown: the insert and the session
+    // commit happen together, either fully before the group ends (so the
+    // teardown sees and notifies this member) or after it (not found).
+    // Without this, a slow insert reply could commit the session to a
+    // group that was already deleted.
+    return this.locks.run(rateKey(app.namespace, groupId), async () => {
+      const added = await this.deps.store.addParticipant(
+        app.namespace,
+        groupId,
+        session.participantId,
+        app.maxGroupSize,
+      );
+      if (added.status === 'not_found') return errorMessage(ErrorCode.GROUP_NOT_FOUND);
+      // The leader counts toward the size (AC21).
+      if (added.status === 'full') {
+        return errorMessage(ErrorCode.GROUP_FULL, { details: { maxGroupSize: app.maxGroupSize } });
+      }
+      // The snapshot comes from the same atomic insert. A second read could
+      // fail after the insert and leave the participant in the group while
+      // the session stays groupless.
+      return this.commitJoin(session, groupId, added.group);
+    });
+  }
 
+  private commitJoin(session: Session, groupId: string, record: GroupRecord): ServerMessage {
+    const { app } = session;
     session.groupId = groupId;
     session.role = 'member';
     this.deps.logger.info(
@@ -190,48 +204,58 @@ export class GroupService implements GroupActions {
     session.groupId = undefined;
     session.role = undefined;
 
-    if (wasLeader) {
-      await this.endGroup(namespace, groupId, session.participantId);
-      return;
-    }
+    // Under the group lock, so a join cannot land between the removal and
+    // the delete.
+    await this.locks.run(rateKey(namespace, groupId), async () => {
+      if (wasLeader) {
+        await this.endGroup(namespace, groupId, session.participantId);
+        return;
+      }
 
-    const result = await this.deps.store.removeParticipant(
-      namespace,
-      groupId,
-      session.participantId,
-    );
-    if (result && result.remaining === 0) {
-      await this.deps.store.delete(namespace, groupId);
-      this.deps.rateLimiter.forget(rateKey(namespace, groupId));
-      this.deps.logger.info(
-        { event: 'group_deleted', namespace, groupRef: groupRef(groupId) },
-        'group deleted',
+      const result = await this.deps.store.removeParticipant(
+        namespace,
+        groupId,
+        session.participantId,
       );
-    }
+      if (result && result.remaining === 0) {
+        await this.deps.store.delete(namespace, groupId);
+        this.deps.rateLimiter.forget(rateKey(namespace, groupId));
+        this.deps.logger.info(
+          { event: 'group_deleted', namespace, groupRef: groupRef(groupId) },
+          'group deleted',
+        );
+      }
+    });
   }
 
   /**
    * In this issue a leader disconnect ends the group (AC17): the group is
    * deleted, remaining members become groupless (their sockets stay open)
-   * and get group.ended.
+   * and get group.ended. Runs under the group lock (see join).
+   *
+   * Each member is cleared and notified through its own message queue, after
+   * the replies to messages it has already sent. A member whose join was in
+   * flight therefore gets group.joined first, then group.ended.
    */
   private async endGroup(namespace: string, groupId: string, leaderId: string): Promise<void> {
     const record = await this.deps.store.get(namespace, groupId);
     await this.deps.store.delete(namespace, groupId);
     this.deps.rateLimiter.forget(rateKey(namespace, groupId));
     const members = (record?.participantIds ?? []).filter((id) => id !== leaderId);
-    for (const memberId of members) {
-      const member = this.deps.notifier.get(memberId);
-      if (member && member.groupId === groupId) {
-        member.groupId = undefined;
-        member.role = undefined;
-      }
-    }
-    this.deps.notifier.broadcast(members, {
+    const ended = JSON.stringify({
       type: 'group.ended',
       groupId,
       reason: 'leader_disconnected',
-    });
+    } satisfies ServerMessage);
+    for (const memberId of members) {
+      const member = this.deps.notifier.get(memberId);
+      member?.afterPending(() => {
+        if (member.groupId !== groupId) return;
+        member.groupId = undefined;
+        member.role = undefined;
+        member.deliver(ended);
+      });
+    }
     this.deps.logger.info(
       { event: 'group_ended', namespace, groupRef: groupRef(groupId), members: members.length },
       'group ended',

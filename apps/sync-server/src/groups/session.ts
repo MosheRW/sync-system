@@ -18,6 +18,12 @@ export interface Session {
   role: Role | undefined;
   /** Sends an already serialized frame to this participant. */
   deliver(text: string): void;
+  /**
+   * Runs `task` after every message this participant has already sent has
+   * been handled and answered, so events it triggers arrive after those
+   * replies.
+   */
+  afterPending(task: () => void): void;
 }
 
 /** Group operations a connection dispatches to. Each returns the direct reply. */

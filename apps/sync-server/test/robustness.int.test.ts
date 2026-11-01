@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import type { AddParticipantResult, GroupRecord } from '../src/groups/group-store.js';
+import { InMemoryGroupStore } from '../src/groups/in-memory-group-store.js';
 import { FailingStore } from './helpers/failing-store.js';
 import { createGroupWithMembers } from './helpers/groups.js';
 import { type TestServer, httpGet, startTestServer } from './helpers/test-server.js';
@@ -9,6 +11,103 @@ let ts: TestServer | undefined;
 afterEach(async () => {
   await ts?.close();
   ts = undefined;
+});
+
+/**
+ * Holds the next call of one method after the real operation ran, until
+ * release(): models a slow store reply (e.g. a Redis round trip).
+ */
+class DeferredStore extends InMemoryGroupStore {
+  reached = false;
+  private held: 'get' | 'addParticipant' | undefined;
+  private gate: Promise<void> = Promise.resolve();
+  private open: () => void = () => undefined;
+
+  holdNext(method: 'get' | 'addParticipant'): void {
+    this.held = method;
+    this.reached = false;
+    this.gate = new Promise<void>((resolve) => {
+      this.open = resolve;
+    });
+  }
+
+  release(): void {
+    this.open();
+  }
+
+  private async pass<T>(method: 'get' | 'addParticipant', result: Promise<T>): Promise<T> {
+    if (this.held !== method) return result;
+    this.held = undefined;
+    this.reached = true;
+    const value = await result;
+    await this.gate;
+    return value;
+  }
+
+  override get(namespace: string, id: string): Promise<GroupRecord | undefined> {
+    return this.pass('get', super.get(namespace, id));
+  }
+
+  override addParticipant(
+    namespace: string,
+    id: string,
+    participantId: string,
+    maxSize: number,
+  ): Promise<AddParticipantResult> {
+    return this.pass('addParticipant', super.addParticipant(namespace, id, participantId, maxSize));
+  }
+}
+
+describe('join racing a leader disconnect, with a slow store', () => {
+  it('replies group.joined before group.ended and leaves the joiner groupless', async () => {
+    const store = new DeferredStore();
+    ts = await startTestServer({ store });
+    const { groupId, leader } = await createGroupWithMembers(ts, 0);
+    const joiner = await ts.connectReady();
+
+    // The insert has run; its reply (with the snapshot) is still in flight.
+    store.holdNext('addParticipant');
+    joiner.send({ type: 'group.join', groupId });
+    await waitUntil(() => store.reached);
+    leader.terminate();
+    await sleep(50);
+    store.release();
+
+    expect(await joiner.next('group.joined')).toMatchObject({ groupId });
+    expect(await joiner.next('group.ended')).toMatchObject({
+      groupId,
+      reason: 'leader_disconnected',
+    });
+    await waitUntil(() => store.size === 0);
+    // Not stuck in the dead group.
+    joiner.send({ type: 'group.create', metadata: {} });
+    expect(await joiner.next('group.created')).toMatchObject({ role: 'leader' });
+  });
+
+  it('never strands a joiner whose insert lands while teardown reads the group', async () => {
+    const store = new DeferredStore();
+    ts = await startTestServer({ store });
+    const { groupId, leader } = await createGroupWithMembers(ts, 0);
+    const joiner = await ts.connectReady();
+
+    // Teardown has read the member list; its delete has not run yet.
+    store.holdNext('get');
+    leader.terminate();
+    await waitUntil(() => store.reached);
+    joiner.send({ type: 'group.join', groupId });
+    await sleep(50);
+    store.release();
+
+    const first = await joiner.next();
+    if (first.type === 'group.joined') {
+      expect((await joiner.next('group.ended')).groupId).toBe(groupId);
+    } else {
+      expect(first).toMatchObject({ code: 'GROUP_NOT_FOUND' });
+    }
+    await waitUntil(() => store.size === 0);
+    joiner.send({ type: 'group.create', metadata: {} });
+    expect(await joiner.next('group.created')).toMatchObject({ role: 'leader' });
+  });
 });
 
 describe('robustness (H4)', () => {
