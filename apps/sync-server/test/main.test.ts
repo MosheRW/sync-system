@@ -7,10 +7,13 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { run } from '../src/main.js';
 import type { SyncServer } from '../src/server.js';
+import { DEV_TOKEN_SECRET } from '../src/config/token-secret.js';
 import { LogCapture } from './helpers/log-capture.js';
 import { httpGet } from './helpers/test-server.js';
 
 const SECRET_KEY = 'SENTINEL-main-key-0123456789-0123456789-xyz';
+/** A strong-looking test token secret (not a real one). */
+const TOKEN_SECRET = 'SENTINEL-tok-8f3Kq2Lp9Zx7Vb4Nm1Rt6Yw0Ue5Io3Aa';
 const devConfigPath = fileURLToPath(new URL('../../../config/apps.dev.json', import.meta.url));
 const serverDir = fileURLToPath(new URL('..', import.meta.url));
 
@@ -49,7 +52,7 @@ async function runCapture(env: Record<string, string>) {
   let stderr = '';
   const logs = new LogCapture();
   const result = await run(
-    { PORT: String(await freePort()), HOST: '127.0.0.1', ...env },
+    { PORT: String(await freePort()), HOST: '127.0.0.1', TOKEN_SECRET, ...env },
     { stderr: (text) => (stderr += text), destination: logs },
   );
   if (result.ok) started = result.server;
@@ -126,11 +129,82 @@ describe('run', () => {
     const port = String(first.result.server.port);
     let stderr = '';
     const second = await run(
-      { SYNC_CONFIG_PATH: writeConfig(validConfig), PORT: port, HOST: '127.0.0.1' },
+      { SYNC_CONFIG_PATH: writeConfig(validConfig), PORT: port, HOST: '127.0.0.1', TOKEN_SECRET },
       { stderr: (text) => (stderr += text), destination: new LogCapture() },
     );
     expect(second).toEqual({ ok: false, exitCode: 1 });
     expect(stderr).toContain('EADDRINUSE');
+  });
+});
+
+describe('token secrets (#5 AC1-AC3, R4)', () => {
+  const config = () => writeConfig(validConfig);
+
+  async function runRaw(env: Record<string, string>) {
+    let stderr = '';
+    const logs = new LogCapture();
+    const result = await run(
+      { SYNC_CONFIG_PATH: config(), PORT: String(await freePort()), HOST: '127.0.0.1', ...env },
+      { stderr: (text) => (stderr += text), destination: logs },
+    );
+    if (result.ok) started = result.server;
+    return { result, stderr, logs };
+  }
+
+  it('refuses a missing TOKEN_SECRET when NODE_ENV is production, unset or unknown (Q-A)', async () => {
+    const envs: Array<Record<string, string>> = [
+      { NODE_ENV: 'production' },
+      {},
+      { NODE_ENV: 'staging' },
+    ];
+    for (const env of envs) {
+      const { result, stderr } = await runRaw(env);
+      expect(result).toEqual({ ok: false, exitCode: 1 });
+      expect(stderr).toMatch(/^Config error: TOKEN_SECRET is required/);
+    }
+  });
+
+  it('refuses the dev secret in production without printing it', async () => {
+    const { result, stderr } = await runRaw({
+      NODE_ENV: 'production',
+      TOKEN_SECRET: DEV_TOKEN_SECRET,
+    });
+    expect(result).toEqual({ ok: false, exitCode: 1 });
+    expect(stderr).toContain('Config error: TOKEN_SECRET is the public development secret');
+    expect(stderr).not.toContain(DEV_TOKEN_SECRET);
+  });
+
+  it('refuses a short secret everywhere, naming the variable only', async () => {
+    const { result, stderr } = await runRaw({
+      NODE_ENV: 'development',
+      TOKEN_SECRET: 'SENTINEL-short',
+    });
+    expect(result).toEqual({ ok: false, exitCode: 1 });
+    expect(stderr).toContain('TOKEN_SECRET must be at least 32 bytes');
+    expect(stderr).not.toContain('SENTINEL');
+  });
+
+  it('starts in development without a secret and warns that tokens will not survive a restart', async () => {
+    const { result, stderr, logs } = await runRaw({ NODE_ENV: 'development' });
+    expect(result.ok).toBe(true);
+    expect(stderr).toBe('');
+    const warning = logs.records().find((r) => r.event === 'token_secret_random');
+    expect(warning).toMatchObject({ level: 40 });
+    expect(String(warning?.msg)).toContain('will not survive a restart');
+  });
+
+  it('warns about the dev secret and a set previous secret, never logging values', async () => {
+    const { result, logs } = await runRaw({
+      NODE_ENV: 'test',
+      TOKEN_SECRET: DEV_TOKEN_SECRET,
+      TOKEN_SECRET_PREVIOUS: TOKEN_SECRET,
+    });
+    expect(result.ok).toBe(true);
+    expect(logs.events()).toEqual(
+      expect.arrayContaining(['dev_token_secret', 'token_secret_previous_set']),
+    );
+    expect(logs.text).not.toContain(DEV_TOKEN_SECRET);
+    expect(logs.text).not.toContain('SENTINEL');
   });
 });
 

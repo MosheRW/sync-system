@@ -4,6 +4,7 @@ import { loadAppsConfigFile } from './config/apps-config.js';
 import { ConfigError } from './config/config-error.js';
 import { checkDevKeys } from './config/dev-key.js';
 import { type EnvSource, parseEnv } from './config/env.js';
+import { parseTokenSecrets, warnAboutSecrets } from './config/token-secret.js';
 import { type Logger, createLogger } from './logging/logger.js';
 import { type SyncServer, createSyncServer } from './server.js';
 
@@ -18,8 +19,8 @@ export type RunResult =
   { ok: true; server: SyncServer; logger: Logger } | { ok: false; exitCode: number };
 
 /**
- * Parses env, loads the app registry, checks dev keys, creates the logger and
- * starts the server. Configuration problems print `Config error: <message>`
+ * Parses env, loads the app registry, checks dev keys and token secrets,
+ * creates the logger and starts the server. Configuration problems print `Config error: <message>`
  * and return exit code 1; the message never contains key values (AC6).
  */
 export async function run(env: EnvSource, io: RunIO = {}): Promise<RunResult> {
@@ -39,7 +40,15 @@ export async function run(env: EnvSource, io: RunIO = {}): Promise<RunResult> {
     });
     const apps = loadAppsConfigFile(serverEnv.configPath, serverEnv);
     checkDevKeys(apps, serverEnv.nodeEnv, logger);
-    server = createSyncServer({ env: serverEnv, registry: new AppRegistry(apps), logger });
+    // Never stored in ServerEnv and never logged (R4).
+    const tokenSecrets = parseTokenSecrets(env, serverEnv.nodeEnv);
+    warnAboutSecrets(tokenSecrets, logger);
+    server = createSyncServer({
+      env: serverEnv,
+      registry: new AppRegistry(apps),
+      logger,
+      tokenSecrets,
+    });
 
     try {
       const port = await server.listen(serverEnv.port, serverEnv.host);

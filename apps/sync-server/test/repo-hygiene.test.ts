@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { DEV_TOKEN_SECRET } from '../src/config/token-secret.js';
 
 const repoRoot = fileURLToPath(new URL('../../../', import.meta.url));
 
@@ -82,6 +83,13 @@ describe('pinned supply chain (L8)', () => {
     expect(compose).toContain("'127.0.0.1:8080:8080'");
     expect(compose).toMatch(/NODE_ENV: development/);
     expect(compose).toContain('/health');
+  });
+
+  it('sets the documented dev token secret in compose (#5 AC3)', () => {
+    const compose = read('compose.yaml');
+    const match = /^\s*TOKEN_SECRET:\s*(\S+)\s*$/m.exec(compose);
+    expect(match?.[1]).toBe(DEV_TOKEN_SECRET);
+    expect(compose).not.toMatch(/TOKEN_SECRET_PREVIOUS/);
   });
 });
 

@@ -8,6 +8,7 @@ import type { GroupStore } from './groups/group-store.js';
 import { InMemoryGroupStore } from './groups/in-memory-group-store.js';
 import { LocalNotifier } from './groups/notifier.js';
 import type { ServerEnv } from './config/env.js';
+import type { TokenSecrets } from './config/token-secret.js';
 import { handleHttpRequest } from './http/health.js';
 import {
   CLOSE_TIMEOUT_MS,
@@ -37,6 +38,11 @@ export interface SyncServerOptions {
   heartbeatMs?: number;
   /** Defaults to HANDSHAKE_TIMEOUT_MS; shortened by tests. */
   handshakeTimeoutMs?: number;
+  /**
+   * Token signing secrets. `main` always passes them; tests that omit them
+   * get a random per-instance secret.
+   */
+  tokenSecrets?: TokenSecrets;
 }
 
 export interface SyncServer {
