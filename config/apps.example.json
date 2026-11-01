@@ -1,0 +1,18 @@
+{
+  "apps": [
+    {
+      "namespace": "reading-app",
+      "apiKey": "REPLACE-with-output-of-openssl-rand-base64-32",
+      "minAppVersion": "1.0.0",
+      "maxGroupSize": 30,
+      "maxLeaderUpdatesPerSecond": 5,
+      "maxMessageBytes": 4096,
+      "maxConnections": 1000
+    },
+    {
+      "namespace": "another-app",
+      "apiKey": "REPLACE-with-a-different-openssl-rand-base64-32",
+      "minAppVersion": "2.3.0"
+    }
+  ]
+}
