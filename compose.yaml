@@ -1,0 +1,40 @@
+# Local development only. It uses the public dev API key from
+# config/apps.dev.json, so it binds to loopback and sets NODE_ENV=development
+# (in production the dev key is refused at startup). See README.md.
+services:
+  sync-server:
+    build:
+      context: .
+      dockerfile: apps/sync-server/Dockerfile
+    image: sync-system/sync-server:dev
+    ports:
+      # Loopback only (M3); put TLS and a reverse proxy in front for real use.
+      - '127.0.0.1:8080:8080'
+    volumes:
+      - ./config/apps.dev.json:/config/apps.json:ro
+    environment:
+      SYNC_CONFIG_PATH: /config/apps.json
+      NODE_ENV: development
+      PORT: '8080'
+      HOST: 0.0.0.0
+      LOG_LEVEL: info
+      MAX_GROUP_SIZE_CEILING: '100'
+      MAX_LEADER_UPDATE_RATE_CEILING: '10'
+      MAX_MESSAGE_SIZE_CEILING: '16384'
+      MAX_APP_CONNECTIONS_CEILING: '10000'
+      MAX_CONNECTIONS: '10000'
+      MAX_PENDING_HANDSHAKES: '1000'
+      MAX_INBOUND_MESSAGES_PER_SECOND: '20'
+      MAX_INBOUND_BURST: '40'
+      MAX_BUFFERED_BYTES: '1048576'
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped
