@@ -174,6 +174,16 @@ export type GroupResumedMessage =
   | (GroupResumedBase & { hasPosition: true; position: JsonValue })
   | (GroupResumedBase & { hasPosition: false });
 
+/**
+ * Reply to a member's group.resume when the group is not in memory: the
+ * connection waits (parked) until the leader recreates it (#5 AC25).
+ */
+export interface GroupWaitingMessage {
+  type: 'group.waiting';
+  reqId?: string;
+  groupId: string;
+}
+
 /** Status of a stored token (#5 AC14). */
 export type TokenStatus =
   'live' | 'recoverable' | 'waiting' | 'blocked' | 'ended' | 'expired' | 'invalid';
@@ -241,6 +251,7 @@ export type ServerMessage =
   | GroupCreatedMessage
   | GroupJoinedMessage
   | GroupResumedMessage
+  | GroupWaitingMessage
   | PositionAckMessage
   | PositionUpdatedMessage
   | GroupEndedMessage

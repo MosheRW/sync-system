@@ -377,6 +377,7 @@ function canCarryReqId(message: ServerMessage): boolean {
     message.type === 'position.ack' ||
     message.type === 'hello.ok' ||
     message.type === 'group.resumed' ||
+    message.type === 'group.waiting' ||
     message.type === 'group.ended' ||
     message.type === 'group.left'
   );

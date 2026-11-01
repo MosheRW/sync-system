@@ -153,6 +153,7 @@ const schemas = buildJitless(() => {
     z.object({ ...groupJoinedBase, hasPosition: z.literal(false) }),
     z.object({ ...groupResumedBase, hasPosition: z.literal(true), position: opaqueValue }),
     z.object({ ...groupResumedBase, hasPosition: z.literal(false) }),
+    z.object({ type: z.literal('group.waiting'), reqId, groupId: z.string() }),
     z.object({ type: z.literal('position.ack'), reqId }),
     z.object({ type: z.literal('position.updated'), groupId: z.string(), position: opaqueValue }),
     z.object({

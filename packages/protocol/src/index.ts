@@ -45,6 +45,7 @@ export type {
   GroupCreatedMessage,
   GroupJoinedMessage,
   GroupResumedMessage,
+  GroupWaitingMessage,
   TokenStatus,
   PositionAckMessage,
   PositionUpdatedMessage,

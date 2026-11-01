@@ -25,6 +25,7 @@ import { GroupTimers } from './group-timers.js';
 import { newGroupId, newParticipantId } from './ids.js';
 import { KeyedLock } from './keyed-lock.js';
 import type { Notifier } from './notifier.js';
+import { ParkingLot } from './parking-lot.js';
 import { classifyToken } from './resume.js';
 import { type GroupActions, type Membership, type Session, membershipKey } from './session.js';
 
@@ -77,14 +78,27 @@ export class GroupService implements GroupActions {
   /** Serializes join and teardown per group (namespace + ID). */
   private readonly locks = new KeyedLock();
   private readonly timers: GroupTimers;
+  private readonly parking: ParkingLot;
 
   constructor(private readonly deps: GroupServiceDeps) {
     this.timers = new GroupTimers(deps.scheduler);
+    this.parking = new ParkingLot(deps.scheduler);
   }
 
-  /** Cancels every group timer (server shutdown). */
+  /** Cancels every group and parking timer (server shutdown). */
   close(): void {
     this.timers.clearAll();
+    this.parking.clearAll();
+  }
+
+  /** Number of parked sessions. For tests only. */
+  get parkedCount(): number {
+    return this.parking.size;
+  }
+
+  /** In a group or waiting for one (ALREADY_IN_GROUP). */
+  private busy(session: Session): boolean {
+    return session.membership !== undefined || session.parked !== undefined;
   }
 
   /** Number of groups with a pending timer. For tests only. */
@@ -172,7 +186,7 @@ export class GroupService implements GroupActions {
   }
 
   async create(session: Session, message: GroupCreateMessage): Promise<ServerMessage> {
-    if (session.membership !== undefined) return errorMessage(ErrorCode.ALREADY_IN_GROUP);
+    if (this.busy(session)) return errorMessage(ErrorCode.ALREADY_IN_GROUP);
 
     const { app } = session;
     // Checked before anything is stored: an oversized create leaves no group.
@@ -210,7 +224,7 @@ export class GroupService implements GroupActions {
   }
 
   async join(session: Session, message: GroupJoinMessage): Promise<ServerMessage> {
-    if (session.membership !== undefined) return errorMessage(ErrorCode.ALREADY_IN_GROUP);
+    if (this.busy(session)) return errorMessage(ErrorCode.ALREADY_IN_GROUP);
 
     const { app } = session;
     const { groupId } = message;
@@ -340,6 +354,8 @@ export class GroupService implements GroupActions {
    * `ended_by_leader`; the leader gets the same message as its reply.
    */
   async end(session: Session, _message: GroupEndMessage): Promise<ServerMessage> {
+    // A parked session is a member waiting for its leader.
+    if (session.parked !== undefined) return errorMessage(ErrorCode.NOT_LEADER);
     const membership = this.owned(session);
     if (membership === undefined) return errorMessage(ErrorCode.NOT_IN_GROUP);
     if (membership.role !== 'leader') return errorMessage(ErrorCode.NOT_LEADER);
@@ -358,6 +374,11 @@ export class GroupService implements GroupActions {
    * member is not blocked. The leader must use group.end (Q-D).
    */
   async leave(session: Session, _message: GroupLeaveMessage): Promise<ServerMessage> {
+    const parked = session.parked;
+    if (parked !== undefined) {
+      this.parking.unpark(session);
+      return { type: 'group.left', groupId: parked.groupId };
+    }
     const membership = this.owned(session);
     if (membership === undefined) return errorMessage(ErrorCode.NOT_IN_GROUP);
     if (membership.role === 'leader') return errorMessage(ErrorCode.LEADER_CANNOT_LEAVE);
@@ -385,7 +406,7 @@ export class GroupService implements GroupActions {
    * serialize (AC27).
    */
   async resume(session: Session, message: GroupResumeMessage): Promise<ServerMessage> {
-    if (session.membership !== undefined) return errorMessage(ErrorCode.ALREADY_IN_GROUP);
+    if (this.busy(session)) return errorMessage(ErrorCode.ALREADY_IN_GROUP);
     const { app } = session;
     const verified = this.deps.tokens.verify(message.token, app.namespace, this.now());
     if (!verified.ok) return errorMessage(ErrorCode.TOKEN_INVALID);
@@ -402,7 +423,7 @@ export class GroupService implements GroupActions {
     if (tooLarge) return tooLarge;
 
     return this.locks.run(groupKey(app.namespace, claims.gid), async () => {
-      if (session.membership !== undefined) return errorMessage(ErrorCode.ALREADY_IN_GROUP);
+      if (this.busy(session)) return errorMessage(ErrorCode.ALREADY_IN_GROUP);
       const record = await this.deps.store.get(app.namespace, claims.gid);
       const status = classifyToken({
         claims,
@@ -428,8 +449,7 @@ export class GroupService implements GroupActions {
         case 'recoverable':
           return this.recreate(session, claims, message);
         case 'waiting':
-          // Parking comes with a later change.
-          return errorMessage(ErrorCode.GROUP_NOT_FOUND);
+          return this.parkMember(session, claims);
       }
     });
   }
@@ -531,6 +551,7 @@ export class GroupService implements GroupActions {
     }
     this.armMaxSession(app, record);
     this.attach(session, { groupId: record.id, participantId: claims.pid, role: 'leader' });
+    await this.admitParked(app, record);
     this.deps.logger.info(
       {
         event: 'group_resumed',
@@ -542,6 +563,96 @@ export class GroupService implements GroupActions {
       'group recreated',
     );
     return this.resumedMessage(record, claims.pid, true, now);
+  }
+
+  /**
+   * A member resumed a group that is not in memory (AC25): the connection is
+   * parked until the leader recreates the group, or until no leader token
+   * able to recreate it can exist any more. Runs under the group lock.
+   */
+  private parkMember(session: Session, claims: TokenClaims): ServerMessage {
+    const { app } = session;
+    const namespace = app.namespace;
+    const now = this.now();
+    const sessionEnd = claims.gct + app.maxSessionMinutes * MINUTE_MS;
+    // A recreating leader token has lat <= now, so after this no such token
+    // is usable any more (architecture 6.5).
+    const leaderWindowEnd = now + app.inactivityLimitMinutes * MINUTE_MS + this.deps.refreshMaxMs;
+    const until = Math.min(sessionEnd, leaderWindowEnd);
+    const reason: GroupEndedReason =
+      sessionEnd <= leaderWindowEnd ? 'max_session' : 'leader_timeout';
+    const key = groupKey(namespace, claims.gid);
+    const older = this.parking.park(session, key, claims.gid, claims.pid, until, () => {
+      this.runTimer(namespace, claims.gid, () => {
+        if (session.parked?.groupKey === key && this.parking.unpark(session)) {
+          const text = JSON.stringify({
+            type: 'group.ended',
+            groupId: claims.gid,
+            reason,
+          } satisfies ServerMessage);
+          session.afterPending(() => session.deliver(text));
+        }
+        return Promise.resolve();
+      });
+    });
+    if (older !== undefined) {
+      // One parked session per participant: newest wins (M5).
+      const text = JSON.stringify({
+        type: 'group.ended',
+        groupId: claims.gid,
+        reason: 'replaced',
+      } satisfies ServerMessage);
+      older.afterPending(() => older.deliver(text));
+    }
+    this.deps.logger.info(
+      {
+        event: 'group_waiting',
+        namespace,
+        groupRef: groupRef(claims.gid),
+        participantRef: participantRef(session.connectionId),
+      },
+      'member waiting for leader',
+    );
+    return { type: 'group.waiting', groupId: claims.gid };
+  }
+
+  /**
+   * After a recreation, admits every parked member in arrival order (AC25,
+   * AC26): blocked ones get PARTICIPANT_BLOCKED, those over the size limit
+   * GROUP_FULL, the rest an unsolicited group.joined with a fresh token.
+   * Runs under the group lock.
+   */
+  private async admitParked(app: AppConfig, record: GroupRecord): Promise<void> {
+    const namespace = app.namespace;
+    for (const { session: member, participantId } of this.parking.drain(
+      groupKey(namespace, record.id),
+    )) {
+      if (record.blockList.includes(participantId)) {
+        this.deliverLater(member, errorMessage(ErrorCode.PARTICIPANT_BLOCKED));
+        continue;
+      }
+      const added = await this.deps.store.addParticipant(
+        namespace,
+        record.id,
+        participantId,
+        app.maxGroupSize,
+      );
+      if (added.status !== 'ok') {
+        this.deliverLater(
+          member,
+          errorMessage(ErrorCode.GROUP_FULL, { details: { maxGroupSize: app.maxGroupSize } }),
+        );
+        continue;
+      }
+      this.attach(member, { groupId: record.id, participantId, role: 'member' });
+      const token = this.issueToken(namespace, added.group, participantId, 'member', this.now());
+      this.deliverLater(member, this.joinedMessage(added.group, participantId, token));
+    }
+  }
+
+  private deliverLater(session: Session, message: ServerMessage): void {
+    const text = JSON.stringify(message);
+    session.afterPending(() => session.deliver(text));
   }
 
   private resumedMessage(
@@ -601,6 +712,8 @@ export class GroupService implements GroupActions {
   }
 
   async disconnect(session: Session): Promise<void> {
+    // A parked session just stops waiting.
+    this.parking.unpark(session);
     const membership = session.membership;
     if (membership === undefined) return;
     const { app } = session;

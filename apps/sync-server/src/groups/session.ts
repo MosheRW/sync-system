@@ -31,6 +31,14 @@ export interface Session {
    * membership (M4).
    */
   membership: Membership | undefined;
+  /**
+   * Set while this session waits for its leader to recreate a group (#5
+   * AC25). Managed by the ParkingLot only. A parked session counts as "in a
+   * group" for ALREADY_IN_GROUP.
+   */
+  parked?:
+    | { readonly groupKey: string; readonly groupId: string; readonly participantId: string }
+    | undefined;
   /** Sends an already serialized frame to this participant. */
   deliver(text: string): void;
   /**
