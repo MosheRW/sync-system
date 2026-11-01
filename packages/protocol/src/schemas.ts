@@ -9,10 +9,16 @@ import {
   MAX_GROUP_ID_INPUT_LENGTH,
   MAX_REQ_ID_LENGTH,
   MAX_TOKEN_LENGTH,
+  MAX_TOKENS_PER_CHECK,
   NAMESPACE_PATTERN,
   PARTICIPANT_ID_PATTERN,
 } from './limits.js';
-import { type ClientMessage, GROUP_ENDED_REASONS, type ServerMessage } from './messages.js';
+import {
+  type ClientMessage,
+  GROUP_ENDED_REASONS,
+  type ServerMessage,
+  TOKEN_STATUSES,
+} from './messages.js';
 
 // Every schema below is built with zod's `jitless` option on. Without it,
 // building the first z.object runs zod's eval probe at import time: it reads
@@ -83,6 +89,12 @@ const schemas = buildJitless(() => {
     blockList: blockList.optional(),
   });
 
+  const tokensCheckSchema = z.object({
+    type: z.literal('tokens.check'),
+    reqId,
+    tokens: z.array(inboundToken).min(1).max(MAX_TOKENS_PER_CHECK),
+  });
+
   const blockListSetSchema = z.object({ type: z.literal('blocklist.set'), reqId, blockList });
 
   const groupEndSchema = z.object({ type: z.literal('group.end'), reqId });
@@ -95,6 +107,7 @@ const schemas = buildJitless(() => {
     groupJoinSchema,
     positionUpdateSchema,
     groupResumeSchema,
+    tokensCheckSchema,
     blockListSetSchema,
     groupEndSchema,
     groupLeaveSchema,
@@ -157,6 +170,13 @@ const schemas = buildJitless(() => {
     z.object({ ...groupResumedBase, hasPosition: z.literal(true), position: opaqueValue }),
     z.object({ ...groupResumedBase, hasPosition: z.literal(false) }),
     z.object({ type: z.literal('group.waiting'), reqId, groupId: z.string() }),
+    z.object({
+      type: z.literal('tokens.result'),
+      reqId,
+      results: z
+        .array(z.object({ status: z.enum(TOKEN_STATUSES), token: token.optional() }))
+        .max(MAX_TOKENS_PER_CHECK),
+    }),
     z.object({ type: z.literal('position.ack'), reqId }),
     z.object({ type: z.literal('position.updated'), groupId: z.string(), position: opaqueValue }),
     z.object({

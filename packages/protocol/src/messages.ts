@@ -78,6 +78,16 @@ export interface GroupResumeMessage {
   blockList?: string[];
 }
 
+/**
+ * Asks which of the presented tokens' groups are live or resumable (#5
+ * AC14). At most 20 tokens; one result per token, in the same order.
+ */
+export interface TokensCheckMessage {
+  type: 'tokens.check';
+  reqId?: string;
+  tokens: string[];
+}
+
 /** The leader replaces its group's block list (#5 AC26, AC34). */
 export interface BlockListSetMessage {
   type: 'blocklist.set';
@@ -103,6 +113,7 @@ export type ClientMessage =
   | GroupJoinMessage
   | PositionUpdateMessage
   | GroupResumeMessage
+  | TokensCheckMessage
   | BlockListSetMessage
   | GroupEndMessage
   | GroupLeaveMessage;
@@ -207,6 +218,17 @@ export const TOKEN_STATUSES = [
   'invalid',
 ] as const satisfies readonly TokenStatus[];
 
+/**
+ * One result per presented token, in order (#5 AC14). `token` is present
+ * only for a usable token that was signed with the previous secret: the same
+ * claims re-signed with the current secret (AC2).
+ */
+export interface TokensResultMessage {
+  type: 'tokens.result';
+  reqId?: string;
+  results: Array<{ status: TokenStatus; token?: string }>;
+}
+
 export interface PositionAckMessage {
   type: 'position.ack';
   reqId?: string;
@@ -273,6 +295,7 @@ export type ServerMessage =
   | GroupJoinedMessage
   | GroupResumedMessage
   | GroupWaitingMessage
+  | TokensResultMessage
   | PositionAckMessage
   | PositionUpdatedMessage
   | GroupEndedMessage

@@ -56,3 +56,9 @@ export const MAX_ENDED_GROUPS = 100_000;
 
 /** How often expired ended-group refs are swept. */
 export const ENDED_SWEEP_MS = 60_000;
+
+/** tokens.check requests per connection per window (#5 AC16). */
+export const TOKENS_CHECK_PER_MINUTE = 10;
+
+/** Window of the tokens.check limiter. */
+export const TOKENS_CHECK_WINDOW_MS = 60_000;

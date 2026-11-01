@@ -6,6 +6,7 @@ import type {
   GroupLeaveMessage,
   GroupResumeMessage,
   PositionUpdateMessage,
+  TokensCheckMessage,
   Role,
   ServerMessage,
 } from '@sync-system/protocol';
@@ -65,6 +66,8 @@ export interface GroupActions {
   update(session: Session, message: PositionUpdateMessage): Promise<ServerMessage>;
   /** Rejoin or recover a group with a participant token (#5 AC17-AC28). */
   resume(session: Session, message: GroupResumeMessage): Promise<ServerMessage>;
+  /** Status of up to 20 stored tokens (#5 AC14-AC16). */
+  checkTokens(session: Session, message: TokensCheckMessage): Promise<ServerMessage>;
   /** Leader replaces the block list (#5 AC26). */
   setBlockList(session: Session, message: BlockListSetMessage): Promise<ServerMessage>;
   /** Leader ends the group (#5 AC29). */

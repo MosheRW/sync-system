@@ -12,10 +12,13 @@ import {
   type Role,
   type ServerMessage,
   type TokenClaims,
+  type TokensCheckMessage,
+  type TokensResultMessage,
 } from '@sync-system/protocol';
 import type { AppConfig } from '../apps/app-registry.js';
 import { jsonByteLength } from '../limits/json-size.js';
-import type { SlidingWindowRateLimiter } from '../limits/rate-limiter.js';
+import { TOKENS_CHECK_PER_MINUTE, TOKENS_CHECK_WINDOW_MS } from '../limits/constants.js';
+import { SlidingWindowRateLimiter } from '../limits/rate-limiter.js';
 import { type Logger, groupRef, participantRef, safeErr } from '../logging/logger.js';
 import type { Scheduler } from '../time/scheduler.js';
 import type { TokenService } from '../tokens/token-service.js';
@@ -82,8 +85,11 @@ export class GroupService implements GroupActions {
   private readonly timers: GroupTimers;
   private readonly parking: ParkingLot;
   private readonly refresher: TokenRefresher;
+  /** tokens.check limiter, keyed by connection (#5 AC16). */
+  private readonly checkLimiter: SlidingWindowRateLimiter;
 
   constructor(private readonly deps: GroupServiceDeps) {
+    this.checkLimiter = new SlidingWindowRateLimiter(() => this.now(), TOKENS_CHECK_WINDOW_MS);
     this.timers = new GroupTimers(deps.scheduler);
     this.parking = new ParkingLot(deps.scheduler);
     this.refresher = new TokenRefresher(deps.scheduler, deps.refresh);
@@ -381,6 +387,49 @@ export class GroupService implements GroupActions {
     return record.participantIds
       .filter((id) => id !== record.leaderId)
       .map((id) => membershipKey(record.appNamespace, record.id, id));
+  }
+
+  /**
+   * tokens.check (#5 AC14-AC16). Limited per connection first. Each token is
+   * verified, and only a verified token leads to a group lookup, so invalid
+   * tokens never touch group state (AC15). Results carry only a status, plus
+   * a re-signed token for usable previous-secret tokens (AC2).
+   */
+  async checkTokens(session: Session, message: TokensCheckMessage): Promise<ServerMessage> {
+    const rate = this.checkLimiter.tryAcquire(session.connectionId, TOKENS_CHECK_PER_MINUTE);
+    if (!rate.ok) {
+      return errorMessage(ErrorCode.RATE_LIMITED, { details: { retryAfterMs: rate.retryAfterMs } });
+    }
+    const { app } = session;
+    const results: TokensResultMessage['results'] = [];
+    for (const token of message.tokens) {
+      const now = this.now();
+      const verified = this.deps.tokens.verify(token, app.namespace, now);
+      if (!verified.ok) {
+        results.push({ status: 'invalid' });
+        continue;
+      }
+      const { claims } = verified;
+      const status = classifyToken({
+        claims,
+        app,
+        record: await this.deps.store.get(app.namespace, claims.gid),
+        ended: this.deps.ended.has(app.namespace, claims.gid),
+        now,
+        refreshMaxMs: this.deps.refresh.maxMs,
+      });
+      const usable = status === 'live' || status === 'recoverable' || status === 'waiting';
+      results.push(
+        verified.viaPrevious && usable
+          ? { status, token: this.deps.tokens.resign(claims, app.namespace) }
+          : { status },
+      );
+    }
+    this.deps.logger.debug(
+      { event: 'tokens_checked', namespace: app.namespace, count: results.length },
+      'tokens checked',
+    );
+    return { type: 'tokens.result', results };
   }
 
   /**
@@ -814,6 +863,7 @@ export class GroupService implements GroupActions {
   }
 
   async disconnect(session: Session): Promise<void> {
+    this.checkLimiter.forget(session.connectionId);
     // A parked session just stops waiting.
     this.parking.unpark(session);
     const membership = session.membership;
