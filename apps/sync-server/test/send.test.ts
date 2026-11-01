@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
-import { type SendTarget, send, sendSerialized } from '../src/ws/send.js';
+import {
+  type PongTarget,
+  type SendTarget,
+  send,
+  sendPong,
+  sendSerialized,
+} from '../src/ws/send.js';
 
 class FakeSocket implements SendTarget {
   readyState: number = WebSocket.OPEN;
@@ -56,5 +62,46 @@ describe('sendSerialized (H2, H4)', () => {
     const ws = new FakeSocket();
     send(ws, { type: 'position.ack', reqId: 'r' }, 100);
     expect(ws.sent).toEqual(['{"type":"position.ack","reqId":"r"}']);
+  });
+});
+
+class FakePongSocket implements PongTarget {
+  readyState: number = WebSocket.OPEN;
+  bufferedAmount = 0;
+  pongs: Buffer[] = [];
+  pong(data: Buffer): void {
+    this.pongs.push(data);
+  }
+}
+
+describe('sendPong (H2, H3)', () => {
+  it('echoes the ping payload while the buffer is under the limit', () => {
+    const ws = new FakePongSocket();
+    ws.bufferedAmount = 90;
+    expect(sendPong(ws, Buffer.from('abc'), 100)).toBe('sent');
+    expect(ws.pongs).toEqual([Buffer.from('abc')]);
+  });
+
+  it('sends no pong once the outbound buffer is at or over the limit', () => {
+    for (const buffered of [100, 101, 5000]) {
+      const ws = new FakePongSocket();
+      ws.bufferedAmount = buffered;
+      expect(sendPong(ws, Buffer.from('abc'), 100)).toBe('dropped');
+      expect(ws.pongs).toEqual([]);
+    }
+  });
+
+  it('does not let the pong itself push the buffer over the limit', () => {
+    const ws = new FakePongSocket();
+    ws.bufferedAmount = 98;
+    expect(sendPong(ws, Buffer.from('abc'), 100)).toBe('dropped');
+    expect(ws.pongs).toEqual([]);
+  });
+
+  it('does nothing unless the socket is OPEN', () => {
+    const ws = new FakePongSocket();
+    ws.readyState = WebSocket.CLOSING;
+    expect(sendPong(ws, Buffer.from('abc'), 100)).toBe('not_open');
+    expect(ws.pongs).toEqual([]);
   });
 });

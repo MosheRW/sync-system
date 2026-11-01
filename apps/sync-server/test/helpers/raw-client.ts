@@ -116,6 +116,8 @@ export interface RawUpgradeOptions {
 
 export class RawClient {
   readonly messages: unknown[] = [];
+  /** Payloads of pong frames received from the server. */
+  readonly pongs: Buffer[] = [];
   closeCode: number | undefined;
   private buffer: Buffer = Buffer.alloc(0);
   private waiters: Array<() => void> = [];
@@ -295,6 +297,8 @@ export class RawClient {
           this.writeFrame({ opcode: Opcode.CLOSE, payload: frame.payload.subarray(0, 2) });
           this.socket.end();
         }
+      } else if (frame.opcode === Opcode.PONG) {
+        this.pongs.push(frame.payload);
       } else if (frame.opcode === Opcode.PING && this.autoPong) {
         this.writeFrame({ opcode: Opcode.PONG, payload: frame.payload });
       }

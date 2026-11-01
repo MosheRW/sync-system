@@ -33,3 +33,26 @@ export function sendSerialized(ws: SendTarget, text: string, maxBufferedBytes: n
 export function send(ws: SendTarget, message: ServerMessage, maxBufferedBytes: number): SendResult {
   return sendSerialized(ws, JSON.stringify(message), maxBufferedBytes);
 }
+
+/** The subset of a ws WebSocket that answering a ping needs. */
+export interface PongTarget {
+  readonly readyState: number;
+  readonly bufferedAmount: number;
+  pong(data: Buffer): void;
+}
+
+export type PongResult = 'sent' | 'not_open' | 'dropped';
+
+/**
+ * Answers a ping by hand (ws auto-pong is off). The pong is skipped, not
+ * queued, if the outbound buffer is at the limit or the pong would push it
+ * over, so a peer that pings but never reads cannot grow server memory (H2).
+ */
+export function sendPong(ws: PongTarget, data: Buffer, maxBufferedBytes: number): PongResult {
+  if (ws.readyState !== WebSocket.OPEN) return 'not_open';
+  if (ws.bufferedAmount >= maxBufferedBytes || ws.bufferedAmount + data.length > maxBufferedBytes) {
+    return 'dropped';
+  }
+  ws.pong(data);
+  return 'sent';
+}

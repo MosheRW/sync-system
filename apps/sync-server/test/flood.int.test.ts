@@ -155,3 +155,61 @@ describe('inbound message limit (H3)', () => {
     }
   });
 });
+
+describe('control frames count toward the inbound limit (H3)', () => {
+  const ping = (payload = 'p') =>
+    encodeFrame({ opcode: Opcode.PING, payload: Buffer.from(payload) });
+
+  it('closes a ping flood before the handshake with 4008', async () => {
+    ts = await startTestServer({ env: FLOOD_ENV, now: new TestClock().now });
+    const raw = await RawClient.connect(ts.port);
+    await raw.waitForType('welcome');
+    // Six pings in one TCP write: one over the burst of 5.
+    raw.writeRaw(Buffer.concat(Array.from({ length: 6 }, () => ping())));
+    await raw.closed();
+    expect(raw.closeCode).toBe(4008);
+    // Only the pings within budget were answered.
+    expect(raw.pongs.length).toBeLessThanOrEqual(5);
+  });
+
+  it('closes a ping flood after the handshake with 4008', async () => {
+    ts = await startTestServer({ env: FLOOD_ENV, now: new TestClock().now });
+    const client = await ts.connectReady(); // the hello took token 1 of 5
+    for (let i = 0; i < 20; i++) client.ws.ping();
+    expect(await client.next('error')).toMatchObject({ code: 'TOO_MANY_MESSAGES' });
+    expect(await client.closed()).toEqual({ code: 4008, reason: 'TOO_MANY_MESSAGES' });
+  });
+
+  it('closes a pong flood after the handshake with 4008', async () => {
+    ts = await startTestServer({ env: FLOOD_ENV, now: new TestClock().now });
+    const client = await ts.connectReady();
+    for (let i = 0; i < 20; i++) client.ws.pong();
+    expect(await client.next('error')).toMatchObject({ code: 'TOO_MANY_MESSAGES' });
+    expect((await client.closed()).code).toBe(4008);
+  });
+
+  it('still answers a ping within budget with the echoed payload', async () => {
+    ts = await startTestServer({ env: FLOOD_ENV, now: new TestClock().now });
+    const raw = await RawClient.connect(ts.port);
+    await raw.waitForType('welcome');
+    raw.writeRaw(ping('echo-me'));
+    await waitUntil(() => raw.pongs.length === 1);
+    expect(raw.pongs[0]!.toString()).toBe('echo-me');
+    raw.destroy();
+  });
+});
+
+describe('heartbeat with manual pongs (H2)', () => {
+  it('keeps a peer that echoes the ping payload and drops one that does not', async () => {
+    ts = await startTestServer({ heartbeatMs: 100 });
+    const alive = await RawClient.connect(ts.port);
+    const dead = await RawClient.connect(ts.port);
+    dead.autoPong = false;
+    await alive.waitForType('welcome');
+    await dead.waitForType('welcome');
+    await dead.closed();
+    await sleep(100);
+    expect(alive.ended).toBe(false);
+    alive.destroy();
+  });
+});

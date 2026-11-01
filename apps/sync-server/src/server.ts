@@ -79,6 +79,9 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
     // Compression adds zip-bomb and memory risk (L4).
     perMessageDeflate: false,
     clientTracking: false,
+    // Pings are answered by Connection, which charges them to the inbound
+    // limit and checks the outbound buffer first (H2, H3).
+    autoPong: false,
   });
   wss.on('error', (err: NodeJS.ErrnoException) => {
     logger.error({ event: 'wss_error', code: err.code, name: err.name }, 'websocket server error');

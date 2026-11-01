@@ -22,7 +22,7 @@ import { errorMessage } from './error-messages.js';
 import { checkHello } from './handshake.js';
 import { type HeartbeatTarget, heartbeatPong } from './heartbeat.js';
 import { InboundLimiter } from './inbound-limiter.js';
-import { sendSerialized } from './send.js';
+import { sendPong, sendSerialized } from './send.js';
 
 export interface ConnectionDeps {
   logger: Logger;
@@ -91,7 +91,9 @@ export class Connection implements HeartbeatTarget {
     // The client's close reason is never logged (L8).
     ws.on('close', (code: number) => this.onClose(code));
     ws.on('message', (data: RawData, isBinary: boolean) => this.onMessage(data, isBinary));
-    ws.on('pong', (data: Buffer) => heartbeatPong(this, data));
+    // Control frames take inbound tokens like any other frame (H3).
+    ws.on('ping', (data: Buffer) => this.onPing(data));
+    ws.on('pong', (data: Buffer) => this.onPong(data));
 
     this.handshakeTimer = setTimeout(() => this.onHandshakeTimeout(), deps.handshakeTimeoutMs);
     this.handshakeTimer.unref();
@@ -117,6 +119,24 @@ export class Connection implements HeartbeatTarget {
 
   terminate(): void {
     this.ws.terminate();
+  }
+
+  /** False (and the socket closing with 4008) when the frame is over the limit. */
+  private takeInboundToken(): boolean {
+    if (this.closed || this.flooded || this.state === 'closing') return false;
+    if (this.limiter.take()) return true;
+    this.closeFlooded();
+    return false;
+  }
+
+  private onPing(data: Buffer): void {
+    if (!this.takeInboundToken()) return;
+    sendPong(this.ws, data, this.deps.maxBufferedBytes);
+  }
+
+  private onPong(data: Buffer): void {
+    if (!this.takeInboundToken()) return;
+    heartbeatPong(this, data);
   }
 
   private onMessage(data: RawData, isBinary: boolean): void {
