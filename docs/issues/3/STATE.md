@@ -1,13 +1,14 @@
 # State: #3 Framework-free core client package
 - Path: full
-- Phase: implementation
+- Phase: validation
 - Branch: feat/3-core-client
 - PR: #4
 - Plan approved by user: yes (Gate 2, 2026-11-01)
-- QA loops: 0
+- QA loops: 1
 - Security-sensitive: yes
-- Review rounds: 2 (security plan review: round 1 FAIL, round 2 PASS)
-- Last updated by: engineer
+- Review rounds: 1 (code review of PR #4; the plan had 2 security review rounds: round 1 FAIL, round 2 PASS)
+- QA verdict: FAIL (round 1, 2026-11-01): https://github.com/MosheRW/sync-system/pull/4#pullrequestreview-5729212922
+- Last updated by: qa
 
 ## Notes
 - PRD item 2 of 9. "item N" in spec.md means PRD item N, not GitHub issue N.
@@ -63,8 +64,14 @@
 - R2-L5 deterministic flapping test, runAttempts reset by the stability rule: client.ts #connectionLost. Tests: flapping.int.test.ts (random: () => 1), client.reconnect.test.ts.
 - R2-L6 minimum gap between socket opens on close() + connect(): client.ts connect(). Tests: client.close.test.ts.
 
+## QA (round 1)
+- Checks: install --frozen-lockfile, lint, typecheck, test (protocol 22, server 343, client 301), build, server docker build: all exit 0. CI `check` pass.
+- ACs: 31/32 met. AC7 not met as written: importing the package reads `navigator` (and runs zod's `new Function("")` probe) at import time through `@sync-system/protocol`; ssr-import.test.ts pre-loads protocol to avoid it (deviation 11, not user-approved).
+- Finding 2: AC11 test does not cover NOT_CONNECTED while `reconnecting` (planned in architecture section 10).
+- Deviations: all others accepted.
+
 ## Open questions
-- none
+- AC7 (QA finding 1): accept the transitive zod `navigator`/eval probe as a documented deviation (AC7 = this package's own code), or approve a protocol-package change (lazy schemas or zod jitless) to remove it?
 
 ## Deviations from plan
 - packages/client typecheck also runs `tsc -p tsconfig.build.json --noEmit --customConditions @sync-system/source`, so the no-DOM/no-Node build config (AC1) is checked in CI's typecheck step, before build.
