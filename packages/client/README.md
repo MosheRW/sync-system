@@ -149,6 +149,15 @@ timer and no new socket. A `connect()` from a `closed` listener starts a new
 run with its own promise; the promise of the run that just ended still
 settles with that run's outcome.
 
+When a listener's `close()` or `connect()` cuts a fatal error or a
+give-up short, the client does not emit the `error` event for that
+failure. A call from a `closed` state listener comes after the failure was
+recorded, so the `closed` state's `error` and the rejected `connect()`
+promise still carry it. A call made earlier (for example from `groupEnded`)
+replaces the failure: the run ends the way that `close()` or `connect()`
+ends it. Read failures from the `closed` state or the `connect()` promise,
+not only from `error` events.
+
 ## Connection states
 
 `ConnectionState` is a union on `status`:
