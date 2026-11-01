@@ -17,6 +17,7 @@ import {
   HTTP_REQUEST_TIMEOUT_MS,
   transportMaxPayload,
 } from './limits/constants.js';
+import { SlidingWindowRateLimiter } from './limits/rate-limiter.js';
 import type { Logger } from './logging/logger.js';
 import { Connection } from './ws/connection.js';
 import { ConnectionCounter, type ConnectionStats } from './ws/connection-counter.js';
@@ -84,7 +85,13 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
   });
 
   const store = options.store ?? new InMemoryGroupStore();
-  const groups = new GroupService({ store, notifier: new LocalNotifier(), logger, now });
+  const groups = new GroupService({
+    store,
+    notifier: new LocalNotifier(),
+    logger,
+    now,
+    rateLimiter: new SlidingWindowRateLimiter(now),
+  });
   const counter = new ConnectionCounter();
   const connections = new Set<Connection>();
 

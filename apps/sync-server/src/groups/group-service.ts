@@ -6,6 +6,7 @@ import {
   type PositionUpdateMessage,
   type ServerMessage,
 } from '@sync-system/protocol';
+import type { SlidingWindowRateLimiter } from '../limits/rate-limiter.js';
 import { type Logger, groupRef, participantRef } from '../logging/logger.js';
 import { errorMessage } from '../ws/error-messages.js';
 import type { GroupRecord, GroupStore } from './group-store.js';
@@ -18,6 +19,12 @@ export interface GroupServiceDeps {
   notifier: Notifier;
   logger: Logger;
   now: () => number;
+  /** Leader update limiter, keyed by group (AC22). */
+  rateLimiter: SlidingWindowRateLimiter;
+}
+
+function rateKey(namespace: string, groupId: string): string {
+  return `${namespace}:${groupId}`;
 }
 
 /**
@@ -111,7 +118,23 @@ export class GroupService implements GroupActions {
     if (groupId === undefined) return errorMessage(ErrorCode.NOT_IN_GROUP);
     if (session.role !== 'leader') return errorMessage(ErrorCode.NOT_LEADER);
 
-    const namespace = session.app.namespace;
+    const { app } = session;
+    const namespace = app.namespace;
+    // Checked last, so rejected updates never use rate budget. Over-rate
+    // updates are rejected, never queued or coalesced (AC22).
+    const rate = this.deps.rateLimiter.tryAcquire(
+      rateKey(namespace, groupId),
+      app.maxLeaderUpdatesPerSecond,
+    );
+    if (!rate.ok) {
+      return errorMessage(ErrorCode.RATE_LIMITED, {
+        details: {
+          maxLeaderUpdatesPerSecond: app.maxLeaderUpdatesPerSecond,
+          retryAfterMs: rate.retryAfterMs,
+        },
+      });
+    }
+
     const stored = await this.deps.store.setPosition(namespace, groupId, message.position);
     if (!stored) return errorMessage(ErrorCode.NOT_IN_GROUP);
 
@@ -153,6 +176,7 @@ export class GroupService implements GroupActions {
     );
     if (result && result.remaining === 0) {
       await this.deps.store.delete(namespace, groupId);
+      this.deps.rateLimiter.forget(rateKey(namespace, groupId));
       this.deps.logger.info(
         { event: 'group_deleted', namespace, groupRef: groupRef(groupId) },
         'group deleted',
@@ -168,6 +192,7 @@ export class GroupService implements GroupActions {
   private async endGroup(namespace: string, groupId: string, leaderId: string): Promise<void> {
     const record = await this.deps.store.get(namespace, groupId);
     await this.deps.store.delete(namespace, groupId);
+    this.deps.rateLimiter.forget(rateKey(namespace, groupId));
     const members = (record?.participantIds ?? []).filter((id) => id !== leaderId);
     for (const memberId of members) {
       const member = this.deps.notifier.get(memberId);
