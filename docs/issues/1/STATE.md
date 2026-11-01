@@ -1,11 +1,11 @@
 # State: #1 Sync server core and monorepo scaffold
 - Path: full
-- Phase: grooming
+- Phase: architecture
 - Branch: feat/1-sync-server-core
 - PR: none
 - Plan approved by user: no
 - QA loops: 0
-- Last updated by: pm
+- Last updated by: architect
 
 ## Gate 1
 - Gate 1 approved by user with edits (spec updated: AC27 max message size, AC28 CI workflow; open questions resolved).
@@ -23,6 +23,10 @@
 - Leader disconnect in #1 ends the group with a "group ended" event.
 - Over-rate leader updates are rejected, not coalesced.
 - Add CI workflow (push + pull_request: frozen-lockfile install, lint, typecheck, test, build).
+
+## Architecture
+- Plan: docs/issues/1/architecture.md (ws chosen over Socket.IO; packages/protocol + apps/sync-server; 19 planned commits).
+- Awaiting Gate 2 approval.
 
 ## Open questions
 - none
