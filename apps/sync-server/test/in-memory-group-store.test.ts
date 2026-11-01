@@ -29,7 +29,7 @@ describe('InMemoryGroupStore', () => {
     const store = new InMemoryGroupStore();
     await store.create(record());
     expect(await store.get('app-b', ID)).toBeUndefined();
-    expect(await store.addParticipant('app-b', ID, 'p', 10)).toBe('not_found');
+    expect(await store.addParticipant('app-b', ID, 'p', 10)).toEqual({ status: 'not_found' });
     expect(await store.setPosition('app-b', ID, 1)).toBe(false);
     expect(await store.removeParticipant('app-b', ID, 'leader')).toBeUndefined();
     await store.delete('app-b', ID);
@@ -60,19 +60,36 @@ describe('InMemoryGroupStore', () => {
     const results = await Promise.all(
       ['a', 'b', 'c', 'd', 'e'].map((p) => store.addParticipant('app-a', ID, p, 3)),
     );
-    expect(results.filter((r) => r === 'ok')).toHaveLength(2);
-    expect(results.filter((r) => r === 'full')).toHaveLength(3);
+    expect(results.filter((r) => r.status === 'ok')).toHaveLength(2);
+    expect(results.filter((r) => r.status === 'full')).toHaveLength(3);
     expect((await store.get('app-a', ID))!.participantIds).toHaveLength(3);
-    expect(await store.addParticipant('app-a', 'missing'.padEnd(43, 'x'), 'p', 3)).toBe(
-      'not_found',
-    );
+    expect(await store.addParticipant('app-a', 'missing'.padEnd(43, 'x'), 'p', 3)).toEqual({
+      status: 'not_found',
+    });
   });
 
   it('treats re-adding a present participant as ok without duplicating it', async () => {
     const store = new InMemoryGroupStore();
     await store.create(record());
-    expect(await store.addParticipant('app-a', ID, 'leader', 1)).toBe('ok');
+    expect(await store.addParticipant('app-a', ID, 'leader', 1)).toEqual({
+      status: 'ok',
+      group: record(),
+    });
     expect((await store.get('app-a', ID))!.participantIds).toEqual(['leader']);
+  });
+
+  it('returns a snapshot including the new participant from the same insert', async () => {
+    const store = new InMemoryGroupStore();
+    const position = { has: true, payload: 7 } as const;
+    await store.create(record({ position }));
+    const added = await store.addParticipant('app-a', ID, 'm1', 10);
+    expect(added).toEqual({
+      status: 'ok',
+      group: record({ position, participantIds: ['leader', 'm1'] }),
+    });
+    // A copy: changing the snapshot does not touch the stored group.
+    if (added.status === 'ok') added.group.participantIds.push('sneaky');
+    expect((await store.get('app-a', ID))!.participantIds).toEqual(['leader', 'm1']);
   });
 
   it('removes participants and reports the remaining count', async () => {

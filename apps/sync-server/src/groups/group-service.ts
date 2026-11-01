@@ -103,14 +103,15 @@ export class GroupService implements GroupActions {
       session.participantId,
       app.maxGroupSize,
     );
-    if (added === 'not_found') return errorMessage(ErrorCode.GROUP_NOT_FOUND);
+    if (added.status === 'not_found') return errorMessage(ErrorCode.GROUP_NOT_FOUND);
     // The leader counts toward the size (AC21).
-    if (added === 'full') {
+    if (added.status === 'full') {
       return errorMessage(ErrorCode.GROUP_FULL, { details: { maxGroupSize: app.maxGroupSize } });
     }
-
-    const record = await this.deps.store.get(app.namespace, groupId);
-    if (!record) return errorMessage(ErrorCode.GROUP_NOT_FOUND);
+    // The snapshot comes from the same atomic insert. A second read could
+    // fail after the insert and leave the participant in the group while the
+    // session stays groupless.
+    const record = added.group;
 
     session.groupId = groupId;
     session.role = 'member';

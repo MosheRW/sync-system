@@ -39,11 +39,12 @@ export class InMemoryGroupStore implements GroupStore {
     maxSize: number,
   ): Promise<AddParticipantResult> {
     const record = this.groups.get(keyOf(namespace, id));
-    if (!record) return Promise.resolve('not_found');
-    if (record.participantIds.includes(participantId)) return Promise.resolve('ok');
-    if (record.participantIds.length >= maxSize) return Promise.resolve('full');
-    record.participantIds.push(participantId);
-    return Promise.resolve('ok');
+    if (!record) return Promise.resolve({ status: 'not_found' });
+    if (!record.participantIds.includes(participantId)) {
+      if (record.participantIds.length >= maxSize) return Promise.resolve({ status: 'full' });
+      record.participantIds.push(participantId);
+    }
+    return Promise.resolve({ status: 'ok', group: copy(record) });
   }
 
   removeParticipant(

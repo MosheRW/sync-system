@@ -18,7 +18,12 @@ export interface GroupRecord {
   createdAt: number;
 }
 
-export type AddParticipantResult = 'ok' | 'not_found' | 'full';
+/**
+ * `ok` carries a snapshot of the group taken in the same atomic step as the
+ * insert, so a join never needs a second read that could fail or race.
+ */
+export type AddParticipantResult =
+  { status: 'ok'; group: GroupRecord } | { status: 'not_found' } | { status: 'full' };
 
 /**
  * Group storage. Async and atomic per operation, so a Redis implementation
@@ -30,7 +35,10 @@ export interface GroupStore {
   create(group: GroupRecord): Promise<void>;
   /** A shallow copy (opaque values are shared, never mutated). */
   get(namespace: string, id: string): Promise<GroupRecord | undefined>;
-  /** Adds a participant unless the group is missing or already has `maxSize`. */
+  /**
+   * Adds a participant unless the group is missing or already has `maxSize`,
+   * and returns a snapshot of the group that includes it (one atomic step).
+   */
   addParticipant(
     namespace: string,
     id: string,

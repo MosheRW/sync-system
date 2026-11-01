@@ -45,6 +45,45 @@ describe('robustness (H4)', () => {
     expect((await httpGet(ts.port, '/health')).status).toBe(200);
   });
 
+  it('joins without a second store read, so a failing get cannot strand a member', async () => {
+    const store = new FailingStore();
+    ts = await startTestServer({ store });
+    const { groupId, leader } = await createGroupWithMembers(ts, 0);
+    const member = await ts.connectReady();
+
+    // Join used to call get after addParticipant had already succeeded.
+    store.failNext('get');
+    member.send({ type: 'group.join', groupId });
+    expect(await member.next('group.joined')).toMatchObject({ groupId, role: 'member' });
+    // The injected failure is still armed: join never read the group again.
+    await expect(store.get('app-a', groupId)).rejects.toThrow('injected store failure');
+
+    // Session and store agree: the member is in the group and gets updates.
+    const stored = await store.inner.get('app-a', groupId);
+    expect(stored!.participantIds).toHaveLength(2);
+    member.send({ type: 'group.join', groupId });
+    expect(await member.next('error')).toMatchObject({ code: 'ALREADY_IN_GROUP' });
+    leader.send({ type: 'position.update', position: 1 });
+    await leader.next('position.ack');
+    expect(await member.next('position.updated')).toMatchObject({ position: 1 });
+  });
+
+  it('leaves no stray participant when the atomic join fails', async () => {
+    const store = new FailingStore();
+    ts = await startTestServer({ store });
+    const { groupId } = await createGroupWithMembers(ts, 0);
+    const member = await ts.connectReady();
+
+    store.failNext('addParticipant');
+    member.send({ type: 'group.join', reqId: 'j', groupId });
+    expect(await member.next('error')).toMatchObject({ reqId: 'j', code: 'INTERNAL_ERROR' });
+
+    // Neither in the store nor in the session.
+    expect((await store.inner.get('app-a', groupId))!.participantIds).toHaveLength(1);
+    member.send({ type: 'group.join', groupId });
+    expect((await member.next('group.joined')).groupId).toBe(groupId);
+  });
+
   it('relays safely to a member that has just closed', async () => {
     ts = await startTestServer();
     const { leader, members } = await createGroupWithMembers(ts, 2);
