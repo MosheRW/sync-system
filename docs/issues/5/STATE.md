@@ -6,8 +6,8 @@
 - Plan approved by user: no
 - Security-sensitive: yes
 - QA loops: 0
-- Review rounds: 0
-- Last updated by: architect
+- Review rounds: 1 (security plan review round 1: PASS)
+- Last updated by: security
 
 ## Notes
 - PRD item 3 of 9. "item N" in spec.md means PRD item N, not GitHub issue N.
@@ -34,12 +34,15 @@
 - Q15: outside production with no secret: random per-process secret + warning; compose sets a documented dev secret; production requires TOKEN_SECRET.
 - Defaults: HS256, 365 d expiry, token <= 2048 chars, secret >= 32 bytes, TOKEN_SECRET + optional TOKEN_SECRET_PREVIOUS (verify only); refresh after 10 activities, min 60 s, max 300 s; <= 20 tokens per check, <= 10 checks per connection per minute; client stores <= 20 tokens and <= 256 block-list IDs per server+app.
 
+- Security plan review: docs/issues/5/security.md (PASS: 0 critical, 0 high, 6 medium, 8 low; required controls R1-R14 mapped to planned commits; recommended to fold in before implementation).
+
 ## Open questions (Gate 2, see architecture.md section 12)
 - Q-A: missing/dev secret allowed only for NODE_ENV development|test (fail closed like #1 S4); short secret an error everywhere.
 - Q-B: AC9's last-activity check applies to leader tokens only; member tokens checked by creation time and group liveness; parked members released after inactivity + slack.
 - Q-C: client keeps its token on group.ended reason `replaced`.
 - Q-D: leader group.leave rejected with LEADER_CANNOT_LEAVE.
 - Q-E: indicatorOf maps an ended group to `none`.
+- Security view: agree with Q-A (strongly), Q-B (with M5), Q-C (with L6), Q-D (with M4), Q-E (no impact).
 
 ## Deviations from plan
 - none
