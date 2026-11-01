@@ -60,6 +60,24 @@ export interface PositionUpdateMessage {
   position: JsonValue;
 }
 
+/**
+ * Rejoin or recover a group with a participant token (#5 AC17, AC19, AC23).
+ * A leader recreating a group that is not in memory must send its metadata,
+ * and may send its latest position and block list. Item 4 adds the latest
+ * join codes here (`joinCodes`); nothing reads them yet.
+ */
+export interface GroupResumeMessage {
+  type: 'group.resume';
+  reqId?: string;
+  token: string;
+  /** Opaque; required for a recreation, ignored when the group is live. */
+  metadata?: JsonObject;
+  /** Opaque; used only for a recreation (the live position wins, Q14). */
+  position?: JsonValue;
+  /** Leader only: blocked participant IDs. Omitted keeps the server's list (L5). */
+  blockList?: string[];
+}
+
 /** The leader ends its group (#5 AC29). */
 export interface GroupEndMessage {
   type: 'group.end';
@@ -77,6 +95,7 @@ export type ClientMessage =
   | GroupCreateMessage
   | GroupJoinMessage
   | PositionUpdateMessage
+  | GroupResumeMessage
   | GroupEndMessage
   | GroupLeaveMessage;
 
@@ -137,6 +156,39 @@ export type GroupJoinedMessage =
   | (GroupJoinedBase & { hasPosition: true; position: JsonValue })
   | (GroupJoinedBase & { hasPosition: false });
 
+/** Reply to a leader's group.resume (#5 AC19, AC23). */
+interface GroupResumedBase {
+  type: 'group.resumed';
+  reqId?: string;
+  groupId: string;
+  participantId: string;
+  role: 'leader';
+  metadata: JsonObject;
+  /** A fresh leader token. */
+  token: string;
+  /** True when the group was rebuilt from the token (not in memory before). */
+  recreated: boolean;
+}
+
+export type GroupResumedMessage =
+  | (GroupResumedBase & { hasPosition: true; position: JsonValue })
+  | (GroupResumedBase & { hasPosition: false });
+
+/** Status of a stored token (#5 AC14). */
+export type TokenStatus =
+  'live' | 'recoverable' | 'waiting' | 'blocked' | 'ended' | 'expired' | 'invalid';
+
+/** Every TokenStatus, for schemas. */
+export const TOKEN_STATUSES = [
+  'live',
+  'recoverable',
+  'waiting',
+  'blocked',
+  'ended',
+  'expired',
+  'invalid',
+] as const satisfies readonly TokenStatus[];
+
 export interface PositionAckMessage {
   type: 'position.ack';
   reqId?: string;
@@ -188,6 +240,7 @@ export type ServerMessage =
   | HelloOkMessage
   | GroupCreatedMessage
   | GroupJoinedMessage
+  | GroupResumedMessage
   | PositionAckMessage
   | PositionUpdatedMessage
   | GroupEndedMessage

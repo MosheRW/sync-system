@@ -25,6 +25,10 @@ const ERROR_TEXT: Record<ErrorCode, string> = {
   TOO_MANY_MESSAGES: 'Too many messages',
   INTERNAL_ERROR: 'Internal error',
   LEADER_CANNOT_LEAVE: 'The leader cannot leave; end the group instead',
+  TOKEN_INVALID: 'Invalid token',
+  TOKEN_EXPIRED: 'Token expired',
+  GROUP_ENDED: 'Group has ended',
+  PARTICIPANT_BLOCKED: 'Participant is blocked',
 };
 
 export function errorMessage(

@@ -304,6 +304,9 @@ export class Connection implements HeartbeatTarget {
       case 'position.update':
         response = await groups.update(session, message);
         break;
+      case 'group.resume':
+        response = await groups.resume(session, message);
+        break;
       case 'group.end':
         response = await groups.end(session, message);
         break;
@@ -373,6 +376,7 @@ function canCarryReqId(message: ServerMessage): boolean {
     message.type === 'group.joined' ||
     message.type === 'position.ack' ||
     message.type === 'hello.ok' ||
+    message.type === 'group.resumed' ||
     message.type === 'group.ended' ||
     message.type === 'group.left'
   );

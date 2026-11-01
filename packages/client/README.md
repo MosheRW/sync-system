@@ -318,6 +318,10 @@ fix the configuration.
 | `RATE_LIMITED`           | server | `details.maxLeaderUpdatesPerSecond`, `details.retryAfterMs`.            |
 | `MESSAGE_TOO_LARGE`      | both   | `details.field`, `details.limitBytes`, `details.sizeBytes?`.            |
 | `LEADER_CANNOT_LEAVE`    | both   | The leader called `leaveGroup()`; it ends the group with `endGroup()`.  |
+| `TOKEN_INVALID`          | server | The stored token is not valid here (any cause, same answer). Deleted.   |
+| `TOKEN_EXPIRED`          | server | The token is past its group's limits. Deleted.                          |
+| `GROUP_ENDED`            | server | The group ended on this server. Deleted.                                |
+| `PARTICIPANT_BLOCKED`    | server | The leader blocked this participant. Deleted.                           |
 
 Unknown server message types are ignored, so a newer server can add events
 without breaking older clients. A known type with a bad shape, a binary,

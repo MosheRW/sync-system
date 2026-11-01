@@ -34,6 +34,7 @@ export type {
   GroupCreateMessage,
   GroupJoinMessage,
   PositionUpdateMessage,
+  GroupResumeMessage,
   GroupEndMessage,
   GroupLeaveMessage,
   ClientMessage,
@@ -43,6 +44,8 @@ export type {
   HelloOkMessage,
   GroupCreatedMessage,
   GroupJoinedMessage,
+  GroupResumedMessage,
+  TokenStatus,
   PositionAckMessage,
   PositionUpdatedMessage,
   GroupEndedMessage,
@@ -58,6 +61,7 @@ export {
   groupCreateSchema,
   groupJoinSchema,
   positionUpdateSchema,
+  groupResumeSchema,
   clientMessageSchema,
   serverMessageSchema,
   formatIssues,
@@ -65,6 +69,6 @@ export {
   parseServerMessage,
 } from './schemas.js';
 export type { ParseResult } from './schemas.js';
-export { GROUP_ENDED_REASONS } from './messages.js';
+export { GROUP_ENDED_REASONS, TOKEN_STATUSES } from './messages.js';
 export { checkJson } from './json-guard.js';
 export type { JsonCheckOptions, JsonCheckResult } from './json-guard.js';

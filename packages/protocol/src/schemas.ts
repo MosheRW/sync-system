@@ -5,10 +5,12 @@ import type { JsonObject, JsonValue } from './json.js';
 import {
   MAX_API_KEY_LENGTH,
   MAX_APP_VERSION_INPUT_LENGTH,
+  MAX_BLOCK_LIST_SIZE,
   MAX_GROUP_ID_INPUT_LENGTH,
   MAX_REQ_ID_LENGTH,
   MAX_TOKEN_LENGTH,
   NAMESPACE_PATTERN,
+  PARTICIPANT_ID_PATTERN,
 } from './limits.js';
 import { type ClientMessage, GROUP_ENDED_REASONS, type ServerMessage } from './messages.js';
 
@@ -67,6 +69,20 @@ const schemas = buildJitless(() => {
     position: opaqueValue,
   });
 
+  const inboundToken = z.string().max(MAX_TOKEN_LENGTH);
+
+  /** Participant IDs: at most 256, each in the participant ID format (#5 AC24). */
+  const blockList = z.array(z.string().regex(PARTICIPANT_ID_PATTERN)).max(MAX_BLOCK_LIST_SIZE);
+
+  const groupResumeSchema = z.object({
+    type: z.literal('group.resume'),
+    reqId,
+    token: inboundToken,
+    metadata: opaqueObject.optional(),
+    position: opaqueValue.optional(),
+    blockList: blockList.optional(),
+  });
+
   const groupEndSchema = z.object({ type: z.literal('group.end'), reqId });
 
   const groupLeaveSchema = z.object({ type: z.literal('group.leave'), reqId });
@@ -76,6 +92,7 @@ const schemas = buildJitless(() => {
     groupCreateSchema,
     groupJoinSchema,
     positionUpdateSchema,
+    groupResumeSchema,
     groupEndSchema,
     groupLeaveSchema,
   ]);
@@ -98,6 +115,17 @@ const schemas = buildJitless(() => {
     metadata: opaqueObject,
     token,
     leaderOnline: z.boolean(),
+  };
+
+  const groupResumedBase = {
+    type: z.literal('group.resumed'),
+    reqId,
+    groupId: z.string(),
+    participantId: z.string(),
+    role: z.literal('leader'),
+    metadata: opaqueObject,
+    token,
+    recreated: z.boolean(),
   };
 
   const serverMessageSchema = z.union([
@@ -123,6 +151,8 @@ const schemas = buildJitless(() => {
     }),
     z.object({ ...groupJoinedBase, hasPosition: z.literal(true), position: opaqueValue }),
     z.object({ ...groupJoinedBase, hasPosition: z.literal(false) }),
+    z.object({ ...groupResumedBase, hasPosition: z.literal(true), position: opaqueValue }),
+    z.object({ ...groupResumedBase, hasPosition: z.literal(false) }),
     z.object({ type: z.literal('position.ack'), reqId }),
     z.object({ type: z.literal('position.updated'), groupId: z.string(), position: opaqueValue }),
     z.object({
@@ -148,6 +178,7 @@ const schemas = buildJitless(() => {
     groupCreateSchema,
     groupJoinSchema,
     positionUpdateSchema,
+    groupResumeSchema,
     clientMessageSchema,
     serverMessageSchema,
   };
@@ -157,6 +188,7 @@ export const helloSchema = schemas.helloSchema;
 export const groupCreateSchema = schemas.groupCreateSchema;
 export const groupJoinSchema = schemas.groupJoinSchema;
 export const positionUpdateSchema = schemas.positionUpdateSchema;
+export const groupResumeSchema = schemas.groupResumeSchema;
 export const clientMessageSchema = schemas.clientMessageSchema;
 export const serverMessageSchema = schemas.serverMessageSchema;
 

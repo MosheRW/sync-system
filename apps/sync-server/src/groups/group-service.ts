@@ -6,9 +6,11 @@ import {
   type GroupEndedReason,
   type GroupJoinMessage,
   type GroupLeaveMessage,
+  type GroupResumeMessage,
   type PositionUpdateMessage,
   type Role,
   type ServerMessage,
+  type TokenClaims,
 } from '@sync-system/protocol';
 import type { AppConfig } from '../apps/app-registry.js';
 import { jsonByteLength } from '../limits/json-size.js';
@@ -23,6 +25,7 @@ import { GroupTimers } from './group-timers.js';
 import { newGroupId, newParticipantId } from './ids.js';
 import { KeyedLock } from './keyed-lock.js';
 import type { Notifier } from './notifier.js';
+import { classifyToken } from './resume.js';
 import { type GroupActions, type Membership, type Session, membershipKey } from './session.js';
 
 export interface GroupServiceDeps {
@@ -110,14 +113,14 @@ export class GroupService implements GroupActions {
   }
 
   private issueToken(
-    app: AppConfig,
+    namespace: string,
     record: GroupRecord,
     participantId: string,
     role: Role,
     now: number,
   ): string {
     return this.deps.tokens.issue({
-      namespace: app.namespace,
+      namespace,
       groupId: record.id,
       participantId,
       role,
@@ -202,7 +205,7 @@ export class GroupService implements GroupActions {
       { event: 'group_created', namespace: app.namespace, groupRef: groupRef(record.id) },
       'group created',
     );
-    const token = this.issueToken(app, record, participantId, 'leader', now);
+    const token = this.issueToken(app.namespace, record, participantId, 'leader', now);
     return { type: 'group.created', groupId: record.id, participantId, role: 'leader', token };
   }
 
@@ -255,7 +258,7 @@ export class GroupService implements GroupActions {
     return this.joinedMessage(
       record,
       participantId,
-      this.issueToken(app, record, participantId, 'member', this.now()),
+      this.issueToken(app.namespace, record, participantId, 'member', this.now()),
     );
   }
 
@@ -372,6 +375,177 @@ export class GroupService implements GroupActions {
       );
       return { type: 'group.left', groupId };
     });
+  }
+
+  /**
+   * group.resume (#5 AC17, AC19, AC20): rejoin with a participant token. The
+   * token is verified before anything else touches group state; every
+   * verification failure gets the same TOKEN_INVALID (AC8, AC15). The rest
+   * runs under the group lock, so concurrent resumes with one token
+   * serialize (AC27).
+   */
+  async resume(session: Session, message: GroupResumeMessage): Promise<ServerMessage> {
+    if (session.membership !== undefined) return errorMessage(ErrorCode.ALREADY_IN_GROUP);
+    const { app } = session;
+    const verified = this.deps.tokens.verify(message.token, app.namespace, this.now());
+    if (!verified.ok) return errorMessage(ErrorCode.TOKEN_INVALID);
+    const { claims } = verified;
+
+    // Size-checked like group.create, whether or not they end up used.
+    const tooLarge =
+      (message.metadata === undefined
+        ? undefined
+        : sizeError('metadata', message.metadata, app.maxMessageBytes)) ??
+      (message.position === undefined
+        ? undefined
+        : sizeError('position', message.position, app.maxMessageBytes));
+    if (tooLarge) return tooLarge;
+
+    return this.locks.run(groupKey(app.namespace, claims.gid), async () => {
+      if (session.membership !== undefined) return errorMessage(ErrorCode.ALREADY_IN_GROUP);
+      const record = await this.deps.store.get(app.namespace, claims.gid);
+      const status = classifyToken({
+        claims,
+        app,
+        record,
+        ended: this.deps.ended.has(app.namespace, claims.gid),
+        now: this.now(),
+        refreshMaxMs: this.deps.refreshMaxMs,
+      });
+      switch (status) {
+        case 'invalid':
+          return errorMessage(ErrorCode.TOKEN_INVALID);
+        case 'expired':
+          return errorMessage(ErrorCode.TOKEN_EXPIRED);
+        case 'ended':
+          return errorMessage(ErrorCode.GROUP_ENDED);
+        case 'blocked':
+          return errorMessage(ErrorCode.PARTICIPANT_BLOCKED);
+        case 'live':
+          return claims.role === 'leader'
+            ? this.leaderReturn(session, record!, claims)
+            : this.memberResume(session, record!, claims);
+        case 'recoverable':
+        case 'waiting':
+          // Recreation and parking come with later changes.
+          return errorMessage(ErrorCode.GROUP_NOT_FOUND);
+      }
+    });
+  }
+
+  /**
+   * Detaches an older session that holds the same membership (AC20): it
+   * loses the membership at once (M4) and is told `replaced` after its
+   * pending replies. The group goes on for everyone else.
+   */
+  private replaceOwner(
+    namespace: string,
+    groupId: string,
+    participantId: string,
+    by: Session,
+  ): void {
+    const key = membershipKey(namespace, groupId, participantId);
+    const older = this.deps.notifier.get(key);
+    if (older === undefined || older === by) return;
+    this.deps.notifier.unregister(key, older);
+    if (older.membership?.groupId === groupId) older.membership = undefined;
+    const text = JSON.stringify({
+      type: 'group.ended',
+      groupId,
+      reason: 'replaced',
+    } satisfies ServerMessage);
+    older.afterPending(() => older.deliver(text));
+    this.deps.logger.info(
+      { event: 'session_replaced', namespace, groupRef: groupRef(groupId) },
+      'session replaced',
+    );
+  }
+
+  /**
+   * The leader comes back to a live or frozen group (AC19). The server's
+   * metadata and position win over anything the client sends (Q14). Runs
+   * under the group lock.
+   */
+  private async leaderReturn(
+    session: Session,
+    record: GroupRecord,
+    claims: TokenClaims,
+  ): Promise<ServerMessage> {
+    const { app } = session;
+    const namespace = app.namespace;
+    const now = this.now();
+    this.replaceOwner(namespace, record.id, claims.pid, session);
+    const updated = await this.deps.store.setLeaderOnline(namespace, record.id, true, now);
+    if (!updated) return errorMessage(ErrorCode.GROUP_NOT_FOUND);
+    this.timers.clearFrozenEnd(groupKey(namespace, record.id));
+    if (!record.leaderOnline) {
+      this.deps.notifier.broadcast(this.memberKeys(updated), {
+        type: 'leader.online',
+        groupId: record.id,
+      });
+    }
+    this.attach(session, { groupId: record.id, participantId: claims.pid, role: 'leader' });
+    this.deps.logger.info(
+      { event: 'group_resumed', namespace, groupRef: groupRef(record.id), recreated: false },
+      'leader resumed',
+    );
+    return this.resumedMessage(updated, claims.pid, false, now);
+  }
+
+  private resumedMessage(
+    record: GroupRecord,
+    participantId: string,
+    recreated: boolean,
+    now: number,
+  ): ServerMessage {
+    const base = {
+      type: 'group.resumed' as const,
+      groupId: record.id,
+      participantId,
+      role: 'leader' as const,
+      metadata: record.metadata,
+      token: this.issueToken(record.appNamespace, record, participantId, 'leader', now),
+      recreated,
+    };
+    return record.position.has
+      ? { ...base, hasPosition: true, position: record.position.payload }
+      : { ...base, hasPosition: false };
+  }
+
+  /** A member rejoins a live or frozen group with its token's participant ID (AC17). */
+  private async memberResume(
+    session: Session,
+    record: GroupRecord,
+    claims: TokenClaims,
+  ): Promise<ServerMessage> {
+    const { app } = session;
+    const namespace = app.namespace;
+    // Newest wins (AC20). The store is idempotent per participant ID, so the
+    // replaced session's slot is reused, not doubled.
+    this.replaceOwner(namespace, record.id, claims.pid, session);
+    const added = await this.deps.store.addParticipant(
+      namespace,
+      record.id,
+      claims.pid,
+      app.maxGroupSize,
+    );
+    if (added.status === 'not_found') return errorMessage(ErrorCode.GROUP_NOT_FOUND);
+    if (added.status === 'full') {
+      return errorMessage(ErrorCode.GROUP_FULL, { details: { maxGroupSize: app.maxGroupSize } });
+    }
+    this.attach(session, { groupId: record.id, participantId: claims.pid, role: 'member' });
+    this.deps.logger.info(
+      {
+        event: 'group_resumed',
+        namespace,
+        groupRef: groupRef(record.id),
+        participantRef: participantRef(session.connectionId),
+        recreated: false,
+      },
+      'member resumed',
+    );
+    const token = this.issueToken(app.namespace, added.group, claims.pid, 'member', this.now());
+    return this.joinedMessage(added.group, claims.pid, token);
   }
 
   async disconnect(session: Session): Promise<void> {

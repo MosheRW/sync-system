@@ -104,6 +104,31 @@ describe('client message schemas', () => {
   });
 });
 
+describe('token messages (#5)', () => {
+  const PID = '0b6a3f5e-8c1d-4e2f-9a7b-1c2d3e4f5a6b';
+
+  it('parses group.resume, group.end and group.leave', () => {
+    expect(ok({ type: 'group.resume', token: 't' }).type).toBe('group.resume');
+    expect(
+      ok({ type: 'group.resume', token: 't', metadata: {}, position: null, blockList: [PID] }).type,
+    ).toBe('group.resume');
+    expect(ok({ type: 'group.end', reqId: 'e' }).type).toBe('group.end');
+    expect(ok({ type: 'group.leave' }).type).toBe('group.leave');
+  });
+
+  it('bounds the token and the block list (AC24)', () => {
+    ok({ type: 'group.resume', token: 'x'.repeat(2048) });
+    fails({ type: 'group.resume', token: 'x'.repeat(2049) });
+    fails({ type: 'group.resume' });
+    fails({ type: 'group.resume', token: 1 });
+    ok({ type: 'group.resume', token: 't', blockList: Array.from({ length: 256 }, () => PID) });
+    fails({ type: 'group.resume', token: 't', blockList: Array.from({ length: 257 }, () => PID) });
+    fails({ type: 'group.resume', token: 't', blockList: ['not-a-uuid'] });
+    fails({ type: 'group.resume', token: 't', blockList: PID });
+    fails({ type: 'group.resume', token: 't', metadata: [] });
+  });
+});
+
 describe('server message schemas', () => {
   it('parses every server message type', () => {
     const messages = [
