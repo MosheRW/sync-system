@@ -14,6 +14,7 @@ FROM base AS build
 # Manifests first, so dependency installation is cached separately.
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml tsconfig.base.json ./
 COPY packages/protocol/package.json packages/protocol/
+COPY packages/client/package.json packages/client/
 COPY apps/sync-server/package.json apps/sync-server/
 RUN pnpm install --frozen-lockfile
 # Sources only: never the repo root (M1).
