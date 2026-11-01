@@ -2,7 +2,7 @@
 - Path: full
 - Phase: architecture
 - Branch: feat/3-core-client
-- PR: #TBD
+- PR: #4
 - Plan approved by user: no
 - QA loops: 0
 - Security-sensitive: yes
