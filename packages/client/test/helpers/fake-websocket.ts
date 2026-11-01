@@ -1,6 +1,6 @@
 import type { WebSocketLike } from '../../src/host.js';
 
-type Listener = (event: never) => void;
+type Listener = (event: unknown) => void;
 type EventType = 'open' | 'message' | 'close' | 'error';
 
 /**
@@ -97,7 +97,7 @@ export class FakeWebSocket implements WebSocketLike {
 
   #emit(type: EventType, event: object): void {
     for (const listener of [...(this.#listeners.get(type) ?? [])]) {
-      (listener as (e: object) => void)(event);
+      listener(event);
     }
   }
 }

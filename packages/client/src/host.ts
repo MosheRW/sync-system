@@ -8,18 +8,10 @@
 export const WS_CONNECTING = 0;
 export const WS_OPEN = 1;
 
-export interface WebSocketMessageEventLike {
-  readonly data: unknown;
-}
-
-export interface WebSocketCloseEventLike {
-  readonly code: number;
-  readonly reason: string;
-}
-
 /**
  * The WHATWG WebSocket subset the client uses. The browser `WebSocket`,
- * Node's global `WebSocket` and the `ws` package (v8) all fit it.
+ * Node's global `WebSocket` and the `ws` package (v8) all fit it. Listeners
+ * take `unknown`: events come from the host and are checked before use.
  */
 export interface WebSocketLike {
   readonly readyState: number;
@@ -27,11 +19,11 @@ export interface WebSocketLike {
   close(code?: number, reason?: string): void;
   addEventListener(
     type: 'open' | 'message' | 'close' | 'error',
-    listener: (event: never) => void,
+    listener: (event: unknown) => void,
   ): void;
   removeEventListener(
     type: 'open' | 'message' | 'close' | 'error',
-    listener: (event: never) => void,
+    listener: (event: unknown) => void,
   ): void;
 }
 

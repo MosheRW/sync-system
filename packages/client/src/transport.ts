@@ -5,12 +5,7 @@ import {
   checkJson,
   parseServerMessage,
 } from '@sync-system/protocol';
-import type {
-  WebSocketCloseEventLike,
-  WebSocketConstructorLike,
-  WebSocketLike,
-  WebSocketMessageEventLike,
-} from './host.js';
+import type { WebSocketConstructorLike, WebSocketLike } from './host.js';
 
 /** Result of decoding one inbound frame. */
 export type InboundFrame =
@@ -90,15 +85,24 @@ export class Transport {
   readonly #onOpen = () => {
     if (!this.#retired) this.#handlers.onOpen();
   };
-  readonly #onMessage = (event: WebSocketMessageEventLike) => {
-    if (!this.#retired) this.#handlers.onFrame(decodeFrame(event.data, this.#maxChars));
+  readonly #onMessage = (event: unknown) => {
+    if (this.#retired) return;
+    const data = isObject(event) ? event.data : undefined;
+    this.#handlers.onFrame(decodeFrame(data, this.#maxChars));
   };
-  readonly #onClose = (event: WebSocketCloseEventLike) => {
-    this.#ended(typeof event.code === 'number' ? event.code : ABNORMAL_CLOSE);
+  readonly #onClose = (event: unknown) => {
+    const code = isObject(event) ? event.code : undefined;
+    this.#ended(typeof code === 'number' ? code : ABNORMAL_CLOSE);
   };
   readonly #onError = () => {
     this.#ended(ABNORMAL_CLOSE);
   };
+  /**
+   * Stays attached to a retired socket for good (H2). `ws` is an
+   * EventEmitter: an 'error' with no listener (for example after close() on
+   * a socket that is still CONNECTING) would throw and end the Node process.
+   */
+  readonly #ignoreError = () => {};
 
   /** Throws if the constructor throws; the caller treats that as a failed attempt. */
   constructor(
@@ -125,18 +129,31 @@ export class Transport {
     this.#maxChars = maxChars;
   }
 
-  /** Sends one message as JSON. */
+  /**
+   * Sends one message as JSON. Returns false if the transport is retired or
+   * the socket threw; a throw is handled like a socket error (H2), so
+   * `onClose` has already run when this returns false.
+   */
   send(message: object): boolean {
     if (this.#retired) return false;
-    this.#socket.send(JSON.stringify(message));
-    return true;
+    try {
+      this.#socket.send(JSON.stringify(message));
+      return true;
+    } catch {
+      this.#ended(ABNORMAL_CLOSE);
+      return false;
+    }
   }
 
   /** Stops listening and closes the socket. Idempotent. */
   retire(code = 1000, reason?: string): void {
     if (this.#retired) return;
     this.#detach();
-    this.#socket.close(code, reason);
+    try {
+      this.#socket.close(code, reason);
+    } catch {
+      // Some implementations throw on invalid state or codes; never rethrow (H2).
+    }
   }
 
   #ended(code: number): void {
@@ -147,6 +164,8 @@ export class Transport {
 
   #detach(): void {
     this.#retired = true;
+    // Attached before the real handlers go and before close() (H2).
+    this.#socket.addEventListener('error', this.#ignoreError);
     this.#socket.removeEventListener('open', this.#onOpen);
     this.#socket.removeEventListener('message', this.#onMessage);
     this.#socket.removeEventListener('close', this.#onClose);

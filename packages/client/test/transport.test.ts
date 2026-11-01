@@ -160,3 +160,42 @@ describe('Transport', () => {
     expect((handlers.onFrame.mock.calls[1]![0] as InboundFrame).kind).toBe('message');
   });
 });
+
+describe('Transport host safety (H2)', () => {
+  function open() {
+    const handlers = { onOpen: vi.fn(), onFrame: vi.fn(), onClose: vi.fn() };
+    const transport = new Transport(FakeWebSocket, 'wss://x/', handlers, 8192);
+    return { transport, handlers, socket: FakeWebSocket.last };
+  }
+
+  it('keeps an error listener on a retired socket for good', () => {
+    const { transport, socket } = open();
+    transport.retire();
+    expect(socket.listenerCount('error')).toBe(1);
+    expect(socket.listenerCount('open')).toBe(0);
+    expect(socket.listenerCount('message')).toBe(0);
+    expect(socket.listenerCount('close')).toBe(0);
+    expect(() => socket.error()).not.toThrow();
+  });
+
+  it('keeps an error listener after the socket closed by itself', () => {
+    const { socket } = open();
+    socket.serverClose(1001);
+    expect(socket.listenerCount('error')).toBe(1);
+  });
+
+  it('never rethrows from close()', () => {
+    const { transport, socket } = open();
+    socket.throwOnClose = true;
+    expect(() => transport.retire(1000)).not.toThrow();
+    expect(transport.retired).toBe(true);
+  });
+
+  it('treats a throwing send() as a socket error', () => {
+    const { transport, handlers, socket } = open();
+    socket.throwOnSend = true;
+    expect(transport.send({ type: 'hello' })).toBe(false);
+    expect(handlers.onClose).toHaveBeenCalledWith(1006);
+    expect(transport.retired).toBe(true);
+  });
+});
