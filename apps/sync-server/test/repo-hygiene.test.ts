@@ -37,6 +37,18 @@ describe('secrets stay out of git and the image (M1)', () => {
     }
   });
 
+  it('also keeps nested env files and app registries out of the build context (S3)', () => {
+    const lines = read('.dockerignore').split(/\r?\n/);
+    // A bare pattern matches only at the context root; these match at any depth.
+    expect(lines).toContain('**/.env*');
+    expect(lines).toContain('**/config/apps*.json');
+    // The server source has a src/config directory, so no pattern may drop
+    // every directory named config.
+    for (const entry of ['**/config', '**/config/', '**/config/**']) {
+      expect(lines, entry).not.toContain(entry);
+    }
+  });
+
   it('never copies the repo root into the image', () => {
     const dockerfile = read('apps/sync-server/Dockerfile');
     const copies = dockerfile.split(/\r?\n/).filter((line) => /^COPY\s/.test(line));

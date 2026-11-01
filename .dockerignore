@@ -7,7 +7,10 @@ node_modules
 .claude.zip
 docs
 config/
+# Registries anywhere in the tree (never a bare config dir: src/config is code).
+**/config/apps*.json
 .env*
+**/.env*
 **/*.log
 coverage
 **/coverage
