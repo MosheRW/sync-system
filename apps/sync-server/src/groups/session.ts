@@ -1,6 +1,8 @@
 import type {
   GroupCreateMessage,
+  GroupEndMessage,
   GroupJoinMessage,
+  GroupLeaveMessage,
   PositionUpdateMessage,
   Role,
   ServerMessage,
@@ -51,6 +53,10 @@ export interface GroupActions {
   create(session: Session, message: GroupCreateMessage): Promise<ServerMessage>;
   join(session: Session, message: GroupJoinMessage): Promise<ServerMessage>;
   update(session: Session, message: PositionUpdateMessage): Promise<ServerMessage>;
+  /** Leader ends the group (#5 AC29). */
+  end(session: Session, message: GroupEndMessage): Promise<ServerMessage>;
+  /** Member leaves the group (#5 AC30). */
+  leave(session: Session, message: GroupLeaveMessage): Promise<ServerMessage>;
   /** Runs the disconnect rules (member removal, group end). */
   disconnect(session: Session): Promise<void>;
 }

@@ -67,11 +67,17 @@ const schemas = buildJitless(() => {
     position: opaqueValue,
   });
 
+  const groupEndSchema = z.object({ type: z.literal('group.end'), reqId });
+
+  const groupLeaveSchema = z.object({ type: z.literal('group.leave'), reqId });
+
   const clientMessageSchema = z.discriminatedUnion('type', [
     helloSchema,
     groupCreateSchema,
     groupJoinSchema,
     positionUpdateSchema,
+    groupEndSchema,
+    groupLeaveSchema,
   ]);
 
   const appLimitsSchema = z.object({
@@ -121,9 +127,11 @@ const schemas = buildJitless(() => {
     z.object({ type: z.literal('position.updated'), groupId: z.string(), position: opaqueValue }),
     z.object({
       type: z.literal('group.ended'),
+      reqId,
       groupId: z.string(),
       reason: z.enum(GROUP_ENDED_REASONS),
     }),
+    z.object({ type: z.literal('group.left'), reqId, groupId: z.string() }),
     z.object({ type: z.literal('leader.offline'), groupId: z.string() }),
     z.object({ type: z.literal('leader.online'), groupId: z.string() }),
     z.object({

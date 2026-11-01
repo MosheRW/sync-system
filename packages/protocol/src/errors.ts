@@ -39,6 +39,8 @@ export const ErrorCode = {
   TOO_MANY_MESSAGES: 'TOO_MANY_MESSAGES',
   /** An unexpected server error while handling a message. */
   INTERNAL_ERROR: 'INTERNAL_ERROR',
+  /** The leader sent group.leave; it must end the group instead (#5 Q-D). */
+  LEADER_CANNOT_LEAVE: 'LEADER_CANNOT_LEAVE',
 } as const;
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];

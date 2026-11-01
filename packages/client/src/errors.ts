@@ -80,6 +80,7 @@ const MESSAGES: Record<ClientErrorCode, string> = {
   MESSAGE_TOO_LARGE: 'Message too large',
   TOO_MANY_MESSAGES: 'Too many messages',
   INTERNAL_ERROR: 'Internal server error',
+  LEADER_CANNOT_LEAVE: 'The leader cannot leave the group; end it instead',
   NOT_CONNECTED: 'Not connected',
   CLOSED: 'The client was closed',
   CONNECTION_LOST: 'The connection was lost',

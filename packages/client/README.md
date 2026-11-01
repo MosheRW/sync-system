@@ -317,6 +317,7 @@ fix the configuration.
 | `NOT_LEADER`             | both   | Position update by a member.                                            |
 | `RATE_LIMITED`           | server | `details.maxLeaderUpdatesPerSecond`, `details.retryAfterMs`.            |
 | `MESSAGE_TOO_LARGE`      | both   | `details.field`, `details.limitBytes`, `details.sizeBytes?`.            |
+| `LEADER_CANNOT_LEAVE`    | both   | The leader called `leaveGroup()`; it ends the group with `endGroup()`.  |
 
 Unknown server message types are ignored, so a newer server can add events
 without breaking older clients. A known type with a bad shape, a binary,

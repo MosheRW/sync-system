@@ -4,6 +4,7 @@ import { CloseCode } from '@sync-system/protocol';
 import { randomBytes } from 'node:crypto';
 import { type ServerOptions, WebSocketServer } from 'ws';
 import type { AppRegistry } from './apps/app-registry.js';
+import { EndedGroups } from './groups/ended-groups.js';
 import { GroupService } from './groups/group-service.js';
 import type { GroupStore } from './groups/group-store.js';
 import { InMemoryGroupStore } from './groups/in-memory-group-store.js';
@@ -13,6 +14,7 @@ import type { TokenSecrets } from './config/token-secret.js';
 import { handleHttpRequest } from './http/health.js';
 import {
   CLOSE_TIMEOUT_MS,
+  ENDED_SWEEP_MS,
   HANDSHAKE_TIMEOUT_MS,
   HEARTBEAT_INTERVAL_MS,
   HTTP_CONNECTION_MARGIN,
@@ -110,6 +112,8 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
   });
 
   const store = options.store ?? new InMemoryGroupStore();
+  const ended = new EndedGroups(now, logger);
+  let sweepTimer: NodeJS.Timeout | undefined;
   const tokenSecrets = options.tokenSecrets ?? { current: randomBytes(32) };
   const tokens = new TokenService(new TokenKeyring(tokenSecrets));
   const groups = new GroupService({
@@ -120,6 +124,7 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
     tokens,
     scheduler,
     refreshMaxMs: env.tokenRefreshMaxSeconds * 1000,
+    ended,
   });
   const counter = new ConnectionCounter();
   const connections = new Set<Connection>();
@@ -199,6 +204,8 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
           httpServer.off('error', onError);
           port = (httpServer.address() as AddressInfo).port;
           heartbeat.start();
+          sweepTimer = setInterval(() => ended.sweep(), ENDED_SWEEP_MS);
+          sweepTimer.unref();
           resolve(port);
         };
         httpServer.once('error', onError);
@@ -208,6 +215,7 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
     },
     async close() {
       heartbeat.stop();
+      clearInterval(sweepTimer);
       groups.close();
       const httpClosed = new Promise<void>((resolve) => {
         if (!httpServer.listening) {

@@ -2,8 +2,10 @@ import {
   ErrorCode,
   GROUP_ID_PATTERN,
   type GroupCreateMessage,
+  type GroupEndMessage,
   type GroupEndedReason,
   type GroupJoinMessage,
+  type GroupLeaveMessage,
   type PositionUpdateMessage,
   type Role,
   type ServerMessage,
@@ -16,6 +18,7 @@ import type { Scheduler } from '../time/scheduler.js';
 import type { TokenService } from '../tokens/token-service.js';
 import { errorMessage } from '../ws/error-messages.js';
 import { type GroupRecord, type GroupStore, connectedCount } from './group-store.js';
+import type { EndedGroups } from './ended-groups.js';
 import { GroupTimers } from './group-timers.js';
 import { newGroupId, newParticipantId } from './ids.js';
 import { KeyedLock } from './keyed-lock.js';
@@ -34,6 +37,8 @@ export interface GroupServiceDeps {
   tokens: TokenService;
   /** Max interval between leader token refreshes in ms; also the recovery slack (Q10). */
   refreshMaxMs: number;
+  /** Groups that ended in this process (Q8). */
+  ended: EndedGroups;
 }
 
 /**
@@ -150,7 +155,7 @@ export class GroupService implements GroupActions {
             this.armMaxSession(app, current);
             return;
           }
-          await this.endGroup(namespace, groupId, 'max_session');
+          await this.endGroup(app, groupId, 'max_session');
         });
       },
     );
@@ -327,6 +332,48 @@ export class GroupService implements GroupActions {
       .map((id) => membershipKey(record.appNamespace, record.id, id));
   }
 
+  /**
+   * group.end (#5 AC29): the leader ends the group. Members get group.ended
+   * `ended_by_leader`; the leader gets the same message as its reply.
+   */
+  async end(session: Session, _message: GroupEndMessage): Promise<ServerMessage> {
+    const membership = this.owned(session);
+    if (membership === undefined) return errorMessage(ErrorCode.NOT_IN_GROUP);
+    if (membership.role !== 'leader') return errorMessage(ErrorCode.NOT_LEADER);
+    const { app } = session;
+    const { groupId } = membership;
+    return this.locks.run(groupKey(app.namespace, groupId), async () => {
+      // Replaced while waiting for the lock (M4).
+      if (this.owned(session) !== membership) return errorMessage(ErrorCode.NOT_IN_GROUP);
+      await this.endGroup(app, groupId, 'ended_by_leader', session);
+      return { type: 'group.ended', groupId, reason: 'ended_by_leader' };
+    });
+  }
+
+  /**
+   * group.leave (#5 AC30): a member leaves; the leader is not affected and the
+   * member is not blocked. The leader must use group.end (Q-D).
+   */
+  async leave(session: Session, _message: GroupLeaveMessage): Promise<ServerMessage> {
+    const membership = this.owned(session);
+    if (membership === undefined) return errorMessage(ErrorCode.NOT_IN_GROUP);
+    if (membership.role === 'leader') return errorMessage(ErrorCode.LEADER_CANNOT_LEAVE);
+    const { app } = session;
+    const { groupId, participantId } = membership;
+    return this.locks.run(groupKey(app.namespace, groupId), async () => {
+      if (this.owned(session) !== membership) return errorMessage(ErrorCode.NOT_IN_GROUP);
+      this.deps.notifier.unregister(membershipKey(app.namespace, groupId, participantId), session);
+      session.membership = undefined;
+      const result = await this.deps.store.removeParticipant(app.namespace, groupId, participantId);
+      if (result && result.connected === 0) await this.dropGroup(app.namespace, groupId);
+      this.deps.logger.info(
+        { event: 'group_left', namespace: app.namespace, groupRef: groupRef(groupId) },
+        'group left',
+      );
+      return { type: 'group.left', groupId };
+    });
+  }
+
   async disconnect(session: Session): Promise<void> {
     const membership = session.membership;
     if (membership === undefined) return;
@@ -382,11 +429,11 @@ export class GroupService implements GroupActions {
     const groupId = record.id;
     const namespace = app.namespace;
     if (this.maxSessionEndAt(app, record) <= this.now()) {
-      await this.endGroup(namespace, groupId, 'max_session');
+      await this.endGroup(app, groupId, 'max_session');
       return;
     }
     if (at <= this.now()) {
-      await this.endGroup(namespace, groupId, 'leader_timeout');
+      await this.endGroup(app, groupId, 'leader_timeout');
       return;
     }
     // Max session comes first: its own timer ends the group.
@@ -430,13 +477,17 @@ export class GroupService implements GroupActions {
    * group.joined first, then group.ended.
    */
   private async endGroup(
-    namespace: string,
+    app: AppConfig,
     groupId: string,
     reason: GroupEndedReason,
+    requester?: Session,
   ): Promise<void> {
+    const namespace = app.namespace;
     const record = await this.deps.store.get(namespace, groupId);
     await this.deps.store.delete(namespace, groupId);
     this.forgetGroup(namespace, groupId);
+    // Remembered until its max-session deadline, as a hashed ref only (Q8).
+    if (record) this.deps.ended.remember(namespace, groupId, this.maxSessionEndAt(app, record));
     const keys = (record?.participantIds ?? []).map((id) => membershipKey(namespace, groupId, id));
     const ended = JSON.stringify({ type: 'group.ended', groupId, reason } satisfies ServerMessage);
     let notified = 0;
@@ -446,7 +497,8 @@ export class GroupService implements GroupActions {
       notified += 1;
       this.deps.notifier.unregister(key, participant);
       if (participant.membership?.groupId === groupId) participant.membership = undefined;
-      participant.afterPending(() => participant.deliver(ended));
+      // The requester gets group.ended as its direct reply instead.
+      if (participant !== requester) participant.afterPending(() => participant.deliver(ended));
     }
     this.deps.logger.info(
       {

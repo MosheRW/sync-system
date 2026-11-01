@@ -35,3 +35,9 @@ export const TOKEN_TTL_SECONDS = 365 * 86_400;
 
 /** Clock skew tolerated for token times in the future (M2). */
 export const MAX_CLOCK_SKEW_MS = 300_000;
+
+/** Most remembered ended-group refs; the oldest is evicted first (Q8, L4). */
+export const MAX_ENDED_GROUPS = 100_000;
+
+/** How often expired ended-group refs are swept. */
+export const ENDED_SWEEP_MS = 60_000;

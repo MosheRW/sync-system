@@ -24,6 +24,7 @@ const ERROR_TEXT: Record<ErrorCode, string> = {
   MESSAGE_TOO_LARGE: 'Message too large',
   TOO_MANY_MESSAGES: 'Too many messages',
   INTERNAL_ERROR: 'Internal error',
+  LEADER_CANNOT_LEAVE: 'The leader cannot leave; end the group instead',
 };
 
 export function errorMessage(

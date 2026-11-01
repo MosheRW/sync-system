@@ -60,8 +60,25 @@ export interface PositionUpdateMessage {
   position: JsonValue;
 }
 
+/** The leader ends its group (#5 AC29). */
+export interface GroupEndMessage {
+  type: 'group.end';
+  reqId?: string;
+}
+
+/** A member leaves its group (#5 AC30). */
+export interface GroupLeaveMessage {
+  type: 'group.leave';
+  reqId?: string;
+}
+
 export type ClientMessage =
-  HelloMessage | GroupCreateMessage | GroupJoinMessage | PositionUpdateMessage;
+  | HelloMessage
+  | GroupCreateMessage
+  | GroupJoinMessage
+  | PositionUpdateMessage
+  | GroupEndMessage
+  | GroupLeaveMessage;
 
 export type ClientMessageType = ClientMessage['type'];
 
@@ -133,8 +150,17 @@ export interface PositionUpdatedMessage {
 
 export interface GroupEndedMessage {
   type: 'group.ended';
+  /** Set only on the leader's reply to its own group.end. */
+  reqId?: string;
   groupId: string;
   reason: GroupEndedReason;
+}
+
+/** Reply to group.leave (#5 AC30). */
+export interface GroupLeftMessage {
+  type: 'group.left';
+  reqId?: string;
+  groupId: string;
 }
 
 /** To attached members: the leader's connection closed; the group is frozen (#5 AC18). */
@@ -165,6 +191,7 @@ export type ServerMessage =
   | PositionAckMessage
   | PositionUpdatedMessage
   | GroupEndedMessage
+  | GroupLeftMessage
   | LeaderOfflineMessage
   | LeaderOnlineMessage
   | ErrorMessage;
