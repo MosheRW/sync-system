@@ -1,12 +1,16 @@
 import { readFileSync } from 'node:fs';
 import semver from 'semver';
 import { z } from 'zod';
-import { MAX_API_KEY_LENGTH, MAX_APP_VERSION_LENGTH } from '@sync-system/protocol';
+import {
+  MAX_API_KEY_LENGTH,
+  MAX_APP_VERSION_LENGTH,
+  NAMESPACE_PATTERN,
+} from '@sync-system/protocol';
 import { type AppConfig, hashApiKey } from '../apps/app-registry.js';
 import { ConfigError } from './config-error.js';
 import type { ServerEnv } from './env.js';
 
-export const NAMESPACE_PATTERN = /^[a-z0-9][a-z0-9_-]{0,62}$/;
+export { NAMESPACE_PATTERN };
 export const MIN_API_KEY_LENGTH = 32;
 
 const BOM = String.fromCharCode(0xfeff);

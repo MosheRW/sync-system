@@ -25,3 +25,19 @@ export const MAX_APP_VERSION_INPUT_LENGTH = 256;
 
 /** Longest `reqId` accepted. */
 export const MAX_REQ_ID_LENGTH = 64;
+
+/** Longest token accepted anywhere, checked before any parsing (#5 AC7). */
+export const MAX_TOKEN_LENGTH = 2048;
+
+/** Most tokens in one `tokens.check` (#5 AC14). */
+export const MAX_TOKENS_PER_CHECK = 20;
+
+/** Most participant IDs in a group's block list (#5 AC24). */
+export const MAX_BLOCK_LIST_SIZE = 256;
+
+/** A group-scoped participant ID: a lowercase random UUID (v4). */
+export const PARTICIPANT_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+/** An app namespace (also the token audience and part of the client storage key). */
+export const NAMESPACE_PATTERN = /^[a-z0-9][a-z0-9_-]{0,62}$/;
