@@ -1,7 +1,7 @@
 import { type Server, createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { CloseCode } from '@sync-system/protocol';
-import { WebSocketServer } from 'ws';
+import { type ServerOptions, WebSocketServer } from 'ws';
 import type { AppRegistry } from './apps/app-registry.js';
 import { GroupService } from './groups/group-service.js';
 import type { GroupStore } from './groups/group-store.js';
@@ -10,6 +10,7 @@ import { LocalNotifier } from './groups/notifier.js';
 import type { ServerEnv } from './config/env.js';
 import { handleHttpRequest } from './http/health.js';
 import {
+  CLOSE_TIMEOUT_MS,
   HANDSHAKE_TIMEOUT_MS,
   HEARTBEAT_INTERVAL_MS,
   HTTP_CONNECTION_MARGIN,
@@ -73,7 +74,8 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
     logger.error({ event: 'http_error', code: err.code, name: err.name }, 'http server error');
   });
 
-  const wss = new WebSocketServer({
+  // closeTimeout is a ws option that @types/ws does not declare yet.
+  const wssOptions: ServerOptions & { closeTimeout: number } = {
     noServer: true,
     maxPayload: transportMaxPayload(env.maxMessageSizeCeiling),
     // Compression adds zip-bomb and memory risk (L4).
@@ -82,7 +84,11 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
     // Pings are answered by Connection, which charges them to the inbound
     // limit and checks the outbound buffer first (H2, H3).
     autoPong: false,
-  });
+    // A peer that never answers our close frame is dropped after this, so it
+    // cannot hold a pending, global or per-app slot for ws's 30 s default (S1).
+    closeTimeout: CLOSE_TIMEOUT_MS,
+  };
+  const wss = new WebSocketServer(wssOptions);
   wss.on('error', (err: NodeJS.ErrnoException) => {
     logger.error({ event: 'wss_error', code: err.code, name: err.name }, 'websocket server error');
   });

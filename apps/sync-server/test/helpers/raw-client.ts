@@ -125,6 +125,8 @@ export class RawClient {
   ended = false;
   /** Answer server pings automatically (set false to simulate a dead peer). */
   autoPong = true;
+  /** Never answer the server close frame (simulates an unresponsive peer). */
+  ignoreClose = false;
 
   private constructor(
     readonly socket: net.Socket,
@@ -293,7 +295,7 @@ export class RawClient {
       } else if (frame.opcode === Opcode.CLOSE) {
         this.closeCode = frame.payload.length >= 2 ? frame.payload.readUInt16BE(0) : 1005;
         // Complete the close handshake like a normal client would.
-        if (this.socket.writable) {
+        if (this.socket.writable && !this.ignoreClose) {
           this.writeFrame({ opcode: Opcode.CLOSE, payload: frame.payload.subarray(0, 2) });
           this.socket.end();
         }

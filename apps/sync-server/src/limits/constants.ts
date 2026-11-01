@@ -3,6 +3,9 @@
 /** A hello is one small message; sockets that do not send it are closed (H1). */
 export const HANDSHAKE_TIMEOUT_MS = 5_000;
 
+/** How long a closing socket may take to answer our close frame (S1). */
+export const CLOSE_TIMEOUT_MS = 2_000;
+
 /** Maximum queued inbound messages per connection before close 4008 (H3). */
 export const MAX_QUEUED_MESSAGES = 32;
 

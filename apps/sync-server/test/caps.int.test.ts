@@ -144,3 +144,37 @@ describe('upgrade guard (H1, L4)', () => {
     client.destroy();
   });
 });
+
+describe('close timeout (S1)', () => {
+  /** Waits for the server to drop the socket; returns how long that took. */
+  async function slotFreedWithin(): Promise<number> {
+    const started = Date.now();
+    await waitUntil(() => ts!.server.stats().total === 0, 4000, 'slot to be freed');
+    expect(ts!.server.stats()).toEqual({ total: 0, pending: 0, perApp: {} });
+    return Date.now() - started;
+  }
+
+  it('frees a pending slot within ~2 s when the peer never answers the close', async () => {
+    ts = await startTestServer({ handshakeTimeoutMs: 100 });
+    const raw = await RawClient.connect(ts.port);
+    raw.ignoreClose = true;
+    await waitUntil(() => raw.closeCode === 4002, 1000, 'handshake timeout close');
+    expect(ts.server.stats().pending).toBe(1);
+    expect(await slotFreedWithin()).toBeLessThan(3000);
+    raw.destroy();
+  });
+
+  it('frees an app slot within ~2 s when the peer never answers the close', async () => {
+    ts = await startTestServer();
+    const raw = await RawClient.connect(ts.port);
+    raw.ignoreClose = true;
+    raw.sendJson({ type: 'hello', protocolVersion: 1, appVersion: '1.0.0', apiKey: KEY_A });
+    await raw.waitForType('hello.ok');
+    // Over the default burst of 40: the server closes with 4008.
+    for (let i = 0; i < 60; i++) raw.sendText('{}');
+    await waitUntil(() => raw.closeCode === 4008, 1000, 'flood close');
+    expect(ts.server.stats().perApp).toEqual({ 'app-a': 1 });
+    expect(await slotFreedWithin()).toBeLessThan(3000);
+    raw.destroy();
+  });
+});
