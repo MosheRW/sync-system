@@ -29,6 +29,7 @@ import { jsonByteLength } from './json-size.js';
 import { maxInboundChars } from './limits.js';
 import { type LogFields, type LogLevel, log } from './logger.js';
 import { type ResolvedOptions, type SyncClientOptions, resolveOptions } from './options.js';
+import { type RejoinStrategy, memberRejoinByGroupId } from './rejoin.js';
 import { type PendingRequest, RequestTracker } from './requests.js';
 import type {
   ConnectedInfo,
@@ -134,6 +135,8 @@ export class SyncClient {
   #runAttempts = 0;
   /** When the current connection reached `connected` (H1). */
   #connectedAt = 0;
+  /** Group handling across reconnects (Q1). Item 3 swaps in token rejoin. */
+  readonly #rejoin: RejoinStrategy = memberRejoinByGroupId;
 
   /** Validates the options (throws `INVALID_OPTIONS`). Touches no host globals except `URL`. */
   constructor(options: SyncClientOptions) {
@@ -624,6 +627,26 @@ export class SyncClient {
     this.#transport?.setMaxInboundChars(maxInboundChars(limits));
     this.#update({ connection: { status: 'connected', ...info } });
     this.#settleRun(info);
+    this.#rejoinGroup();
+  }
+
+  /** After each hello.ok: a member gets back into its group, or is told it is not (AC29). */
+  #rejoinGroup(): void {
+    this.#rejoin.onReady(
+      {
+        group: this.#snapshot.group,
+        join: (groupId, callbacks) => this.#join(groupId, callbacks),
+      },
+      (outcome) => {
+        if (outcome.kind === 'rejoined') {
+          this.#log('info', 'group_rejoined');
+          this.#events.emit('rejoined', outcome.joined);
+        } else if (outcome.kind === 'failed') {
+          this.#log('info', 'group_rejoin_failed', { code: outcome.code });
+          this.#endGroup('rejoin_failed', outcome.code);
+        }
+      },
+    );
   }
 
   #onHandshakeError(message: ErrorMessage): void {
@@ -736,7 +759,8 @@ export class SyncClient {
     this.#log('warn', 'fatal_error', { code: error.code });
     this.#failureStreak = streakAfterFailure(this.#failureStreak);
     this.#teardown(error, error.code);
-    this.#endGroup('closed', error.code);
+    const group = this.#snapshot.group;
+    this.#endGroup(group?.status === 'rejoining' ? 'rejoin_failed' : 'closed', error.code);
     this.#update({ connection: { status: 'closed', reason: 'fatal', error } });
     this.#emitError(error);
     this.#settleRun(error);
@@ -761,18 +785,28 @@ export class SyncClient {
       }
     }
     this.#failureStreak = streakAfterFailure(this.#failureStreak, busy);
-    // The server ends a leader's group as soon as its socket closes (AC29).
-    if (group?.status === 'active' && group.role === 'leader') {
-      this.#endGroup('leader_disconnected');
-    } else {
-      this.#endGroup('closed', error.code);
-    }
+    this.#groupAfterDrop(group);
     if (this.#runAttempts >= this.#opts.maxAttempts) {
       this.#giveUp(error);
       return;
     }
     this.#scheduleRetry(busy);
     this.#emitError(error);
+  }
+
+  /**
+   * A leader's group ended on the server when its socket closed, so it is
+   * marked ended at the drop. A member's group becomes `rejoining`, keeping
+   * the last metadata and position (Q1, AC29).
+   */
+  #groupAfterDrop(group: GroupState | null): void {
+    const next = this.#rejoin.onDisconnected(group);
+    if (next === group) return;
+    if (next?.status === 'ended') {
+      this.#endGroup(next.reason, next.code);
+      return;
+    }
+    this.#update({ group: next });
   }
 
   /** Waits the backoff delay, then opens a new socket (state `reconnecting`). */
