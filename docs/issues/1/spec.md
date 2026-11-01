@@ -18,7 +18,18 @@ Core principle carried into this issue: **the server syncs a position, not a pag
 - Vitest for tests. Docker Compose for running the server.
 - The PRD is split into 9 issues worked in order; this is issue 1 of 9.
 - Joining in this issue uses a **temporary** mechanism (join by group ID). Join methods A-D are issue 4.
-- Lock-tolerance success criterion: working assumption of **30 seconds** (enforced in later issues; recorded here).
+- Lock-tolerance success criterion: **30 seconds** (confirmed at Gate 1; enforced in later issues, recorded here).
+
+## Gate 1 decisions (user)
+
+- All proposed defaults and env ceilings accepted as written (see "Defaults" below), including the timer values recorded for issue 5.
+- An app config value above its env ceiling is a startup error, not clamped (AC5).
+- App versions and the configured minimum app version are semver (AC9).
+- In this issue, a leader disconnect ends the group with a "group ended" event (AC17).
+- Over-rate leader updates are rejected, not coalesced (AC22).
+- Added: max message size for position payload and group metadata (AC27).
+- Added: GitHub Actions CI workflow (AC28).
+- pnpm workspaces confirmed.
 
 ## User stories
 
@@ -38,14 +49,14 @@ Core principle carried into this issue: **the server syncs a position, not a pag
 - [ ] AC3. The sync server lives in its own workspace package and its tests run with Vitest.
 
 ### Client-app registry and configuration
-- [ ] AC4. The server loads client apps from a JSON config file (path settable by env variable). Each app entry has at least: API key, namespace, minimum app version, max group size, max leader update rate.
-- [ ] AC5. Env variables define ceilings for every client-set value in this issue (max group size, max leader update rate). An app value above its ceiling causes a startup error naming the app namespace and field (see Open question 3).
+- [ ] AC4. The server loads client apps from a JSON config file (path settable by env variable). Each app entry has at least: API key, namespace, minimum app version, max group size, max leader update rate, max message size.
+- [ ] AC5. Env variables define ceilings for every client-set value in this issue (max group size, max leader update rate, max message size). An app value above its ceiling causes a startup error naming the app namespace and field (values are never clamped).
 - [ ] AC6. The server exits non-zero at startup with a human-readable error identifying the problem when: the config file is missing or not valid JSON; a required field is missing or has the wrong type; two apps share an API key or a namespace; an env ceiling is not a positive number. The error never prints API key values.
 - [ ] AC7. A connection that presents an unknown or missing API key is rejected with a distinguishable error code and is not attached to any app.
 
 ### Handshake and version checks
 - [ ] AC8. On connect, the server declares its sync protocol version and the minimum client protocol version it accepts. A client declaring a protocol version below the minimum is rejected with a distinguishable "protocol too old" error that includes the server's minimum.
-- [ ] AC9. A client declaring an app version below its app's configured minimum app version is rejected with a distinguishable "app version too old" error that includes the minimum, so the client can prompt the user to update. App versions are compared as semver (see Open question 4).
+- [ ] AC9. A client declaring an app version below its app's configured minimum app version is rejected with a distinguishable "app version too old" error that includes the minimum, so the client can prompt the user to update. App versions and the configured minimum are semver and compared as semver; a configured minimum that is not valid semver is a startup error, and a client app version that is not valid semver is rejected.
 - [ ] AC10. No group action (create, join, update) is accepted before a successful handshake.
 
 ### Groups and position sync
@@ -55,7 +66,7 @@ Core principle carried into this issue: **the server syncs a position, not a pag
 - [ ] AC14. The server stores and relays the position payload and group metadata deep-equal (as JSON) to what the leader sent, including arbitrary extra fields; tests prove the server does not depend on or alter any field inside them.
 - [ ] AC15. Only the leader can send position updates; an update from a member is rejected with an error and not relayed.
 - [ ] AC16. Groups are in memory only: after a server restart no group exists (recovery is issue 3).
-- [ ] AC17. A disconnected member is removed from the group. In this issue, when the leader disconnects the group ends and members are notified with a "group ended" event; a group with no connections is removed from memory (see Open question 5; lifecycle and handoff are issue 5).
+- [ ] AC17. A disconnected member is removed from the group. In this issue, when the leader disconnects the group ends and members are notified with a "group ended" event; a group with no connections is removed from memory (temporary behavior; lifecycle, grace period and handoff are issue 5).
 
 ### Isolation
 - [ ] AC18. App isolation: a client of app B joining with a group ID belonging to app A gets the same "group not found" error as for a nonexistent ID, and never receives app A's payloads.
@@ -64,24 +75,27 @@ Core principle carried into this issue: **the server syncs a position, not a pag
 
 ### Limits
 - [ ] AC21. Max group size: the effective limit is the app's value (never above its env ceiling). A join that would exceed it is rejected with a distinguishable "group full" error; the leader counts toward the size.
-- [ ] AC22. Leader update rate limit: the effective limit is the app's value (never above its env ceiling). Updates beyond the limit are rejected with a distinguishable "rate limited" error to the leader and are not relayed; the group's stored position stays the last accepted one (see Open question 6).
+- [ ] AC22. Leader update rate limit: the effective limit is the app's value (never above its env ceiling). Updates beyond the limit are rejected with a distinguishable "rate limited" error to the leader and are not relayed; the group's stored position stays the last accepted one. Over-rate updates are never coalesced or queued.
+- [ ] AC27. Max message size: the position payload and the group metadata are each limited by a max message size, set per app (default 16 KB) and capped by an env ceiling. A create or update whose payload or metadata exceeds the effective limit is rejected with a distinguishable "message too large" error and is neither stored nor relayed; the group's stored state is unchanged.
 
 ### Operations, privacy and packaging
 - [ ] AC23. `GET /health` returns HTTP 200 with a JSON body that includes the server status and protocol version, and reveals no app, group or participant data.
 - [ ] AC24. Server logs never contain client IP addresses, display names, API key values, position payloads or group metadata contents. A test captures log output during connect/create/join/update/error flows and asserts this.
 - [ ] AC25. A `Dockerfile` builds the sync server image, and `docker compose up` from the repo root starts the server with the config file mounted, env ceilings set, and a healthcheck that uses `/health`.
 - [ ] AC26. A short README section documents how to run the server locally and with Docker Compose, the config file format, and the env variables with their defaults.
+- [ ] AC28. A GitHub Actions workflow runs on `push` and `pull_request` and executes `pnpm install --frozen-lockfile`, `pnpm lint`, `pnpm typecheck`, `pnpm test` and `pnpm build`; the workflow fails if any step fails. A `pnpm-lock.yaml` is committed.
 
-## Proposed defaults (to confirm at Gate 1)
+## Defaults (confirmed at Gate 1)
 
-| Setting | Proposed app default | Proposed env ceiling (default) |
+| Setting | App default | Env ceiling (default) |
 | --- | --- | --- |
 | Max group size (incl. leader) | 30 | 100 (`MAX_GROUP_SIZE_CEILING`) |
 | Max leader update rate | 5 updates/second | 10 updates/second (`MAX_LEADER_UPDATE_RATE_CEILING`) |
+| Max message size (payload, metadata; each) | 16 KB | env-set (`MAX_MESSAGE_SIZE_CEILING`); default value: see Open questions |
 
-Timer proposals for issue 5 (recorded only, not implemented here):
+Timer values for issue 5 (recorded only, not implemented here):
 
-| Timer | Proposed app default | Proposed env ceiling |
+| Timer | App default | Env ceiling |
 | --- | --- | --- |
 | Disconnection timeout / grace period | 30 s (matches 30 s lock tolerance) | 120 s |
 | Inactivity limit | 20 min | 60 min |
@@ -104,11 +118,6 @@ Env variable names are illustrative; the architect finalizes them.
 
 ## Open questions
 
-1. **Defaults and ceilings:** confirm the proposed group size (30 default / 100 ceiling) and leader update rate (5/s default / 10/s ceiling), and the timer proposals for issue 5.
-2. **Lock tolerance:** confirm 30 seconds as the success-criterion target (drives the issue 5 grace period default).
-3. **Over-ceiling app values:** fail at startup (proposed, AC5) or clamp to the ceiling with a startup warning?
-4. **App version format:** is semver the required format for client app versions and the configured minimum?
-5. **Leader disconnect in this issue:** end the group immediately and notify members (proposed, AC17), or keep the group until it empties? Either is replaced by issue 5.
-6. **Over-rate updates:** reject with an error (proposed, AC22), or silently coalesce and relay only the latest within each window?
-7. **Message size cap:** add a max payload/metadata size with an env ceiling (proposed 16 KB) in this issue as abuse protection?
-8. **CI:** should this issue add a GitHub Actions workflow running lint/typecheck/test/build, or is that deferred?
+Gate 1 resolved all earlier questions (see "Gate 1 decisions" above). One detail remains:
+
+1. **Max message size env ceiling default:** the app default is 16 KB; what should the env ceiling default to? Proposed: 64 KB. Until confirmed, the architect may treat 64 KB as the working value.
