@@ -5,15 +5,23 @@ import { MAX_RATE_LIMIT_RETRY_MS, PositionThrottle } from '../src/throttle.js';
 interface Sent {
   at: number;
   value: JsonValue;
+  generation: number;
 }
 
 let sent: Sent[];
 let start: number;
 
 function makeThrottle(limit = 5): PositionThrottle<JsonValue> {
-  return new PositionThrottle<JsonValue>(limit, (value) =>
-    sent.push({ at: Date.now() - start, value }),
+  return new PositionThrottle<JsonValue>(limit, (value, generation) =>
+    sent.push({ at: Date.now() - start, value, generation }),
   );
+}
+
+/** Generation of the newest send. */
+function lastGeneration(): number {
+  const last = sent.at(-1);
+  if (!last) throw new Error('nothing sent');
+  return last.generation;
 }
 
 /** Largest number of sends inside any window of `windowMs`. */
@@ -92,7 +100,7 @@ describe('RATE_LIMITED re-queue (AC23, M1, L5)', () => {
   it('puts the position back after retryAfterMs when nothing newer is pending', () => {
     const throttle = makeThrottle(5);
     throttle.submit('p');
-    throttle.rateLimited('p', 300);
+    throttle.rateLimited(lastGeneration(), 300);
     vi.advanceTimersByTime(299);
     expect(sent).toHaveLength(1);
     vi.advanceTimersByTime(1);
@@ -103,9 +111,45 @@ describe('RATE_LIMITED re-queue (AC23, M1, L5)', () => {
     const throttle = makeThrottle(1);
     throttle.submit('old');
     throttle.submit('new');
-    throttle.rateLimited('old', 10);
+    throttle.rateLimited(sent[0]!.generation, 10);
     vi.advanceTimersByTime(5_000);
     expect(sent.map((s) => s.value)).toEqual(['old', 'new']);
+  });
+
+  it('ignores a late RATE_LIMITED for an older position after a newer one was sent', () => {
+    const throttle = makeThrottle(5);
+    throttle.submit('A');
+    throttle.submit('B');
+    expect(sent.map((s) => s.value)).toEqual(['A', 'B']);
+    throttle.rateLimited(sent[0]!.generation, 10);
+    vi.advanceTimersByTime(5_000);
+    expect(sent.map((s) => s.value)).toEqual(['A', 'B']);
+    expect(vi.getTimerCount()).toBe(0);
+    // The latest one is still re-sent when it is the one rejected.
+    throttle.rateLimited(sent[1]!.generation, 10);
+    vi.advanceTimersByTime(10);
+    expect(sent.map((s) => s.value)).toEqual(['A', 'B', 'B']);
+  });
+
+  it('tells equal values apart: only the latest submission is re-sent', () => {
+    const throttle = makeThrottle(5);
+    throttle.submit('same');
+    const first = lastGeneration();
+    throttle.submit('same');
+    expect(lastGeneration()).not.toBe(first);
+    throttle.rateLimited(first, 10);
+    vi.advanceTimersByTime(5_000);
+    expect(sent).toHaveLength(2);
+  });
+
+  it('ignores RATE_LIMITED after cancel()', () => {
+    const throttle = makeThrottle(5);
+    throttle.submit('p');
+    throttle.cancel();
+    throttle.rateLimited(lastGeneration(), 10);
+    vi.advanceTimersByTime(5_000);
+    expect(sent).toHaveLength(1);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it.each([
@@ -115,7 +159,7 @@ describe('RATE_LIMITED re-queue (AC23, M1, L5)', () => {
   ])('clamps retryAfterMs %s to [slot, 10 s]', (_name, retryAfterMs, expected) => {
     const throttle = makeThrottle(5);
     throttle.submit('p');
-    throttle.rateLimited('p', retryAfterMs);
+    throttle.rateLimited(lastGeneration(), retryAfterMs);
     vi.advanceTimersByTime(Math.max(0, expected - 1));
     if (expected > 0) expect(sent).toHaveLength(1);
     vi.advanceTimersByTime(1);
@@ -125,7 +169,7 @@ describe('RATE_LIMITED re-queue (AC23, M1, L5)', () => {
   it('waits at least for the next window slot', () => {
     const throttle = makeThrottle(1);
     throttle.submit('p');
-    throttle.rateLimited('p', 1);
+    throttle.rateLimited(lastGeneration(), 1);
     vi.advanceTimersByTime(1_099);
     expect(sent).toHaveLength(1);
     vi.advanceTimersByTime(1);
@@ -136,7 +180,7 @@ describe('RATE_LIMITED re-queue (AC23, M1, L5)', () => {
     const throttle = makeThrottle(5);
     throttle.submit('p');
     for (let i = 0; i < 6; i += 1) {
-      throttle.rateLimited('p', 10);
+      throttle.rateLimited(lastGeneration(), 10);
       vi.advanceTimersByTime(20);
     }
     expect(sent).toHaveLength(4);

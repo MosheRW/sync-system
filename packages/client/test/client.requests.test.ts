@@ -399,6 +399,31 @@ describe('server rejections of position updates (AC23)', () => {
     client.close();
   });
 
+  it('a late RATE_LIMITED for an older position does not re-send it over a newer one', async () => {
+    const { client, socket } = await leader();
+    const errors: string[] = [];
+    client.on('error', (e) => errors.push(e.code));
+    client.updatePosition({ page: 'A' });
+    const first = socket.lastMessage();
+    client.updatePosition({ page: 'B' });
+    const second = socket.lastMessage();
+    expect(second.position).toEqual({ page: 'B' });
+    const sentBefore = socket.sent.length;
+    socket.receive({
+      type: 'error',
+      reqId: first.reqId,
+      code: 'RATE_LIMITED',
+      message: 'x',
+      details: { retryAfterMs: 200 },
+    });
+    // Well past retryAfterMs, still inside the 20 s ack timeout.
+    vi.advanceTimersByTime(5_000);
+    expect(errors).toEqual(['RATE_LIMITED']);
+    expect(socket.sent).toHaveLength(sentBefore);
+    expect(client.getSnapshot().group).toMatchObject({ position: { page: 'B' } });
+    client.close();
+  });
+
   it('MESSAGE_TOO_LARGE is a typed error event and the client stays connected', async () => {
     const { client, socket } = await leader();
     const errors: SyncClientError[] = [];

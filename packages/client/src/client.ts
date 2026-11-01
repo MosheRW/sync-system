@@ -506,12 +506,18 @@ export class SyncClient {
 
   #startGroup(group: Extract<GroupState, { status: 'active' }>): void {
     this.#throttle?.cancel();
-    this.#throttle =
-      group.role === 'leader' && this.#info
-        ? new PositionThrottle<string>(this.#info.limits.maxLeaderUpdatesPerSecond, (json) =>
-            this.#sendPosition(json),
-          )
-        : undefined;
+    this.#throttle = undefined;
+    if (group.role === 'leader' && this.#info) {
+      const throttle: PositionThrottle<string> = new PositionThrottle<string>(
+        this.#info.limits.maxLeaderUpdatesPerSecond,
+        (json, generation) =>
+          this.#sendPosition(json, (retryAfterMs) => {
+            // A rejection is re-queued only by the throttle that sent it.
+            if (this.#throttle === throttle) throttle.rateLimited(generation, retryAfterMs);
+          }),
+      );
+      this.#throttle = throttle;
+    }
     this.#update({ group });
   }
 
@@ -531,7 +537,7 @@ export class SyncClient {
   }
 
   /** Sends a position as the exact JSON text `updatePosition` checked. */
-  #sendPosition(json: string): void {
+  #sendPosition(json: string, onRateLimited: (retryAfterMs: number | undefined) => void): void {
     const reqId = this.#requests.nextId();
     this.#requests.add(reqId, {
       kind: 'position.update',
@@ -539,7 +545,7 @@ export class SyncClient {
       timeoutKind: 'ack',
       timeoutMs: 2 * this.#opts.requestTimeoutMs,
       resolve: () => {},
-      reject: (error) => this.#onPositionRejected(json, error),
+      reject: (error) => this.#onPositionRejected(error, onRateLimited),
     });
     // reqId is a client-made `c<n>`; JSON.stringify quotes it all the same.
     const text = `{"type":"position.update","reqId":${JSON.stringify(reqId)},"position":${json}}`;
@@ -547,7 +553,10 @@ export class SyncClient {
   }
 
   /** Server rejections of a position update come through the `error` event (AC23). */
-  #onPositionRejected(json: string, error: SyncClientError): void {
+  #onPositionRejected(
+    error: SyncClientError,
+    onRateLimited: (retryAfterMs: number | undefined) => void,
+  ): void {
     if (
       error.source === 'client' &&
       (error.code === 'CONNECTION_LOST' || error.code === 'CLOSED')
@@ -557,7 +566,7 @@ export class SyncClient {
     this.#emitError(error);
     if (error.code === 'RATE_LIMITED') {
       const details = error.details as { retryAfterMs?: number } | undefined;
-      this.#throttle?.rateLimited(json, details?.retryAfterMs);
+      onRateLimited(details?.retryAfterMs);
     }
   }
 

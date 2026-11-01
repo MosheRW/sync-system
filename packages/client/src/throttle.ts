@@ -11,25 +11,40 @@ export const MAX_REQUEUES = 3;
 
 const WINDOW_MS = THROTTLE_WINDOW_MS + THROTTLE_SAFETY_MS;
 
+/** One `submit()` call: its value and a generation unique to it. */
+interface Submission<T> {
+  readonly value: T;
+  readonly generation: number;
+}
+
 /**
  * Leader position throttle (Q2, AC21). At most `limit` sends in any window
  * of 1.1 s. Calls made faster than that are coalesced: only the latest
  * pending position is kept, and it is sent as soon as the window allows
  * (trailing send). At most one timer runs at a time.
+ *
+ * Every send carries the generation of the `submit()` it came from; a
+ * re-send after RATE_LIMITED keeps it. `rateLimited` takes that generation,
+ * so a late rejection of an older position is never re-sent over a newer
+ * one, even when the newer one was already sent.
  */
 export class PositionThrottle<T> {
   readonly #limit: number;
-  readonly #send: (position: T) => void;
+  readonly #send: (position: T, generation: number) => void;
   /** Send times, a ring buffer of at most `limit` entries (M1). */
   readonly #times: number[] = [];
   /** Index of the oldest entry once the ring is full. */
   #oldest = 0;
-  #pending: { value: T } | undefined;
+  #generation = 0;
+  /** The latest submission, kept after it is sent. */
+  #latest: Submission<T> | undefined;
+  #pending: Submission<T> | undefined;
   #timer: TimerHandle | undefined;
-  #requeued: { value: T; count: number } | undefined;
+  /** How often the latest submission was put back (L5). */
+  #requeues = 0;
 
   /** `limit` must already be checked against the client bounds (positive, at most 100). */
-  constructor(limit: number, send: (position: T) => void) {
+  constructor(limit: number, send: (position: T, generation: number) => void) {
     this.#limit = limit;
     this.#send = send;
   }
@@ -41,27 +56,28 @@ export class PositionThrottle<T> {
 
   /** Stores `position` as the latest and sends it now or when the window allows. */
   submit(position: T): void {
-    this.#pending = { value: position };
-    this.#requeued = undefined;
+    this.#generation += 1;
+    this.#latest = { value: position, generation: this.#generation };
+    this.#pending = this.#latest;
+    this.#requeues = 0;
     this.#flush();
   }
 
   /**
-   * The server answered RATE_LIMITED for `position` (AC23). If nothing newer
-   * is pending, put it back and send it after `retryAfterMs`, clamped to
-   * `[next window slot, 10 s]`; a missing value means the next slot (M1, L1).
-   * The same position is put back at most 3 times (L5).
+   * The server answered RATE_LIMITED for the send of `generation` (AC23).
+   * Only the latest submission is put back, and only if it is not already
+   * waiting; it is sent after `retryAfterMs`, clamped to `[next window slot,
+   * 10 s]`; a missing value means the next slot (M1, L1). The same
+   * submission is put back at most 3 times (L5).
    */
-  rateLimited(position: T, retryAfterMs: number | undefined): void {
+  rateLimited(generation: number, retryAfterMs: number | undefined): void {
+    const latest = this.#latest;
+    if (latest === undefined || latest.generation !== generation) return;
     if (this.#pending !== undefined) return;
-    if (this.#requeued?.value === position) {
-      this.#requeued.count += 1;
-    } else {
-      this.#requeued = { value: position, count: 1 };
-    }
-    if (this.#requeued.count > MAX_REQUEUES) return;
+    this.#requeues += 1;
+    if (this.#requeues > MAX_REQUEUES) return;
 
-    this.#pending = { value: position };
+    this.#pending = latest;
     const slot = this.#waitMs();
     const delay =
       retryAfterMs === undefined
@@ -75,7 +91,8 @@ export class PositionThrottle<T> {
     clearTimer(this.#timer);
     this.#timer = undefined;
     this.#pending = undefined;
-    this.#requeued = undefined;
+    this.#latest = undefined;
+    this.#requeues = 0;
   }
 
   /** 0 if a send is allowed now, else the ms until the oldest send leaves the window. */
@@ -92,10 +109,10 @@ export class PositionThrottle<T> {
       this.#schedule(wait);
       return;
     }
-    const { value } = this.#pending;
+    const { value, generation } = this.#pending;
     this.#pending = undefined;
     this.#record(now());
-    this.#send(value);
+    this.#send(value, generation);
   }
 
   #schedule(delay: number): void {
