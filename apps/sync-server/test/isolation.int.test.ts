@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { InMemoryGroupStore } from '../src/groups/in-memory-group-store.js';
+import { createGroupWithMembers } from './helpers/groups.js';
 import type { TestClient } from './helpers/test-client.js';
 import { KEY_A, KEY_B, type TestServer, startTestServer } from './helpers/test-server.js';
 
@@ -46,6 +47,39 @@ describe('app isolation (AC18)', () => {
     expect(unknown).toEqual(crossApp);
     expect(malformed).toEqual(crossApp);
     expect(JSON.stringify(crossApp)).toBe(JSON.stringify(unknown));
+  });
+});
+
+describe('no cross-app payloads (AC18)', () => {
+  it("never delivers app A's updates to an app B client that tried its group ID", async () => {
+    const groupA = await createGroupWithMembers(ts, 1, { apiKey: KEY_A });
+    const clientB = await ts.connectReady(KEY_B);
+    await joinError(clientB, groupA.groupId);
+
+    groupA.leader.send({ type: 'position.update', position: { secret: 'page' } });
+    await groupA.leader.next('position.ack');
+    await groupA.members[0]!.next('position.updated');
+    await clientB.expectNoMessage();
+  });
+});
+
+describe('group isolation (AC19)', () => {
+  it('keeps updates and events of group X away from group Y and from other apps', async () => {
+    const x = await createGroupWithMembers(ts, 2, { apiKey: KEY_A });
+    const y = await createGroupWithMembers(ts, 2, { apiKey: KEY_A });
+    const z = await createGroupWithMembers(ts, 1, { apiKey: KEY_B });
+
+    x.leader.send({ type: 'position.update', position: { group: 'x' } });
+    await x.leader.next('position.ack');
+    for (const member of x.members) {
+      expect(await member.next('position.updated')).toMatchObject({ groupId: x.groupId });
+    }
+
+    // Leader of X disconnects: events must stay inside X as well.
+    await x.leader.close();
+    for (const client of [y.leader, ...y.members, z.leader, ...z.members]) {
+      await client.expectNoMessage(50);
+    }
   });
 });
 

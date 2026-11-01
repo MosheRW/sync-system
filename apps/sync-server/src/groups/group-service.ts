@@ -102,8 +102,30 @@ export class GroupService implements GroupActions {
       : { ...base, hasPosition: false };
   }
 
-  update(_session: Session, _message: PositionUpdateMessage): Promise<ServerMessage> {
-    return Promise.reject(new Error('position updates are not implemented yet'));
+  async update(session: Session, message: PositionUpdateMessage): Promise<ServerMessage> {
+    const { groupId } = session;
+    if (groupId === undefined) return errorMessage(ErrorCode.NOT_IN_GROUP);
+    if (session.role !== 'leader') return errorMessage(ErrorCode.NOT_LEADER);
+
+    const namespace = session.app.namespace;
+    const stored = await this.deps.store.setPosition(namespace, groupId, message.position);
+    if (!stored) return errorMessage(ErrorCode.NOT_IN_GROUP);
+
+    const record = await this.deps.store.get(namespace, groupId);
+    if (record) {
+      // Members only: the leader gets position.ack, not the broadcast (AC13).
+      const members = record.participantIds.filter((id) => id !== record.leaderId);
+      this.deps.notifier.broadcast(members, {
+        type: 'position.updated',
+        groupId,
+        position: message.position,
+      });
+    }
+    this.deps.logger.debug(
+      { event: 'position_updated', namespace, groupRef: groupRef(groupId) },
+      'position updated',
+    );
+    return { type: 'position.ack' };
   }
 
   async disconnect(session: Session): Promise<void> {

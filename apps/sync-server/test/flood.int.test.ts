@@ -56,6 +56,30 @@ describe('inbound message limit (H3)', () => {
     expect((await client.closed()).code).toBe(4008);
   });
 
+  it('counts NOT_LEADER updates and random joins', async () => {
+    const clock = new TestClock();
+    ts = await startTestServer({ env: FLOOD_ENV, now: clock.now });
+    const leader = await ts.connectReady();
+    leader.send({ type: 'group.create', metadata: {} });
+    const { groupId } = await leader.next('group.created');
+
+    const member = await ts.connectReady();
+    member.send({ type: 'group.join', groupId }); // tokens used: hello, join
+    await member.next('group.joined');
+    for (let i = 0; i < 3; i++) member.send({ type: 'position.update', position: i });
+    await drainErrors(member, 3, 'NOT_LEADER');
+    for (let i = 0; i < 5; i++) member.send({ type: 'position.update', position: i });
+    expect(await member.next('error')).toMatchObject({ code: 'TOO_MANY_MESSAGES' });
+    expect((await member.closed()).code).toBe(4008);
+
+    const joiner = await ts.connectReady();
+    for (let i = 0; i < 4; i++) joiner.send({ type: 'group.join', groupId: 'R'.repeat(43) });
+    await drainErrors(joiner, 4, 'GROUP_NOT_FOUND');
+    for (let i = 0; i < 5; i++) joiner.send({ type: 'group.join', groupId: 'R'.repeat(43) });
+    expect(await joiner.next('error')).toMatchObject({ code: 'TOO_MANY_MESSAGES' });
+    expect((await joiner.closed()).code).toBe(4008);
+  });
+
   it('refills over time, so a client under the rate stays connected', async () => {
     const clock = new TestClock();
     ts = await startTestServer({ env: FLOOD_ENV, now: clock.now });
