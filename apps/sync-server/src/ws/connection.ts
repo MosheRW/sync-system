@@ -16,9 +16,11 @@ import type { AppRegistry } from '../apps/app-registry.js';
 import { newParticipantId } from '../groups/ids.js';
 import type { GroupActions, Session } from '../groups/session.js';
 import { type Logger, participantRef, safeErr } from '../logging/logger.js';
+import { MAX_QUEUED_MESSAGES } from '../limits/constants.js';
 import type { ConnectionCounter } from './connection-counter.js';
 import { errorMessage } from './error-messages.js';
 import { checkHello } from './handshake.js';
+import { InboundLimiter } from './inbound-limiter.js';
 import { send, sendSerialized } from './send.js';
 
 export interface ConnectionDeps {
@@ -26,6 +28,9 @@ export interface ConnectionDeps {
   counter: ConnectionCounter;
   registry: AppRegistry;
   handshakeTimeoutMs: number;
+  /** Per-connection inbound limiter settings (H3). */
+  inbound: { ratePerSecond: number; burst: number };
+  now: () => number;
   /** Group operations; wired in by the server. */
   groups?: GroupActions;
   /** Called once when the socket has closed. */
@@ -62,12 +67,16 @@ export class Connection {
   private closed = false;
   private tail: Promise<void> = Promise.resolve();
   private handshakeTimer: NodeJS.Timeout | undefined;
+  private readonly limiter: InboundLimiter;
+  private queueLength = 0;
+  private flooded = false;
 
   constructor(
     readonly ws: WebSocket,
     private readonly deps: ConnectionDeps,
   ) {
     deps.counter.opened();
+    this.limiter = new InboundLimiter(deps.inbound.ratePerSecond, deps.inbound.burst, deps.now);
 
     // Without an 'error' listener, a protocol violation from the peer would
     // throw from the EventEmitter and crash the process (H4).
@@ -93,8 +102,33 @@ export class Connection {
   }
 
   private onMessage(data: RawData, isBinary: boolean): void {
-    if (this.closed || this.state === 'closing') return;
-    this.enqueue(() => this.process(data, isBinary));
+    if (this.closed || this.flooded || this.state === 'closing') return;
+    // A token is taken for every frame before any parsing (H3).
+    if (!this.limiter.take() || this.queueLength >= MAX_QUEUED_MESSAGES) {
+      this.closeFlooded();
+      return;
+    }
+    this.queueLength += 1;
+    this.enqueue(async () => {
+      try {
+        await this.process(data, isBinary);
+      } finally {
+        this.queueLength -= 1;
+      }
+    });
+  }
+
+  /** Sends TOO_MANY_MESSAGES once, closes with 4008, ignores the rest (H3). */
+  private closeFlooded(): void {
+    this.flooded = true;
+    this.state = 'closing';
+    clearTimeout(this.handshakeTimer);
+    this.deps.logger.warn(
+      { event: 'flood_closed', namespace: this.session?.app.namespace },
+      'inbound message limit exceeded',
+    );
+    send(this.ws, errorMessage(ErrorCode.TOO_MANY_MESSAGES));
+    this.ws.close(CloseCode.POLICY_VIOLATION, ErrorCode.TOO_MANY_MESSAGES);
   }
 
   private enqueue(task: () => Promise<void>): void {

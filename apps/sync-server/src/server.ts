@@ -46,6 +46,7 @@ const SHUTDOWN_GRACE_MS = 1_000;
 export function createSyncServer(options: SyncServerOptions): SyncServer {
   const { env, logger, registry } = options;
   const handshakeTimeoutMs = options.handshakeTimeoutMs ?? HANDSHAKE_TIMEOUT_MS;
+  const now = options.now ?? Date.now;
 
   const httpServer = createServer(handleHttpRequest);
   // Slowloris protection and a hard socket backstop above the WS cap (H1).
@@ -88,6 +89,8 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
           counter,
           registry,
           handshakeTimeoutMs,
+          inbound: { ratePerSecond: env.maxInboundMessagesPerSecond, burst: env.maxInboundBurst },
+          now,
           onClosed: (closed) => connections.delete(closed),
         });
         connections.add(connection);

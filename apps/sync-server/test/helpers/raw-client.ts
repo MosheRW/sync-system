@@ -290,6 +290,11 @@ export class RawClient {
         }
       } else if (frame.opcode === Opcode.CLOSE) {
         this.closeCode = frame.payload.length >= 2 ? frame.payload.readUInt16BE(0) : 1005;
+        // Complete the close handshake like a normal client would.
+        if (this.socket.writable) {
+          this.writeFrame({ opcode: Opcode.CLOSE, payload: frame.payload.subarray(0, 2) });
+          this.socket.end();
+        }
       } else if (frame.opcode === Opcode.PING && this.autoPong) {
         this.writeFrame({ opcode: Opcode.PONG, payload: frame.payload });
       }
