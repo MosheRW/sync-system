@@ -7,6 +7,8 @@ import {
   MAX_APP_VERSION_INPUT_LENGTH,
   MAX_GROUP_ID_INPUT_LENGTH,
   MAX_REQ_ID_LENGTH,
+  MAX_TOKEN_LENGTH,
+  NAMESPACE_PATTERN,
 } from './limits.js';
 import type { ClientMessage, ServerMessage } from './messages.js';
 
@@ -76,7 +78,10 @@ const schemas = buildJitless(() => {
     maxGroupSize: z.number().int().positive(),
     maxLeaderUpdatesPerSecond: z.number().int().positive(),
     maxMessageBytes: z.number().int().positive(),
+    maxSessionMinutes: z.number().int().positive(),
   });
+
+  const token = z.string().min(1).max(MAX_TOKEN_LENGTH);
 
   const groupJoinedBase = {
     type: z.literal('group.joined'),
@@ -85,6 +90,8 @@ const schemas = buildJitless(() => {
     participantId: z.string(),
     role: z.literal('member'),
     metadata: opaqueObject,
+    token,
+    leaderOnline: z.boolean(),
   };
 
   const serverMessageSchema = z.union([
@@ -97,6 +104,7 @@ const schemas = buildJitless(() => {
       type: z.literal('hello.ok'),
       reqId,
       participantId: z.string(),
+      namespace: z.string().regex(NAMESPACE_PATTERN),
       limits: appLimitsSchema,
     }),
     z.object({
@@ -105,6 +113,7 @@ const schemas = buildJitless(() => {
       groupId: z.string(),
       participantId: z.string(),
       role: z.literal('leader'),
+      token,
     }),
     z.object({ ...groupJoinedBase, hasPosition: z.literal(true), position: opaqueValue }),
     z.object({ ...groupJoinedBase, hasPosition: z.literal(false) }),

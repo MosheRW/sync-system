@@ -56,6 +56,7 @@ describe('close() (AC28)', () => {
     const creating = client.createGroup({});
     socket.receive({
       type: 'group.created',
+      token: 'h.p.s',
       reqId: socket.lastMessage().reqId,
       groupId: GROUP_ID,
       participantId: PARTICIPANT_ID,
@@ -97,6 +98,7 @@ describe('close() from a listener inside an internal flow (AC28)', () => {
     const creating = client.createGroup({});
     socket.receive({
       type: 'group.created',
+      token: 'h.p.s',
       reqId: socket.lastMessage().reqId,
       groupId: GROUP_ID,
       participantId: PARTICIPANT_ID,
@@ -111,6 +113,8 @@ describe('close() from a listener inside an internal flow (AC28)', () => {
     const joining = client.joinGroup(GROUP_ID);
     socket.receive({
       type: 'group.joined',
+      token: 'h.p.s',
+      leaderOnline: true,
       reqId: socket.lastMessage().reqId,
       groupId: GROUP_ID,
       participantId: PARTICIPANT_ID,
@@ -395,6 +399,8 @@ describe('no unhandled rejections inside the client (L6)', () => {
       const joining = client.joinGroup(GROUP_ID).catch(() => undefined);
       FakeWebSocket.last.receive({
         type: 'group.joined',
+        token: 'h.p.s',
+        leaderOnline: true,
         reqId: FakeWebSocket.last.lastMessage().reqId,
         groupId: GROUP_ID,
         participantId: PARTICIPANT_ID,

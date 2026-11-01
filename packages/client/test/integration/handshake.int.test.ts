@@ -42,6 +42,7 @@ describe('handshake against the real server (AC8, AC9, AC30)', () => {
       maxGroupSize: 7,
       maxLeaderUpdatesPerSecond: 3,
       maxMessageBytes: 2048,
+      maxSessionMinutes: 180,
     });
     expect(client.getState()).toMatchObject({
       status: 'connected',

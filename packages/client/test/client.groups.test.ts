@@ -33,6 +33,7 @@ describe('createGroup (AC15)', () => {
     expect(sent).toEqual({ type: 'group.create', reqId: 'c2', metadata, position: { page: 1 } });
     socket.receive({
       type: 'group.created',
+      token: 'h.p.s',
       reqId: 'c2',
       groupId: GROUP_ID,
       participantId: PARTICIPANT_ID,
@@ -101,6 +102,8 @@ describe('joinGroup (AC16)', () => {
     const metadata = { book: 'b1' };
     socket.receive({
       type: 'group.joined',
+      token: 'h.p.s',
+      leaderOnline: true,
       reqId: 'c2',
       groupId: GROUP_ID,
       participantId: PARTICIPANT_ID,
@@ -133,6 +136,8 @@ describe('joinGroup (AC16)', () => {
     const joining = client.joinGroup(GROUP_ID);
     socket.receive({
       type: 'group.joined',
+      token: 'h.p.s',
+      leaderOnline: true,
       reqId: 'c2',
       groupId: GROUP_ID,
       participantId: PARTICIPANT_ID,
@@ -184,6 +189,8 @@ describe('group events (AC19, AC20)', () => {
     const joining = client.joinGroup(GROUP_ID);
     socket.receive({
       type: 'group.joined',
+      token: 'h.p.s',
+      leaderOnline: true,
       reqId: 'c2',
       groupId: GROUP_ID,
       participantId: PARTICIPANT_ID,

@@ -275,10 +275,13 @@ export class Connection implements HeartbeatTarget {
       type: 'hello.ok',
       ...(message.reqId !== undefined ? { reqId: message.reqId } : {}),
       participantId: this.connectionId,
+      // Not secret: clients key token storage by it (#5 AC33).
+      namespace: app.namespace,
       limits: {
         maxGroupSize: app.maxGroupSize,
         maxLeaderUpdatesPerSecond: app.maxLeaderUpdatesPerSecond,
         maxMessageBytes: app.maxMessageBytes,
+        maxSessionMinutes: app.maxSessionMinutes,
       },
     });
   }

@@ -689,8 +689,14 @@ export class SyncClient {
     }
     clearTimer(this.#attemptTimer);
     this.#attemptTimer = undefined;
-    const { maxGroupSize, maxLeaderUpdatesPerSecond, maxMessageBytes } = message.limits;
-    const limits = Object.freeze({ maxGroupSize, maxLeaderUpdatesPerSecond, maxMessageBytes });
+    const { maxGroupSize, maxLeaderUpdatesPerSecond, maxMessageBytes, maxSessionMinutes } =
+      message.limits;
+    const limits = Object.freeze({
+      maxGroupSize,
+      maxLeaderUpdatesPerSecond,
+      maxMessageBytes,
+      maxSessionMinutes,
+    });
     const info: ConnectedInfo = Object.freeze({ participantId: message.participantId, limits });
     this.#info = info;
     this.#phase = 'ready';

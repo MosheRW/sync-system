@@ -7,7 +7,12 @@ import {
   indicatorOf,
 } from '../src/state.js';
 
-const LIMITS = { maxGroupSize: 30, maxLeaderUpdatesPerSecond: 5, maxMessageBytes: 4096 };
+const LIMITS = {
+  maxGroupSize: 30,
+  maxLeaderUpdatesPerSecond: 5,
+  maxMessageBytes: 4096,
+  maxSessionMinutes: 180,
+};
 
 const connections: Record<string, ConnectionState> = {
   idle: { status: 'idle' },

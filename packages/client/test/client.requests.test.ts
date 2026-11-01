@@ -39,6 +39,7 @@ async function leader(limits = LIMITS): Promise<{ client: SyncClient; socket: Fa
   const reqId = socket.lastMessage().reqId;
   socket.receive({
     type: 'group.created',
+    token: 'h.p.s',
     reqId,
     groupId: GROUP_ID,
     participantId: PARTICIPANT_ID,
@@ -208,6 +209,7 @@ describe('one group request in flight (L5, R2-L4)', () => {
     socket.receive({ type: 'welcome', protocolVersion: 1, minProtocolVersion: 1 });
     socket.receive({
       type: 'hello.ok',
+      namespace: 'app-a',
       reqId: socket.lastMessage().reqId,
       participantId: 'p2',
       limits: LIMITS,
@@ -231,6 +233,8 @@ describe('updatePosition rules (AC18)', () => {
     const joining = client.joinGroup(GROUP_ID);
     socket.receive({
       type: 'group.joined',
+      token: 'h.p.s',
+      leaderOnline: true,
       reqId: 'c2',
       groupId: GROUP_ID,
       participantId: PARTICIPANT_ID,

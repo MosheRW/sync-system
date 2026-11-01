@@ -76,6 +76,7 @@ describe('limits (M1)', () => {
         maxGroupSize: 30,
         maxLeaderUpdatesPerSecond: 5,
         maxMessageBytes: 4096,
+        maxSessionMinutes: 180,
       }),
     ).toBeUndefined();
     expect(findOutOfBoundsLimit({ ...CLIENT_LIMIT_BOUNDS })).toBeUndefined();
@@ -88,15 +89,27 @@ describe('limits (M1)', () => {
     ['maxLeaderUpdatesPerSecond', 0],
     ['maxLeaderUpdatesPerSecond', 1.5],
     ['maxGroupSize', 10_001],
+    ['maxSessionMinutes', 10_081],
+    ['maxSessionMinutes', 0],
   ] as const)('names %s = %d as out of bounds', (key, value) => {
-    const limits = { maxGroupSize: 30, maxLeaderUpdatesPerSecond: 5, maxMessageBytes: 4096 };
+    const limits = {
+      maxGroupSize: 30,
+      maxLeaderUpdatesPerSecond: 5,
+      maxMessageBytes: 4096,
+      maxSessionMinutes: 180,
+    };
     expect(findOutOfBoundsLimit({ ...limits, [key]: value })).toBe(key);
   });
 
   it('sizes the inbound guard from the limits', () => {
     expect(maxInboundChars(undefined)).toBe(PRE_HANDSHAKE_MAX_CHARS);
     expect(
-      maxInboundChars({ maxGroupSize: 2, maxLeaderUpdatesPerSecond: 1, maxMessageBytes: 1000 }),
+      maxInboundChars({
+        maxGroupSize: 2,
+        maxLeaderUpdatesPerSecond: 1,
+        maxMessageBytes: 1000,
+        maxSessionMinutes: 180,
+      }),
     ).toBe(2000 + 8192);
   });
 });

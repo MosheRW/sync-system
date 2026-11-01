@@ -94,6 +94,7 @@ describe('handshake messages after connected (L8)', () => {
     socket.receive({ type: 'welcome', protocolVersion: 1, minProtocolVersion: 1 });
     socket.receive({
       type: 'hello.ok',
+      namespace: 'app-a',
       participantId: 'other',
       limits: { ...LIMITS, maxMessageBytes: 100_000 },
     });

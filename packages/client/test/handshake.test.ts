@@ -46,15 +46,25 @@ describe('checkWelcome (AC12, Q5)', () => {
 });
 
 describe('checkHelloOk (M1, R2-L2)', () => {
-  const base = { type: 'hello.ok' as const, participantId: 'p' };
+  const base = { type: 'hello.ok' as const, participantId: 'p', namespace: 'app-a' };
 
   it('accepts limits in bounds', () => {
-    const limits = { maxGroupSize: 30, maxLeaderUpdatesPerSecond: 5, maxMessageBytes: 4096 };
+    const limits = {
+      maxGroupSize: 30,
+      maxLeaderUpdatesPerSecond: 5,
+      maxSessionMinutes: 180,
+      maxMessageBytes: 4096,
+    };
     expect(checkHelloOk({ ...base, limits }, welcome(1, 1))).toBeUndefined();
   });
 
   it('is fatal SERVER_UNSUPPORTED with the limit name when out of bounds', () => {
-    const limits = { maxGroupSize: 30, maxLeaderUpdatesPerSecond: 5, maxMessageBytes: 2 ** 53 };
+    const limits = {
+      maxGroupSize: 30,
+      maxLeaderUpdatesPerSecond: 5,
+      maxSessionMinutes: 180,
+      maxMessageBytes: 2 ** 53,
+    };
     const result = checkHelloOk({ ...base, limits }, welcome(1, 1));
     expect(result?.fatal).toBe(true);
     expect(result?.details.limit).toBe('maxMessageBytes');

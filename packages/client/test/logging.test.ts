@@ -30,6 +30,7 @@ async function fullFlow(extra: Partial<SyncClientOptions> = {}): Promise<SyncCli
   const creating = client.createGroup({ secret: MARKER }, { page: MARKER });
   socket.receive({
     type: 'group.created',
+    token: 'h.p.s',
     reqId: socket.lastMessage().reqId,
     groupId: GROUP_ID,
     participantId: PARTICIPANT_ID,

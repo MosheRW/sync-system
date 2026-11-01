@@ -43,7 +43,13 @@ describe('handshake', () => {
       type: 'hello.ok',
       reqId: 'h1',
       participantId: expect.stringMatching(/^[0-9a-f-]{36}$/) as string,
-      limits: { maxGroupSize: 30, maxLeaderUpdatesPerSecond: 5, maxMessageBytes: 4096 },
+      namespace: 'app-a',
+      limits: {
+        maxGroupSize: 30,
+        maxLeaderUpdatesPerSecond: 5,
+        maxMessageBytes: 4096,
+        maxSessionMinutes: 180,
+      },
     });
   });
 

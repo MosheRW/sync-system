@@ -9,6 +9,7 @@ export const CLIENT_LIMIT_BOUNDS: Readonly<AppLimits> = Object.freeze({
   maxGroupSize: 10_000,
   maxLeaderUpdatesPerSecond: 100,
   maxMessageBytes: 1_048_576,
+  maxSessionMinutes: 10_080,
 });
 
 /** Longest inbound frame (UTF-16 units) before `hello.ok`. */
@@ -17,7 +18,12 @@ export const PRE_HANDSHAKE_MAX_CHARS = 8_192;
 /** Room for the envelope around metadata and position in one frame. */
 export const FRAME_OVERHEAD_CHARS = 8_192;
 
-const LIMIT_KEYS = ['maxGroupSize', 'maxLeaderUpdatesPerSecond', 'maxMessageBytes'] as const;
+const LIMIT_KEYS = [
+  'maxGroupSize',
+  'maxLeaderUpdatesPerSecond',
+  'maxMessageBytes',
+  'maxSessionMinutes',
+] as const;
 
 /** The first limit that is not a positive safe integer within the client bounds, if any. */
 export function findOutOfBoundsLimit(limits: AppLimits): keyof AppLimits | undefined {

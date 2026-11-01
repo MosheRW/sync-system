@@ -1,6 +1,7 @@
 import { type Server, createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { CloseCode } from '@sync-system/protocol';
+import { randomBytes } from 'node:crypto';
 import { type ServerOptions, WebSocketServer } from 'ws';
 import type { AppRegistry } from './apps/app-registry.js';
 import { GroupService } from './groups/group-service.js';
@@ -21,6 +22,8 @@ import {
 } from './limits/constants.js';
 import { SlidingWindowRateLimiter } from './limits/rate-limiter.js';
 import { type Scheduler, realScheduler } from './time/scheduler.js';
+import { TokenKeyring } from './tokens/token-keys.js';
+import { TokenService } from './tokens/token-service.js';
 import type { Logger } from './logging/logger.js';
 import { Connection } from './ws/connection.js';
 import { ConnectionCounter, type ConnectionStats } from './ws/connection-counter.js';
@@ -107,12 +110,15 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
   });
 
   const store = options.store ?? new InMemoryGroupStore();
+  const tokenSecrets = options.tokenSecrets ?? { current: randomBytes(32) };
+  const tokens = new TokenService(new TokenKeyring(tokenSecrets));
   const groups = new GroupService({
     store,
     notifier: new LocalNotifier(),
     logger,
     now,
     rateLimiter: new SlidingWindowRateLimiter(now),
+    tokens,
   });
   const counter = new ConnectionCounter();
   const connections = new Set<Connection>();

@@ -25,6 +25,8 @@ async function member(
   const joining = client.joinGroup(GROUP_ID);
   socket.receive({
     type: 'group.joined',
+    token: 'h.p.s',
+    leaderOnline: true,
     reqId: socket.lastMessage().reqId,
     groupId: GROUP_ID,
     participantId: PARTICIPANT_ID,
@@ -72,6 +74,8 @@ describe('member rejoin after reconnect (Q1, AC29)', () => {
     expect(join).toMatchObject({ type: 'group.join', groupId: GROUP_ID });
     next.receive({
       type: 'group.joined',
+      token: 'h.p.s',
+      leaderOnline: true,
       reqId: join.reqId,
       groupId: GROUP_ID,
       participantId: 'participant-2',

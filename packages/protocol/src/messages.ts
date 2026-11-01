@@ -61,12 +61,16 @@ export interface AppLimits {
   maxGroupSize: number;
   maxLeaderUpdatesPerSecond: number;
   maxMessageBytes: number;
+  /** Max session time from group creation; clients prune stored tokens by it (#5 M6). */
+  maxSessionMinutes: number;
 }
 
 export interface HelloOkMessage {
   type: 'hello.ok';
   reqId?: string;
   participantId: string;
+  /** The app's namespace (not secret); clients key token storage by it (#5 AC33). */
+  namespace: string;
   limits: AppLimits;
 }
 
@@ -76,6 +80,8 @@ export interface GroupCreatedMessage {
   groupId: string;
   participantId: string;
   role: 'leader';
+  /** The leader's participant token for this group (#5 AC5). */
+  token: string;
 }
 
 interface GroupJoinedBase {
@@ -85,6 +91,10 @@ interface GroupJoinedBase {
   participantId: string;
   role: 'member';
   metadata: JsonObject;
+  /** The member's participant token for this group (#5 AC5). */
+  token: string;
+  /** False while the leader is offline (frozen group, #5 AC18). */
+  leaderOnline: boolean;
 }
 
 /** `hasPosition: false` (and no `position` field) is the explicit "no position yet". */

@@ -29,6 +29,7 @@ describe('group create (AC11)', () => {
       groupId: expect.stringMatching(GROUP_ID_PATTERN) as string,
       participantId: expect.any(String) as string,
       role: 'leader',
+      token: expect.any(String) as string,
     });
     expect(store.size).toBe(1);
   });
@@ -76,6 +77,8 @@ describe('group join (AC12)', () => {
       participantId: expect.any(String) as string,
       role: 'member',
       metadata: METADATA,
+      token: expect.any(String) as string,
+      leaderOnline: true,
       hasPosition: true,
       position: { page: 3 },
     });

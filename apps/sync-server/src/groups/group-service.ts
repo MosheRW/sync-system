@@ -9,6 +9,7 @@ import {
 import { jsonByteLength } from '../limits/json-size.js';
 import type { SlidingWindowRateLimiter } from '../limits/rate-limiter.js';
 import { type Logger, groupRef, participantRef } from '../logging/logger.js';
+import type { TokenService } from '../tokens/token-service.js';
 import { errorMessage } from '../ws/error-messages.js';
 import type { GroupRecord, GroupStore } from './group-store.js';
 import { newGroupId, newParticipantId } from './ids.js';
@@ -23,6 +24,8 @@ export interface GroupServiceDeps {
   now: () => number;
   /** Leader update limiter, keyed by group (AC22). */
   rateLimiter: SlidingWindowRateLimiter;
+  /** Issues participant tokens (#5 AC5). */
+  tokens: TokenService;
 }
 
 /**
@@ -84,6 +87,7 @@ export class GroupService implements GroupActions {
     if (tooLarge) return tooLarge;
 
     const participantId = newParticipantId();
+    const now = this.deps.now();
     const record: GroupRecord = {
       id: newGroupId(),
       appNamespace: app.namespace,
@@ -92,7 +96,7 @@ export class GroupService implements GroupActions {
         message.position === undefined ? { has: false } : { has: true, payload: message.position },
       leaderId: participantId,
       participantIds: [participantId],
-      createdAt: this.deps.now(),
+      createdAt: now,
     };
     await this.deps.store.create(record);
     this.attach(session, { groupId: record.id, participantId, role: 'leader' });
@@ -100,7 +104,16 @@ export class GroupService implements GroupActions {
       { event: 'group_created', namespace: app.namespace, groupRef: groupRef(record.id) },
       'group created',
     );
-    return { type: 'group.created', groupId: record.id, participantId, role: 'leader' };
+    const token = this.deps.tokens.issue({
+      namespace: app.namespace,
+      groupId: record.id,
+      participantId,
+      role: 'leader',
+      groupCreatedAt: now,
+      lastActivityAt: now,
+      now,
+    });
+    return { type: 'group.created', groupId: record.id, participantId, role: 'leader', token };
   }
 
   async join(session: Session, message: GroupJoinMessage): Promise<ServerMessage> {
@@ -149,12 +162,23 @@ export class GroupService implements GroupActions {
       },
       'group joined',
     );
+    const token = this.deps.tokens.issue({
+      namespace: app.namespace,
+      groupId: record.id,
+      participantId,
+      role: 'member',
+      groupCreatedAt: record.createdAt,
+      lastActivityAt: record.createdAt,
+      now: this.deps.now(),
+    });
     const base = {
       type: 'group.joined' as const,
       groupId: record.id,
       participantId,
       role: 'member' as const,
       metadata: record.metadata,
+      token,
+      leaderOnline: true,
     };
     return record.position.has
       ? { ...base, hasPosition: true, position: record.position.payload }

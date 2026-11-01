@@ -103,6 +103,7 @@ describe('automatic reconnect (AC26)', () => {
     socket.receive({ type: 'welcome', protocolVersion: 1, minProtocolVersion: 1 });
     socket.receive({
       type: 'hello.ok',
+      namespace: 'app-a',
       reqId: 'c1',
       participantId: 'p',
       limits: { ...LIMITS, maxMessageBytes: 2 ** 53 },
@@ -310,6 +311,7 @@ describe('leader drop (AC29)', () => {
     const creating = client.createGroup({});
     socket.receive({
       type: 'group.created',
+      token: 'h.p.s',
       reqId: socket.lastMessage().reqId,
       groupId: GROUP_ID,
       participantId: PARTICIPANT_ID,
