@@ -77,6 +77,40 @@ describe('calls while not connected (AC11)', () => {
     await check();
     expect(socket.messages.map((m) => m.type)).toEqual(['hello']);
   });
+
+  it('fail with NOT_CONNECTED while reconnecting (waiting and attempting), and send nothing', async () => {
+    const { client, socket } = await connectedClient();
+    const check = async () => {
+      expect(isSyncClientError(await rejection(client.createGroup({})), 'NOT_CONNECTED')).toBe(
+        true,
+      );
+      expect(isSyncClientError(await rejection(client.joinGroup(GROUP_ID)), 'NOT_CONNECTED')).toBe(
+        true,
+      );
+      expect(
+        isSyncClientError(
+          thrown(() => client.updatePosition(1)),
+          'NOT_CONNECTED',
+        ),
+      ).toBe(true);
+    };
+
+    socket.serverClose(1006);
+    expect(client.getState()).toMatchObject({ status: 'reconnecting', attempting: false });
+    await check();
+
+    vi.advanceTimersToNextTimer();
+    expect(client.getState()).toMatchObject({ status: 'reconnecting', attempting: true });
+    const retrySocket = FakeWebSocket.last;
+    expect(retrySocket).not.toBe(socket);
+    retrySocket.open();
+    retrySocket.receive({ type: 'welcome', protocolVersion: 1, minProtocolVersion: 1 });
+    await check();
+
+    expect(socket.messages.map((m) => m.type)).toEqual(['hello']);
+    expect(retrySocket.messages.map((m) => m.type)).toEqual(['hello']);
+    client.close();
+  });
 });
 
 describe('reqId matching (AC17)', () => {
