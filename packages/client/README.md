@@ -72,7 +72,9 @@ If no `WebSocket` exists and none is injected, the constructor still works and
 ## Server-side rendering
 
 Importing the package has no side effects: no globals are read, no timers
-start, no socket opens. Still:
+start, no socket opens. This covers the whole import graph: the protocol
+schemas are built in zod's `jitless` mode, so zod never reads `navigator` or
+calls `new Function` (also safe under a CSP without `unsafe-eval`). Still:
 
 - Do not create a client at module scope on an SSR server: it would be shared
   by every request and user.
@@ -139,6 +141,13 @@ fields, and passes the received objects through as they are.
 
 A listener that throws does not affect other listeners or the client. A
 listener removed during an emit is not called.
+
+Listeners (and `subscribe` callbacks) may call `close()` or `connect()`. The
+client stops what it was doing at once: a `close()` from a `groupEnded`,
+`state` or `subscribe` callback during a drop leaves `closed(client)` with no
+timer and no new socket. A `connect()` from a `closed` listener starts a new
+run with its own promise; the promise of the run that just ended still
+settles with that run's outcome.
 
 ## Connection states
 
@@ -207,7 +216,10 @@ the handshake and version checks every time.
 - **Timeouts count as failures:** a timeout that drops the socket grows the
   streak.
 - **`maxAttempts`:** when used up, the client goes to `closed(gave_up)` with
-  `RECONNECT_FAILED`.
+  `RECONNECT_FAILED`. After `closed(fatal)` or `closed(gave_up)`, the first
+  socket of the next `connect()` run already counts as reconnect attempt 1
+  (it waits the backoff), so that run opens at most `maxAttempts` sockets,
+  one fewer than a run started from `idle`.
 - **`connect()` does not reset the backoff.** After `closed(fatal)`,
   `closed(gave_up)` or recent failures, `connect()` first waits the next
   backoff delay (state `reconnecting`). Through `close()` + `connect()`, two
