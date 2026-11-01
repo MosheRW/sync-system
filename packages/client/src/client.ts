@@ -1,20 +1,31 @@
-import type { ErrorMessage, ServerMessage, WelcomeMessage } from '@sync-system/protocol';
+import {
+  type ErrorMessage,
+  type JsonObject,
+  type JsonValue,
+  MAX_GROUP_ID_INPUT_LENGTH,
+  MAX_JSON_DEPTH,
+  type ServerMessage,
+  type WelcomeMessage,
+  checkJson,
+} from '@sync-system/protocol';
 import type { BusySignal } from './backoff.js';
 import { Emitter, ListenerSet } from './emitter.js';
 import {
+  type ClientErrorCode,
   type RequestKind,
   SyncClientError,
   fromServerError,
   invalidServerMessage,
 } from './errors.js';
 import {
+  buildHello,
   checkHelloOk,
   checkWelcome,
-  buildHello,
   classifyClose,
   classifyHandshakeError,
 } from './handshake.js';
-import { type TimerHandle, clearTimer, globalWebSocket, setClampedTimeout } from './host.js';
+import { type TimerHandle, clearTimer, globalWebSocket, now, setClampedTimeout } from './host.js';
+import { jsonByteLength } from './json-size.js';
 import { maxInboundChars } from './limits.js';
 import { type LogFields, type LogLevel, log } from './logger.js';
 import { type ResolvedOptions, type SyncClientOptions, resolveOptions } from './options.js';
@@ -22,10 +33,15 @@ import { type PendingRequest, RequestTracker } from './requests.js';
 import type {
   ConnectedInfo,
   ConnectionState,
+  CreatedGroup,
+  GroupEndedInfo,
+  GroupEndedReason,
   GroupState,
+  JoinedGroup,
   SyncClientEvents,
   SyncClientSnapshot,
 } from './state.js';
+import { PositionThrottle } from './throttle.js';
 import { type InboundFrame, Transport } from './transport.js';
 
 /** Handshake phase of the current socket. */
@@ -34,17 +50,22 @@ type Phase = 'welcome' | 'hello' | 'ready';
 interface Deferred<T> {
   promise: Promise<T>;
   resolve(value: T): void;
-  reject(error: SyncClientError): void;
+  reject(error: unknown): void;
 }
 
 function deferred<T>(): Deferred<T> {
   let resolve!: (value: T) => void;
-  let reject!: (error: SyncClientError) => void;
+  let reject!: (error: unknown) => void;
   const promise = new Promise<T>((res, rej) => {
     resolve = res;
     reject = rej;
   });
   return { promise, resolve, reject };
+}
+
+interface RequestCallbacks {
+  resolve(message: ServerMessage): void;
+  reject(error: SyncClientError): void;
 }
 
 const IDLE_SNAPSHOT: SyncClientSnapshot = Object.freeze({
@@ -62,6 +83,21 @@ const REPLY_TYPE: Record<RequestKind, ServerMessage['type']> = {
   'group.join': 'group.joined',
   'position.update': 'position.ack',
 };
+
+/** Runs local checks; returns the SyncClientError they threw, if any. */
+function localError(check: () => void): SyncClientError | undefined {
+  try {
+    check();
+    return undefined;
+  } catch (error) {
+    if (error instanceof SyncClientError) return error;
+    throw error;
+  }
+}
+
+function isJsonObject(value: unknown): value is JsonObject {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
 
 /**
  * Framework-free sync client. See the package README for the full contract.
@@ -82,6 +118,12 @@ export class SyncClient {
   #attemptTimer: TimerHandle | undefined;
   /** The promise of the current `connect()` run, until it settles. */
   #run: Deferred<ConnectedInfo> | undefined;
+  /** Last time any frame came from the server (M4). */
+  #lastInboundAt = 0;
+  /** Leader throttle for the current group. */
+  #throttle: PositionThrottle | undefined;
+  /** One group create/join in flight at a time (L5). */
+  #groupRequestInFlight = false;
 
   /** Validates the options (throws `INVALID_OPTIONS`). Touches no host globals except `URL`. */
   constructor(options: SyncClientOptions) {
@@ -126,15 +168,107 @@ export class SyncClient {
 
   /**
    * Stops the client (AC28): closes the socket with 1000, rejects pending
-   * requests and `connect()` with `CLOSED`, and cancels every timer.
-   * Idempotent and synchronous.
+   * requests and `connect()` with `CLOSED`, and cancels every timer and the
+   * throttled update. Idempotent and synchronous.
    */
   close(): void {
     if (this.#snapshot.connection.status === 'closed') return;
     const error = new SyncClientError('CLOSED');
     this.#teardown(error);
+    this.#endGroup('closed');
     this.#update({ connection: { status: 'closed', reason: 'client' } });
     this.#settleRun(error);
+  }
+
+  /**
+   * Creates a group with this client as leader (AC15). Rejects locally with
+   * NOT_CONNECTED, ALREADY_IN_GROUP, REQUEST_IN_PROGRESS, INVALID_PAYLOAD or
+   * MESSAGE_TOO_LARGE before anything is sent.
+   */
+  createGroup(metadata: JsonObject, initialPosition?: JsonValue): Promise<CreatedGroup> {
+    const invalid = localError(() => {
+      this.#checkGroupRequest();
+      if (!isJsonObject(metadata)) throw new SyncClientError('INVALID_PAYLOAD');
+      this.#checkPayload('metadata', metadata);
+      if (initialPosition !== undefined) this.#checkPayload('position', initialPosition);
+    });
+    if (invalid) return Promise.reject(invalid);
+    const reqId = this.#requests.nextId();
+    const message = {
+      type: 'group.create' as const,
+      reqId,
+      metadata,
+      ...(initialPosition === undefined ? {} : { position: initialPosition }),
+    };
+    const result = deferred<CreatedGroup>();
+    this.#trackGroupRequest('group.create', reqId, message, {
+      resolve: (reply) => {
+        if (reply.type !== 'group.created') return;
+        this.#startGroup({
+          status: 'active',
+          groupId: reply.groupId,
+          role: 'leader',
+          metadata: null,
+          hasPosition: initialPosition !== undefined,
+          position: initialPosition,
+        });
+        result.resolve(
+          Object.freeze({
+            groupId: reply.groupId,
+            role: 'leader',
+            participantId: reply.participantId,
+          }),
+        );
+      },
+      reject: (error) => result.reject(error),
+    });
+    return result.promise;
+  }
+
+  /**
+   * Joins a group as member (AC16). Rejects locally with NOT_CONNECTED,
+   * ALREADY_IN_GROUP, REQUEST_IN_PROGRESS or INVALID_PAYLOAD, and with the
+   * server's code (GROUP_NOT_FOUND, GROUP_FULL, ...) otherwise.
+   */
+  joinGroup(groupId: string): Promise<JoinedGroup> {
+    const invalid = localError(() => {
+      this.#checkGroupRequest();
+      if (
+        typeof groupId !== 'string' ||
+        groupId.length === 0 ||
+        groupId.length > MAX_GROUP_ID_INPUT_LENGTH
+      ) {
+        throw new SyncClientError('INVALID_PAYLOAD');
+      }
+    });
+    if (invalid) return Promise.reject(invalid);
+    const result = deferred<JoinedGroup>();
+    this.#join(groupId, {
+      resolve: (joined) => result.resolve(joined),
+      reject: (error) => result.reject(error),
+    });
+    return result.promise;
+  }
+
+  /**
+   * Sets the leader's position (AC18, AC21). Throws NOT_CONNECTED,
+   * NOT_IN_GROUP, NOT_LEADER, INVALID_PAYLOAD or MESSAGE_TOO_LARGE locally,
+   * and sends nothing then. Calls faster than the rate limit are coalesced;
+   * the latest position is always sent. Server rejections arrive as `error`
+   * events.
+   */
+  updatePosition(position: JsonValue): void {
+    if (this.#snapshot.connection.status !== 'connected') {
+      throw new SyncClientError('NOT_CONNECTED');
+    }
+    const group = this.#snapshot.group;
+    if (group === null || group.status === 'ended') throw new SyncClientError('NOT_IN_GROUP');
+    if (group.status !== 'active' || group.role !== 'leader') {
+      throw new SyncClientError('NOT_LEADER');
+    }
+    this.#checkPayload('position', position);
+    this.#update({ group: { ...group, hasPosition: true, position } });
+    this.#throttle?.submit(position);
   }
 
   /** Current connection state (same as `getSnapshot().connection`). */
@@ -205,6 +339,151 @@ export class SyncClient {
   }
 
   // ---------------------------------------------------------------------------
+  // Groups
+  // ---------------------------------------------------------------------------
+
+  /** Local checks for create/join, in the planned order (AC11, L5). */
+  #checkGroupRequest(): void {
+    if (this.#snapshot.connection.status !== 'connected') {
+      throw new SyncClientError('NOT_CONNECTED');
+    }
+    const group = this.#snapshot.group;
+    if (group !== null && group.status !== 'ended') throw new SyncClientError('ALREADY_IN_GROUP');
+    if (this.#groupRequestInFlight) throw new SyncClientError('REQUEST_IN_PROGRESS');
+  }
+
+  /** JSON check (depth leaves room for the envelope) then size, as the server measures it (AC22). */
+  #checkPayload(field: 'metadata' | 'position', value: unknown): void {
+    if (checkJson(value, { maxDepth: MAX_JSON_DEPTH - 1 }) !== 'ok') {
+      throw new SyncClientError('INVALID_PAYLOAD');
+    }
+    const limitBytes = this.#info?.limits.maxMessageBytes ?? 0;
+    const sizeBytes = jsonByteLength(value);
+    if (sizeBytes > limitBytes) {
+      throw new SyncClientError('MESSAGE_TOO_LARGE', { details: { field, sizeBytes, limitBytes } });
+    }
+  }
+
+  /**
+   * Sends a create/join and tracks it. The in-flight flag is cleared in the
+   * same callbacks that settle the request, so it clears on a reply, an
+   * error, a timeout, a drop and `close()` alike (R2-L4).
+   */
+  #trackGroupRequest(
+    kind: 'group.create' | 'group.join',
+    reqId: string,
+    message: object,
+    callbacks: RequestCallbacks,
+  ): void {
+    this.#groupRequestInFlight = true;
+    this.#requests.add(reqId, {
+      kind,
+      timeoutKind: 'drop',
+      timeoutMs: this.#opts.requestTimeoutMs,
+      resolve: (reply) => {
+        this.#groupRequestInFlight = false;
+        callbacks.resolve(reply);
+      },
+      reject: (error) => {
+        this.#groupRequestInFlight = false;
+        callbacks.reject(error);
+      },
+    });
+    // A throwing socket is handled as a drop, which rejects the request above.
+    this.#send(message);
+  }
+
+  #join(
+    groupId: string,
+    callbacks: { resolve(joined: JoinedGroup): void; reject(error: SyncClientError): void },
+  ): void {
+    const reqId = this.#requests.nextId();
+    this.#trackGroupRequest(
+      'group.join',
+      reqId,
+      { type: 'group.join', reqId, groupId },
+      {
+        resolve: (reply) => {
+          if (reply.type !== 'group.joined') return;
+          const joined: JoinedGroup = Object.freeze({
+            groupId: reply.groupId,
+            role: 'member',
+            participantId: reply.participantId,
+            metadata: reply.metadata,
+            hasPosition: reply.hasPosition,
+            ...(reply.hasPosition ? { position: reply.position } : {}),
+          });
+          this.#startGroup({
+            status: 'active',
+            groupId: reply.groupId,
+            role: 'member',
+            metadata: reply.metadata,
+            hasPosition: reply.hasPosition,
+            position: reply.hasPosition ? reply.position : undefined,
+          });
+          callbacks.resolve(joined);
+        },
+        reject: (error) => callbacks.reject(error),
+      },
+    );
+  }
+
+  #startGroup(group: Extract<GroupState, { status: 'active' }>): void {
+    this.#throttle?.cancel();
+    this.#throttle =
+      group.role === 'leader' && this.#info
+        ? new PositionThrottle(this.#info.limits.maxLeaderUpdatesPerSecond, (position) =>
+            this.#sendPosition(position),
+          )
+        : undefined;
+    this.#update({ group });
+  }
+
+  /** Ends an active or rejoining group, stops the throttle and emits `groupEnded` (AC19, AC29). */
+  #endGroup(reason: GroupEndedReason, code?: ClientErrorCode): void {
+    const group = this.#snapshot.group;
+    this.#throttle?.cancel();
+    this.#throttle = undefined;
+    if (group === null || group.status === 'ended') return;
+    const info: GroupEndedInfo = Object.freeze({
+      groupId: group.groupId,
+      reason,
+      ...(code === undefined ? {} : { code }),
+    });
+    this.#update({ group: { status: 'ended', ...info } });
+    this.#events.emit('groupEnded', info);
+  }
+
+  #sendPosition(position: JsonValue): void {
+    const reqId = this.#requests.nextId();
+    this.#requests.add(reqId, {
+      kind: 'position.update',
+      // Twice the request timeout; drops only on a silent link (M4).
+      timeoutKind: 'ack',
+      timeoutMs: 2 * this.#opts.requestTimeoutMs,
+      position,
+      resolve: () => {},
+      reject: (error) => this.#onPositionRejected(position, error),
+    });
+    this.#send({ type: 'position.update', reqId, position });
+  }
+
+  /** Server rejections of a position update come through the `error` event (AC23). */
+  #onPositionRejected(position: JsonValue, error: SyncClientError): void {
+    if (
+      error.source === 'client' &&
+      (error.code === 'CONNECTION_LOST' || error.code === 'CLOSED')
+    ) {
+      return;
+    }
+    this.#emitError(error);
+    if (error.code === 'RATE_LIMITED') {
+      const details = error.details as { retryAfterMs?: number } | undefined;
+      this.#throttle?.rateLimited(position, details?.retryAfterMs);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Socket attempts and the handshake
   // ---------------------------------------------------------------------------
 
@@ -252,6 +531,8 @@ export class SyncClient {
   }
 
   #onFrame(frame: InboundFrame): void {
+    // Any frame, valid or not, proves the link is alive (M4).
+    this.#lastInboundAt = now();
     switch (frame.kind) {
       case 'unknown':
         // Forward compatible: a newer server may add event types (AC10).
@@ -351,9 +632,29 @@ export class SyncClient {
       case 'error':
         this.#onServerError(message);
         return;
-      case 'position.updated':
-      case 'group.ended':
+      case 'position.updated': {
+        const group = this.#snapshot.group;
+        if (
+          group?.status !== 'active' ||
+          group.role !== 'member' ||
+          group.groupId !== message.groupId
+        ) {
+          return;
+        }
+        this.#update({ group: { ...group, hasPosition: true, position: message.position } });
+        this.#events.emit(
+          'positionUpdated',
+          Object.freeze({ groupId: message.groupId, position: message.position }),
+        );
         return;
+      }
+      case 'group.ended': {
+        const group = this.#snapshot.group;
+        if (group?.status === 'active' && group.groupId === message.groupId) {
+          this.#endGroup('leader_disconnected');
+        }
+        return;
+      }
     }
   }
 
@@ -378,8 +679,17 @@ export class SyncClient {
     this.#emitError(fromServerError(message));
   }
 
+  /**
+   * Request timeouts (M4, Q-C). The request was already rejected with
+   * REQUEST_TIMEOUT. Create/join drop the socket; a position ack drops it
+   * only if nothing came from the server for `requestTimeoutMs`.
+   */
   #onRequestTimeout(request: PendingRequest): void {
     this.#log('debug', 'request_timeout', { request: request.kind });
+    const silentFor = now() - this.#lastInboundAt;
+    if (request.timeoutKind === 'drop' || silentFor >= this.#opts.requestTimeoutMs) {
+      this.#connectionLost(new SyncClientError('REQUEST_TIMEOUT', { request: request.kind }));
+    }
   }
 
   #onSocketClosed(code: number): void {
@@ -402,6 +712,7 @@ export class SyncClient {
     transport?.retire(1000, closeReason);
     this.#phase = 'welcome';
     this.#info = undefined;
+    this.#throttle?.cancel();
     this.#requests.rejectAll(requestError);
   }
 
@@ -409,6 +720,7 @@ export class SyncClient {
   #fail(error: SyncClientError): void {
     this.#log('warn', 'fatal_error', { code: error.code });
     this.#teardown(error, error.code);
+    this.#endGroup('closed', error.code);
     this.#update({ connection: { status: 'closed', reason: 'fatal', error } });
     this.#emitError(error);
     this.#settleRun(error);
@@ -417,7 +729,14 @@ export class SyncClient {
   /** A retryable failure or an unexpected drop. */
   #connectionLost(error: SyncClientError, _busy?: BusySignal): void {
     this.#log('info', 'connection_lost', { code: error.code });
+    const group = this.#snapshot.group;
     this.#teardown(new SyncClientError('CONNECTION_LOST'));
+    // The server ends a leader's group as soon as its socket closes (AC29).
+    if (group?.status === 'active' && group.role === 'leader') {
+      this.#endGroup('leader_disconnected');
+    } else {
+      this.#endGroup('closed', error.code);
+    }
     const gaveUp = new SyncClientError('RECONNECT_FAILED');
     this.#update({ connection: { status: 'closed', reason: 'gave_up', error: gaveUp } });
     this.#emitError(error);
