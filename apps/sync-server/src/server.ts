@@ -20,6 +20,7 @@ import {
   transportMaxPayload,
 } from './limits/constants.js';
 import { SlidingWindowRateLimiter } from './limits/rate-limiter.js';
+import { type Scheduler, realScheduler } from './time/scheduler.js';
 import type { Logger } from './logging/logger.js';
 import { Connection } from './ws/connection.js';
 import { ConnectionCounter, type ConnectionStats } from './ws/connection-counter.js';
@@ -30,8 +31,13 @@ export interface SyncServerOptions {
   env: ServerEnv;
   registry: AppRegistry;
   logger: Logger;
-  /** Clock in ms; injected by tests. */
+  /** Clock in ms; injected by tests. Ignored when `scheduler` is given. */
   now?: () => number;
+  /**
+   * Clock and timers for group timers; injected by tests (a manual
+   * scheduler). Defaults to real, unref()ed timers on `now`.
+   */
+  scheduler?: Scheduler;
   /** Defaults to a new InMemoryGroupStore. */
   store?: GroupStore;
   /** Defaults to HEARTBEAT_INTERVAL_MS; shortened by tests. */
@@ -64,7 +70,8 @@ const SHUTDOWN_GRACE_MS = 1_000;
 export function createSyncServer(options: SyncServerOptions): SyncServer {
   const { env, logger, registry } = options;
   const handshakeTimeoutMs = options.handshakeTimeoutMs ?? HANDSHAKE_TIMEOUT_MS;
-  const now = options.now ?? Date.now;
+  const scheduler = options.scheduler ?? realScheduler(options.now ?? Date.now);
+  const now = (): number => scheduler.now();
 
   const httpServer = createServer(handleHttpRequest);
   // Slowloris protection and a hard socket backstop above the WS cap (H1).
