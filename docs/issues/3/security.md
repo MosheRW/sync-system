@@ -353,3 +353,99 @@ third-party runtime dependency.
 - Fatal set matches Q4 + Q-A exactly; no reconnect after fatal; backoff not
   reset by flapping connections or by `connect()` after fatal.
 - Dockerfile change is only the manifest `COPY`; runtime image unchanged.
+
+---
+
+## Round 2 (architecture revision 2, head 7f499d2)
+
+Result: **PASS** (0 critical, 0 high, 0 new medium, 6 new low). The plan is
+ready for Gate 2 from a security point of view.
+
+### Verification of round-1 findings
+
+| Finding | Where in revision 2 | Verdict |
+| --- | --- | --- |
+| H1 backoff reset | Sec. 1 dec. 6, sec. 4 Backoff (`streakAfterDrop`, timestamp at drop, no timer), timeout drops grow the streak; tests in sec. 10 (fake-timer sequence + `flapping.int` through `tcp-proxy`) | **Resolved.** See R2-L5 for test determinism. |
+| H2 `ws` error listener | Sec. 4 "Socket retirement": no-op `error` listener attached before `close()` and kept forever; `send`/`close` in try/catch, throw treated as a retryable socket error; `ws-safety.int` with injected `ws` against `blackhole-server` | **Resolved.** |
+| M1 bounds | `limits.ts` (1 MiB / 100 / 10,000, positive safe integers); details own-property + finite + `>= 0`; `retryAfterMs` clamped to `[slot, 10 s]`; `*Ms` options in `[0, 2^31-1]` plus cross-checks; `setClampedTimeout` the only timer path; ring buffer | **Resolved.** New low items R2-L1, R2-L2. |
+| M2 URL rules | `url-policy.ts`, sec. 11: `new URL`, `ws:`/`wss:` only, exact `localhost`/`127.0.0.1`/`[::1]`, no userinfo/hash, strict boolean; bypass test list | **Resolved.** See R2-L3. |
+| M3 busy floor | Streak raised to at least 3 for 1001/4003/4008 (first cap 2 s); 503 stays normal; 30 s cap for 4003 is Q-E | **Resolved** (floor scales with `initialDelayMs`, see R2-L1). |
+| M4 / Q-C | Two timeout kinds: hello/create/join drop; `position.update` ack at 2x, drop only if no inbound frame for `requestTimeoutMs`; `lastInboundAt` updated on every frame; timeout drops count toward backoff | **Resolved.** For a leader the only inbound frames are acks, so a fully silent server still drops it after 20 s; that is a dead link in practice and acceptable. |
+| M5 `connect()` loops | `failureStreak` (delay) vs `runAttempts` (`maxAttempts`); `connect()` never resets the streak; from `closed(fatal\|gave_up)` it waits; test: 20 calls in 1 s give at most 1 socket | **Resolved.** See R2-L6 for the `close()`+`connect()` variant. |
+| L1-L8 | Sec. 6, 8, 9, 4 step 6, sec. 10 table | **All resolved** as recommended. R2-L4 adds one edge for L5. |
+
+### New findings in revision 2 (all Low, advisory)
+
+**R2-L1. Option minimums can switch off H1 and M3.** Sec. 3 option
+validation allows `stableAfterMs: 0` (resets after any connection, which is
+the round-1 H1 storm again) and `initialDelayMs: 1` (the busy floor becomes
+a 4 ms cap). An app can do this by accident to "make tests fast", and it
+hits the shared server. *Fix:* enforce floors, for example `initialDelayMs >=
+100`, `maxDelayMs >= 1000`, `stableAfterMs >= 1000`. Tests do not need
+smaller values: `random: () => 0` already gives zero delays, and unit tests
+use fake timers.
+
+**R2-L2. Out-of-bound `hello.ok` limits are retried forever.** Sec. 6
+treats them as a retryable `INVALID_SERVER_MESSAGE`. They are deterministic:
+an operator who raises `MAX_MESSAGE_SIZE_CEILING` above 1 MiB makes every
+client reconnect forever without ever connecting (one handshake per 0-10 s
+per client). By the Q-A reasoning, make it fatal (`SERVER_UNSUPPORTED` with
+a `limit` detail, or `INVALID_SERVER_MESSAGE` with `fatal: true`), and say
+in the README which bounds the client accepts.
+
+**R2-L3. Connect with the URL that was checked.** Pass `parsed.href` from
+`checkServerUrl` to `new WebSocket(...)`, not the original string, so the
+policy check and the connection can never parse the URL differently.
+
+**R2-L4. The "one group request in flight" flag must clear on every path.**
+If it stays set after a timeout, a drop, `close()` or a rejected rejoin, the
+client refuses every later `createGroup`/`joinGroup` with
+`REQUEST_IN_PROGRESS` (a self-inflicted lockout). Clear it in the same place
+that settles the request. Test: create/join after each of those outcomes.
+
+**R2-L5. Make the H1 integration test deterministic, and define
+`runAttempts` resets.** `flapping.int` asserts "at most 4 attempts in 3 s",
+but with real `Math.random` the jittered delays can all be near 0 and the
+test can fail without a bug. Inject `random: () => 1` (or `0.5`) there.
+Also state when `runAttempts` resets besides `connect()`. If it resets only
+on `connect()`, a long-lived client with a finite `maxAttempts` gives up
+after N drops spread over days, even with stable sessions in between. Reset
+it with the stability rule too. This is functional, not a security problem.
+
+**R2-L6. `close()` followed by `connect()` opens a socket right away while
+the streak is 0.** An app or a React effect that runs `close(); connect()`
+on every render (unstable deps, StrictMode double mount) opens a new socket
+and handshake each time, with no delay. *Fix (item 6, or cheaply here):*
+the hooks keep one client per mount and never call `close()`/`connect()`
+per render. Optionally the client enforces a minimum gap of `initialDelayMs`
+between two socket constructions. README note.
+
+Smaller notes (no finding): the ack timers are bounded (at most the
+throttle rate x 20 s pending entries), but one timer for the oldest pending
+ack would be lighter than one timer per update. A late `RATE_LIMITED` error
+whose `reqId` is no longer pending should go to the `error` event and not be
+re-queued.
+
+### Gate 2 questions
+
+- **Q-A, Q-B, Q-C:** the revised wording matches my round-1 view. Agree.
+- **Q-D (AC27 "successful reconnect" = stayed connected for
+  `stableAfterMs`): agree, and it is required.** It is what makes H1 work.
+  The intent of AC27 (a recovered client is not punished on its next drop,
+  and the handshake plus version checks run on every reconnect) still holds.
+  The user-visible cost is small: after a connection that dropped within
+  10 s, the next wait can be up to the next cap instead of up to 0.5 s.
+- **Q-E (30 s cap for 4003): agree, mild preference, not required.** 4003
+  means the app is at its own connection cap; faster retries only add
+  rejected handshakes that compete with real users for
+  `MAX_PENDING_HANDSHAKES`. Clients still retry, so the 30 s lock tolerance
+  ("still retrying at 30 s") holds; the cost is up to about 30 s to get a
+  slot after one frees. Keeping 10 s is acceptable from a security view
+  because the 2 s floor (M3) stays either way.
+
+### Code-mode additions
+
+On top of section 6: check R2-L1 to R2-L6 if the user keeps them, that
+`stableAfterMs` is read at drop time and never reset by `connect()`, that
+the in-flight flag clears on every settle path, and that `flapping.int`
+injects `random`.
