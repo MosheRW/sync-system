@@ -219,7 +219,7 @@ describe('group events (AC19, AC20)', () => {
     client.on('positionUpdated', listener);
     client.on('groupEnded', listener);
     socket.receive({ type: 'position.updated', groupId: 'H'.repeat(43), position: 1 });
-    socket.receive({ type: 'group.ended', groupId: 'H'.repeat(43), reason: 'leader_disconnected' });
+    socket.receive({ type: 'group.ended', groupId: 'H'.repeat(43), reason: 'ended_by_leader' });
     expect(listener).not.toHaveBeenCalled();
     client.close();
   });
@@ -228,7 +228,7 @@ describe('group events (AC19, AC20)', () => {
     const { client, socket } = await member();
     const ended: GroupEndedInfo[] = [];
     client.on('groupEnded', (e) => ended.push(e));
-    socket.receive({ type: 'group.ended', groupId: GROUP_ID, reason: 'leader_disconnected' });
+    socket.receive({ type: 'group.ended', groupId: GROUP_ID, reason: 'ended_by_leader' });
     expect(ended).toEqual([{ groupId: GROUP_ID, reason: 'leader_disconnected' }]);
     expect(client.getSnapshot().group).toEqual({
       status: 'ended',

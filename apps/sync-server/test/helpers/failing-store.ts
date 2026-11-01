@@ -50,14 +50,29 @@ export class FailingStore implements GroupStore {
     namespace: string,
     id: string,
     participantId: string,
-  ): Promise<{ remaining: number } | undefined> {
+  ): Promise<{ connected: number } | undefined> {
     this.check('removeParticipant');
     return this.inner.removeParticipant(namespace, id, participantId);
   }
 
-  async setPosition(namespace: string, id: string, payload: JsonValue): Promise<boolean> {
+  async setLeaderOnline(
+    namespace: string,
+    id: string,
+    online: boolean,
+    at?: number,
+  ): Promise<GroupRecord | undefined> {
+    this.check('setLeaderOnline');
+    return this.inner.setLeaderOnline(namespace, id, online, at);
+  }
+
+  async setPosition(
+    namespace: string,
+    id: string,
+    payload: JsonValue,
+    at: number,
+  ): Promise<boolean> {
     this.check('setPosition');
-    return this.inner.setPosition(namespace, id, payload);
+    return this.inner.setPosition(namespace, id, payload, at);
   }
 
   async delete(namespace: string, id: string): Promise<void> {

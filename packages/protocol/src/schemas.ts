@@ -10,7 +10,7 @@ import {
   MAX_TOKEN_LENGTH,
   NAMESPACE_PATTERN,
 } from './limits.js';
-import type { ClientMessage, ServerMessage } from './messages.js';
+import { type ClientMessage, GROUP_ENDED_REASONS, type ServerMessage } from './messages.js';
 
 // Every schema below is built with zod's `jitless` option on. Without it,
 // building the first z.object runs zod's eval probe at import time: it reads
@@ -122,8 +122,10 @@ const schemas = buildJitless(() => {
     z.object({
       type: z.literal('group.ended'),
       groupId: z.string(),
-      reason: z.literal('leader_disconnected'),
+      reason: z.enum(GROUP_ENDED_REASONS),
     }),
+    z.object({ type: z.literal('leader.offline'), groupId: z.string() }),
+    z.object({ type: z.literal('leader.online'), groupId: z.string() }),
     z.object({
       type: z.literal('error'),
       reqId,

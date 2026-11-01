@@ -116,9 +116,10 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
     store,
     notifier: new LocalNotifier(),
     logger,
-    now,
     rateLimiter: new SlidingWindowRateLimiter(now),
     tokens,
+    scheduler,
+    refreshMaxMs: env.tokenRefreshMaxSeconds * 1000,
   });
   const counter = new ConnectionCounter();
   const connections = new Set<Connection>();
@@ -207,6 +208,7 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
     },
     async close() {
       heartbeat.stop();
+      groups.close();
       const httpClosed = new Promise<void>((resolve) => {
         if (!httpServer.listening) {
           resolve();
@@ -219,6 +221,8 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
       httpServer.closeAllConnections();
       await httpClosed;
       await new Promise<void>((resolve) => wss.close(() => resolve()));
+      // Disconnect handling may have armed timers while sockets closed.
+      groups.close();
     },
   };
 }

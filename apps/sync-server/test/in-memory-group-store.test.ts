@@ -13,6 +13,9 @@ function record(overrides: Partial<GroupRecord> = {}): GroupRecord {
     leaderId: 'leader',
     participantIds: ['leader'],
     createdAt: 1,
+    lastActivityAt: 1,
+    leaderOnline: true,
+    blockList: [],
     ...overrides,
   };
 }
@@ -30,7 +33,8 @@ describe('InMemoryGroupStore', () => {
     await store.create(record());
     expect(await store.get('app-b', ID)).toBeUndefined();
     expect(await store.addParticipant('app-b', ID, 'p', 10)).toEqual({ status: 'not_found' });
-    expect(await store.setPosition('app-b', ID, 1)).toBe(false);
+    expect(await store.setPosition('app-b', ID, 1, 5)).toBe(false);
+    expect(await store.setLeaderOnline('app-b', ID, false)).toBeUndefined();
     expect(await store.removeParticipant('app-b', ID, 'leader')).toBeUndefined();
     await store.delete('app-b', ID);
     expect(store.size).toBe(1);
@@ -92,17 +96,40 @@ describe('InMemoryGroupStore', () => {
     expect((await store.get('app-a', ID))!.participantIds).toEqual(['leader', 'm1']);
   });
 
-  it('removes participants and reports the remaining count', async () => {
+  it('removes members and reports how many are still connected (#5 AC22)', async () => {
+    const store = new InMemoryGroupStore();
+    await store.create(record({ participantIds: ['leader', 'm1', 'm2'] }));
+    expect(await store.removeParticipant('app-a', ID, 'm1')).toEqual({ connected: 2 });
+    await store.setLeaderOnline('app-a', ID, false);
+    expect(await store.removeParticipant('app-a', ID, 'm2')).toEqual({ connected: 0 });
+  });
+
+  it('keeps the leader slot reserved while the leader is offline (architecture 3)', async () => {
     const store = new InMemoryGroupStore();
     await store.create(record({ participantIds: ['leader', 'm1'] }));
-    expect(await store.removeParticipant('app-a', ID, 'm1')).toEqual({ remaining: 1 });
-    expect(await store.removeParticipant('app-a', ID, 'leader')).toEqual({ remaining: 0 });
+    const frozen = await store.setLeaderOnline('app-a', ID, false);
+    expect(frozen).toMatchObject({ leaderOnline: false, participantIds: ['leader', 'm1'] });
+    expect(await store.removeParticipant('app-a', ID, 'leader')).toEqual({ connected: 1 });
+    expect(await store.addParticipant('app-a', ID, 'm2', 2)).toEqual({ status: 'full' });
+  });
+
+  it('records leader activity when the leader comes back or sets a position (#5 AC12)', async () => {
+    const store = new InMemoryGroupStore();
+    await store.create(record());
+    await store.setLeaderOnline('app-a', ID, false, 50);
+    expect((await store.get('app-a', ID))!.lastActivityAt).toBe(1);
+    expect(await store.setLeaderOnline('app-a', ID, true, 60)).toMatchObject({
+      leaderOnline: true,
+      lastActivityAt: 60,
+    });
+    await store.setPosition('app-a', ID, 'p', 70);
+    expect((await store.get('app-a', ID))!.lastActivityAt).toBe(70);
   });
 
   it('sets the position and deletes groups', async () => {
     const store = new InMemoryGroupStore();
     await store.create(record());
-    expect(await store.setPosition('app-a', ID, null)).toBe(true);
+    expect(await store.setPosition('app-a', ID, null, 2)).toBe(true);
     expect((await store.get('app-a', ID))!.position).toEqual({ has: true, payload: null });
     await store.delete('app-a', ID);
     expect(await store.get('app-a', ID)).toBeUndefined();
@@ -111,7 +138,13 @@ describe('InMemoryGroupStore', () => {
 
   it('has no way to list groups (AC20)', () => {
     expectTypeOf<keyof GroupStore>().toEqualTypeOf<
-      'create' | 'get' | 'addParticipant' | 'removeParticipant' | 'setPosition' | 'delete'
+      | 'create'
+      | 'get'
+      | 'addParticipant'
+      | 'removeParticipant'
+      | 'setLeaderOnline'
+      | 'setPosition'
+      | 'delete'
     >();
   });
 });

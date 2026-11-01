@@ -75,10 +75,13 @@ describe('group isolation (AC19)', () => {
       expect(await member.next('position.updated')).toMatchObject({ groupId: x.groupId });
     }
 
-    // Leader of X disconnects: group.ended must stay inside X as well.
+    // Leader of X disconnects: leader.offline must stay inside X as well (#5 AC18).
     await x.leader.close();
     for (const member of x.members) {
-      expect(await member.next('group.ended')).toMatchObject({ groupId: x.groupId });
+      expect(await member.next('leader.offline')).toEqual({
+        type: 'leader.offline',
+        groupId: x.groupId,
+      });
     }
     for (const client of [y.leader, ...y.members, z.leader, ...z.members]) {
       await client.expectNoMessage(50);

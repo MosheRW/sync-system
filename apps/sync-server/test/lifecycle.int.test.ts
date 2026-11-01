@@ -46,31 +46,32 @@ describe('disconnects (AC17)', () => {
     expect((await late.next('group.joined')).groupId).toBe(groupId);
   });
 
-  it('ends the group when the leader disconnects', async () => {
+  // #5 AC18 replaces #1 AC17: a leader disconnect freezes the group.
+  it('freezes the group when the leader disconnects; members stay in it', async () => {
     const { groupId, leader, members } = await createGroupWithMembers(ts, 1);
     const [member] = members as [(typeof members)[0]];
 
     await leader.close();
-    expect(await member.next('group.ended')).toEqual({
-      type: 'group.ended',
-      groupId,
-      reason: 'leader_disconnected',
-    });
-    await waitUntil(() => store.size === 0);
+    expect(await member.next('leader.offline')).toEqual({ type: 'leader.offline', groupId });
+    const frozen = await store.get('app-a', groupId);
+    expect(frozen).toMatchObject({ leaderOnline: false });
+    expect(frozen?.participantIds).toHaveLength(2);
 
-    // The member's socket stays open and it is groupless again.
+    // The member's socket stays open and it is still in the group.
     expect(member.isClosed).toBe(false);
-    member.send({ type: 'group.join', groupId });
-    expect(await member.next('error')).toMatchObject({ code: 'GROUP_NOT_FOUND' });
     member.send({ type: 'group.create', metadata: {} });
-    expect((await member.next('group.created')).role).toBe('leader');
+    expect(await member.next('error')).toMatchObject({ code: 'ALREADY_IN_GROUP' });
+
+    // When the last member leaves, the group is dropped from memory.
+    await member.close();
+    await waitUntil(() => store.size === 0);
   });
 
-  it('ends the group on an abrupt leader disconnect too', async () => {
-    const { leader, members } = await createGroupWithMembers(ts, 1);
+  it('freezes the group on an abrupt leader disconnect too', async () => {
+    const { groupId, leader, members } = await createGroupWithMembers(ts, 1);
     leader.terminate();
-    expect((await members[0]!.next('group.ended')).reason).toBe('leader_disconnected');
-    await waitUntil(() => store.size === 0);
+    expect(await members[0]!.next('leader.offline')).toMatchObject({ groupId });
+    expect(store.size).toBe(1);
   });
 
   it('removes a group with no connections from memory', async () => {

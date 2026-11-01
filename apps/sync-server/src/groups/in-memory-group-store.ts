@@ -1,5 +1,10 @@
 import type { JsonValue } from '@sync-system/protocol';
-import type { AddParticipantResult, GroupRecord, GroupStore } from './group-store.js';
+import {
+  type AddParticipantResult,
+  type GroupRecord,
+  type GroupStore,
+  connectedCount,
+} from './group-store.js';
 
 function keyOf(namespace: string, id: string): string {
   // Namespaces match ^[a-z0-9][a-z0-9_-]*$, so ':' cannot be ambiguous.
@@ -7,7 +12,11 @@ function keyOf(namespace: string, id: string): string {
 }
 
 function copy(record: GroupRecord): GroupRecord {
-  return { ...record, participantIds: [...record.participantIds] };
+  return {
+    ...record,
+    participantIds: [...record.participantIds],
+    blockList: [...record.blockList],
+  };
 }
 
 /**
@@ -51,17 +60,34 @@ export class InMemoryGroupStore implements GroupStore {
     namespace: string,
     id: string,
     participantId: string,
-  ): Promise<{ remaining: number } | undefined> {
+  ): Promise<{ connected: number } | undefined> {
     const record = this.groups.get(keyOf(namespace, id));
     if (!record) return Promise.resolve(undefined);
-    record.participantIds = record.participantIds.filter((p) => p !== participantId);
-    return Promise.resolve({ remaining: record.participantIds.length });
+    // The leader's slot is reserved while it is offline (architecture 3).
+    if (participantId !== record.leaderId) {
+      record.participantIds = record.participantIds.filter((p) => p !== participantId);
+    }
+    return Promise.resolve({ connected: connectedCount(record) });
   }
 
-  setPosition(namespace: string, id: string, payload: JsonValue): Promise<boolean> {
+  setLeaderOnline(
+    namespace: string,
+    id: string,
+    online: boolean,
+    at?: number,
+  ): Promise<GroupRecord | undefined> {
+    const record = this.groups.get(keyOf(namespace, id));
+    if (!record) return Promise.resolve(undefined);
+    record.leaderOnline = online;
+    if (online && at !== undefined) record.lastActivityAt = at;
+    return Promise.resolve(copy(record));
+  }
+
+  setPosition(namespace: string, id: string, payload: JsonValue, at: number): Promise<boolean> {
     const record = this.groups.get(keyOf(namespace, id));
     if (!record) return Promise.resolve(false);
     record.position = { has: true, payload };
+    record.lastActivityAt = at;
     return Promise.resolve(true);
   }
 

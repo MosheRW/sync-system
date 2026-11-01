@@ -18,6 +18,8 @@ export interface TestApp {
   maxLeaderUpdatesPerSecond?: number;
   maxMessageBytes?: number;
   maxConnections?: number;
+  maxSessionMinutes?: number;
+  inactivityLimitMinutes?: number;
 }
 
 export interface RealServerOptions {

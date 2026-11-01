@@ -11,11 +11,21 @@ export interface GroupRecord {
   metadata: JsonObject;
   /** Opaque, stored exactly as parsed; never read. */
   position: StoredPosition;
+  /** Group-scoped participant ID of the leader. */
   leaderId: string;
-  /** Includes the leader. */
+  /**
+   * The leader (always, connected or not: its slot stays reserved while it is
+   * offline) plus the attached members. Group-scoped participant IDs.
+   */
   participantIds: string[];
   /** Epoch ms. */
   createdAt: number;
+  /** Epoch ms of the leader's last activity (#5 AC12). */
+  lastActivityAt: number;
+  /** False while the leader is offline: the group is frozen (#5 AC18). */
+  leaderOnline: boolean;
+  /** Blocked participant IDs (#5 AC26). Never logged. */
+  blockList: readonly string[];
 }
 
 /**
@@ -38,6 +48,8 @@ export interface GroupStore {
   /**
    * Adds a participant unless the group is missing or already has `maxSize`,
    * and returns a snapshot of the group that includes it (one atomic step).
+   * Idempotent per participant ID: adding an ID that is already in the
+   * group takes no extra slot.
    */
   addParticipant(
     namespace: string,
@@ -45,11 +57,32 @@ export interface GroupStore {
     participantId: string,
     maxSize: number,
   ): Promise<AddParticipantResult>;
+  /**
+   * Removes a member. `connected` is the number of participants still
+   * connected afterwards: the attached members plus the leader if online.
+   */
   removeParticipant(
     namespace: string,
     id: string,
     participantId: string,
-  ): Promise<{ remaining: number } | undefined>;
-  setPosition(namespace: string, id: string, payload: JsonValue): Promise<boolean>;
+  ): Promise<{ connected: number } | undefined>;
+  /**
+   * Marks the leader online or offline. Going online at `at` is a leader
+   * activity (`lastActivityAt = at`). Returns the updated snapshot.
+   */
+  setLeaderOnline(
+    namespace: string,
+    id: string,
+    online: boolean,
+    at?: number,
+  ): Promise<GroupRecord | undefined>;
+  /** Stores a leader position; it is a leader activity at `at`. */
+  setPosition(namespace: string, id: string, payload: JsonValue, at: number): Promise<boolean>;
   delete(namespace: string, id: string): Promise<void>;
+}
+
+/** Participants connected to `record`: attached members plus the leader if online. */
+export function connectedCount(record: GroupRecord): number {
+  const members = record.participantIds.filter((id) => id !== record.leaderId).length;
+  return members + (record.leaderOnline ? 1 : 0);
 }

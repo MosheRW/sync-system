@@ -4,8 +4,26 @@ import type { JsonObject, JsonValue } from './json.js';
 /** Role of a participant in a group. Later issues add more roles. */
 export type Role = 'leader' | 'member';
 
-/** Why a group ended. Later issues add more reasons. */
-export type GroupEndedReason = 'leader_disconnected';
+/**
+ * Why a group ended for the receiver (#5):
+ * - `ended_by_leader`: the leader sent group.end;
+ * - `leader_timeout`: the leader stayed offline past the recovery window;
+ * - `max_session`: the group reached its max session time;
+ * - `replaced`: a newer connection resumed the same participant (only that
+ *   older connection is told; the group goes on);
+ * - `removed`: the participant is on the leader's block list.
+ */
+export type GroupEndedReason =
+  'ended_by_leader' | 'leader_timeout' | 'max_session' | 'replaced' | 'removed';
+
+/** Every GroupEndedReason, for schemas and exhaustive checks. */
+export const GROUP_ENDED_REASONS = [
+  'ended_by_leader',
+  'leader_timeout',
+  'max_session',
+  'replaced',
+  'removed',
+] as const satisfies readonly GroupEndedReason[];
 
 // ---------------------------------------------------------------------------
 // Client -> server
@@ -119,6 +137,18 @@ export interface GroupEndedMessage {
   reason: GroupEndedReason;
 }
 
+/** To attached members: the leader's connection closed; the group is frozen (#5 AC18). */
+export interface LeaderOfflineMessage {
+  type: 'leader.offline';
+  groupId: string;
+}
+
+/** To attached members: the leader is back (#5 AC19). */
+export interface LeaderOnlineMessage {
+  type: 'leader.online';
+  groupId: string;
+}
+
 export interface ErrorMessage {
   type: 'error';
   reqId?: string;
@@ -135,6 +165,8 @@ export type ServerMessage =
   | PositionAckMessage
   | PositionUpdatedMessage
   | GroupEndedMessage
+  | LeaderOfflineMessage
+  | LeaderOnlineMessage
   | ErrorMessage;
 
 export type ServerMessageType = ServerMessage['type'];

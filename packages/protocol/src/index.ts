@@ -44,6 +44,8 @@ export type {
   PositionAckMessage,
   PositionUpdatedMessage,
   GroupEndedMessage,
+  LeaderOfflineMessage,
+  LeaderOnlineMessage,
   ErrorMessage,
   ServerMessage,
   ServerMessageType,
@@ -60,5 +62,6 @@ export {
   parseServerMessage,
 } from './schemas.js';
 export type { ParseResult } from './schemas.js';
+export { GROUP_ENDED_REASONS } from './messages.js';
 export { checkJson } from './json-guard.js';
 export type { JsonCheckOptions, JsonCheckResult } from './json-guard.js';

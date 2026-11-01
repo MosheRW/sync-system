@@ -143,13 +143,23 @@ describe('server message schemas', () => {
       },
       { type: 'position.ack', reqId: 'r' },
       { type: 'position.updated', groupId: GROUP_ID, position: [1] },
-      { type: 'group.ended', groupId: GROUP_ID, reason: 'leader_disconnected' },
+      { type: 'group.ended', groupId: GROUP_ID, reason: 'ended_by_leader' },
+      { type: 'group.ended', groupId: GROUP_ID, reason: 'leader_timeout' },
+      { type: 'group.ended', groupId: GROUP_ID, reason: 'max_session' },
+      { type: 'group.ended', groupId: GROUP_ID, reason: 'replaced' },
+      { type: 'group.ended', groupId: GROUP_ID, reason: 'removed' },
+      { type: 'leader.offline', groupId: GROUP_ID },
+      { type: 'leader.online', groupId: GROUP_ID },
       { type: 'error', code: 'GROUP_FULL', message: 'full', details: { maxGroupSize: 3 } },
     ];
     for (const message of messages) {
       expect(parseServerMessage(message).ok, message.type).toBe(true);
     }
     expect(parseServerMessage({ type: 'error', code: 'NOPE', message: '' }).ok).toBe(false);
+    expect(
+      parseServerMessage({ type: 'group.ended', groupId: GROUP_ID, reason: 'leader_disconnected' })
+        .ok,
+    ).toBe(false);
   });
 
   it('requires a bounded token and a valid namespace (#5)', () => {
