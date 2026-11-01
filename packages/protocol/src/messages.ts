@@ -239,6 +239,13 @@ export interface GroupLeftMessage {
   groupId: string;
 }
 
+/** To the leader: a refreshed leader token with a new last-activity time (#5 AC12). */
+export interface TokenRefreshedMessage {
+  type: 'token.refreshed';
+  groupId: string;
+  token: string;
+}
+
 /** To attached members: the leader's connection closed; the group is frozen (#5 AC18). */
 export interface LeaderOfflineMessage {
   type: 'leader.offline';
@@ -271,6 +278,7 @@ export type ServerMessage =
   | GroupEndedMessage
   | GroupLeftMessage
   | BlockListAckMessage
+  | TokenRefreshedMessage
   | LeaderOfflineMessage
   | LeaderOnlineMessage
   | ErrorMessage;

@@ -53,6 +53,7 @@ export type {
   GroupEndedMessage,
   GroupLeftMessage,
   BlockListAckMessage,
+  TokenRefreshedMessage,
   LeaderOfflineMessage,
   LeaderOnlineMessage,
   ErrorMessage,

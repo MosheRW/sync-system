@@ -167,6 +167,7 @@ const schemas = buildJitless(() => {
     }),
     z.object({ type: z.literal('group.left'), reqId, groupId: z.string() }),
     z.object({ type: z.literal('blocklist.ack'), reqId }),
+    z.object({ type: z.literal('token.refreshed'), groupId: z.string(), token }),
     z.object({ type: z.literal('leader.offline'), groupId: z.string() }),
     z.object({ type: z.literal('leader.online'), groupId: z.string() }),
     z.object({

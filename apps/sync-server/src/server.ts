@@ -123,7 +123,11 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
     rateLimiter: new SlidingWindowRateLimiter(now),
     tokens,
     scheduler,
-    refreshMaxMs: env.tokenRefreshMaxSeconds * 1000,
+    refresh: {
+      activities: env.tokenRefreshActivities,
+      minMs: env.tokenRefreshMinSeconds * 1000,
+      maxMs: env.tokenRefreshMaxSeconds * 1000,
+    },
     ended,
   });
   const counter = new ConnectionCounter();

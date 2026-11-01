@@ -28,6 +28,7 @@ import { KeyedLock } from './keyed-lock.js';
 import type { Notifier } from './notifier.js';
 import { ParkingLot } from './parking-lot.js';
 import { classifyToken } from './resume.js';
+import { type RefreshPolicy, TokenRefresher } from './token-refresher.js';
 import { type GroupActions, type Membership, type Session, membershipKey } from './session.js';
 
 export interface GroupServiceDeps {
@@ -40,8 +41,8 @@ export interface GroupServiceDeps {
   rateLimiter: SlidingWindowRateLimiter;
   /** Issues participant tokens (#5 AC5). */
   tokens: TokenService;
-  /** Max interval between leader token refreshes in ms; also the recovery slack (Q10). */
-  refreshMaxMs: number;
+  /** Leader token refresh policy (#5 AC12); `maxMs` is also the recovery slack (Q10). */
+  refresh: RefreshPolicy;
   /** Groups that ended in this process (Q8). */
   ended: EndedGroups;
 }
@@ -80,16 +81,48 @@ export class GroupService implements GroupActions {
   private readonly locks = new KeyedLock();
   private readonly timers: GroupTimers;
   private readonly parking: ParkingLot;
+  private readonly refresher: TokenRefresher;
 
   constructor(private readonly deps: GroupServiceDeps) {
     this.timers = new GroupTimers(deps.scheduler);
     this.parking = new ParkingLot(deps.scheduler);
+    this.refresher = new TokenRefresher(deps.scheduler, deps.refresh);
   }
 
   /** Cancels every group and parking timer (server shutdown). */
   close(): void {
     this.timers.clearAll();
     this.parking.clearAll();
+    this.refresher.clearAll();
+  }
+
+  /**
+   * Starts refresh counting for the group's online leader after a fresh
+   * leader token was issued at `at` (create, return, recreation).
+   */
+  private startRefresh(namespace: string, groupId: string, at: number): void {
+    this.refresher.reset(groupKey(namespace, groupId), at, () => {
+      this.runTimer(namespace, groupId, () => this.sendRefreshedToken(namespace, groupId));
+    });
+  }
+
+  /**
+   * Sends the online leader a token with the group's current last-activity
+   * time; all other claims stay the same (#5 AC12). Runs under the group lock.
+   */
+  private async sendRefreshedToken(namespace: string, groupId: string): Promise<void> {
+    const record = await this.deps.store.get(namespace, groupId);
+    if (!record || !record.leaderOnline) return;
+    const leader = this.deps.notifier.get(membershipKey(namespace, groupId, record.leaderId));
+    if (leader === undefined) return;
+    const token = this.issueToken(namespace, record, record.leaderId, 'leader', this.now());
+    leader.deliver(
+      JSON.stringify({ type: 'token.refreshed', groupId, token } satisfies ServerMessage),
+    );
+    this.deps.logger.debug(
+      { event: 'token_refreshed', namespace, groupRef: groupRef(groupId) },
+      'leader token refreshed',
+    );
   }
 
   /** Number of parked sessions. For tests only. */
@@ -147,7 +180,7 @@ export class GroupService implements GroupActions {
 
   /** When a frozen group ends: the recovery window after the leader's last activity. */
   private frozenEndAt(app: AppConfig, record: GroupRecord): number {
-    return record.lastActivityAt + app.inactivityLimitMinutes * MINUTE_MS + this.deps.refreshMaxMs;
+    return record.lastActivityAt + app.inactivityLimitMinutes * MINUTE_MS + this.deps.refresh.maxMs;
   }
 
   private maxSessionEndAt(app: AppConfig, record: GroupRecord): number {
@@ -215,6 +248,7 @@ export class GroupService implements GroupActions {
     };
     await this.deps.store.create(record);
     this.armMaxSession(app, record);
+    this.startRefresh(app.namespace, record.id, now);
     this.attach(session, { groupId: record.id, participantId, role: 'leader' });
     this.deps.logger.info(
       { event: 'group_created', namespace: app.namespace, groupRef: groupRef(record.id) },
@@ -322,13 +356,10 @@ export class GroupService implements GroupActions {
     }
 
     // An accepted update is a leader activity (#5 AC12).
-    const stored = await this.deps.store.setPosition(
-      namespace,
-      groupId,
-      message.position,
-      this.now(),
-    );
+    const at = this.now();
+    const stored = await this.deps.store.setPosition(namespace, groupId, message.position, at);
     if (!stored) return errorMessage(ErrorCode.NOT_IN_GROUP);
+    this.refresher.activity(groupKey(namespace, groupId), at);
 
     const record = await this.deps.store.get(namespace, groupId);
     if (record) {
@@ -494,7 +525,7 @@ export class GroupService implements GroupActions {
         record,
         ended: this.deps.ended.has(app.namespace, claims.gid),
         now: this.now(),
-        refreshMaxMs: this.deps.refreshMaxMs,
+        refreshMaxMs: this.deps.refresh.maxMs,
       });
       switch (status) {
         case 'invalid':
@@ -565,6 +596,7 @@ export class GroupService implements GroupActions {
     const updated = await this.deps.store.setLeaderOnline(namespace, record.id, true, now);
     if (!updated) return errorMessage(ErrorCode.GROUP_NOT_FOUND);
     this.timers.clearFrozenEnd(groupKey(namespace, record.id));
+    this.startRefresh(namespace, record.id, now);
     if (!record.leaderOnline) {
       this.deps.notifier.broadcast(this.memberKeys(updated), {
         type: 'leader.online',
@@ -616,6 +648,7 @@ export class GroupService implements GroupActions {
       return this.leaderReturn(session, existing, claims, message.blockList);
     }
     this.armMaxSession(app, record);
+    this.startRefresh(namespace, record.id, now);
     this.attach(session, { groupId: record.id, participantId: claims.pid, role: 'leader' });
     await this.admitParked(app, record);
     this.deps.logger.info(
@@ -643,7 +676,7 @@ export class GroupService implements GroupActions {
     const sessionEnd = claims.gct + app.maxSessionMinutes * MINUTE_MS;
     // A recreating leader token has lat <= now, so after this no such token
     // is usable any more (architecture 6.5).
-    const leaderWindowEnd = now + app.inactivityLimitMinutes * MINUTE_MS + this.deps.refreshMaxMs;
+    const leaderWindowEnd = now + app.inactivityLimitMinutes * MINUTE_MS + this.deps.refresh.maxMs;
     const until = Math.min(sessionEnd, leaderWindowEnd);
     const reason: GroupEndedReason =
       sessionEnd <= leaderWindowEnd ? 'max_session' : 'leader_timeout';
@@ -815,6 +848,7 @@ export class GroupService implements GroupActions {
   private async leaderOffline(app: AppConfig, groupId: string): Promise<void> {
     const namespace = app.namespace;
     const record = await this.deps.store.setLeaderOnline(namespace, groupId, false);
+    this.refresher.clear(groupKey(namespace, groupId));
     if (!record) return;
     if (connectedCount(record) === 0) {
       await this.dropGroup(namespace, groupId);
@@ -873,6 +907,7 @@ export class GroupService implements GroupActions {
     const key = groupKey(namespace, groupId);
     this.deps.rateLimiter.forget(key);
     this.timers.clear(key);
+    this.refresher.clear(key);
   }
 
   /**
