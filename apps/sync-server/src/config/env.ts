@@ -53,7 +53,7 @@ const NUMERIC_VARS: readonly NumericVar[] = [
     defaultValue: 20,
   },
   { key: 'maxInboundBurst', name: 'MAX_INBOUND_BURST', defaultValue: 40 },
-  { key: 'maxBufferedBytes', name: 'MAX_BUFFERED_BYTES', defaultValue: 1_048_576 },
+  { key: 'maxBufferedBytes', name: 'MAX_BUFFERED_BYTES', defaultValue: 262_144 },
 ];
 
 /** Digits only, no sign, no leading zero, no decimal point. */

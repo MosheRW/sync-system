@@ -26,7 +26,7 @@ services:
       MAX_PENDING_HANDSHAKES: '1000'
       MAX_INBOUND_MESSAGES_PER_SECOND: '20'
       MAX_INBOUND_BURST: '40'
-      MAX_BUFFERED_BYTES: '1048576'
+      MAX_BUFFERED_BYTES: '262144'
     healthcheck:
       test:
         - CMD

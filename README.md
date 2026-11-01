@@ -145,11 +145,18 @@ Numeric variables must be positive integers; anything else (empty, `0`, `-1`,
 | `MAX_PENDING_HANDSHAKES`          | `1000`               | Sockets that have not sent hello yet. Must be <= `MAX_CONNECTIONS`.      |
 | `MAX_INBOUND_MESSAGES_PER_SECOND` | `20`                 | Per-connection message rate. Must be > `MAX_LEADER_UPDATE_RATE_CEILING`. |
 | `MAX_INBOUND_BURST`               | `40`                 | Per-connection burst. Must be >= `MAX_INBOUND_MESSAGES_PER_SECOND`.      |
-| `MAX_BUFFERED_BYTES`              | `1048576`            | Per-socket outbound buffer before it is dropped. >= 4 x message ceiling. |
+| `MAX_BUFFERED_BYTES`              | `262144`             | Per-socket outbound buffer before it is dropped. >= 4 x message ceiling. |
 
 Fixed limits: hello within 5 s, at most 32 queued messages per connection, JSON
 nesting at most 64 levels, heartbeat ping every 30 s, HTTP header timeout 10 s
 and request timeout 15 s.
+
+Memory sizing: outbound buffers alone can reach
+`MAX_CONNECTIONS x MAX_BUFFERED_BYTES` (10000 x 256 KiB, about 2.5 GiB at the
+defaults), and one app's clients up to its `maxConnections x MAX_BUFFERED_BYTES`
+(1000 x 256 KiB, about 250 MiB at the default). Give the process (and its
+container memory limit) at least that much headroom, or lower `MAX_CONNECTIONS`
+or `MAX_BUFFERED_BYTES` to fit the machine.
 
 ### Protocol (v1) in brief
 

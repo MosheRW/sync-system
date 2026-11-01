@@ -41,7 +41,7 @@ describe('parseEnv', () => {
       maxPendingHandshakes: 1000,
       maxInboundMessagesPerSecond: 20,
       maxInboundBurst: 40,
-      maxBufferedBytes: 1048576,
+      maxBufferedBytes: 262144,
     });
   });
 
