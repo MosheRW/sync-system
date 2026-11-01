@@ -5,7 +5,7 @@
 - PR: #2
 - Plan approved by user: no
 - QA loops: 0
-- Last updated by: architect
+- Last updated by: security
 
 ## Gate 1
 - Gate 1 approved by user with edits (spec updated: AC27 max message size, AC28 CI workflow; open questions resolved).
@@ -27,6 +27,11 @@
 ## Architecture
 - Plan: docs/issues/1/architecture.md (ws chosen over Socket.IO; packages/protocol + apps/sync-server; 19 planned commits).
 - Awaiting Gate 2 approval.
+
+## Security (plan review)
+- docs/issues/1/security.md: FAIL (0 critical, 4 high, 6 medium, 8 low).
+- Blocking (all DoS/availability): H1 no connection / pending-handshake caps; H2 no outbound backpressure (slow readers); H3 no per-connection inbound limit, unbounded queue; H4 ws error listeners / unhandled rejections can crash the process.
+- Architect must add the required controls (security.md section 4) before Gate 2.
 
 ## Open questions
 - none
