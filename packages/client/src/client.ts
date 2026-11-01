@@ -8,7 +8,7 @@ import {
   type WelcomeMessage,
   checkJson,
 } from '@sync-system/protocol';
-import type { BusySignal } from './backoff.js';
+import { type BusySignal, nextDelay, streakAfterDrop, streakAfterFailure } from './backoff.js';
 import { Emitter, ListenerSet } from './emitter.js';
 import {
   type ClientErrorCode,
@@ -124,6 +124,16 @@ export class SyncClient {
   #throttle: PositionThrottle | undefined;
   /** One group create/join in flight at a time (L5). */
   #groupRequestInFlight = false;
+  #reconnectTimer: TimerHandle | undefined;
+  /**
+   * Sets the backoff delay. Grows on every failed attempt (fatal ones too)
+   * and resets only through the stability rule (H1) or a new client.
+   */
+  #failureStreak = 0;
+  /** Reconnect attempts since the last `connect()` or stable connection, against `maxAttempts` (R2-L5). */
+  #runAttempts = 0;
+  /** When the current connection reached `connected` (H1). */
+  #connectedAt = 0;
 
   /** Validates the options (throws `INVALID_OPTIONS`). Touches no host globals except `URL`. */
   constructor(options: SyncClientOptions) {
@@ -158,6 +168,7 @@ export class SyncClient {
     }
     const run = deferred<ConnectedInfo>();
     this.#run = run;
+    this.#runAttempts = 0;
     this.#update({
       connection: { status: 'connecting' },
       group: state.status === 'closed' ? null : this.#snapshot.group,
@@ -174,6 +185,8 @@ export class SyncClient {
   close(): void {
     if (this.#snapshot.connection.status === 'closed') return;
     const error = new SyncClientError('CLOSED');
+    clearTimer(this.#reconnectTimer);
+    this.#reconnectTimer = undefined;
     this.#teardown(error);
     this.#endGroup('closed');
     this.#update({ connection: { status: 'closed', reason: 'client' } });
@@ -606,6 +619,8 @@ export class SyncClient {
     const info: ConnectedInfo = Object.freeze({ participantId: message.participantId, limits });
     this.#info = info;
     this.#phase = 'ready';
+    // The backoff is not reset here; see the stability rule in #connectionLost (H1).
+    this.#connectedAt = now();
     this.#transport?.setMaxInboundChars(maxInboundChars(limits));
     this.#update({ connection: { status: 'connected', ...info } });
     this.#settleRun(info);
@@ -719,6 +734,7 @@ export class SyncClient {
   /** A fatal error: closed, no automatic reconnect (AC14). */
   #fail(error: SyncClientError): void {
     this.#log('warn', 'fatal_error', { code: error.code });
+    this.#failureStreak = streakAfterFailure(this.#failureStreak);
     this.#teardown(error, error.code);
     this.#endGroup('closed', error.code);
     this.#update({ connection: { status: 'closed', reason: 'fatal', error } });
@@ -726,21 +742,81 @@ export class SyncClient {
     this.#settleRun(error);
   }
 
-  /** A retryable failure or an unexpected drop. */
-  #connectionLost(error: SyncClientError, _busy?: BusySignal): void {
+  /**
+   * A retryable failure or an unexpected drop (AC26). Every failure grows the
+   * streak, timeouts included (M4); busy signals start at a higher streak
+   * (M3). A connection that stayed up for `stableAfterMs` resets the streak
+   * and the attempt count first (H1, R2-L5).
+   */
+  #connectionLost(error: SyncClientError, busy?: BusySignal): void {
     this.#log('info', 'connection_lost', { code: error.code });
+    const wasConnected = this.#phase === 'ready';
     const group = this.#snapshot.group;
     this.#teardown(new SyncClientError('CONNECTION_LOST'));
+    if (wasConnected) {
+      const connectedFor = now() - this.#connectedAt;
+      if (streakAfterDrop(this.#failureStreak, connectedFor, this.#opts.stableAfterMs) === 0) {
+        this.#failureStreak = 0;
+        this.#runAttempts = 0;
+      }
+    }
+    this.#failureStreak = streakAfterFailure(this.#failureStreak, busy);
     // The server ends a leader's group as soon as its socket closes (AC29).
     if (group?.status === 'active' && group.role === 'leader') {
       this.#endGroup('leader_disconnected');
     } else {
       this.#endGroup('closed', error.code);
     }
-    const gaveUp = new SyncClientError('RECONNECT_FAILED');
-    this.#update({ connection: { status: 'closed', reason: 'gave_up', error: gaveUp } });
+    if (this.#runAttempts >= this.#opts.maxAttempts) {
+      this.#giveUp(error);
+      return;
+    }
+    this.#scheduleRetry(busy);
     this.#emitError(error);
-    this.#settleRun(gaveUp);
+  }
+
+  /** Waits the backoff delay, then opens a new socket (state `reconnecting`). */
+  #scheduleRetry(busy?: BusySignal): void {
+    const delayMs = nextDelay(
+      this.#failureStreak,
+      this.#opts,
+      this.#opts.random ?? Math.random,
+      busy,
+    );
+    const attempt = this.#runAttempts + 1;
+    this.#log('info', 'reconnect_scheduled', { attempt, delayMs });
+    this.#update({
+      connection: {
+        status: 'reconnecting',
+        attempt,
+        delayMs,
+        retryAt: now() + delayMs,
+        attempting: false,
+      },
+    });
+    this.#reconnectTimer = setClampedTimeout(() => {
+      this.#reconnectTimer = undefined;
+      this.#retry();
+    }, delayMs);
+  }
+
+  #retry(): void {
+    const state = this.#snapshot.connection;
+    if (state.status !== 'reconnecting') return;
+    this.#runAttempts += 1;
+    this.#update({ connection: { ...state, attempting: true } });
+    this.#openSocket();
+  }
+
+  /** `maxAttempts` used up: closed(gave_up) with RECONNECT_FAILED (AC26). */
+  #giveUp(lastError: SyncClientError): void {
+    const error = new SyncClientError('RECONNECT_FAILED');
+    this.#log('warn', 'reconnect_gave_up', { code: lastError.code });
+    this.#endGroup('rejoin_failed', error.code);
+    this.#update({ connection: { status: 'closed', reason: 'gave_up', error } });
+    this.#emitError(lastError);
+    this.#emitError(error);
+    this.#settleRun(error);
   }
 }
 
