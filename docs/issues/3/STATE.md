@@ -6,8 +6,8 @@
 - Plan approved by user: no
 - QA loops: 0
 - Security-sensitive: yes
-- Review rounds: 1 (security plan review: FAIL, 2 high)
-- Last updated by: architect
+- Review rounds: 2 (security plan review: round 1 FAIL, round 2 PASS)
+- Last updated by: security
 
 ## Notes
 - PRD item 2 of 9. "item N" in spec.md means PRD item N, not GitHub issue N.
@@ -35,6 +35,10 @@
 - Architect must revise the plan (section 5 of security.md lists the required controls) before Gate 2.
 - Revision 2 (architect): all findings folded in. H1, H2 are required; M1-M5 and L1-L8 are listed separately so the user can drop any at Gate 2. Mapping: architecture.md section 11 "Security controls". Next: security plan review round 2.
 - New defaults in revision 2: reconnect.stableAfterMs 10 s; position.update ack timeout 2 x requestTimeoutMs (20 s), drop only after 10 s with no inbound frame; busy signals 1001/4003/4008 start at a 2 s cap; hello.ok limit bounds maxMessageBytes <= 1 MiB, maxLeaderUpdatesPerSecond <= 100, maxGroupSize <= 10000; retryAfterMs clamped to [next slot, 10 s]; RATE_LIMITED re-queue at most 3 per position; serverMessage <= 256 chars; schema issues <= 10; details strings <= 64 chars; one group request in flight (REQUEST_IN_PROGRESS); *Ms options in [0, 2^31-1].
+
+## Security (plan review, round 2)
+- Revision 2 (7f499d2): PASS. H1, H2, M1-M5 and L1-L8 resolved. 6 new low advisories (R2-L1..L6 in security.md): option minimums (stableAfterMs/initialDelayMs), fatal for out-of-bound hello.ok limits, connect with checked href, clear in-flight flag on every path, deterministic flapping test + runAttempts reset, close()+connect() loop.
+- Q-D: agree (required for H1). Q-E: agree, mild preference; keeping 10 s is acceptable.
 
 ## Open questions
 - Q-A: other handshake rejections (INVALID_MESSAGE, HANDSHAKE_REQUIRED, ALREADY_AUTHENTICATED, bare 4001) are fatal (proposed). Security: agree; pair with M5 (no unthrottled connect() after fatal).
