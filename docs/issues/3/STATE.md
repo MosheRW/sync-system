@@ -1,6 +1,6 @@
 # State: #3 Framework-free core client package
 - Path: full
-- Phase: validation
+- Phase: implementation (fix round 1 done, awaiting review round 2)
 - Branch: feat/3-core-client
 - PR: #4
 - Plan approved by user: yes (Gate 2, 2026-11-01)
@@ -8,7 +8,7 @@
 - Security-sensitive: yes
 - Review rounds: 1 (code review of PR #4; the plan had 2 security review rounds: round 1 FAIL, round 2 PASS)
 - QA verdict: FAIL (round 1, 2026-11-01): https://github.com/MosheRW/sync-system/pull/4#pullrequestreview-5729212922
-- Last updated by: qa
+- Last updated by: engineer
 
 ## Notes
 - PRD item 2 of 9. "item N" in spec.md means PRD item N, not GitHub issue N.
@@ -70,8 +70,29 @@
 - Finding 2: AC11 test does not cover NOT_CONNECTED while `reconnecting` (planned in architecture section 10).
 - Deviations: all others accepted.
 
+## Fix round 1 decisions (user)
+1. AC7: fix in @sync-system/protocol (user-approved change to the protocol package, which the original plan ruled out). Importing the client (dist and source) must read no browser global and never call eval/new Function, including through zod.
+2. QA finding 2: add the AC11 `reconnecting` case.
+3. Security MEDIUM (close() from a listener during a drop): fix with a lifecycle generation checked after every emit.
+4. Security LOW (send() throw leaves the socket open): close it.
+5. Security LOW (throttled positions sent by reference): serialize once.
+6. Copilot review (auto-fix on): also fix promise ownership (4436536884) and the stale RATE_LIMITED retry (4436536910); the lifecycle (4436536849), send-throw (4436536941) and deferred-payload (4436536959) comments are covered by fixes 3-5.
+- Optional QA note (one socket fewer after closed(fatal|gave_up)): documented in the README, not changed (see deviations).
+
+## Fix log (round 1)
+- 1c0e205 fix(protocol): schemas are built with zod `jitless` on, then the previous setting is restored (zod's config is process-global, so other zod schemas in the process keep theirs). This skips zod's eval probe: no `navigator` read, no `new Function`. Protocol test test/import.test.ts (recording traps, restored setting). Perf: position.update parse 0.10 -> 0.33 us measured locally; protocol 24 and server 343 tests green. (QA finding 1, AC7)
+- ee47021 test(client): ssr-import.test.ts no longer pre-loads protocol; it also rebuilds protocol + client and imports dist/index.js in a fresh Node process with recording getters on browser globals, Function and eval. Both tests fail on the old protocol. (QA finding 1, AC7)
+- 3d13c62 test(client): AC11 NOT_CONNECTED while reconnecting (waiting and attempting), no group frame sent. (QA finding 2)
+- ed5f646 fix(client): lifecycle generation bumped by close() and a new connect() run; connect(), close(), #connectionLost, #scheduleRetry, #retry, #fail, #giveUp and hello.ok return after an emit if it changed; reconnect timers registered before listeners are notified. Tests in client.close.test.ts: close() from groupEnded, subscribe, state (reconnecting, attempting, connecting with and without the R2-L6 gap) and during a fatal error -> closed(client), no socket, 0 timers. (Security #1 MEDIUM; Copilot 4436536849)
+- 361e3a2 fix(client): the finishing connect() run is detached before the state is announced and settled by the flow that owns it (close, fatal, gave_up, hello.ok). Tests: connect() from a closed listener -> old promise rejects with CLOSED / INVALID_API_KEY / RECONNECT_FAILED, new promise settles on its own; close() from the connected listener still resolves the run that connected. (Copilot 4436536884)
+- 4f187e1 fix(client): a throwing send() closes the socket through retire() (code 1000, no-op error listener kept) before onClose. Tests: transport.test.ts exactly one close() call, also when close() throws; client.reconnect.test.ts one close() then reconnect. (Security #2 LOW; Copilot 4436536941)
+- 8cd5ec3 fix(client): updatePosition serializes once (INVALID_PAYLOAD if JSON.stringify throws), measures that text, and the throttle keeps and sends exactly that string (Transport.sendText). Tests: mutating a throttled or rate-limited position after updatePosition does not change the frame. (Security #3 LOW; Copilot 4436536959)
+- 39c30a4 fix(client): each throttle submit() has a generation kept after the send; RATE_LIMITED re-queues only the latest generation and only on the throttle that sent it. Tests: throttle.test.ts (A then B sent, late reject of A ignored; equal values; after cancel), client.requests.test.ts. (Copilot 4436536910)
+- f5ebc4a docs(client): README notes on listener reentrancy, the jitless import, and maxAttempts after closed(fatal|gave_up).
+- Checks: pnpm lint, typecheck, test (protocol 24, server 343, client 324 in 37 files), build, pnpm audit --audit-level=high: all exit 0. The security repro script now ends in closed(client) with 1 socket; dist import with traps touches nothing.
+
 ## Open questions
-- AC7 (QA finding 1): accept the transitive zod `navigator`/eval probe as a documented deviation (AC7 = this package's own code), or approve a protocol-package change (lazy schemas or zod jitless) to remove it?
+- none
 
 ## Deviations from plan
 - packages/client typecheck also runs `tsc -p tsconfig.build.json --noEmit --customConditions @sync-system/source`, so the no-DOM/no-Node build config (AC1) is checked in CI's typecheck step, before build.
@@ -84,5 +105,11 @@
 - close() applies the stability rule too: a connection up for at least stableAfterMs resets the streak, so close() + connect() after a long session connects at once.
 - The R2-L6 gap applies to connect() from idle/closed with streak 0: the socket opens after the remaining gap while the state is `connecting`.
 - The `error` event also fires for fatal errors and RECONNECT_FAILED (besides the connect() rejection and the closed state). Logger methods are all optional.
-- AC7 test pre-loads @sync-system/protocol before installing the global traps: zod (a protocol dependency) probes `typeof navigator` once when its first schema is built.
+- (Superseded in fix round 1) The AC7 test used to pre-load @sync-system/protocol; it now imports the real graph, after the protocol fix.
+- Fix round 1: the protocol package changed (user-approved, see "Fix round 1 decisions"). zod's `jitless` is switched on only while the protocol schemas are built, so they use zod's interpreted parser (about 0.2 us more per small frame).
+- Fix round 1: ssr-import.test.ts runs `tsc -p tsconfig.build.json` for protocol and client in beforeAll (CI runs tests before the build step), so the dist check never reads a stale or missing build.
+- Fix round 1: after a `close()`/`connect()` from a listener ends a fatal or gave-up flow early, the `error` event for that failure is skipped (the closed state still carries the error and the old promise still rejects with it).
+- Fix round 1: RequestTracker's `position` field is no longer filled by the client (rate-limit retries go through a closure bound to the throttle and generation); the field and its test are unchanged.
+- Fix round 1: optional QA note (after closed(fatal|gave_up) a run gets one socket fewer) documented in the README instead of changed: counting the first socket of such a run as attempt 0 would make `attempt` in the reconnecting state inconsistent.
+- Fix round 1: commit f5ebc4a's subject is longer than 72 characters (pushed, so not amended).
 - logging.test.ts (AC32) is in the integration-test commit (20), readme.test.ts in the README commit (21). Extra test helpers: test/helpers/client.ts, int.ts, wait.ts. The AC14 real-server tests wait 1.5 s instead of 2 s.
