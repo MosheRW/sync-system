@@ -171,6 +171,18 @@ describe('automatic reconnect (AC26)', () => {
     expect(FakeWebSocket.instances).toHaveLength(4);
     expect(vi.getTimerCount()).toBe(0);
   });
+
+  it('closes the old socket once when send() throws, then reconnects', async () => {
+    const { client, socket } = await connectedClient();
+    socket.throwOnSend = true;
+    const joining = client.joinGroup(GROUP_ID).catch((error: unknown) => error);
+    expect(socket.closeCalls).toEqual([{ code: 1000, reason: undefined }]);
+    expect(isSyncClientError(await joining, 'CONNECTION_LOST')).toBe(true);
+    expect(reconnecting(client).attempt).toBe(1);
+    nextSocket(client);
+    expect(socket.closeCalls).toHaveLength(1);
+    client.close();
+  });
 });
 
 describe('state sequence (AC24)', () => {

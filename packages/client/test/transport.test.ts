@@ -198,4 +198,27 @@ describe('Transport host safety (H2)', () => {
     expect(handlers.onClose).toHaveBeenCalledWith(1006);
     expect(transport.retired).toBe(true);
   });
+
+  it('closes the socket exactly once when send() throws, before reporting the drop', () => {
+    const { transport, handlers, socket } = open();
+    socket.throwOnSend = true;
+    handlers.onClose.mockImplementation(() => {
+      expect(socket.closeCalls).toEqual([{ code: 1000, reason: undefined }]);
+    });
+    expect(transport.send({ type: 'hello' })).toBe(false);
+    expect(handlers.onClose).toHaveBeenCalledTimes(1);
+    transport.retire();
+    expect(socket.closeCalls).toEqual([{ code: 1000, reason: undefined }]);
+    expect(socket.listenerCount('error')).toBe(1);
+    expect(() => socket.error()).not.toThrow();
+  });
+
+  it('closes the socket once on a throwing send() even if close() throws too', () => {
+    const { transport, handlers, socket } = open();
+    socket.throwOnSend = true;
+    socket.throwOnClose = true;
+    expect(transport.send({ type: 'hello' })).toBe(false);
+    expect(socket.closeCalls).toHaveLength(1);
+    expect(handlers.onClose).toHaveBeenCalledWith(1006);
+  });
 });

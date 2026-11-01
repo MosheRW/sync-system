@@ -140,7 +140,12 @@ export class Transport {
       this.#socket.send(JSON.stringify(message));
       return true;
     } catch {
-      this.#ended(ABNORMAL_CLOSE);
+      // A socket event fired during send() may have ended the transport already.
+      if (this.#retired) return false;
+      // Close the socket (keeping the no-op error listener) before reporting
+      // the drop, so a socket that is still open never outlives the transport.
+      this.retire(1000);
+      this.#handlers.onClose(ABNORMAL_CLOSE);
       return false;
     }
   }
