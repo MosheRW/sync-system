@@ -330,3 +330,41 @@ New advisories (not blocking):
   `**/.env*`.
 - **S4 (Low):** the dev key is refused only when `NODE_ENV=production`
   exactly. Fix: refuse unless development or test.
+
+## Code re-review (round 2, head 5153780)
+
+Scope: commits 43a4401, 3dccd7b, 7d818cf, 2b43041, 3e3fc8d, f6a8bd9,
+eda6fed, 7211db9 (since the PASS at cd356d9). Verdict: **PASS**.
+
+Advisories S1-S4 are closed:
+- **S1:** `closeTimeout: 2_000` (`CLOSE_TIMEOUT_MS`) on the
+  `WebSocketServer`; `ws@8.22.1` honours the option.
+- **S2:** `MAX_BUFFERED_BYTES` default 256 KiB in `env.ts` and
+  `compose.yaml`, plus a README memory-sizing note.
+- **S3:** `.dockerignore` adds `**/.env*` and `**/config/apps*.json`.
+- **S4:** `checkDevKeys` refuses the dev key unless `NODE_ENV` is exactly
+  `development` or `test` (unset refuses). The Dockerfile keeps
+  `NODE_ENV=production`; only compose (loopback-bound, dev registry) sets
+  `development`.
+
+Regression checks on the new code:
+- `KeyedLock`: entries are removed in `finally` when the tail is still the
+  caller's, so the map holds only keys with work in flight; a failed task
+  still releases. No nesting on one key, and `endGroup` only enqueues on
+  member queues (never awaits them), so a member's join waiting on the same
+  lock cannot deadlock. Malformed IDs are rejected before the lock.
+- `afterPending` tasks bypass the 32-message cap, but at most one is added
+  per member per group end, so they are bounded.
+- Ping/pong: `autoPong: false`; pings and pongs each take an inbound token
+  (over the limit closes 4008); pongs are skipped, not queued, when the
+  buffer would exceed the limit. A pong only clears the heartbeat when it
+  echoes the random ping payload, so unsolicited pongs cannot keep a socket
+  alive, and one pong per 30 s cannot starve the bucket.
+- Join snapshot is taken in the same atomic store step as the insert.
+
+Scanners: `pnpm audit` 0 high/critical, 2 moderate (`minimatch` via
+`eslint`, dev-only, not reachable at runtime). gitleaks and semgrep are not
+installed; the diff was checked for secrets by hand (none).
+
+New advisory: **S5 (Low):** bump `eslint`'s `minimatch` (GHSA-g3hv-75wg-m249)
+when a patched release is available; dev-only.
