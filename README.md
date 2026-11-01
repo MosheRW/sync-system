@@ -13,8 +13,13 @@ A pnpm workspace (Node 24, pnpm 10, TypeScript, ESM).
 | ----------------------- | ------------------- | ---------------------------------------------- |
 | `@sync-system/protocol` | `packages/protocol` | Wire protocol: versions, error codes, schemas. |
 | `@sync-system/server`   | `apps/sync-server`  | The sync server (HTTP `/health` + WebSocket).  |
+| `@sync-system/client`   | `packages/client`   | Framework-free client for browsers and Node.   |
 
 `packages/*` holds libraries and `apps/*` holds deployables.
+
+The client's usage, API, events, error codes, connection states and
+reconnect behavior are documented in
+[`packages/client/README.md`](packages/client/README.md).
 
 ```sh
 corepack enable          # uses the pnpm version pinned in package.json
