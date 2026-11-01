@@ -45,3 +45,5 @@ export {
   parseServerMessage,
 } from './schemas.js';
 export type { ParseResult } from './schemas.js';
+export { checkJson } from './json-guard.js';
+export type { JsonCheckOptions, JsonCheckResult } from './json-guard.js';
