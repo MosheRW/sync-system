@@ -36,6 +36,13 @@ export class InMemoryGroupStore implements GroupStore {
     return Promise.resolve();
   }
 
+  createIfAbsent(group: GroupRecord): Promise<'created' | 'exists'> {
+    const key = keyOf(group.appNamespace, group.id);
+    if (this.groups.has(key)) return Promise.resolve('exists');
+    this.groups.set(key, copy(group));
+    return Promise.resolve('created');
+  }
+
   get(namespace: string, id: string): Promise<GroupRecord | undefined> {
     const record = this.groups.get(keyOf(namespace, id));
     return Promise.resolve(record ? copy(record) : undefined);

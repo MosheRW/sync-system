@@ -136,9 +136,21 @@ describe('InMemoryGroupStore', () => {
     expect(store.size).toBe(0);
   });
 
+  it('creates a group only if it is absent, atomically (#5 AC27)', async () => {
+    const store = new InMemoryGroupStore();
+    const results = await Promise.all([
+      store.createIfAbsent(record({ leaderId: 'a', participantIds: ['a'] })),
+      store.createIfAbsent(record({ leaderId: 'b', participantIds: ['b'] })),
+    ]);
+    expect(results).toEqual(['created', 'exists']);
+    expect((await store.get('app-a', ID))!.leaderId).toBe('a');
+    expect(await store.createIfAbsent(record({ appNamespace: 'app-b' }))).toBe('created');
+  });
+
   it('has no way to list groups (AC20)', () => {
     expectTypeOf<keyof GroupStore>().toEqualTypeOf<
       | 'create'
+      | 'createIfAbsent'
       | 'get'
       | 'addParticipant'
       | 'removeParticipant'

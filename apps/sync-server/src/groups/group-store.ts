@@ -43,6 +43,11 @@ export type AddParticipantResult =
  */
 export interface GroupStore {
   create(group: GroupRecord): Promise<void>;
+  /**
+   * Stores `group` unless a group with its namespace and ID exists (#5
+   * recreation, AC27). Atomic: two concurrent calls create one group.
+   */
+  createIfAbsent(group: GroupRecord): Promise<'created' | 'exists'>;
   /** A shallow copy (opaque values are shared, never mutated). */
   get(namespace: string, id: string): Promise<GroupRecord | undefined>;
   /**

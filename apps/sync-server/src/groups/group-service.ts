@@ -426,8 +426,9 @@ export class GroupService implements GroupActions {
             ? this.leaderReturn(session, record!, claims)
             : this.memberResume(session, record!, claims);
         case 'recoverable':
+          return this.recreate(session, claims, message);
         case 'waiting':
-          // Recreation and parking come with later changes.
+          // Parking comes with a later change.
           return errorMessage(ErrorCode.GROUP_NOT_FOUND);
       }
     });
@@ -490,6 +491,57 @@ export class GroupService implements GroupActions {
       'leader resumed',
     );
     return this.resumedMessage(updated, claims.pid, false, now);
+  }
+
+  /**
+   * Rebuilds a group that is not in memory from the leader's token and the
+   * recovery data its client sends (AC23, AC24, AC28): same group ID, the
+   * token's creation time (so a group never outlives its max session) and the
+   * leader's participant ID. Runs under the group lock.
+   */
+  private async recreate(
+    session: Session,
+    claims: TokenClaims,
+    message: GroupResumeMessage,
+  ): Promise<ServerMessage> {
+    if (message.metadata === undefined) return errorMessage(ErrorCode.INVALID_MESSAGE);
+    const { app } = session;
+    const namespace = app.namespace;
+    const now = this.now();
+    const record: GroupRecord = {
+      id: claims.gid,
+      appNamespace: namespace,
+      metadata: message.metadata,
+      position:
+        message.position === undefined ? { has: false } : { has: true, payload: message.position },
+      leaderId: claims.pid,
+      participantIds: [claims.pid],
+      createdAt: claims.gct,
+      lastActivityAt: now,
+      leaderOnline: true,
+      // Deduplicated; the leader's own ID is ignored.
+      blockList: [...new Set(message.blockList ?? [])].filter((id) => id !== claims.pid),
+    };
+    if ((await this.deps.store.createIfAbsent(record)) === 'exists') {
+      // Impossible under the in-process lock; with a shared store, the group
+      // someone else just recreated is resumed instead.
+      const existing = await this.deps.store.get(namespace, claims.gid);
+      if (!existing) return errorMessage(ErrorCode.GROUP_NOT_FOUND);
+      return this.leaderReturn(session, existing, claims);
+    }
+    this.armMaxSession(app, record);
+    this.attach(session, { groupId: record.id, participantId: claims.pid, role: 'leader' });
+    this.deps.logger.info(
+      {
+        event: 'group_resumed',
+        namespace,
+        groupRef: groupRef(record.id),
+        recreated: true,
+        blocked: record.blockList.length,
+      },
+      'group recreated',
+    );
+    return this.resumedMessage(record, claims.pid, true, now);
   }
 
   private resumedMessage(

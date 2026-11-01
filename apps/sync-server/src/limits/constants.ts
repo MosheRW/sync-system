@@ -23,11 +23,26 @@ export const HTTP_CONNECTION_MARGIN = 64;
 export const LEADER_RATE_WINDOW_MS = 1_000;
 
 /**
+ * Room in a group.resume frame for a full block list (256 IDs of about 39
+ * bytes each), a 2048-character token and slack (#5 architecture 4.6).
+ */
+export const RECOVERY_EXTRA_BYTES = 16_384;
+
+/** A tokens.check frame with 20 tokens of 2048 characters plus the envelope. */
+export const TOKENS_CHECK_MAX_FRAME_BYTES = 45_056;
+
+/**
  * Transport frame limit: large enough that any frame that could still be legal
- * reaches the app-level size check, small enough to bound memory.
+ * reaches the app-level size check, small enough to bound memory. A
+ * group.resume carries metadata and a position (each up to the ceiling), a
+ * token and a block list, which has its own count limit and is not counted
+ * against the app's max message size (#5 AC24).
  */
 export function transportMaxPayload(maxMessageSizeCeiling: number): number {
-  return 2 * maxMessageSizeCeiling + 8192;
+  return Math.max(
+    2 * maxMessageSizeCeiling + 8192 + RECOVERY_EXTRA_BYTES,
+    TOKENS_CHECK_MAX_FRAME_BYTES,
+  );
 }
 
 /** Token lifetime: `exp = iat + TOKEN_TTL_SECONDS` (365 days, #5 AC5). */

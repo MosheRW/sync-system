@@ -31,6 +31,11 @@ export class FailingStore implements GroupStore {
     return this.inner.create(group);
   }
 
+  async createIfAbsent(group: GroupRecord): Promise<'created' | 'exists'> {
+    this.check('createIfAbsent');
+    return this.inner.createIfAbsent(group);
+  }
+
   async get(namespace: string, id: string): Promise<GroupRecord | undefined> {
     this.check('get');
     return this.inner.get(namespace, id);
