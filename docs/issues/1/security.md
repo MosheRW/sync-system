@@ -289,3 +289,44 @@ that in STATE.md under "Deviations from plan" as an accepted risk.
   `.dockerignore` and `.gitignore` as in M1; compose binds `127.0.0.1`.
 - CI: `permissions: contents: read`, `pull_request` (not `pull_request_target`),
   no secrets, frozen lockfile.
+
+## 6. Code review (PR #2, round 1, head `3459e85`)
+
+Result: **PASS** (0 critical, 0 high, 2 medium, 2 low). The full comment is on
+PR #2.
+
+Scanners: gitleaks and semgrep are not installed. I grepped all 34 commits for
+secrets by hand: only the public dev key and placeholders turned up.
+`pnpm audit`: 0 high/critical, 2 moderate dev-only advisories (accepted).
+
+Plan controls, all implemented and tested:
+
+| ID | Where | Test |
+| --- | --- | --- |
+| H1 | `ws/upgrade.ts`, `server.ts`, `config/env.ts`, `limits/constants.ts` | `caps.int`, `http.int`, `env` |
+| H2 | `ws/send.ts`, `ws/heartbeat.ts` | `slow-consumer.int`, `heartbeat`, `send` |
+| H3 | `ws/inbound-limiter.ts`, `ws/connection.ts` | `flood.int`, `inbound-limiter` |
+| H4 | `ws/connection.ts`, `ws/upgrade.ts`, `server.ts`, `index.ts` | `malformed-frames.int`, `robustness.int` |
+| M1 | `.gitignore`, `.dockerignore`, `Dockerfile` | `repo-hygiene` |
+| M2 | `config/apps-config.ts` `describeJsonSyntaxError` | `apps-config` |
+| M3 | README "Security", `compose.yaml` | `repo-hygiene` |
+| M4/L6 | `protocol/json-guard.ts`, `z.custom` opaque values | `json-guard`, `opaque-payload.int`, `malformed-frames.int` |
+| M5 | `ws/handshake.ts`, `connection-counter.ts` | `caps.int` |
+| M6 | `config/dev-key.ts`, compose `NODE_ENV=development` | `dev-key`, `repo-hygiene` |
+| L1 | `ws@8.22.1`, `semver@7.8.5`, CI audit step | `repo-hygiene` |
+| L2/L3 | `protocol/schemas.ts`, `GROUP_ID_PATTERN` | `handshake.int`, `isolation.int` |
+| L4 | `perMessageDeflate: false` | `caps.int` |
+| L5/L8 | `safeErr`, close reason not logged, digest/SHA pins | `privacy.int`, `repo-hygiene` |
+| L7 | `MIN_API_KEY_LENGTH = 32`, README `openssl rand` | `apps-config` |
+
+New advisories (not blocking):
+- **S1 (Medium):** `ws` `closeTimeout` is left at its 30 s default, so a closed
+  but unacknowledged socket holds a pending or connection slot for up to 30 s.
+  Fix: `closeTimeout: 2_000`.
+- **S2 (Medium):** the total outbound memory is only bounded by
+  `MAX_CONNECTIONS x MAX_BUFFERED_BYTES` (about 10 GiB at the defaults; about
+  1 GiB per public key). Fix: default 256 KiB plus a README sizing note.
+- **S3 (Low):** `.dockerignore` `.env*` matches only at the root. Fix:
+  `**/.env*`.
+- **S4 (Low):** the dev key is refused only when `NODE_ENV=production`
+  exactly. Fix: refuse unless development or test.
