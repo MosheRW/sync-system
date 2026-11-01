@@ -1,14 +1,14 @@
 # State: #3 Framework-free core client package
 - Path: full
-- Phase: validation
+- Phase: ready-to-merge
 - Branch: feat/3-core-client
 - PR: #4
 - Plan approved by user: yes (Gate 2, 2026-11-01)
 - QA loops: 1
 - Security-sensitive: yes
-- Review rounds: 2 (code review of PR #4; the plan had 2 security review rounds: round 1 FAIL, round 2 PASS)
-- QA verdict: PASS (round 2, 2026-11-01): https://github.com/MosheRW/sync-system/pull/4#pullrequestreview-5729356946 (round 1 FAIL: https://github.com/MosheRW/sync-system/pull/4#pullrequestreview-5729212922)
-- Last updated by: engineer
+- Review rounds: 3 (code review of PR #4; the plan had 2 security review rounds: round 1 FAIL, round 2 PASS)
+- QA verdict: PASS (round 3, delta review of 334f92d and 7a61096, 2026-11-01): https://github.com/MosheRW/sync-system/pull/4#pullrequestreview-5729936339 (round 2 PASS: https://github.com/MosheRW/sync-system/pull/4#pullrequestreview-5729356946; round 1 FAIL: https://github.com/MosheRW/sync-system/pull/4#pullrequestreview-5729212922)
+- Last updated by: qa
 
 ## Notes
 - PRD item 2 of 9. "item N" in spec.md means PRD item N, not GitHub issue N.
@@ -101,6 +101,13 @@
 - 334f92d fix(protocol): the schemas are built inside `buildJitless` (internal src/jitless.ts, try/finally), so zod's previous `jitless` value is restored even if building throws. Tests: test/jitless.test.ts (on during build, restored after; restored after a throwing build); test/import.test.ts restore check unchanged. (Security low advisory)
 - 7a61096 docs(client): README says a listener's close()/connect() during a fatal or give-up flow skips the `error` event; from a `closed` listener the closed state's error and the rejected connect() promise still carry the failure. (Security low advisory; QA round-2 note)
 - Checks: pnpm lint, typecheck, test (protocol 26, server 343, client 324), build: all exit 0. eslint/minimatch not bumped (out of scope).
+
+## QA (round 3, delta review, head d818dd3)
+- Scope: 334f92d and 7a61096 only.
+- Checks: lint, typecheck, test (protocol 26, server 343, client 324), build: all exit 0. CI `check` pass.
+- Exported schema names and d.ts types unchanged; protocol index exports the same 22 names (buildJitless internal). AC7 trap script on protocol and client dist: 0 hits.
+- README note matches client.ts #fail/#giveUp. Commit subjects 63 and 67 chars.
+- Non-blocking: the README note covers fatal/give-up only; a retryable drop's error event is skipped the same way when a listener calls close()/connect().
 
 ## Open questions
 - none
