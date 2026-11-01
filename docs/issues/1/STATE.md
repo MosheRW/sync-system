@@ -4,8 +4,8 @@
 - Branch: feat/1-sync-server-core
 - PR: #2
 - Plan approved by user: yes
-- QA loops: 1
-- Last updated by: engineer
+- QA loops: 2
+- Last updated by: qa
 
 ## Gate 1
 - Gate 1 approved by user with edits (spec updated: AC27 max message size, AC28 CI workflow; open questions resolved).
@@ -64,6 +64,12 @@
 - Checks: pnpm lint, typecheck, test (protocol 22, server 343), build pass; pnpm audit --audit-level=high passes (2 moderate dev-only, accepted).
 - Needs a QA re-run (round 2).
 
+## QA (round 2)
+- Verdict: PASS (review comment on PR #2). Reviewed head 5153780 (product code); 4c15041 adds only the security re-review doc.
+- Checks: install --frozen-lockfile, lint, typecheck, test (protocol 22, server 343), build all pass; `docker compose build` passes; CI 2/2 green on 5153780.
+- All 8 fixes verified with their regression tests (Copilot 1-4, S1-S4). S4 also checked in the container: NODE_ENV=staging exits 1 with the dev-key ConfigError, NODE_ENV=development warns and listens. README and compose.yaml match (NODE_ENV, MAX_BUFFERED_BYTES 262144).
+- ACs: 27/28 met, no regressions; Gate 2 Q1-Q3 unchanged. AC25 partly verified: Docker bind mounts still hang here, so the user needs to run `docker compose up --build` once before merge.
+
 ## Open questions
 - none
 
@@ -85,4 +91,3 @@
 - Review fixes: ws `autoPong: false`; `Connection` answers pings with `sendPong` (src/ws/send.ts), which skips the pong if the buffer is at the limit or the pong would push it over.
 - Review fixes: `closeTimeout` is not in @types/ws 8.18.1, so the server options are typed as `ServerOptions & { closeTimeout: number }`; `CLOSE_TIMEOUT_MS = 2_000` in limits/constants.ts. compose.yaml MAX_BUFFERED_BYTES set to the new 262144 default.
 - Review fixes: test helpers: RawClient records server pongs and can ignore close frames; vitest.config sets NODE_ENV=test.
-
