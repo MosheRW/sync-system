@@ -2,6 +2,7 @@ import { MAX_API_KEY_LENGTH, MAX_APP_VERSION_INPUT_LENGTH } from '@sync-system/p
 import { SyncClientError } from './errors.js';
 import { MAX_TIMER_MS, type WebSocketConstructorLike } from './host.js';
 import type { SyncClientLogger } from './logger.js';
+import { checkServerUrl } from './url-policy.js';
 
 export interface ReconnectOptions {
   /** First backoff cap in ms. Default 500, at least 100 (R2-L1). */
@@ -112,9 +113,6 @@ export function resolveOptions(options: unknown): ResolvedOptions {
     random: options.random,
   };
 
-  const url = source.url;
-  if (typeof url !== 'string' || url.length === 0) throw invalid('url');
-
   const apiKey = readString(source, 'apiKey', MAX_API_KEY_LENGTH);
   const appVersion = readString(source, 'appVersion', MAX_APP_VERSION_INPUT_LENGTH);
 
@@ -129,6 +127,9 @@ export function resolveOptions(options: unknown): ResolvedOptions {
   }
   if (source.logger !== undefined && !isRecord(source.logger)) throw invalid('logger');
   if (source.random !== undefined && typeof source.random !== 'function') throw invalid('random');
+
+  if (typeof source.url !== 'string') throw invalid('url');
+  const url = checkServerUrl(source.url, source.allowInsecureTransport === true);
 
   const rawReconnect = source.reconnect;
   if (rawReconnect !== undefined && !isRecord(rawReconnect)) throw invalid('reconnect');
