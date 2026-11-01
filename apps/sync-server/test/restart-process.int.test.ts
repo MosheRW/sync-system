@@ -41,7 +41,7 @@ function startProcess(env: Record<string, string>): Promise<ChildProcess> {
     children.push(child);
     let output = '';
     const timer = setTimeout(() => reject(new Error('server did not start')), 30_000);
-    child.stdout!.on('data', (chunk: Buffer) => {
+    child.stdout.on('data', (chunk: Buffer) => {
       output += chunk.toString('utf8');
       if (output.includes('"event":"server_listening"')) {
         clearTimeout(timer);
