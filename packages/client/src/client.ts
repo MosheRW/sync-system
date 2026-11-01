@@ -137,6 +137,15 @@ export class SyncClient {
   #connectedAt = 0;
   /** When the last socket was constructed (R2-L6). */
   #lastSocketOpenAt: number | undefined;
+  /**
+   * Lifecycle generation, bumped by `close()` and by `connect()` starting a
+   * new run. App callbacks run synchronously inside internal flows (state,
+   * subscribers, groupEnded, error), and one of them may call `close()` or
+   * `connect()`. Each flow keeps the value it started with and returns as
+   * soon as it changed after an emit, so it never reopens a socket, starts a
+   * timer or overwrites the state the app just set (AC28).
+   */
+  #generation = 0;
   /** Group handling across reconnects (Q1). Item 3 swaps in token rejoin. */
   readonly #rejoin: RejoinStrategy = memberRejoinByGroupId;
 
@@ -180,26 +189,28 @@ export class SyncClient {
     const run = deferred<ConnectedInfo>();
     this.#run = run;
     this.#runAttempts = 0;
+    const generation = ++this.#generation;
     const group = state.status === 'closed' ? null : this.#snapshot.group;
     const afterFailure =
       state.status === 'closed' && (state.reason === 'fatal' || state.reason === 'gave_up');
     if (afterFailure || this.#failureStreak > 0) {
       this.#update({ group });
+      if (generation !== this.#generation) return run.promise;
       this.#scheduleRetry(undefined, this.#failureStreak + 1);
       return run.promise;
     }
-    this.#update({ connection: { status: 'connecting' }, group });
     const sinceLastOpen =
       this.#lastSocketOpenAt === undefined ? Infinity : now() - this.#lastSocketOpenAt;
     const gap = this.#opts.initialDelayMs - sinceLastOpen;
     if (gap > 0) {
+      // Registered before listeners run, so a close() from one cancels it.
       this.#reconnectTimer = setClampedTimeout(() => {
         this.#reconnectTimer = undefined;
         this.#openSocket();
       }, gap);
-    } else {
-      this.#openSocket();
     }
+    this.#update({ connection: { status: 'connecting' }, group });
+    if (gap <= 0 && generation === this.#generation) this.#openSocket();
     return run.promise;
   }
 
@@ -210,6 +221,7 @@ export class SyncClient {
    */
   close(): void {
     if (this.#snapshot.connection.status === 'closed') return;
+    const generation = ++this.#generation;
     const error = new SyncClientError('CLOSED');
     clearTimer(this.#reconnectTimer);
     this.#reconnectTimer = undefined;
@@ -219,6 +231,8 @@ export class SyncClient {
     }
     this.#teardown(error);
     this.#endGroup('closed');
+    // A groupEnded listener called close() or connect() itself.
+    if (generation !== this.#generation) return;
     this.#update({ connection: { status: 'closed', reason: 'client' } });
     this.#settleRun(error);
   }
@@ -653,7 +667,9 @@ export class SyncClient {
     // The backoff is not reset here; see the stability rule in #connectionLost (H1).
     this.#connectedAt = now();
     this.#transport?.setMaxInboundChars(maxInboundChars(limits));
+    const generation = this.#generation;
     this.#update({ connection: { status: 'connected', ...info } });
+    if (generation !== this.#generation) return;
     this.#settleRun(info);
     this.#rejoinGroup();
   }
@@ -784,11 +800,13 @@ export class SyncClient {
 
   /** A fatal error: closed, no automatic reconnect (AC14). */
   #fail(error: SyncClientError): void {
+    const generation = this.#generation;
     this.#log('warn', 'fatal_error', { code: error.code });
     this.#failureStreak = streakAfterFailure(this.#failureStreak);
     this.#teardown(error, error.code);
     const group = this.#snapshot.group;
     this.#endGroup(group?.status === 'rejoining' ? 'rejoin_failed' : 'closed', error.code);
+    if (generation !== this.#generation) return;
     this.#update({ connection: { status: 'closed', reason: 'fatal', error } });
     this.#emitError(error);
     this.#settleRun(error);
@@ -801,10 +819,12 @@ export class SyncClient {
    * and the attempt count first (H1, R2-L5).
    */
   #connectionLost(error: SyncClientError, busy?: BusySignal): void {
+    const generation = this.#generation;
     this.#log('info', 'connection_lost', { code: error.code });
     const wasConnected = this.#phase === 'ready';
     const group = this.#snapshot.group;
     this.#teardown(new SyncClientError('CONNECTION_LOST'));
+    if (generation !== this.#generation) return;
     if (wasConnected) {
       const connectedFor = now() - this.#connectedAt;
       if (streakAfterDrop(this.#failureStreak, connectedFor, this.#opts.stableAfterMs) === 0) {
@@ -813,12 +833,15 @@ export class SyncClient {
       }
     }
     this.#failureStreak = streakAfterFailure(this.#failureStreak, busy);
+    // Listeners may call close() or connect() from here on (AC28).
     this.#groupAfterDrop(group);
+    if (generation !== this.#generation) return;
     if (this.#runAttempts >= this.#opts.maxAttempts) {
       this.#giveUp(error);
       return;
     }
     this.#scheduleRetry(busy);
+    if (generation !== this.#generation) return;
     this.#emitError(error);
   }
 
@@ -837,11 +860,20 @@ export class SyncClient {
     this.#update({ group: next });
   }
 
-  /** Waits the backoff delay for `streak`, then opens a new socket (state `reconnecting`). */
+  /**
+   * Waits the backoff delay for `streak`, then opens a new socket (state
+   * `reconnecting`). The timer is registered before listeners hear about the
+   * new state, so a `close()` from one of them cancels it.
+   */
   #scheduleRetry(busy?: BusySignal, streak = this.#failureStreak): void {
     const delayMs = nextDelay(streak, this.#opts, this.#opts.random ?? Math.random, busy);
     const attempt = this.#runAttempts + 1;
     this.#log('info', 'reconnect_scheduled', { attempt, delayMs });
+    clearTimer(this.#reconnectTimer);
+    this.#reconnectTimer = setClampedTimeout(() => {
+      this.#reconnectTimer = undefined;
+      this.#retry();
+    }, delayMs);
     this.#update({
       connection: {
         status: 'reconnecting',
@@ -851,25 +883,25 @@ export class SyncClient {
         attempting: false,
       },
     });
-    this.#reconnectTimer = setClampedTimeout(() => {
-      this.#reconnectTimer = undefined;
-      this.#retry();
-    }, delayMs);
   }
 
   #retry(): void {
     const state = this.#snapshot.connection;
     if (state.status !== 'reconnecting') return;
+    const generation = this.#generation;
     this.#runAttempts += 1;
     this.#update({ connection: { ...state, attempting: true } });
+    if (generation !== this.#generation) return;
     this.#openSocket();
   }
 
   /** `maxAttempts` used up: closed(gave_up) with RECONNECT_FAILED (AC26). */
   #giveUp(lastError: SyncClientError): void {
+    const generation = this.#generation;
     const error = new SyncClientError('RECONNECT_FAILED');
     this.#log('warn', 'reconnect_gave_up', { code: lastError.code });
     this.#endGroup('rejoin_failed', error.code);
+    if (generation !== this.#generation) return;
     this.#update({ connection: { status: 'closed', reason: 'gave_up', error } });
     this.#emitError(lastError);
     this.#emitError(error);

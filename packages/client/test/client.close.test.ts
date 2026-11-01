@@ -91,6 +91,116 @@ describe('close() (AC28)', () => {
   });
 });
 
+describe('close() from a listener inside an internal flow (AC28)', () => {
+  async function leaderClient(): Promise<{ client: SyncClient; socket: FakeWebSocket }> {
+    const { client, socket } = await connectedClient();
+    const creating = client.createGroup({});
+    socket.receive({
+      type: 'group.created',
+      reqId: socket.lastMessage().reqId,
+      groupId: GROUP_ID,
+      participantId: PARTICIPANT_ID,
+      role: 'leader',
+    });
+    await creating;
+    return { client, socket };
+  }
+
+  async function memberClient(): Promise<{ client: SyncClient; socket: FakeWebSocket }> {
+    const { client, socket } = await connectedClient();
+    const joining = client.joinGroup(GROUP_ID);
+    socket.receive({
+      type: 'group.joined',
+      reqId: socket.lastMessage().reqId,
+      groupId: GROUP_ID,
+      participantId: PARTICIPANT_ID,
+      role: 'member',
+      metadata: {},
+      hasPosition: false,
+    });
+    await joining;
+    return { client, socket };
+  }
+
+  /** closed(client), no timer left, and no socket opened even an hour later. */
+  function expectClosedForGood(client: SyncClient, sockets: number): void {
+    expect(client.getState()).toEqual({ status: 'closed', reason: 'client' });
+    expect(vi.getTimerCount()).toBe(0);
+    vi.advanceTimersByTime(HOUR);
+    expect(FakeWebSocket.instances).toHaveLength(sockets);
+    expect(client.getState()).toEqual({ status: 'closed', reason: 'client' });
+  }
+
+  it('groupEnded listener during a leader drop', async () => {
+    const { client, socket } = await leaderClient();
+    const errors: string[] = [];
+    client.on('error', (error) => errors.push(error.code));
+    client.on('groupEnded', () => client.close());
+    socket.serverClose(1006);
+    expectClosedForGood(client, 1);
+    expect(errors).toEqual([]);
+  });
+
+  it('subscribe listener during a member drop (group -> rejoining)', async () => {
+    const { client, socket } = await memberClient();
+    client.subscribe(() => client.close());
+    socket.serverClose(1006);
+    expectClosedForGood(client, 1);
+  });
+
+  it('state listener on reconnecting during a drop', async () => {
+    const { client, socket } = await connectedClient();
+    client.on('state', (state) => {
+      if (state.status === 'reconnecting') client.close();
+    });
+    socket.serverClose(1006);
+    expectClosedForGood(client, 1);
+  });
+
+  it('state listener on the retry attempt (attempting: true) opens no socket', async () => {
+    const { client, socket } = await connectedClient();
+    socket.serverClose(1006);
+    client.on('state', (state) => {
+      if (state.status === 'reconnecting' && state.attempting) client.close();
+    });
+    vi.advanceTimersToNextTimer();
+    expectClosedForGood(client, 1);
+  });
+
+  it('state listener on connecting, with and without the R2-L6 gap', async () => {
+    const client = makeClient();
+    const stop = client.on('state', (state) => {
+      if (state.status === 'connecting') client.close();
+    });
+    await rejection(client.connect());
+    expectClosedForGood(client, 0);
+    stop();
+
+    const connected = await connectedClient();
+    connected.client.close();
+    connected.client.on('state', (state) => {
+      if (state.status === 'connecting') connected.client.close();
+    });
+    // Inside initialDelayMs of the last socket: the open waits on a timer.
+    await rejection(connected.client.connect());
+    expectClosedForGood(connected.client, 1);
+  });
+
+  it('groupEnded listener during a fatal error (rejoining member, INVALID_API_KEY)', async () => {
+    const { client, socket } = await memberClient();
+    socket.serverClose(1006);
+    vi.advanceTimersToNextTimer();
+    const ended: string[] = [];
+    client.on('groupEnded', (info) => {
+      ended.push(info.reason);
+      client.close();
+    });
+    rejectKey();
+    expect(ended).toEqual(['rejoin_failed']);
+    expectClosedForGood(client, 2);
+  });
+});
+
 describe('connect() after a fatal or gave-up close (M5)', () => {
   it('20 connect() calls inside 1 s after INVALID_API_KEY open at most 1 socket', async () => {
     const client = makeClient();
