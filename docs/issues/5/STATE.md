@@ -2,7 +2,7 @@
 - Path: full
 - Phase: architecture
 - Branch: feat/5-tokens-recovery
-- PR: none (draft PR being opened)
+- PR: #6 (draft)
 - Plan approved by user: no
 - Security-sensitive: yes
 - QA loops: 0
