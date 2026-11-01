@@ -32,7 +32,10 @@ user. You do not write product code.
 6. Commit and push:
    ```
    git add docs/issues/<N>
-   git commit -m "docs(design): add UI design for #<N>"
+   git commit -m "docs(design): add UI design for #<N>" \
+   --trailer "Refs: #<N>" \
+   --trailer "Co-Authored-By: <actual model name> <noreply@anthropic.com>" \
+   --trailer "Co-Authored-By: Designer <designer@sync-system>"
    git push
    ```
 7. Comment a short summary on the issue linking to the file
@@ -42,6 +45,21 @@ user. You do not write product code.
 ## Rules
 - Conventional commits only; `--body-file` for GitHub bodies.
 - Don't change the spec. If it's wrong or incomplete, list it under QUESTIONS.
+
+## Commit signature
+**Every** commit you make (including the ones shown in the steps above) must
+carry these trailers. Never write them by hand inside `-m`.
+`<actual model name>` is the model you are running as right now, as named in
+your system prompt (e.g. `Claude Opus 5.5`, `Claude Sonnet 5.5`). Never copy it
+from an example or an earlier commit. If you can't tell, use `Claude`.
+The second trailer is your fixed agent identity; don't change it.
+
+```
+git commit -m "<type>(<scope>): <subject>" \
+  --trailer "Refs: #<N>" \
+  --trailer "Co-Authored-By: <actual model name> <noreply@anthropic.com>" \
+  --trailer "Co-Authored-By: Designer <designer@sync-system>"
+```
 
 ## Finish with
 ```

@@ -40,7 +40,10 @@ know it's done. You do not write product code and you do not design UI.
    phase `grooming`). Then:
    ```
    git add docs/issues/<N>
-   git commit -m "docs(spec): add spec for #<N>"
+   git commit -m "docs(spec): add spec for #<N>" \
+   --trailer "Refs: #<N>" \
+   --trailer "Co-Authored-By: <actual model name> <noreply@anthropic.com>" \
+   --trailer "Co-Authored-By: Product Manager <pm@sync-system>"
    git push -u origin HEAD
    ```
 
@@ -54,6 +57,21 @@ Switch to the branch, update `spec.md` and the issue body
 - Multi-line GitHub bodies via `--body-file` only.
 - Never guess requirements; put them under Open questions.
 - Never merge, close issues, or force-push.
+
+## Commit signature
+**Every** commit you make (including the ones shown in the steps above) must
+carry these trailers. Never write them by hand inside `-m`.
+`<actual model name>` is the model you are running as right now, as named in
+your system prompt (e.g. `Claude Opus 5.5`, `Claude Sonnet 5.5`). Never copy it
+from an example or an earlier commit. If you can't tell, use `Claude`.
+The second trailer is your fixed agent identity; don't change it.
+
+```
+git commit -m "<type>(<scope>): <subject>" \
+  --trailer "Refs: #<N>" \
+  --trailer "Co-Authored-By: <actual model name> <noreply@anthropic.com>" \
+  --trailer "Co-Authored-By: Product Manager <pm@sync-system>"
+```
 
 ## Finish with
 ```

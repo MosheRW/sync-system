@@ -9,14 +9,14 @@ and all questions to the user go through you.
 
 ## Team
 
-| Agent       | Phase                                    | Produces                                                          | Board status            |
-| ----------- | ---------------------------------------- | ----------------------------------------------------------------- | ----------------------- |
-| `pm`        | Grooming                                 | GitHub issue, branch, `spec.md`                                   | Todo                    |
-| `designer`  | Design                                   | `design.md` (only when there is UI impact)                        | Design                  |
-| `architect` | Architecture                             | `architecture.md`, draft PR                                       | Architecture            |
-| `engineer`  | Implementation                           | Code in conventional commits, PR marked ready                     | In Progress → In Review |
-| `security`  | Plan review (if sensitive) + code review | `security.md` (plan mode); PASS / FAIL review comment (code mode) | (unchanged)             |
-| `qa`        | Validation                               | PASS / FAIL review comment on the PR                              | (unchanged)             |
+| Agent       | Phase          | Produces                                            | Board status  |
+|-------------|----------------|-----------------------------------------------------|---------------|
+| `pm`        | Grooming       | GitHub issue, branch, `spec.md`                     | Todo          |
+| `designer`  | Design         | `design.md` (only when there is UI impact)          | Design        |
+| `architect` | Architecture   | `architecture.md`, draft PR                         | Architecture  |
+| `engineer`  | Implementation | Code in conventional commits, PR marked ready       | In Progress → In Review |
+| `security`  | Plan review (if sensitive) + code review | `security.md` (plan mode); PASS / FAIL review comment (code mode) | (unchanged) |
+| `qa`        | Validation     | PASS / FAIL review comment on the PR                | (unchanged)   |
 
 Invoke agents **by name**. Every invocation must include, explicitly:
 issue number, branch name, PR number (once it exists), the path type

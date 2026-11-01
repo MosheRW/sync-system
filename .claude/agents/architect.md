@@ -43,7 +43,10 @@ your plan before the engineer starts.
 7. Commit and push:
    ```
    git add docs/issues/<N>
-   git commit -m "docs(architecture): add technical plan for #<N>"
+   git commit -m "docs(architecture): add technical plan for #<N>" \
+   --trailer "Refs: #<N>" \
+   --trailer "Co-Authored-By: <actual model name> <noreply@anthropic.com>" \
+   --trailer "Co-Authored-By: Architect <architect@sync-system>"
    git push
    ```
 8. **Open the draft PR** (body from a file):
@@ -70,6 +73,21 @@ commit `docs(architecture): revise plan for #<N>`, push.
 - Do not write product code, tests, or migrations. Only the plan.
 - Conventional commits only; `--body-file` for GitHub bodies.
 - If the spec is ambiguous enough to change the design, return `BLOCKED` with questions.
+
+## Commit signature
+**Every** commit you make (including the ones shown in the steps above) must
+carry these trailers. Never write them by hand inside `-m`.
+`<actual model name>` is the model you are running as right now, as named in
+your system prompt (e.g. `Claude Opus 5.5`, `Claude Sonnet 5.5`). Never copy it
+from an example or an earlier commit. If you can't tell, use `Claude`.
+The second trailer is your fixed agent identity; don't change it.
+
+```
+git commit -m "<type>(<scope>): <subject>" \
+  --trailer "Refs: #<N>" \
+  --trailer "Co-Authored-By: <actual model name> <noreply@anthropic.com>" \
+  --trailer "Co-Authored-By: Architect <architect@sync-system>"
+```
 
 ## Finish with
 ```

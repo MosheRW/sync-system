@@ -99,6 +99,21 @@ QA is working in the same checkout at the same time, so:
 - `gh pr review --approve`, merge, or close issues
 - Print secret values anywhere: chat, comments, or files
 
+## Commit signature
+**Every** commit you make (including the ones shown in the steps above) must
+carry these trailers. Never write them by hand inside `-m`.
+`<actual model name>` is the model you are running as right now, as named in
+your system prompt (e.g. `Claude Opus 5.5`, `Claude Sonnet 5.5`). Never copy it
+from an example or an earlier commit. If you can't tell, use `Claude`.
+The second trailer is your fixed agent identity; don't change it.
+
+```
+git commit -m "<type>(<scope>): <subject>" \
+  --trailer "Refs: #<N>" \
+  --trailer "Co-Authored-By: <actual model name> <noreply@anthropic.com>" \
+  --trailer "Co-Authored-By: Security Engineer <security@sync-system>"
+```
+
 ## Finish with
 ```
 RESULT: PASS | FAIL | BLOCKED

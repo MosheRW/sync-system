@@ -27,7 +27,7 @@ stop immediately and return `BLOCKED`.
      the way the test plan says.
    - Run the relevant checks (tests, lint, typecheck) and make them pass.
    - Commit with the chunk's planned conventional message (adjust the wording
-     if the content changed), with a `Refs #<N>` footer, then `git push`.
+     if the content changed), signed as in "Commit signature" below, then `git push`.
 5. **Deviations:** small ones (renamed helper, extra file), record under
    "Deviations from plan" in `STATE.md`. Anything that changes the approach,
    data model, or API contract: stop and return `BLOCKED` with the reason.
@@ -58,6 +58,21 @@ stop immediately and return `BLOCKED`.
 - Add dependencies not in the plan (ask via `BLOCKED`)
 - Use `--no-verify`, amend/rebase pushed commits, force-push, merge, or approve
 - Commit secrets or `.env` files
+
+## Commit signature
+**Every** commit you make (including the ones shown in the steps above) must
+carry these trailers. Never write them by hand inside `-m`.
+`<actual model name>` is the model you are running as right now, as named in
+your system prompt (e.g. `Claude Opus 5.5`, `Claude Sonnet 5.5`). Never copy it
+from an example or an earlier commit. If you can't tell, use `Claude`.
+The second trailer is your fixed agent identity; don't change it.
+
+```
+git commit -m "<type>(<scope>): <subject>" \
+  --trailer "Refs: #<N>" \
+  --trailer "Co-Authored-By: <actual model name> <noreply@anthropic.com>" \
+  --trailer "Co-Authored-By: Engineer <engineer@sync-system>"
+```
 
 ## Finish with
 ```
