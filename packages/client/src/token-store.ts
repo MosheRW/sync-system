@@ -111,6 +111,10 @@ function serialize(entries: readonly StoredEntry[]): string {
  *   most 20 remain.
  * - Storage failures never reject: they are logged by error name and the
  *   in-memory copy is kept. Nothing here throws.
+ * - Groups whose last write failed are dirty: until a write succeeds, their
+ *   in-memory entry (or its absence) wins over what storage returns, so a
+ *   readable store whose writes fail (quota full) never brings back a stale
+ *   token. Other groups still merge in from storage.
  */
 export class TokenStore {
   readonly #storage: TokenStorage;
@@ -121,6 +125,8 @@ export class TokenStore {
   #entries: readonly StoredEntry[] = [];
   #chain: Promise<void> = Promise.resolve();
   #pendingPositions = new Map<string, { hasPosition: boolean; position?: JsonValue }>();
+  /** Groups whose latest change is only in memory because a write failed. */
+  readonly #dirty = new Set<string>();
   #positionTimer: TimerHandle | undefined;
 
   constructor(
@@ -211,7 +217,8 @@ export class TokenStore {
     { ok: true; blockList: readonly string[] } | { ok: false; reason: 'not_found' | 'full' }
   > {
     return this.#run(async () => {
-      const current = this.#prune(this.#applyPending(await this.#read()));
+      const base = await this.#read();
+      const current = this.#prune(this.#applyPending(base));
       const entry = current.find((e) => e.claims.gid === groupId);
       if (entry?.claims.role !== 'leader' || entry.recovery === undefined) {
         this.#entries = current;
@@ -227,11 +234,7 @@ export class TokenStore {
       );
       this.#pendingPositions.clear();
       this.#entries = next;
-      try {
-        await this.#storage.setItem(this.#key, serialize(next));
-      } catch (error) {
-        this.#log('warn', 'storage_error', { op: 'set', name: storageErrorName(error) });
-      }
+      await this.#write(base, next);
       return { ok: true, blockList } as const;
     });
   }
@@ -275,12 +278,15 @@ export class TokenStore {
     clearTimer(this.#positionTimer);
     this.#positionTimer = undefined;
     return this.#run(async () => {
-      const count = this.#entries.length;
+      const previous = this.#entries;
+      const count = previous.length;
       this.#entries = [];
       try {
         await this.#storage.removeItem(this.#key);
+        this.#dirty.clear();
       } catch (error) {
         this.#log('warn', 'storage_error', { op: 'remove', name: storageErrorName(error) });
+        for (const entry of previous) this.#dirty.add(entry.claims.gid);
       }
       this.#log('debug', 'token_deleted', { count });
     });
@@ -304,18 +310,34 @@ export class TokenStore {
   #mutate(change: Change, event?: string, count?: number): Promise<void> {
     return this.#run(async () => {
       // Pending positions go on top: they are newer than anything stored.
-      const next = this.#prune(this.#applyPending(change(await this.#read())));
+      const base = await this.#read();
+      const next = this.#prune(this.#applyPending(change(base)));
       this.#pendingPositions.clear();
       this.#entries = next;
-      try {
-        await this.#storage.setItem(this.#key, serialize(next));
-      } catch (error) {
-        this.#log('warn', 'storage_error', { op: 'set', name: storageErrorName(error) });
-      }
+      await this.#write(base, next);
       if (event !== undefined) {
         this.#log('debug', event, count === undefined ? undefined : { count });
       }
     }).catch(() => undefined);
+  }
+
+  /**
+   * Writes `next`, which was derived from `base`. On success nothing is dirty
+   * any more (the document holds every in-memory change). On failure, every
+   * group whose entry differs between `base` and `next` becomes dirty.
+   */
+  async #write(base: readonly StoredEntry[], next: readonly StoredEntry[]): Promise<void> {
+    try {
+      await this.#storage.setItem(this.#key, serialize(next));
+      this.#dirty.clear();
+    } catch (error) {
+      this.#log('warn', 'storage_error', { op: 'set', name: storageErrorName(error) });
+      const before = new Map(base.map((entry) => [entry.claims.gid, entry]));
+      const after = new Map(next.map((entry) => [entry.claims.gid, entry]));
+      for (const gid of new Set([...before.keys(), ...after.keys()])) {
+        if (before.get(gid) !== after.get(gid)) this.#dirty.add(gid);
+      }
+    }
   }
 
   /** Pending positions applied onto `entries`. */
@@ -329,8 +351,18 @@ export class TokenStore {
     return result;
   }
 
-  /** Reads and validates the stored document. On a read failure, the in-memory copy. */
+  /** The stored entries, with dirty groups taken from memory instead. */
   async #read(): Promise<readonly StoredEntry[]> {
+    const stored = await this.#readStored();
+    if (this.#dirty.size === 0) return stored;
+    return [
+      ...stored.filter((entry) => !this.#dirty.has(entry.claims.gid)),
+      ...this.#entries.filter((entry) => this.#dirty.has(entry.claims.gid)),
+    ];
+  }
+
+  /** Reads and validates the stored document. On a read failure, the in-memory copy. */
+  async #readStored(): Promise<readonly StoredEntry[]> {
     let text: unknown;
     try {
       text = await this.#storage.getItem(this.#key);

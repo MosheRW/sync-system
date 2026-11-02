@@ -237,6 +237,65 @@ describe('TokenStore: untrusted stored data (#5 AC33, L8)', () => {
     expect(JSON.stringify(log.mock.calls)).not.toContain('SENTINEL');
   });
 
+  describe('readable storage whose writes fail (quota full)', () => {
+    function quotaStorage() {
+      const inner = memoryStorage();
+      const state = { full: false };
+      const storage: TokenStorage = {
+        getItem: (key) => inner.getItem(key),
+        setItem: (key, value) => {
+          if (state.full) throw new DOMException('quota', 'QuotaExceededError');
+          void inner.setItem(key, value);
+        },
+        removeItem: (key) => inner.removeItem(key),
+      };
+      return { storage, state };
+    }
+
+    it('keeps an unsaved token over the stored document on the next load', async () => {
+      const { storage, state } = quotaStorage();
+      const tokens = store(storage);
+      const old = fakeToken({ gid: groupIdOf('A') });
+      await tokens.saveToken(old, RECOVERY);
+      state.full = true;
+      const fresh = fakeToken({ gid: groupIdOf('A') });
+      const member = fakeToken({ gid: groupIdOf('B'), role: 'member' });
+      await tokens.saveToken(fresh);
+      await tokens.saveToken(member);
+      expect((await tokens.findFresh(groupIdOf('A')))?.token).toBe(fresh);
+      expect((await tokens.findFresh(groupIdOf('A')))?.recovery).toEqual(RECOVERY);
+      expect((await tokens.findFresh(groupIdOf('B')))?.token).toBe(member);
+    });
+
+    it('keeps an unsaved removal and still merges other groups from storage', async () => {
+      const { storage, state } = quotaStorage();
+      const tokens = store(storage);
+      await tokens.saveToken(fakeToken({ gid: groupIdOf('A') }));
+      state.full = true;
+      await tokens.remove([groupIdOf('A')]);
+      const otherTab = fakeToken({ gid: groupIdOf('C'), role: 'member' });
+      // Another tab, whose write goes through, stores a token for group C.
+      state.full = false;
+      await store(storage).saveToken(otherTab);
+      state.full = true;
+      const ids = (await tokens.load()).map((e) => e.claims.gid);
+      expect(ids).toEqual([groupIdOf('C')]);
+    });
+
+    it('lets storage win again once a write succeeds', async () => {
+      const { storage, state } = quotaStorage();
+      const tokens = store(storage);
+      state.full = true;
+      const a = fakeToken({ gid: groupIdOf('A') });
+      await tokens.saveToken(a);
+      state.full = false;
+      await tokens.saveToken(fakeToken({ gid: groupIdOf('B') }));
+      expect(doc(storage).entries.map((e) => e.token)).toContain(a);
+      void storage.setItem(KEY, JSON.stringify({ v: 1, entries: [] }));
+      expect(await tokens.load()).toEqual([]);
+    });
+  });
+
   it('works with an async store', async () => {
     const inner = memoryStorage();
     const asyncStorage: TokenStorage = {
