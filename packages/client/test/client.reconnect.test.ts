@@ -305,8 +305,8 @@ describe('stability window (H1, AC27, Q-D)', () => {
   });
 });
 
-describe('leader drop (AC29)', () => {
-  it('ends the group at the drop; after reconnect it is connected with no group request sent', async () => {
+describe('leader drop (#5 AC35, replaces #3 AC29)', () => {
+  it('keeps the group as rejoining at the drop and resumes it after the reconnect', async () => {
     const { client, socket } = await connectedClient();
     const creating = client.createGroup({});
     socket.receive({
@@ -321,16 +321,21 @@ describe('leader drop (AC29)', () => {
     const ended: GroupEndedInfo[] = [];
     client.on('groupEnded', (e) => ended.push(e));
     socket.serverClose(1006);
-    expect(ended).toEqual([{ groupId: GROUP_ID, reason: 'leader_disconnected' }]);
-    expect(client.getSnapshot().group).toMatchObject({
-      status: 'ended',
-      reason: 'leader_disconnected',
-    });
+    expect(ended).toEqual([]);
+    expect(client.getSnapshot().group).toMatchObject({ status: 'rejoining', role: 'leader' });
     const next = nextSocket(client);
     serverHandshake(next);
     expect(client.getState().status).toBe('connected');
+    // The test token is not decodable, so nothing was stored: the resume
+    // ends the group with TOKEN_NOT_FOUND (covered in client.rejoin.test.ts).
+    await vi.waitFor(() =>
+      expect(client.getSnapshot().group).toMatchObject({
+        status: 'ended',
+        reason: 'rejoin_failed',
+        code: 'TOKEN_NOT_FOUND',
+      }),
+    );
     expect(next.messages.map((m) => m.type)).toEqual(['hello']);
-    expect(client.getSnapshot().group).toMatchObject({ status: 'ended' });
     client.close();
   });
 });

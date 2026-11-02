@@ -30,12 +30,15 @@ export const ClientErrorCode = {
   INVALID_SERVER_MESSAGE: 'INVALID_SERVER_MESSAGE',
   /** A group create or join is already in flight (L5). */
   REQUEST_IN_PROGRESS: 'REQUEST_IN_PROGRESS',
+  /** No stored token for that group on this server and app (#5 AC38). */
+  TOKEN_NOT_FOUND: 'TOKEN_NOT_FOUND',
 } as const;
 
 export type ClientErrorCode = (typeof ClientErrorCode)[keyof typeof ClientErrorCode];
 
 /** Which request an error belongs to, if any. */
-export type RequestKind = 'hello' | 'group.create' | 'group.join' | 'position.update';
+export type RequestKind =
+  'hello' | 'group.create' | 'group.join' | 'position.update' | 'group.resume';
 
 interface KnownDetails {
   PROTOCOL_TOO_OLD: { minProtocolVersion?: number };
@@ -97,6 +100,7 @@ const MESSAGES: Record<ClientErrorCode, string> = {
   INVALID_PAYLOAD: 'The value is not a valid JSON payload',
   INVALID_SERVER_MESSAGE: 'The server sent an invalid message',
   REQUEST_IN_PROGRESS: 'A group request is already in progress',
+  TOKEN_NOT_FOUND: 'No stored token for this group',
 };
 
 /** Longest server `message` text kept in `serverMessage` (L2). */

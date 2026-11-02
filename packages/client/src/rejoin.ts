@@ -1,26 +1,25 @@
 import type { ClientErrorCode, SyncClientError } from './errors.js';
-import type { GroupState, JoinedGroup } from './state.js';
+import type { GroupState, ResumedGroup } from './state.js';
 
 export type RejoinOutcome =
-  | { kind: 'rejoined'; joined: JoinedGroup }
-  /** The server refused or did not answer: the group is gone for this client. */
+  | { kind: 'rejoined'; resumed: ResumedGroup }
+  /** A member parked until its leader recreates the group. */
+  | { kind: 'waiting' }
+  /** The server refused, or there was no token: the group is gone for this client. */
   | { kind: 'failed'; code: ClientErrorCode }
   /** The connection dropped again before an answer; the next reconnect retries. */
   | { kind: 'lost' };
 
 export interface RejoinContext {
   readonly group: GroupState | null;
-  /** Sends `group.join` through the normal request path. */
-  join(
+  /** Sends `group.resume` with the stored token through the normal request path. */
+  resume(
     groupId: string,
-    callbacks: { resolve(joined: JoinedGroup): void; reject(error: SyncClientError): void },
+    callbacks: { resolve(resumed: ResumedGroup): void; reject(error: SyncClientError): void },
   ): void;
 }
 
-/**
- * How the client gets back into its group after a reconnect (internal seam).
- * Item 3 replaces the strategy below with token-based rejoin.
- */
+/** How the client gets back into its group after a reconnect (internal seam). */
 export interface RejoinStrategy {
   /** The group state right after an unexpected drop. */
   onDisconnected(group: GroupState | null): GroupState | null;
@@ -29,31 +28,42 @@ export interface RejoinStrategy {
 }
 
 /**
- * Gate 1 Q1: a member re-sends `group.join` for its last group ID after a
- * reconnect. A leader is never rejoined: the server ended its group when
- * its socket closed.
+ * #5 AC35 (replaces #3's group-ID rejoin): after an unexpected drop, leader
+ * and member both resume with their stored token. The group is `rejoining`
+ * at the drop (role, metadata and position kept). A `replaced` or otherwise
+ * ended group is never resumed automatically (L6).
  */
-export const memberRejoinByGroupId: RejoinStrategy = {
+export const tokenRejoin: RejoinStrategy = {
   onDisconnected(group) {
-    if (group?.status !== 'active') return group;
-    if (group.role === 'leader') {
-      return { status: 'ended', groupId: group.groupId, reason: 'leader_disconnected' };
+    if (group?.status === 'active') {
+      return {
+        status: 'rejoining',
+        groupId: group.groupId,
+        role: group.role,
+        metadata: group.metadata,
+        hasPosition: group.hasPosition,
+        position: group.position,
+      };
     }
-    return {
-      status: 'rejoining',
-      groupId: group.groupId,
-      role: 'member',
-      metadata: group.metadata ?? {},
-      hasPosition: group.hasPosition,
-      position: group.position,
-    };
+    if (group?.status === 'waiting') {
+      return {
+        status: 'rejoining',
+        groupId: group.groupId,
+        role: 'member',
+        metadata: null,
+        hasPosition: false,
+        position: undefined,
+      };
+    }
+    return group;
   },
 
   onReady(context, done) {
     const group = context.group;
     if (group?.status !== 'rejoining') return;
-    context.join(group.groupId, {
-      resolve: (joined) => done({ kind: 'rejoined', joined }),
+    context.resume(group.groupId, {
+      resolve: (resumed) =>
+        done(resumed.status === 'waiting' ? { kind: 'waiting' } : { kind: 'rejoined', resumed }),
       reject: (error) => {
         const lost =
           error.source === 'client' &&

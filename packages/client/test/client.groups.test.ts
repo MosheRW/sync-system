@@ -48,9 +48,10 @@ describe('createGroup (AC15)', () => {
       status: 'active',
       groupId: GROUP_ID,
       role: 'leader',
-      metadata: null,
+      metadata,
       hasPosition: true,
       position: { page: 1 },
+      leaderOnline: true,
     });
     client.close();
   });
@@ -229,11 +230,11 @@ describe('group events (AC19, AC20)', () => {
     const ended: GroupEndedInfo[] = [];
     client.on('groupEnded', (e) => ended.push(e));
     socket.receive({ type: 'group.ended', groupId: GROUP_ID, reason: 'ended_by_leader' });
-    expect(ended).toEqual([{ groupId: GROUP_ID, reason: 'leader_disconnected' }]);
+    expect(ended).toEqual([{ groupId: GROUP_ID, reason: 'ended_by_leader' }]);
     expect(client.getSnapshot().group).toEqual({
       status: 'ended',
       groupId: GROUP_ID,
-      reason: 'leader_disconnected',
+      reason: 'ended_by_leader',
     });
     // An ended group allows a new create or join.
     void client.joinGroup(GROUP_ID).catch(() => {});

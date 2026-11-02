@@ -29,10 +29,10 @@ import { utf8ByteLength } from './json-size.js';
 import { maxInboundChars } from './limits.js';
 import { type LogFields, type LogLevel, log } from './logger.js';
 import { type ResolvedOptions, type SyncClientOptions, resolveOptions } from './options.js';
-import { type RejoinStrategy, memberRejoinByGroupId } from './rejoin.js';
+import { type RejoinStrategy, tokenRejoin } from './rejoin.js';
 import { type PendingRequest, RequestTracker } from './requests.js';
 import { type TokenStorage, resolveStorage } from './storage.js';
-import { TokenStore, storageKey } from './token-store.js';
+import { type StoredEntry, TokenStore, storageKey } from './token-store.js';
 import type {
   ConnectedInfo,
   ConnectionState,
@@ -41,6 +41,8 @@ import type {
   GroupEndedReason,
   GroupState,
   JoinedGroup,
+  ResumeOptions,
+  ResumedGroup,
   SyncClientEvents,
   SyncClientSnapshot,
 } from './state.js';
@@ -79,13 +81,27 @@ const IDLE_SNAPSHOT: SyncClientSnapshot = Object.freeze({
 /** An unknown server type is logged only if it looks like a type name (L2). */
 const SAFE_TYPE = /^[a-z.]{1,64}$/;
 
-/** Which reply each request expects. */
-const REPLY_TYPE: Record<RequestKind, ServerMessage['type']> = {
-  hello: 'hello.ok',
-  'group.create': 'group.created',
-  'group.join': 'group.joined',
-  'position.update': 'position.ack',
+/** Which replies each request accepts. */
+const REPLY_TYPES: Record<RequestKind, readonly ServerMessage['type'][]> = {
+  hello: ['hello.ok'],
+  'group.create': ['group.created'],
+  'group.join': ['group.joined'],
+  'position.update': ['position.ack'],
+  'group.resume': ['group.resumed', 'group.joined', 'group.waiting'],
 };
+
+/** Server answers that mean a stored token is useless: it is deleted (#5 AC31). */
+const TOKEN_DEAD_CODES: ReadonlySet<ClientErrorCode> = new Set<ClientErrorCode>([
+  'TOKEN_INVALID',
+  'TOKEN_EXPIRED',
+  'GROUP_ENDED',
+  'PARTICIPANT_BLOCKED',
+]);
+
+interface ResumeCallbacks {
+  resolve(resumed: ResumedGroup): void;
+  reject(error: SyncClientError): void;
+}
 
 /** Runs local checks; returns the SyncClientError they threw, if any. */
 function localError(check: () => void): SyncClientError | undefined {
@@ -152,8 +168,8 @@ export class SyncClient {
   #storage: TokenStorage | undefined;
   /** Tokens for the current server and app (#5 AC31, AC33). */
   #tokens: TokenStore | undefined;
-  /** Group handling across reconnects (Q1). Item 3 swaps in token rejoin. */
-  readonly #rejoin: RejoinStrategy = memberRejoinByGroupId;
+  /** Group handling across reconnects: token rejoin (#5 AC35). */
+  readonly #rejoin: RejoinStrategy = tokenRejoin;
 
   /** Validates the options (throws `INVALID_OPTIONS`). Touches no host globals except `URL`. */
   constructor(options: SyncClientOptions) {
@@ -282,9 +298,10 @@ export class SyncClient {
           status: 'active',
           groupId: reply.groupId,
           role: 'leader',
-          metadata: null,
+          metadata,
           hasPosition: initialPosition !== undefined,
           position: initialPosition,
+          leaderOnline: true,
         });
         result.resolve(
           Object.freeze({
@@ -462,7 +479,7 @@ export class SyncClient {
    * error, a timeout, a drop and `close()` alike (R2-L4).
    */
   #trackGroupRequest(
-    kind: 'group.create' | 'group.join',
+    kind: 'group.create' | 'group.join' | 'group.resume',
     reqId: string,
     message: object,
     callbacks: RequestCallbacks,
@@ -513,6 +530,7 @@ export class SyncClient {
             metadata: reply.metadata,
             hasPosition: reply.hasPosition,
             position: reply.hasPosition ? reply.position : undefined,
+            leaderOnline: reply.leaderOnline,
           });
           callbacks.resolve(joined);
         },
@@ -714,7 +732,11 @@ export class SyncClient {
       maxMessageBytes,
       maxSessionMinutes,
     });
-    const info: ConnectedInfo = Object.freeze({ participantId: message.participantId, limits });
+    const info: ConnectedInfo = Object.freeze({
+      participantId: message.participantId,
+      namespace: message.namespace,
+      limits,
+    });
     this.#info = info;
     this.#phase = 'ready';
     // The backoff is not reset here; see the stability rule in #connectionLost (H1).
@@ -753,23 +775,171 @@ export class SyncClient {
     void this.#tokens.load();
   }
 
-  /** After each hello.ok: a member gets back into its group, or is told it is not (AC29). */
+  /** After each hello.ok: a dropped group is resumed with its stored token (#5 AC35). */
   #rejoinGroup(): void {
     this.#rejoin.onReady(
       {
         group: this.#snapshot.group,
-        join: (groupId, callbacks) => this.#join(groupId, callbacks),
+        resume: (groupId, callbacks) => this.#resume(groupId, undefined, callbacks),
       },
       (outcome) => {
         if (outcome.kind === 'rejoined') {
-          this.#log('info', 'group_rejoined');
-          this.#events.emit('rejoined', outcome.joined);
+          this.#log('info', 'group_rejoined', { role: outcome.resumed.role });
+          this.#events.emit('rejoined', outcome.resumed);
+        } else if (outcome.kind === 'waiting') {
+          this.#log('info', 'group_waiting');
         } else if (outcome.kind === 'failed') {
           this.#log('info', 'group_rejoin_failed', { code: outcome.code });
           this.#endGroup('rejoin_failed', outcome.code);
         }
       },
     );
+  }
+
+  /**
+   * Sends group.resume with the stored token for `groupId` (#5 AC35, AC38).
+   * The token and recovery data are read from storage first (another tab
+   * may have changed the block list, L5). After that await, the lifecycle
+   * generation and the transport are checked again, so a close() or
+   * connect() meanwhile never sends on a stale socket. A leader sends its
+   * saved metadata, latest position and block list (overridable).
+   */
+  #resume(groupId: string, overrides: ResumeOptions | undefined, callbacks: ResumeCallbacks): void {
+    const store = this.#tokens;
+    if (store === undefined) {
+      callbacks.reject(new SyncClientError('TOKEN_NOT_FOUND', { request: 'group.resume' }));
+      return;
+    }
+    const generation = this.#generation;
+    const transport = this.#transport;
+    // Reserved while storage is read, so a second group request waits.
+    this.#groupRequestInFlight = true;
+    void store.findFresh(groupId).then((entry) => {
+      this.#groupRequestInFlight = false;
+      if (
+        generation !== this.#generation ||
+        transport !== this.#transport ||
+        this.#phase !== 'ready'
+      ) {
+        callbacks.reject(new SyncClientError('CONNECTION_LOST', { request: 'group.resume' }));
+        return;
+      }
+      if (entry === undefined) {
+        callbacks.reject(new SyncClientError('TOKEN_NOT_FOUND', { request: 'group.resume' }));
+        return;
+      }
+      const reqId = this.#requests.nextId();
+      const recovery = entry.recovery;
+      const leader = entry.claims.role === 'leader';
+      const metadata = overrides?.metadata ?? recovery?.metadata;
+      const hasPosition = overrides?.position !== undefined || recovery?.hasPosition === true;
+      const position = overrides?.position !== undefined ? overrides.position : recovery?.position;
+      const message = {
+        type: 'group.resume' as const,
+        reqId,
+        token: entry.token,
+        ...(leader && metadata !== undefined ? { metadata } : {}),
+        ...(leader && hasPosition ? { position } : {}),
+        ...(leader && recovery !== undefined ? { blockList: [...recovery.blockList] } : {}),
+      };
+      this.#trackGroupRequest('group.resume', reqId, message, {
+        resolve: (reply) => this.#onResumed(entry, reply, callbacks),
+        reject: (error) => {
+          if (error.source === 'server' && TOKEN_DEAD_CODES.has(error.code)) {
+            void store.remove([groupId]);
+          }
+          callbacks.reject(error);
+        },
+      });
+    });
+  }
+
+  /** Applies a group.resume reply: active leader, active member, or waiting member. */
+  #onResumed(entry: StoredEntry, reply: ServerMessage, callbacks: ResumeCallbacks): void {
+    const groupId = entry.claims.gid;
+    if (reply.type === 'group.resumed') {
+      // The server's metadata and position win (Q14) and become the recovery data.
+      void this.#tokens?.saveToken(reply.token, {
+        metadata: reply.metadata,
+        hasPosition: reply.hasPosition,
+        ...(reply.hasPosition ? { position: reply.position } : {}),
+        blockList: entry.recovery?.blockList ?? [],
+      });
+      this.#startGroup({
+        status: 'active',
+        groupId,
+        role: 'leader',
+        metadata: reply.metadata,
+        hasPosition: reply.hasPosition,
+        position: reply.hasPosition ? reply.position : undefined,
+        leaderOnline: true,
+      });
+      this.#log('info', 'group_resumed', { role: 'leader', recreated: reply.recreated });
+      callbacks.resolve(
+        Object.freeze({
+          groupId,
+          role: 'leader',
+          participantId: reply.participantId,
+          status: 'active',
+          recreated: reply.recreated,
+          leaderOnline: true,
+          metadata: reply.metadata,
+          hasPosition: reply.hasPosition,
+          ...(reply.hasPosition ? { position: reply.position } : {}),
+        }),
+      );
+      return;
+    }
+    if (reply.type === 'group.joined') {
+      callbacks.resolve(this.#admitted(reply, false));
+      return;
+    }
+    if (reply.type === 'group.waiting') {
+      this.#throttle?.cancel();
+      this.#throttle = undefined;
+      this.#update({ group: { status: 'waiting', groupId, role: 'member' } });
+      this.#log('info', 'group_waiting');
+      callbacks.resolve(
+        Object.freeze({
+          groupId,
+          role: 'member',
+          participantId: entry.claims.pid,
+          status: 'waiting',
+          recreated: false,
+          leaderOnline: false,
+          hasPosition: false,
+        }),
+      );
+    }
+  }
+
+  /** A member is (back) in its group: token stored, group active (#5 AC17, AC25). */
+  #admitted(
+    reply: Extract<ServerMessage, { type: 'group.joined' }>,
+    recreated: boolean,
+  ): ResumedGroup {
+    void this.#tokens?.saveToken(reply.token);
+    this.#startGroup({
+      status: 'active',
+      groupId: reply.groupId,
+      role: 'member',
+      metadata: reply.metadata,
+      hasPosition: reply.hasPosition,
+      position: reply.hasPosition ? reply.position : undefined,
+      leaderOnline: reply.leaderOnline,
+    });
+    this.#log('info', 'group_resumed', { role: 'member', recreated });
+    return Object.freeze({
+      groupId: reply.groupId,
+      role: 'member',
+      participantId: reply.participantId,
+      status: 'active',
+      recreated,
+      leaderOnline: reply.leaderOnline,
+      metadata: reply.metadata,
+      hasPosition: reply.hasPosition,
+      ...(reply.hasPosition ? { position: reply.position } : {}),
+    });
   }
 
   #onHandshakeError(message: ErrorMessage): void {
@@ -785,11 +955,30 @@ export class SyncClient {
         // Never replaces participantId or limits mid-session (L8).
         this.#emitError(invalidServerMessage(['type: unexpected_message']));
         return;
-      case 'group.created':
       case 'group.joined':
+        if (message.reqId === undefined) {
+          this.#onParkedAdmission(message);
+          return;
+        }
+        this.#onReply(message);
+        return;
+      case 'group.created':
+      case 'group.resumed':
+      case 'group.waiting':
       case 'position.ack':
         this.#onReply(message);
         return;
+      case 'leader.offline':
+      case 'leader.online': {
+        const group = this.#snapshot.group;
+        if (group?.status !== 'active' || group.groupId !== message.groupId) return;
+        const online = message.type === 'leader.online';
+        if (group.leaderOnline === online) return;
+        this.#update({ group: { ...group, leaderOnline: online } });
+        this.#log('info', 'leader_status', { online });
+        this.#events.emit('leaderStatus', Object.freeze({ groupId: group.groupId, online }));
+        return;
+      }
       case 'error':
         this.#onServerError(message);
         return;
@@ -815,9 +1004,13 @@ export class SyncClient {
         return;
       case 'group.ended': {
         const group = this.#snapshot.group;
-        if (group?.status === 'active' && group.groupId === message.groupId) {
-          this.#endGroup('leader_disconnected');
+        if (group === null || group.status === 'ended' || group.groupId !== message.groupId) {
+          return;
         }
+        // `replaced`: another tab or device holds the same identity now, so
+        // the token is kept (Q-C), and the group is not resumed (L6).
+        if (message.reason !== 'replaced') void this.#tokens?.remove([message.groupId]);
+        this.#endGroup(message.reason);
         return;
       }
     }
@@ -828,7 +1021,7 @@ export class SyncClient {
     // Unknown reqIds are ignored: a late ack after an ack timeout is harmless (M4).
     const request = this.#requests.take(message.reqId);
     if (request === undefined) return;
-    if (REPLY_TYPE[request.kind] !== message.type) {
+    if (!REPLY_TYPES[request.kind].includes(message.type)) {
       request.reject(invalidServerMessage(['type: unexpected_reply'], request.kind));
       return;
     }
@@ -841,7 +1034,26 @@ export class SyncClient {
       request.reject(fromServerError(message, { request: request.kind }));
       return;
     }
+    // While waiting, an error without reqId is about the parked group (#5 AC25).
+    const group = this.#snapshot.group;
+    if (
+      message.reqId === undefined &&
+      group?.status === 'waiting' &&
+      (message.code === 'PARTICIPANT_BLOCKED' || message.code === 'GROUP_FULL')
+    ) {
+      if (message.code === 'PARTICIPANT_BLOCKED') void this.#tokens?.remove([group.groupId]);
+      this.#endGroup('rejoin_failed', message.code);
+      return;
+    }
     this.#emitError(fromServerError(message));
+  }
+
+  /** The leader recreated the group this member waited for (#5 AC25). */
+  #onParkedAdmission(message: Extract<ServerMessage, { type: 'group.joined' }>): void {
+    const group = this.#snapshot.group;
+    if (group?.status !== 'waiting' || group.groupId !== message.groupId) return;
+    const resumed = this.#admitted(message, true);
+    this.#events.emit('rejoined', resumed);
   }
 
   /**
@@ -932,11 +1144,12 @@ export class SyncClient {
   }
 
   /**
-   * A leader's group ended on the server when its socket closed, so it is
-   * marked ended at the drop. A member's group becomes `rejoining`, keeping
-   * the last metadata and position (Q1, AC29).
+   * After an unexpected drop the group becomes `rejoining` (leader or
+   * member), keeping the last metadata and position, and a pending position
+   * save is written (#5 AC35).
    */
   #groupAfterDrop(group: GroupState | null): void {
+    void this.#tokens?.flush();
     const next = this.#rejoin.onDisconnected(group);
     if (next === group) return;
     if (next?.status === 'ended') {

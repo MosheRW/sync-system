@@ -135,11 +135,11 @@ describe('close() from a listener inside an internal flow (AC28)', () => {
     expect(client.getState()).toEqual({ status: 'closed', reason: 'client' });
   }
 
-  it('groupEnded listener during a leader drop', async () => {
+  it('subscribe listener during a leader drop (group -> rejoining, #5 AC35)', async () => {
     const { client, socket } = await leaderClient();
     const errors: string[] = [];
     client.on('error', (error) => errors.push(error.code));
-    client.on('groupEnded', () => client.close());
+    client.subscribe(() => client.close());
     socket.serverClose(1006);
     expectClosedForGood(client, 1);
     expect(errors).toEqual([]);

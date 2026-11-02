@@ -61,10 +61,11 @@ describe('connect and handshake (AC8, AC9)', () => {
       limits: LIMITS,
     });
     const info = await connecting;
-    expect(info).toEqual({ participantId: PARTICIPANT_ID, limits: LIMITS });
+    expect(info).toEqual({ participantId: PARTICIPANT_ID, namespace: 'app-a', limits: LIMITS });
     expect(client.getState()).toEqual({
       status: 'connected',
       participantId: PARTICIPANT_ID,
+      namespace: 'app-a',
       limits: LIMITS,
     });
     expect(client.getSnapshot().connection).toBe(client.getState());

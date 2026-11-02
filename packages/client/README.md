@@ -285,43 +285,44 @@ four protocol versions, and `limit` for out-of-range limits),
 Apps must not retry fatal errors automatically; tell the user to update or
 fix the configuration.
 
-| Code                     | Source | When                                                                    |
-| ------------------------ | ------ | ----------------------------------------------------------------------- |
-| `INVALID_OPTIONS`        | client | Bad constructor option (`details.field`).                               |
-| `NO_WEBSOCKET`           | client | No WebSocket implementation. Fatal.                                     |
-| `NOT_CONNECTED`          | client | Group call while not `connected`.                                       |
-| `CLOSED`                 | client | The app called `close()`.                                               |
-| `CONNECTION_LOST`        | client | The socket dropped or failed. Retryable.                                |
-| `REQUEST_TIMEOUT`        | client | No reply in time (`request` says which).                                |
-| `RECONNECT_FAILED`       | client | `maxAttempts` used up.                                                  |
-| `SERVER_UNSUPPORTED`     | client | Server protocol versions or limits not supported. Fatal.                |
-| `HANDSHAKE_REJECTED`     | client | Close 4001 without an error frame. Fatal.                               |
-| `INVALID_PAYLOAD`        | client | Metadata, position or group ID is not valid input.                      |
-| `INVALID_SERVER_MESSAGE` | client | The server sent an invalid frame (`details.issues`: schema paths only). |
-| `REQUEST_IN_PROGRESS`    | client | A create/join is already in flight.                                     |
-| `INVALID_API_KEY`        | server | Unknown or missing key. Fatal.                                          |
-| `INVALID_APP_VERSION`    | server | `appVersion` is not semver. Fatal.                                      |
-| `PROTOCOL_TOO_OLD`       | server | This client's protocol is too old. Fatal.                               |
-| `APP_VERSION_TOO_OLD`    | server | This app version is too old. Fatal.                                     |
-| `INVALID_MESSAGE`        | server | The server rejected a message. Fatal during the handshake.              |
-| `HANDSHAKE_REQUIRED`     | server | Fatal.                                                                  |
-| `ALREADY_AUTHENTICATED`  | server | Fatal.                                                                  |
-| `HANDSHAKE_TIMEOUT`      | server | Close 4002. Retryable.                                                  |
-| `APP_CONNECTION_LIMIT`   | server | Close 4003, the app is at its connection cap. Retryable (busy).         |
-| `TOO_MANY_MESSAGES`      | server | Close 4008. Retryable (busy).                                           |
-| `INTERNAL_ERROR`         | server | Retryable during the handshake.                                         |
-| `GROUP_NOT_FOUND`        | server | Unknown group ID.                                                       |
-| `GROUP_FULL`             | server | `details.maxGroupSize`.                                                 |
-| `ALREADY_IN_GROUP`       | both   | Create/join while in a group (also checked locally).                    |
-| `NOT_IN_GROUP`           | both   | Position update outside a group.                                        |
-| `NOT_LEADER`             | both   | Position update by a member.                                            |
-| `RATE_LIMITED`           | server | `details.maxLeaderUpdatesPerSecond`, `details.retryAfterMs`.            |
-| `MESSAGE_TOO_LARGE`      | both   | `details.field`, `details.limitBytes`, `details.sizeBytes?`.            |
-| `LEADER_CANNOT_LEAVE`    | both   | The leader called `leaveGroup()`; it ends the group with `endGroup()`.  |
-| `TOKEN_INVALID`          | server | The stored token is not valid here (any cause, same answer). Deleted.   |
-| `TOKEN_EXPIRED`          | server | The token is past its group's limits. Deleted.                          |
-| `GROUP_ENDED`            | server | The group ended on this server. Deleted.                                |
-| `PARTICIPANT_BLOCKED`    | server | The leader blocked this participant. Deleted.                           |
+| Code                     | Source | When                                                                        |
+| ------------------------ | ------ | --------------------------------------------------------------------------- |
+| `INVALID_OPTIONS`        | client | Bad constructor option (`details.field`).                                   |
+| `NO_WEBSOCKET`           | client | No WebSocket implementation. Fatal.                                         |
+| `NOT_CONNECTED`          | client | Group call while not `connected`.                                           |
+| `CLOSED`                 | client | The app called `close()`.                                                   |
+| `CONNECTION_LOST`        | client | The socket dropped or failed. Retryable.                                    |
+| `REQUEST_TIMEOUT`        | client | No reply in time (`request` says which).                                    |
+| `RECONNECT_FAILED`       | client | `maxAttempts` used up.                                                      |
+| `SERVER_UNSUPPORTED`     | client | Server protocol versions or limits not supported. Fatal.                    |
+| `HANDSHAKE_REJECTED`     | client | Close 4001 without an error frame. Fatal.                                   |
+| `INVALID_PAYLOAD`        | client | Metadata, position or group ID is not valid input.                          |
+| `INVALID_SERVER_MESSAGE` | client | The server sent an invalid frame (`details.issues`: schema paths only).     |
+| `REQUEST_IN_PROGRESS`    | client | A create/join is already in flight.                                         |
+| `TOKEN_NOT_FOUND`        | client | No stored token for that group (`resumeGroup`, block-list methods, rejoin). |
+| `INVALID_API_KEY`        | server | Unknown or missing key. Fatal.                                              |
+| `INVALID_APP_VERSION`    | server | `appVersion` is not semver. Fatal.                                          |
+| `PROTOCOL_TOO_OLD`       | server | This client's protocol is too old. Fatal.                                   |
+| `APP_VERSION_TOO_OLD`    | server | This app version is too old. Fatal.                                         |
+| `INVALID_MESSAGE`        | server | The server rejected a message. Fatal during the handshake.                  |
+| `HANDSHAKE_REQUIRED`     | server | Fatal.                                                                      |
+| `ALREADY_AUTHENTICATED`  | server | Fatal.                                                                      |
+| `HANDSHAKE_TIMEOUT`      | server | Close 4002. Retryable.                                                      |
+| `APP_CONNECTION_LIMIT`   | server | Close 4003, the app is at its connection cap. Retryable (busy).             |
+| `TOO_MANY_MESSAGES`      | server | Close 4008. Retryable (busy).                                               |
+| `INTERNAL_ERROR`         | server | Retryable during the handshake.                                             |
+| `GROUP_NOT_FOUND`        | server | Unknown group ID.                                                           |
+| `GROUP_FULL`             | server | `details.maxGroupSize`.                                                     |
+| `ALREADY_IN_GROUP`       | both   | Create/join while in a group (also checked locally).                        |
+| `NOT_IN_GROUP`           | both   | Position update outside a group.                                            |
+| `NOT_LEADER`             | both   | Position update by a member.                                                |
+| `RATE_LIMITED`           | server | `details.maxLeaderUpdatesPerSecond`, `details.retryAfterMs`.                |
+| `MESSAGE_TOO_LARGE`      | both   | `details.field`, `details.limitBytes`, `details.sizeBytes?`.                |
+| `LEADER_CANNOT_LEAVE`    | both   | The leader called `leaveGroup()`; it ends the group with `endGroup()`.      |
+| `TOKEN_INVALID`          | server | The stored token is not valid here (any cause, same answer). Deleted.       |
+| `TOKEN_EXPIRED`          | server | The token is past its group's limits. Deleted.                              |
+| `GROUP_ENDED`            | server | The group ended on this server. Deleted.                                    |
+| `PARTICIPANT_BLOCKED`    | server | The leader blocked this participant. Deleted.                               |
 
 Unknown server message types are ignored, so a newer server can add events
 without breaking older clients. A known type with a bad shape, a binary,

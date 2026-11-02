@@ -466,7 +466,7 @@ describe('position ack timeout (M4, Q-C)', () => {
     client.updatePosition(1);
     for (let t = 0; t < 20_000; t += 5_000) {
       vi.advanceTimersByTime(5_000);
-      socket.receive({ type: 'leader.offline' });
+      socket.receive({ type: 'roster.updated' });
     }
     expect(errors.map((e) => [e.code, e.request])).toEqual([
       ['REQUEST_TIMEOUT', 'position.update'],

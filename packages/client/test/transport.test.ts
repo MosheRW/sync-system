@@ -29,9 +29,9 @@ describe('decodeFrame (AC10)', () => {
   });
 
   it('marks unknown types as unknown', () => {
-    expect(decodeFrame('{"type":"leader.offline","x":1}', 8192)).toEqual({
+    expect(decodeFrame('{"type":"roster.updated","x":1}', 8192)).toEqual({
       kind: 'unknown',
-      type: 'leader.offline',
+      type: 'roster.updated',
     });
   });
 

@@ -17,10 +17,14 @@ export type {
   GroupEndedReason,
   GroupState,
   JoinedGroup,
+  LeaderStatusEvent,
   PositionUpdatedEvent,
+  ResumeOptions,
+  ResumedGroup,
+  StoredGroupStatus,
   SyncClientEvents,
   SyncClientSnapshot,
   SyncIndicator,
 } from './state.js';
 export { CLIENT_PROTOCOL_VERSION, MIN_SERVER_PROTOCOL_VERSION } from './version.js';
-export type { AppLimits, JsonObject, JsonValue, Role } from '@sync-system/protocol';
+export type { AppLimits, JsonObject, JsonValue, Role, TokenStatus } from '@sync-system/protocol';

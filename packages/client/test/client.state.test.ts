@@ -27,7 +27,7 @@ describe('connection state (AC24)', () => {
 
     expect(states).toEqual([
       { status: 'connecting' },
-      { status: 'connected', participantId: PARTICIPANT_ID, limits: LIMITS },
+      { status: 'connected', participantId: PARTICIPANT_ID, namespace: 'app-a', limits: LIMITS },
       { status: 'closed', reason: 'client' },
     ]);
     expect(client.getState()).toEqual({ status: 'closed', reason: 'client' });
