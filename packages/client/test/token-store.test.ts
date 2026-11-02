@@ -479,6 +479,64 @@ describe('TokenStore: cross-tab changes win over dirty groups (#7 L5)', () => {
   });
 });
 
+describe('TokenStore: marks made before any successful read (#7 L-a)', () => {
+  const A = groupIdOf('A');
+  const C = groupIdOf('C');
+  const NOW_S = Math.floor(Date.now() / 1000);
+
+  it('keeps a group forgotten while storage was never readable deleted (L-a)', async () => {
+    const area = sharedArea();
+    const tabA = area.tab();
+    const tabB = area.tab();
+    await tabB.tokens.saveToken(fakeToken({ gid: A, iat: NOW_S - 60 })); // stored by another tab
+    tabA.fail.get = true;
+    tabA.fail.set = true;
+    await tabA.tokens.saveToken(fakeToken({ gid: A, iat: NOW_S - 30 })); // never read, never written
+    await tabA.tokens.remove([A]); // forgetGroup() in tab A, not written either
+    tabA.fail.get = false;
+    expect(await tabA.tokens.load()).toEqual([]); // reads recover, writes still fail
+    tabA.fail.set = false;
+    await tabA.tokens.saveToken(fakeToken({ gid: C, role: 'member' }));
+    expect([...area.stored().keys()]).toEqual([C]);
+    expect(tabA.tokens.find(A)).toBeUndefined();
+  });
+
+  it('keeps a token stored while storage was never readable until it is written (L-a)', async () => {
+    const area = sharedArea();
+    const tabA = area.tab();
+    const tabB = area.tab();
+    await tabB.tokens.saveToken(fakeToken({ gid: A, iat: NOW_S - 30 }));
+    tabA.fail.get = true;
+    tabA.fail.set = true;
+    const mine = fakeToken({ gid: A, iat: NOW_S - 60 });
+    await tabA.tokens.saveToken(mine);
+    tabA.fail.get = false;
+    expect((await tabA.tokens.findFresh(A))?.token).toBe(mine);
+    tabA.fail.set = false;
+    await tabA.tokens.saveToken(fakeToken({ gid: C, role: 'member' }));
+    expect(area.stored().get(A)).toBe(mine);
+  });
+
+  it('applies the cross-tab rules again after a successful read and write (L-a)', async () => {
+    const area = sharedArea();
+    const tabA = area.tab();
+    const tabB = area.tab();
+    tabA.fail.get = true;
+    tabA.fail.set = true;
+    await tabA.tokens.saveToken(fakeToken({ gid: A, iat: NOW_S - 90 }));
+    tabA.fail.get = false;
+    tabA.fail.set = false;
+    await tabA.tokens.saveToken(fakeToken({ gid: C, role: 'member' })); // real read + write
+    tabA.fail.set = true;
+    await tabA.tokens.remove([A]); // dirty, marked from a real read
+    const newer = fakeToken({ gid: A, iat: NOW_S - 10 });
+    await tabB.tokens.saveToken(newer);
+    tabA.fail.set = false;
+    await tabA.tokens.saveToken(fakeToken({ gid: C, role: 'member' }));
+    expect(area.stored().get(A)).toBe(newer);
+  });
+});
+
 describe('TokenStore: failed forgetAllGroups (#7 AC17, R5)', () => {
   const A = groupIdOf('A');
   const C = groupIdOf('C');

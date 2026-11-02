@@ -396,6 +396,10 @@ same group is kept. The remaining cross-tab limits:
   write, otherwise only if some tab wrote the document again before this
   tab's next storage operation. Closing the other tabs before
   `forgetAllGroups()` avoids it.
+- If this tab has never read storage successfully (every read failed since
+  it started), it cannot tell what other tabs stored, so a change it made
+  then wins over theirs until its next successful write: a group it forgot
+  stays forgotten, and a token it stored is written over theirs.
 
 ### `checkTokens()`
 

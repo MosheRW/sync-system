@@ -60,6 +60,11 @@ interface DirtyMark {
   readonly storedIat: number | undefined;
   /** Whether the storage key existed then (#7 L-4). */
   readonly keyExisted: boolean;
+  /**
+   * Made before this store ever read or wrote storage successfully, so what
+   * storage held is unknown: memory wins until a successful write (#7 L-a).
+   */
+  readonly memoryWins: boolean;
 }
 
 /** One read of the raw stored document; `ok: false` if the read itself failed. */
@@ -148,6 +153,9 @@ function serialize(entries: readonly StoredEntry[]): string {
  *   `iat`), or the whole key was removed (only `removeAll()` does that).
  *   These rules apply only to a document that was really read: a read
  *   failure never drops or changes a mark (#7 R5).
+ * - A mark made before this store ever read or wrote storage successfully
+ *   does not know what storage held, so memory wins for it (a removal stays
+ *   removed, an unsaved token stays) until a successful write (#7 L-a).
  */
 export class TokenStore {
   readonly #storage: TokenStorage;
@@ -163,6 +171,8 @@ export class TokenStore {
   /** Storage as last read or written by this store, for marks made while reads fail. */
   #known = new Map<string, StoredEntry>();
   #keyKnown = false;
+  /** Whether `#known` comes from a real read or write (false until then, #7 L-a). */
+  #storageSeen = false;
   #positionTimer: TimerHandle | undefined;
 
   constructor(
@@ -327,6 +337,7 @@ export class TokenStore {
         this.#dirty.clear();
         this.#known = new Map();
         this.#keyKnown = false;
+        this.#storageSeen = true;
       } catch (error) {
         this.#log('warn', 'storage_error', { op: 'remove', name: storageErrorName(error) });
         // Best effort: if this read fails too, the groups this store knows
@@ -335,6 +346,7 @@ export class TokenStore {
         if (raw.ok) {
           this.#known = byGroup(raw.entries);
           this.#keyKnown = raw.keyExists;
+          this.#storageSeen = true;
         }
         const groups = new Set([
           ...this.#known.keys(),
@@ -388,6 +400,7 @@ export class TokenStore {
       this.#dirty.clear();
       this.#known = byGroup(next);
       this.#keyKnown = true;
+      this.#storageSeen = true;
     } catch (error) {
       this.#log('warn', 'storage_error', { op: 'set', name: storageErrorName(error) });
       const before = byGroup(read.merged);
@@ -401,7 +414,8 @@ export class TokenStore {
   /**
    * Marks `gid` dirty with its stored entry from `raw`. If that read failed,
    * an existing mark is kept as it is (#7 R5); a new one uses the last
-   * storage state this store saw.
+   * storage state this store saw, or is memory-wins if it never saw one
+   * (#7 L-a).
    */
   #mark(gid: string, raw: StoredRead): void {
     if (!raw.ok && this.#dirty.has(gid)) return;
@@ -410,6 +424,7 @@ export class TokenStore {
       storedToken: stored?.token,
       storedIat: stored?.claims.iat,
       keyExisted: raw.ok ? raw.keyExists : this.#keyKnown,
+      memoryWins: !raw.ok && !this.#storageSeen,
     });
   }
 
@@ -422,6 +437,7 @@ export class TokenStore {
    * 4. otherwise (changed, but not newer): memory wins.
    * Before these, a key that existed then and is missing now can only have
    * been removed by `removeAll()` in another tab, so storage wins (#7 L-4).
+   * A memory-wins mark (#7 L-a) skips all of them.
    */
   #storageWins(
     mark: DirtyMark,
@@ -429,6 +445,7 @@ export class TokenStore {
     memory: StoredEntry | undefined,
     keyExists: boolean,
   ): boolean {
+    if (mark.memoryWins) return false;
     if (mark.keyExisted && !keyExists) return true;
     if (stored?.token === mark.storedToken) return false;
     if (stored === undefined) return true;
@@ -460,6 +477,7 @@ export class TokenStore {
     if (!raw.ok) return { raw, merged: this.#entries };
     this.#known = byGroup(raw.entries);
     this.#keyKnown = raw.keyExists;
+    this.#storageSeen = true;
     if (this.#dirty.size === 0) return { raw, merged: raw.entries };
     const memory = byGroup(this.#entries);
     const merged = raw.entries.filter((entry) => !this.#dirty.has(entry.claims.gid));
