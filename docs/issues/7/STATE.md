@@ -1,12 +1,12 @@
 # State: #7 Harden token recovery (follow-up to #5)
 - Path: fast
-- Phase: implementation
+- Phase: validation
 - Branch: fix/7-token-recovery-hardening
 - PR: #8
 - Plan approved by user: yes
 - Security-sensitive: yes
-- Review rounds: 0
-- Last updated by: engineer
+- Review rounds: 1
+- Last updated by: qa
 
 ## Notes
 - Follow-up to #5 (PRD item 3), merged in PR #6 (a9cfa02). GitHub issue numbers are not PRD item numbers.
@@ -16,6 +16,7 @@
 - Security plan review (round 1): PASS, see docs/issues/7/security.md. 0 critical, 0 high, 1 medium (M1, made required control R5: a storage read failure must not drop dirty marks), 5 low (L-1 drop while resume pending can still reset attempts; L-2 one client can use up the per-app tokens.check budget; L-3 validate `previous` secret too; L-4 residual cross-tab case accepted; L-5 aggregate inbound memory note). Required controls R1-R8.
 - Advisory for Gate 2: client-side fallback texts in packages/client/src/errors.ts for RATE_LIMITED / NOT_LEADER are left unchanged (spec scopes A1 to the server). Superseded at Gate 2: aligned in this PR (see deviations).
 - Implementation: all 10 planned commits plus one extra (client text alignment). Required controls R1-R8 implemented. Approved advisories L-1, L-2, L-4, L-5 implemented (L-3 is part of R1). Checks: pnpm lint, typecheck, test (protocol 42, server 602, client 468), build and audit --audit-level=high all exit 0; lockfile unchanged.
+- QA round 1 (head 415c584): PASS. lint, typecheck, test (protocol 42, server 602, client 468), build, audit --audit-level=high all exit 0 (2 pre-existing moderate advisories); CI 2/2 pass; acceptance criteria 25/25 met; engineer deviations judged acceptable. Non-blocking notes: AC6 no-timers test does not exhaust the per-app budget; pre-existing moderate audit advisories. Review comment posted on PR #8.
 
 ## User decisions (Gate 1)
 - D1 (L2): per-app tokens.check budget 600/min, fixed constant, on top of the per-connection limit; no global budget.
