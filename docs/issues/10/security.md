@@ -297,3 +297,72 @@ No change.
   error texts.
 - Redaction paths and the privacy log-capture tests; `npm audit`, gitleaks and
   semgrep on the changed files.
+
+---
+
+## Round 2 (plan revision 1, head be50db7)
+
+**Verdict: PASS.** No critical or high finding remains. I re-read the whole
+diff `4662c15..be50db7` of `architecture.md`. Every required control R1a-R16
+is in the plan, with a concrete design, a test row, and a planned commit
+(architecture 8.4). The advisories are recorded with their handling (8.5).
+
+### Round-1 findings: status
+
+| Finding | Status | Where in the revised plan |
+|---|---|---|
+| H1 (cross-group door guessing) | **Closed in plan.** R1a: `DoorGuard.failures` is a plain counter since the last door-code change (no timestamps, no decay); every 5th failure rotates and notifies the leader. R1b: `DOOR_FAILURES_PER_APP_PER_MINUTE` (planned 30) is checked with a non-recording `check` **before** the compare and `record`ed only on a wrong compare. Over budget gives `RATE_LIMITED` with `retryAfterMs`, without comparing and without touching any group counter. One namespace-only warn per window. Correct codes, `DOOR_CODE_REQUIRED` and paused attempts never use the budget. R1c: 8.1 has the corrected per-group and per-app numbers. The spec note and README corrections are listed in 8.6 (commit 21) | 3, 4.3 step 7, 5.3, 8.1, 8.6, test rows "AC29 + R1a" and "R1b" |
+| M1 (older blob revival) | **Closed in plan** (R2): the blob and its generation are stored together; the higher generation wins per group, across tabs and independent of the token merge. Residual (leader token plus a copied old blob) is accepted: that person already controls the group | 2.2 `token-store.ts`, 4.8, 7.3, test row R2 |
+| M2, M3 | Advisory, recorded: M2 as a follow-up issue plus a README note, M3 as a README note | 8.5 |
+| L1 | Closed (R3, generation in milliseconds, test with 50 rotations in 1 ms) | D4, test row R3 |
+| L2 | Closed (R9, surrogate-pair regex so it doesn't depend on `isWellFormed`; same function on client and server) | 4.5, test row R9 |
+| L3 | Closed (R10, `blob`/`*.blob`, no `reason` log field, redact paths added in the commit that first carries each field) | 2.2, 6.1, 8.3, 8.4 note |
+| L4-L6 | Advisory, README (R16) | 8.5, 8.6 |
+| L7 | Closed (R11, removal-first settlement under the group lock, approve re-checks the joiner session, race tests in both orders) | 4.6, test row R11 |
+
+### New observations in round 2 (Low; I will check them in code mode)
+
+**N1. Say which rule applies to a blob that comes straight from the server.**
+Location: architecture 7.3 "Highest generation wins". It says both "replace
+only if the generation is >=" and "after a successful recreation or leader
+return the client stores what the server returned". These differ only when the
+server returns a *lower* generation, which can happen if the server clock
+stepped back and a recreation came without a blob (section 9, NTP
+assumption). If the >= rule wins there, the client keeps a superseded blob and
+a later recreation could bring back codes the server had replaced.
+Fix (engineer, commit 17): a blob in a direct server reply (`group.created`,
+`group.resumed`, `codes.updated`) is authoritative for that group and is
+always stored. The highest-generation rule applies only when merging stored
+copies (cross-tab, and stale writes from a tab that didn't just receive it).
+Add one test for the lower-generation server reply.
+
+**N2. Keep the R1b peek, compare and record in one synchronous step.**
+Location: 4.3 step 7. The plan says there is no `await` between the peek and
+the record. A door rotation on the 5th failure calls `store.setCodes` (async),
+so the wrong-door `record` (and `DoorGuard.recordFailure`) must run **before**
+that await, not after it. Otherwise concurrent attempts on other groups can
+peek past the cap. Code-mode check.
+
+**N3. Door-failure counters don't survive a restart (accepted).**
+`DoorGuard` is process-local, and the counter resets on recreation with the
+same door code (valid blob). An attacker gains at most 4 more silent guesses
+per group per server restart. Negligible; no change.
+
+### Gate 2 view (unchanged from section 4, plus Q-E)
+
+- Q-A neutral; Q-B keep the single generation (README condition is in 8.6);
+  Q-C `GROUP_ENDED` without `groupId`/`details` (R13, commit 11); Q-D
+  app-driven refresh.
+- **Q-E `DOOR_FAILURES_PER_APP_PER_MINUTE`: recommend 30** (about 0.043
+  expected break-ins per app per day under a nonstop untargeted attack, and
+  every 5 wrong guesses visibly rotate a door code). 60 makes method A harder
+  to block but doubles the odds. 10 cuts the odds to about 0.014/day but lets
+  one client block method A for the whole app more cheaply. The user decides.
+  The rest of the plan is sound at any of these values.
+
+### Open advisories for Gate 2 / Gate 3
+
+M2 (follow-up issue: group-create rate and per-app live-group cap), M3 (pause
+griefing, README), L4 (per-connection budgets reset on reconnect, README), L5
+(readable ticket payload, accepted), L6 (long QR ticket ceilings, README),
+N1-N3 above.

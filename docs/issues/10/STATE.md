@@ -5,8 +5,8 @@
 - PR: #11 (draft)
 - Plan approved by user: no
 - Security-sensitive: yes (door codes, approval, brute-force limits, QR ticket signing, codes blob, removal of join by group ID)
-- Review rounds: 0 (code review); security plan review rounds: 1 (FAIL), plan revised once
-- Last updated by: architect
+- Review rounds: 0 (code review); security plan review rounds: 2 (round 1 FAIL, round 2 PASS)
+- Last updated by: security
 
 ## Notes
 - PRD item 4 of 9. "item N" in spec.md means PRD item N, not GitHub issue N.
@@ -36,7 +36,11 @@
   DOOR_FAILURES_PER_APP_PER_MINUTE (planned 30) checked before the compare, R1c corrected odds
   in section 8.1 plus spec/README corrections listed in section 8.6 (commit 21). Advisories
   M2 (follow-up issue), M3, L4, L5, L6 recorded in section 8.5.
-- Next: security plan review round 2, then Gate 2.
+- Round 2: PASS (security.md "Round 2"). H1 and M1 closed in plan; all R1a-R16 mapped.
+  New low notes for the engineer: N1 (blob from a direct server reply is always stored;
+  highest-generation rule only for merging stored copies, commit 17), N2 (R1b peek/compare/
+  record synchronous, before any await such as setCodes), N3 accepted.
+- Next: Gate 2.
 
 ## Open questions
 - Gate 2 (architecture.md section 12, with the security view on each): Q-A createGroup signature; Q-B door rotations invalidate QR tickets (spec) vs separate ticket generation; Q-C GROUP_ENDED for pending joiners on end/drop; Q-D app-driven QR refresh; Q-E value of DOOR_FAILURES_PER_APP_PER_MINUTE (recommended 30).
