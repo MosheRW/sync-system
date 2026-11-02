@@ -482,7 +482,7 @@ export class SyncClient {
     const invalid = localError(() => {
       const group = this.#checkInGroup();
       if (group.status === 'waiting' || group.role !== 'leader') {
-        throw new SyncClientError('NOT_LEADER');
+        throw new SyncClientError('NOT_LEADER', { request: 'group.end' });
       }
     });
     if (invalid) return Promise.reject(invalid);
@@ -579,7 +579,7 @@ export class SyncClient {
     const group = this.#snapshot.group;
     if (group === null || group.status === 'ended') throw new SyncClientError('NOT_IN_GROUP');
     if (group.status !== 'active' || group.role !== 'leader') {
-      throw new SyncClientError('NOT_LEADER');
+      throw new SyncClientError('NOT_LEADER', { request: 'position.update' });
     }
     // Serialized once: the checked text is what goes out, even if the app
     // mutates `position` while the update waits in the throttle.

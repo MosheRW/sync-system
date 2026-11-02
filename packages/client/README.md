@@ -328,8 +328,8 @@ fix the configuration.
 | `GROUP_FULL`             | server | `details.maxGroupSize`.                                                     |
 | `ALREADY_IN_GROUP`       | both   | Create/join while in a group (also checked locally).                        |
 | `NOT_IN_GROUP`           | both   | Position update outside a group.                                            |
-| `NOT_LEADER`             | both   | Position update by a member.                                                |
-| `RATE_LIMITED`           | server | `details.maxLeaderUpdatesPerSecond`, `details.retryAfterMs`.                |
+| `NOT_LEADER`             | both   | Position update, `endGroup()` or block list change by a member.             |
+| `RATE_LIMITED`           | server | Position updates or `checkTokens()`. `details.retryAfterMs` (+ max rate).   |
 | `MESSAGE_TOO_LARGE`      | both   | `details.field`, `details.limitBytes`, `details.sizeBytes?`.                |
 | `LEADER_CANNOT_LEAVE`    | both   | The leader called `leaveGroup()`; it ends the group with `endGroup()`.      |
 | `TOKEN_INVALID`          | server | The stored token is not valid here (any cause, same answer). Deleted.       |

@@ -1,6 +1,7 @@
 import type { ErrorMessage } from '@sync-system/protocol';
 import { describe, expect, it } from 'vitest';
 import {
+  ACTION_MESSAGES,
   ClientErrorCode,
   FATAL_HANDSHAKE_CODES,
   SyncClientError,
@@ -153,5 +154,36 @@ describe('error serialization (L3)', () => {
     expect(json).not.toContain(groupId);
     expect(json).not.toContain('PAYLOAD-MARKER');
     expect(JSON.parse(json)).toMatchObject({ name: 'SyncClientError', code: 'GROUP_NOT_FOUND' });
+  });
+});
+
+describe('per-request texts for shared codes (#7 A1, aligned with the server)', () => {
+  it.each([
+    ['RATE_LIMITED', 'position.update', 'Too many position updates'],
+    ['RATE_LIMITED', 'tokens.check', 'Too many token checks'],
+    ['NOT_LEADER', 'position.update', 'Only the leader can update the position'],
+    ['NOT_LEADER', 'group.end', 'Only the leader can end the group'],
+    ['NOT_LEADER', 'blocklist.set', 'Only the leader can set the block list'],
+  ] as const)('%s for %s: %s', (code, request, text) => {
+    expect(fromServerError(serverError(code), { request }).message).toBe(text);
+    expect(new SyncClientError(code, { request }).message).toBe(text);
+  });
+
+  it('keeps the position-update text when the request is not known', () => {
+    expect(new SyncClientError('RATE_LIMITED').message).toBe('Too many position updates');
+    expect(new SyncClientError('NOT_LEADER').message).toBe(
+      'Only the leader can update the position',
+    );
+    expect(fromServerError(serverError('NOT_LEADER'), { request: 'group.join' }).message).toBe(
+      'Only the leader can update the position',
+    );
+  });
+
+  it('gives each request its own fixed text', () => {
+    for (const rows of Object.values(ACTION_MESSAGES)) {
+      const texts = Object.values(rows);
+      expect(new Set(texts).size).toBe(texts.length);
+      for (const text of texts) expect(text).not.toMatch(/[{}$%<>]/);
+    }
   });
 });

@@ -115,6 +115,34 @@ const MESSAGES: Record<ClientErrorCode, string> = {
   BLOCK_LIST_FULL: 'The block list is full',
 };
 
+/**
+ * Per-request text for codes several requests share, matching the server's
+ * per-action texts (#7 A1). `MESSAGES` keeps the position-update text as the
+ * default when the request is not known.
+ */
+export const ACTION_MESSAGES: {
+  readonly [C in 'RATE_LIMITED' | 'NOT_LEADER']: Partial<Record<RequestKind, string>>;
+} = {
+  RATE_LIMITED: {
+    'position.update': 'Too many position updates',
+    'tokens.check': 'Too many token checks',
+  },
+  NOT_LEADER: {
+    'position.update': 'Only the leader can update the position',
+    'group.end': 'Only the leader can end the group',
+    'blocklist.set': 'Only the leader can set the block list',
+  },
+};
+
+/** The fixed text for `code`, named after `request` when the code is shared (#7 A1). */
+function messageFor(code: ClientErrorCode, request: RequestKind | undefined): string {
+  if ((code === 'RATE_LIMITED' || code === 'NOT_LEADER') && request !== undefined) {
+    const text = ACTION_MESSAGES[code][request];
+    if (text !== undefined) return text;
+  }
+  return MESSAGES[code];
+}
+
 /** Longest server `message` text kept in `serverMessage` (L2). */
 export const MAX_SERVER_MESSAGE_LENGTH = 256;
 /** Most schema issues kept in INVALID_SERVER_MESSAGE details (L2). */
@@ -147,7 +175,7 @@ export class SyncClientError<C extends ClientErrorCode = ClientErrorCode> extend
   readonly serverMessage?: string;
 
   constructor(code: C, init: SyncClientErrorInit<C> = {}) {
-    super(MESSAGES[code]);
+    super(messageFor(code, init.request));
     this.code = code;
     this.source = init.source ?? 'client';
     this.fatal = init.fatal ?? false;
