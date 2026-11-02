@@ -478,3 +478,67 @@ describe('TokenStore: cross-tab changes win over dirty groups (#7 L5)', () => {
     expect(area.stored().get(N)).toBe(first);
   });
 });
+
+describe('TokenStore: failed forgetAllGroups (#7 AC17, R5)', () => {
+  const A = groupIdOf('A');
+  const C = groupIdOf('C');
+  const X = groupIdOf('X');
+
+  it('keeps groups deleted that were stored but not loaded in this tab (AC17)', async () => {
+    const area = sharedArea();
+    const tabA = area.tab();
+    const tabB = area.tab();
+    await tabA.tokens.saveToken(fakeToken({ gid: A }));
+    // Stored by another tab after tab A's last read: never loaded in tab A.
+    await tabB.tokens.saveToken(fakeToken({ gid: X, role: 'member' }));
+    expect(tabA.tokens.find(X)).toBeUndefined();
+
+    tabA.fail.remove = true;
+    await tabA.tokens.removeAll();
+    expect(tabA.tokens.entries()).toEqual([]);
+    expect(await tabA.tokens.load()).toEqual([]);
+
+    await tabA.tokens.saveToken(fakeToken({ gid: C, role: 'member' }));
+    expect([...area.stored().keys()]).toEqual([C]);
+  });
+
+  it('lets a newer token another tab stores afterwards win (AC17, rule 3)', async () => {
+    const area = sharedArea();
+    const tabA = area.tab();
+    const tabB = area.tab();
+    await tabA.tokens.saveToken(fakeToken({ gid: A, iat: Math.floor(Date.now() / 1000) - 60 }));
+    tabA.fail.remove = true;
+    await tabA.tokens.removeAll();
+    const newer = fakeToken({ gid: A });
+    await tabB.tokens.saveToken(newer);
+    await tabA.tokens.saveToken(fakeToken({ gid: C, role: 'member' }));
+    expect(area.stored().get(A)).toBe(newer);
+  });
+
+  it('failed remove, failed read, then a successful read and write: the group stays deleted (R5)', async () => {
+    const area = sharedArea();
+    const tabA = area.tab();
+    await tabA.tokens.saveToken(fakeToken({ gid: A }));
+    tabA.fail.remove = true;
+    await tabA.tokens.removeAll();
+    tabA.fail.get = true;
+    expect(await tabA.tokens.load()).toEqual([]);
+    tabA.fail.get = false;
+    expect(await tabA.tokens.load()).toEqual([]);
+    await tabA.tokens.saveToken(fakeToken({ gid: C, role: 'member' }));
+    expect([...area.stored().keys()]).toEqual([C]);
+  });
+
+  it('marks the groups it knows when the read after the failed remove fails too (R5)', async () => {
+    const area = sharedArea();
+    const tabA = area.tab();
+    await tabA.tokens.saveToken(fakeToken({ gid: A }));
+    tabA.fail.remove = true;
+    tabA.fail.get = true;
+    await tabA.tokens.removeAll();
+    expect(await tabA.tokens.load()).toEqual([]);
+    tabA.fail.get = false;
+    await tabA.tokens.saveToken(fakeToken({ gid: C, role: 'member' }));
+    expect([...area.stored().keys()]).toEqual([C]);
+  });
+});

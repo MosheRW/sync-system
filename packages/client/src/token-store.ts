@@ -308,7 +308,12 @@ export class TokenStore {
     );
   }
 
-  /** Deletes every token for this server and app, and the key itself (M6). */
+  /**
+   * Deletes every token for this server and app, and the key itself (M6).
+   * If the delete fails, every group in storage (loaded or not) and in
+   * memory is marked dirty with its stored token, so the next successful
+   * write leaves them out unless another tab changed them since (#7 AC17).
+   */
   removeAll(): Promise<void> {
     this.#pendingPositions.clear();
     clearTimer(this.#positionTimer);
@@ -324,7 +329,19 @@ export class TokenStore {
         this.#keyKnown = false;
       } catch (error) {
         this.#log('warn', 'storage_error', { op: 'remove', name: storageErrorName(error) });
-        for (const entry of previous) this.#mark(entry.claims.gid, { ok: false });
+        // Best effort: if this read fails too, the groups this store knows
+        // about are marked and existing marks stay unchanged (#7 R5).
+        const raw = await this.#readStored();
+        if (raw.ok) {
+          this.#known = byGroup(raw.entries);
+          this.#keyKnown = raw.keyExists;
+        }
+        const groups = new Set([
+          ...this.#known.keys(),
+          ...previous.map((entry) => entry.claims.gid),
+          ...this.#dirty.keys(),
+        ]);
+        for (const gid of groups) this.#mark(gid, raw);
       }
       this.#log('debug', 'token_deleted', { count });
     });
