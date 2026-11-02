@@ -484,7 +484,7 @@ describe('TokenStore: marks made before any successful read (#7 L-a)', () => {
   const C = groupIdOf('C');
   const NOW_S = Math.floor(Date.now() / 1000);
 
-  it('keeps a group forgotten while storage was never readable deleted (L-a)', async () => {
+  it('keeps a group deleted that was forgotten while storage was never readable (L-a)', async () => {
     const area = sharedArea();
     const tabA = area.tab();
     const tabB = area.tab();
