@@ -2,7 +2,7 @@
 - Path: full
 - Phase: architecture
 - Branch: feat/10-join-methods
-- PR: none
+- PR: #11 (draft)
 - Plan approved by user: no
 - Security-sensitive: yes (door codes, approval, brute-force limits, QR ticket signing, codes blob, removal of join by group ID)
 - Review rounds: 0
