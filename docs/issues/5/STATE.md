@@ -8,7 +8,7 @@
 - QA loops: 0
 - Review rounds: 1 (security plan review round 1: PASS; code review round 1: QA PASS)
 - QA verdict: PASS (round 1, head abe874e)
-- Last updated by: qa
+- Last updated by: engineer
 
 ## Notes
 - PRD item 3 of 9. "item N" in spec.md means PRD item N, not GitHub issue N.
@@ -78,3 +78,8 @@
 - The `rejoined` event now carries `ResumedGroup` (was `JoinedGroup`); `ConnectedInfo` and the `connected` state gain `namespace`.
 - `RATE_LIMITED` for tokens.check keeps the fixed #1 text ("Too many position updates"); clients branch on the code and `details.retryAfterMs`.
 - Parked members admitted at recreation get `rejoined` with `recreated: true`.
+- Fix round (Copilot review, after QA and security round 1 PASS). All 3 comments verified as real defects, each fixed with a regression test:
+  - 3425fca `fix(server)`: `MAX_BUFFERED_BYTES` must also be >= `TOKENS_CHECK_MAX_FRAME_BYTES` (45056, a tokens.result with 20 re-signed tokens). `MAX_MESSAGE_SIZE_CEILING=1024` with `MAX_BUFFERED_BYTES=4096` now fails at startup. The env test fixture moved from 32768 to 49152; README row updated.
+  - 5d998a9 `fix(client)`: a client-side `REQUEST_TIMEOUT` on the automatic group.resume is classified `lost`, not `failed`; the socket is dropped right after (timeoutKind `drop`), so the group stays `rejoining` and the next reconnect resumes again.
+  - 8bbac72 `fix(client)`: `TokenStore` marks groups whose write failed as dirty; until a write succeeds, their in-memory entry (or removal) wins over storage reads, while other groups still merge in from storage.
+  - Checks after the fixes: `pnpm lint`, `pnpm typecheck`, `pnpm test` (protocol 42, server 575, client 445), `pnpm build` all exit 0.
