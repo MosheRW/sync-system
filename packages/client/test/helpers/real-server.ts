@@ -1,6 +1,7 @@
 import { AppRegistry } from '@sync-system/server/src/apps/app-registry.js';
 import { parseAppsConfig } from '@sync-system/server/src/config/apps-config.js';
 import { parseEnv } from '@sync-system/server/src/config/env.js';
+import type { TokenSecrets } from '@sync-system/server/src/config/token-secret.js';
 import { createLogger } from '@sync-system/server/src/logging/logger.js';
 import { type SyncServer, createSyncServer } from '@sync-system/server/src/server.js';
 import { WebSocket as WsWebSocket } from 'ws';
@@ -28,6 +29,8 @@ export interface RealServerOptions {
   env?: Record<string, string>;
   /** Fixed port, for restart tests. Default: a random free port. */
   port?: number;
+  /** Token secrets; pass the same ones to a restarted server so tokens survive (#5). */
+  tokenSecrets?: TokenSecrets;
 }
 
 export interface RealServer {
@@ -69,7 +72,12 @@ export async function startRealServer(options: RealServerOptions = {}): Promise<
   const registry = new AppRegistry(parseAppsConfig(JSON.stringify({ apps }), env));
   const sink = new LogSink();
   const logger = createLogger({ level: env.logLevel, destination: sink });
-  const server = createSyncServer({ env, registry, logger });
+  const server = createSyncServer({
+    env,
+    registry,
+    logger,
+    ...(options.tokenSecrets ? { tokenSecrets: options.tokenSecrets } : {}),
+  });
   const port = await listenWithRetry(server, options.port ?? 0);
   return {
     server,
