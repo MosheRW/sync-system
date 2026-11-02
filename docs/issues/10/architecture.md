@@ -9,6 +9,19 @@ means PRD item N of 9. GitHub #9 (client clock skew) is out of scope, but the
 new wire fields avoid absolute client-side deadlines for the same reason
 (relative `...Ms` fields, section 4).
 
+**Revision 1 (after security plan review round 1, [`security.md`](./security.md)).**
+The review failed on H1 (door-code guessing spread over many groups was
+uncapped and silent). This revision adds every required control R1a-R16 to the
+plan. The main changes: door failures are counted since the last door-code
+change, with no time decay (R1a, 5.3); a new fixed app-wide wrong-door budget
+`DOOR_FAILURES_PER_APP_PER_MINUTE` (planned 30, confirmed at Gate 2) checked
+before the compare (R1b, 4.3); corrected brute-force numbers (R1c, 8.1); the
+client keeps the highest-generation codes blob (R2, 7.3); generations in
+milliseconds (R3, D4); stricter display names (R9, 4.5); `blob` redaction and
+no `reason` log field (R10, 6.1); approval settles exactly once under the
+group lock (R11, 4.6). Section 8.4 maps every control to a planned commit, and
+section 8.5 records the advisories (M2, M3, L4, L5, L6).
+
 ## 1. Approach
 
 Join codes are **group state** on the server (in the `GroupRecord`), indexed
@@ -28,11 +41,11 @@ Connection ──> GroupService (facade, GroupActions)
                  └─ JoinService                       new: every join and code flow
                       ├─ CodeIndex       per-app maps: 6-digit group code -> gid, 8-char code -> gid
                       ├─ codes.ts        draw a code set (CSPRNG, uniform), generation rule
-                      ├─ DoorGuard       door-failure windows, rotation count, method A pause timer
+                      ├─ DoorGuard       failures since the last door-code change (no decay), rotation window, method A pause timer
                       ├─ ApprovalQueue   method B pending requests (<= 10 per group), deadline timers
                       ├─ QrTicketService sign / verify QR tickets   (HKDF label "qr-ticket")
                       ├─ CodesBlobService sign / verify codes blobs (HKDF label "codes-blob")
-                      └─ 4 SlidingWindowRateLimiters (join per conn, join per app, qr.issue per conn, rotate per group)
+                      └─ 5 SlidingWindowRateLimiters (join per conn, join per app, wrong door per app, qr.issue per conn, rotate per group)
 ```
 
 Every state change still runs under the existing per-group `KeyedLock`
@@ -48,7 +61,7 @@ been freed in between).
 | D1 | Codes live in `GroupRecord.codes` (+ `joinMethods`); the code -> group lookup is a separate process-local `CodeIndex`. | Codes are part of a group's state and travel with it through the store. The reverse index is a lookup structure like the notifier map; item 9 moves both to Redis. |
 | D2 | One generic compact signed format (`base64url(payloadJson) "." base64url(hmac)`) for QR tickets and codes blobs, with **per-app, per-purpose** HKDF keys: `sync-system/qr-ticket/v1:<ns>` and `sync-system/codes-blob/v1:<ns>`. Token keys (`sync-system/token/v1:<ns>`) are unchanged. | Cross-app and cross-purpose isolation by construction: a ticket can't verify as a token or a blob, and the reverse, because the key differs (AC26). Two segments (a token has three, with a fixed header) also make the shapes disjoint. Same constant-time, charset-first rules as #5's `jwt.ts`. |
 | D3 | QR ticket payload is minimal: `{"v":1,"g":<gid>,"n":<generation>,"e":<exp seconds>}`. No namespace (the per-app key binds it), no server URL (Q3.3). | Keeps the worst-case ticket at about 170 characters, well under 256 (AC23). |
-| D4 | Code generation rule: every new code set gets `generation = max(previous + 1, floor(now / 1000))`. A recreation with a valid blob keeps the blob's generation. | "Increases on every rotation" (AC6) holds. A full new set issued after a restart **without** a valid blob still gets a generation above every earlier one, so a ticket issued before the restart can't come back to life (AC25, AC33). Rotations are rate-limited, so the counter never runs far ahead of the clock. |
+| D4 | Code generation rule (R3): every new code set gets `generation = max(previous + 1, nowMs)`, with `nowMs` the server clock in **milliseconds** (a safe integer, about 13 digits). A recreation with a valid blob keeps the blob's generation. | "Increases on every rotation" (AC6) holds. A full new set issued after a restart **without** a valid blob still gets a generation above every earlier one, so a ticket issued before the restart can't come back to life (AC25, AC33). With seconds, a few rotations inside one second could run the counter ahead of the clock and a quick restart could reuse a generation (security L1); with milliseconds that would take more than 1000 rotations per second, far above the limits. The ticket grows by about 3 characters and stays far below 256. A server clock stepping back stays a documented NTP assumption (section 9). |
 | D5 | Wire field names are `joinCode`, `doorCode`, `displayName`, `ticket`, `joinCodes` (blob), never bare `code`. | Pino redaction is a second line of defense and can't redact `code`, which logs already use for error codes. Distinct names are redactable (section 8.3). |
 | D6 | Relative times on the wire: `join.pending.timeoutMs`, `join.requested.expiresInMs`, `qr.ticket.expiresInMs`, `retryAfterMs`. The client derives local deadlines. | Server and client clocks differ (the subject of #9). A relative value is correct on any client clock. |
 | D7 | QR refresh is **app-driven**: the client exposes `issueQrTicket()` and does not refresh on a timer (Q3.1, architect's choice). The README gives the recipe: re-issue at about 80 % of `expiresInMs` while the QR is on screen, and right after `codesChanged`. | Only the app knows when the QR is visible. A background timer would spend the 6/min `qr.issue` budget while nothing is shown. Item 6 can wrap the recipe in a hook. |
@@ -76,16 +89,16 @@ been freed in between).
 
 | Path | What |
 | --- | --- |
-| `packages/protocol/src/join.ts` | `JoinMethod = 'A'\|'B'\|'C'\|'D'`, `JOIN_METHODS`, `ALPHA_CODE_ALPHABET = '23456789ABCDEFGHJKMNPQRSTUVWXYZ'`, `normalizeJoinCode(raw)` (strip spaces and hyphens, uppercase), `classifyJoinCode(normalized) -> 'group' \| 'alpha' \| undefined`, `isDoorCode(normalized)`, `normalizeDisplayName(raw) -> string \| undefined` (section 4.5), `QR_TICKET_PATTERN`, `CODES_BLOB_PATTERN`, `JOIN_REQUEST_ID_PATTERN`. Pure, no globals (SSR rule #3 AC7). Shared by server and client so both normalize identically (AC12). |
+| `packages/protocol/src/join.ts` | `JoinMethod = 'A'\|'B'\|'C'\|'D'`, `JOIN_METHODS`, `ALPHA_CODE_ALPHABET = '23456789ABCDEFGHJKMNPQRSTUVWXYZ'`, `normalizeJoinCode(raw)` (strip spaces and hyphens, uppercase), `classifyJoinCode(normalized) -> 'group' \| 'alpha' \| undefined`, `isDoorCode(normalized)`, `normalizeDisplayName(raw) -> string \| undefined` (section 4.5, including the R9 well-formed UTF-16 and invisible-character rules), `QR_TICKET_PATTERN`, `CODES_BLOB_PATTERN`, `JOIN_REQUEST_ID_PATTERN`. Pure, no globals (SSR rule #3 AC7). Shared by server and client so both normalize identically (AC12). |
 | `packages/protocol/test/join.test.ts` | Normalization, classification, alphabet (no 0/O/1/I/L), display-name rules, patterns. |
 | `apps/sync-server/src/tokens/signed-blob.ts` | `signCompact(payloadJson, key)`, `verifyCompact(text, keys, maxLength) -> { payloadJson, keyIndex } \| undefined`: length first, exactly two segments, base64url charset before decoding, 43-character signature, `timingSafeEqual` against every key. |
 | `apps/sync-server/src/tokens/qr-tickets.ts` | `QrTicketService.issue(ns, gid, generation, now, seconds) -> { ticket, expiresInMs }`, `verify(ticket, ns, now) -> { ok: true, gid, generation } \| { ok: false, expired: boolean }` (`expired` only for a well-formed, correctly signed ticket). |
 | `apps/sync-server/src/tokens/codes-blob.ts` | `CodesBlobService.sign(ns, gid, methods, codes) -> string`, `verify(blob, ns, gid) -> { methods, codes } \| undefined`. |
 | `apps/sync-server/src/joins/join-methods.ts` | `defaultAppMethods(envAllowed)`, `resolveGroupMethods(app, requested?) -> { ok: true, methods } \| { ok: false }` (AC5 rules), `methodsKey()` canonical sort A-D. |
-| `apps/sync-server/src/joins/codes.ts` | `GroupCodes` type, `drawGroupCode()`, `drawDoorCode(groupCode)`, `drawAlphaCode()` (`crypto.randomInt`, uniform), `nextGeneration(prev, now)` (D4), `issueCodeSet(index, ns, gid, methods, prevGeneration, now) -> GroupCodes \| 'exhausted'`, `MAX_CODE_DRAWS = 20`. |
+| `apps/sync-server/src/joins/codes.ts` | `GroupCodes` type, `drawGroupCode()`, `drawDoorCode(groupCode)`, `drawAlphaCode()` (`crypto.randomInt`, uniform), `nextGeneration(prev, nowMs)` (D4, milliseconds, R3), `issueCodeSet(index, ns, gid, methods, prevGeneration, now) -> GroupCodes \| 'exhausted'`, `MAX_CODE_DRAWS = 20`. |
 | `apps/sync-server/src/joins/code-index.ts` | `CodeIndex`: `lookup(ns, kind, code) -> gid \| undefined`, `claim(ns, gid, codes) -> boolean` (all or nothing), `release(ns, gid, codes)`, `size`, `clear()`. Synchronous, so a claim is atomic in-process. |
-| `apps/sync-server/src/joins/door-guard.ts` | `DoorGuard` per group key: `recordFailure(key, now) -> 'counted' \| 'rotate'`, `recordRotation(key, now) -> { paused: boolean, until? }`, `pausedFor(key, now) -> ms \| 0`, `reset(key)` (leader rotate), `clear(key)`, `clearAll()`. Pause-end timer on the injected `Scheduler`. |
-| `apps/sync-server/src/joins/approval-queue.ts` | `ApprovalQueue`: `add(groupKey, session, displayName?, deadline, onTimeout) -> requestId \| 'full'`, `take(groupKey, requestId)`, `takeBySession(session)`, `list(groupKey)`, `drain(groupKey)`, `clearAll()`. Sets and clears `session.pendingJoin`. |
+| `apps/sync-server/src/joins/door-guard.ts` | `DoorGuard` per group key: `recordFailure(key) -> 'counted' \| 'rotate'` (a plain counter since the last door-code change, no timestamps, no decay; R1a), `recordRotation(key, now) -> { paused: boolean, until? }` (resets the failure counter), `pausedFor(key, now) -> ms \| 0`, `reset(key)` (leader rotate), `clear(key)`, `clearAll()`. Pause-end timer on the injected `Scheduler`. |
+| `apps/sync-server/src/joins/approval-queue.ts` | `ApprovalQueue`: `add(groupKey, session, displayName?, deadline, onTimeout) -> requestId \| 'full'`, `take(groupKey, requestId) -> entry \| undefined` and `takeBySession(session)` (both remove the entry and clear `session.pendingJoin` in one synchronous step, so the first caller wins and every later caller gets `undefined`; R11), `list(groupKey)`, `drain(groupKey)`, `clearAll()`. Request IDs from 16 CSPRNG bytes. |
 | `apps/sync-server/src/joins/join-service.ts` | `JoinService`: `joinByCode`, `joinByQr`, `cancel`, `approve`, `deny`, `issueQr`, `rotate`, plus lifecycle hooks `initialCodes`, `restoreCodes`, `onLeaderReturn`, `onGroupGone`, `onDisconnect`, `close`. Talks to `GroupService` through a `JoinHost` interface (`runLocked`, `admit`, `deliverLater`, `leaderSession`, `store`, `now`). |
 | `apps/sync-server/test/join-methods.test.ts`, `codes.test.ts`, `code-index.test.ts`, `door-guard.test.ts`, `approval-queue.test.ts`, `signed-blob.test.ts`, `qr-tickets.test.ts`, `codes-blob.test.ts` | Unit tests (section 10). |
 | `apps/sync-server/test/join-code.int.test.ts` | A and C joins, errors, normalization, cross-app (AC12-AC18). |
@@ -109,7 +122,8 @@ been freed in between).
 | `apps/sync-server/src/config/env.ts` | `JOIN_METHODS_ALLOWED` (list), `QR_TICKET_SECONDS_CEILING`, `APPROVAL_TIMEOUT_SECONDS_CEILING` (section 5). |
 | `apps/sync-server/src/config/apps-config.ts` | `joinMethods`, `qrTicketSeconds`, `approvalTimeoutSeconds` (section 5.2). |
 | `apps/sync-server/src/apps/app-registry.ts` | `AppConfig` gains `joinMethods: readonly JoinMethod[]`, `qrTicketSeconds`, `approvalTimeoutSeconds`. |
-| `apps/sync-server/src/limits/constants.ts` | Fixed join constants (section 5.3). |
+| `apps/sync-server/src/limits/constants.ts` | Fixed join constants (section 5.3), including `DOOR_FAILURES_PER_APP_PER_MINUTE` (R1b). |
+| `apps/sync-server/src/limits/rate-limiter.ts` | `SlidingWindowRateLimiter` gains `check(key, limit) -> RateResult` (prunes and answers, records nothing) and `record(key)` (adds one event), for "check before, count only on failure" budgets (R1b). `tryAcquire` is unchanged. Unit tests in `rate-limiter.test.ts`. |
 | `apps/sync-server/src/tokens/token-keys.ts` | `deriveAppKey(secret, ns, infoPrefix = HKDF_INFO_PREFIX)`; `TokenKeyring` takes an optional purpose prefix. Token keys byte-identical to today (pinned by test). |
 | `apps/sync-server/src/server.ts` | Builds the two extra keyrings, `QrTicketService`, `CodesBlobService`, passes them to `GroupService`. |
 | `apps/sync-server/src/groups/group-store.ts`, `in-memory-group-store.ts` | `GroupRecord.joinMethods`, `GroupRecord.codes`; `setCodes(ns, id, codes) -> GroupRecord \| undefined`; `copy()` copies `codes`. |
@@ -117,18 +131,19 @@ been freed in between).
 | `apps/sync-server/src/groups/group-service.ts` | Builds `JoinService`; `busy()` includes `pendingJoin`; create issues codes; `join()` and the group-ID path removed; `forgetGroup` / `endGroup` / `dropGroup` call `joins.onGroupGone`; leader return and recreation return codes; disconnect calls `joins.onDisconnect`; `close()` calls `joins.close()`. |
 | `apps/sync-server/src/ws/connection.ts` | `hello.ok` gets `joinMethods` and the two new limits; dispatch for the new types; `group.join` case removed; `canCarryReqId` extended. |
 | `apps/sync-server/src/ws/error-messages.ts` | Texts for the new codes; `ACTION_ERROR_TEXT` rows for the new actions (section 4.4). |
-| `apps/sync-server/src/logging/logger.ts` | `REDACT_PATHS` adds `joinCode`, `doorCode`, `groupCode`, `alphaCode`, `codes`, `joinCodes`, `ticket`, `requestId` (each also as `*.x`). `displayName` is already there. |
+| `apps/sync-server/src/logging/logger.ts` | `REDACT_PATHS` adds `joinCode`, `doorCode`, `groupCode`, `alphaCode`, `codes`, `joinCodes`, `blob`, `ticket`, `requestId` (each also as `*.x`; R10). `displayName` is already there. `reason` is already redacted (#5), so no new log event uses a field named `reason` (6.1). |
 | `apps/sync-server/test/helpers/groups.ts` | `createGroupWithMembers` joins by code; new `joinByCode(ts, created, opts)`, `codesOf(created)`. |
 | `apps/sync-server/test/helpers/test-server.ts` | `TestAppInput` gains `joinMethods`, `qrTicketSeconds`, `approvalTimeoutSeconds`. |
 | Server tests that send `group.join` (`end-leave`, `flood`, `frozen`, `groups`, `handshake`, `isolation`, `lifecycle`, `limits`, `opaque-payload`, `position`, `privacy`, `recreate`, `restart-process`, `restart`, `resume`, `robustness`, `slow-consumer`, `tokens`) | Join through the helpers (AC44). `groups.int` and `isolation.int` cases about group IDs become code cases; tests that loop more than 10 joins on one connection get a scheduler advance or new connections. |
 | `apps/sync-server/test/env.test.ts`, `apps-config.test.ts`, `handshake.int.test.ts`, `token-keys.test.ts`, `error-messages.test.ts`, `in-memory-group-store.test.ts`, `logger.test.ts` | New config, `hello.ok` fields, key pinning, texts, store fields, redaction. |
 | `config/apps.example.json`, `config/apps.dev.json` | `joinMethods` (example: `["A","D"]` and `["C","D"]`; dev: `["A","B","C","D"]` so every flow can be tried locally). |
 | `compose.yaml` | `JOIN_METHODS_ALLOWED: A,B,C,D` with a comment. |
-| `README.md` | Env vars, app settings, fixed join limits, brute-force reasoning, protocol summary, updated block-list note (AC37, AC43). |
+| `README.md` | Env vars, app settings, fixed join limits, brute-force reasoning with the corrected numbers, protocol summary, updated block-list note, and every R16 item (AC37, AC43; section 8.6). |
+| `docs/issues/10/spec.md` | Corrections from the security review (R1c, section 8.6): the "Defaults" table rows for door failures and the paragraph under the table. The ACs are not edited (R1a is stricter than AC29 and satisfies it). |
 | `packages/client/src/state.ts` | `awaiting_approval` group state; `SyncIndicator` adds `'awaiting_approval'`; new event and result types (section 7). |
 | `packages/client/src/errors.ts` | `RequestKind` swaps `group.join` for the new kinds; client codes `INVALID_JOIN_CODE`, `INVALID_DISPLAY_NAME`, `JOIN_METHOD_UNAVAILABLE`, `JOIN_CANCELLED`; details for `JOIN_PAUSED`, `RATE_LIMITED`, `APPROVAL_QUEUE_FULL`; `ACTION_MESSAGES` rows matching the server. |
 | `packages/client/src/client.ts` | `joinGroup` removed; `joinByCode`, `joinByQr`, `cancelJoin`, leader API, new inbound messages, blob capture. |
-| `packages/client/src/token-store.ts` | `Recovery.joinCodes?: string` (validated on load against `CODES_BLOB_PATTERN` and length); document stays `v: 1` (additive). |
+| `packages/client/src/token-store.ts` | `Recovery.joinCodes?: string` and `Recovery.joinCodesGeneration?: number` (validated on load: blob against `CODES_BLOB_PATTERN` and length, generation a safe non-negative integer; a blob without a valid generation is dropped). A stored blob is never replaced by one with a lower generation for the same group, independent of the token merge rule; the cross-tab merge keeps the higher generation (R2, 7.3). Document stays `v: 1` (additive). |
 | `packages/client/src/limits.ts` | `CLIENT_LIMIT_BOUNDS` adds `qrTicketSeconds: 86_400`, `approvalTimeoutSeconds: 3_600`; `LIMIT_KEYS` extended. |
 | `packages/client/src/transport.ts` | `KNOWN_TYPES` adds the new server types. |
 | `packages/client/src/requests.ts` | No change in logic; new kinds flow through. |
@@ -165,10 +180,11 @@ Process-local structures (all cleared on group end, drop and `server.close()`):
 | Structure | Key -> value | Bound |
 | --- | --- | --- |
 | `CodeIndex` | `ns` -> `{ group: Map<code6, gid>, alpha: Map<code8, gid> }` | At most 2 entries per live group |
-| `DoorGuard` | `ns:gid` -> `{ failures: number[], rotations: number[], pausedUntil?, timer? }` | Method A groups only; at most 5 + 3 timestamps each (older ones pruned) |
+| `DoorGuard` | `ns:gid` -> `{ failures: number, rotations: number[], pausedUntil?, timer? }` | Method A groups only; `failures` is a counter since the last door-code change (0-4, R1a); at most 3 rotation timestamps (older ones pruned) |
 | `ApprovalQueue` | `ns:gid` -> `Map<requestId, { session, displayName?, deadline, cancel }>`; `session.pendingJoin` back-pointer | 10 per group, 1 per connection |
 | Join limiter (per connection) | `connectionId` -> timestamps | 10 per minute; forgotten on disconnect |
 | Join limiter (per app) | `ns` -> timestamps | 600 per minute |
+| Wrong-door limiter (per app, R1b) | `ns` -> timestamps of failed door compares | `DOOR_FAILURES_PER_APP_PER_MINUTE` (planned 30) per minute; cleared on `close()` |
 | `qr.issue` limiter | `connectionId` -> timestamps | 6 per minute; forgotten on disconnect |
 | Rotate limiter | `ns:gid` -> timestamps | 6 per minute; forgotten with the group |
 
@@ -245,7 +261,13 @@ unambiguous on the client (state `waiting` -> parked admission, state
 5. Normalize and validate: `joinCode` (6 digits or 8 alphabet characters), `doorCode` (6 digits if present), `displayName` (4.5), ticket pattern. Failure -> `INVALID_MESSAGE` (AC12, AC20).
 6. Lookup (code index, or ticket signature and expiry). Failure -> `CODE_NOT_FOUND` / `QR_INVALID` / `QR_EXPIRED` (AC13, AC25).
 7. Under the group lock: re-check the code still maps to this group (else `CODE_NOT_FOUND`) and the record exists; then the method rules:
-   - 6-digit code, group uses **A**: paused -> `JOIN_PAUSED { retryAfterMs }` (door code not checked); no door code -> `DOOR_CODE_REQUIRED` (no failure counted); wrong door code (constant-time compare of 6-byte buffers) -> `DOOR_CODE_WRONG` and `DoorGuard.recordFailure`; correct -> admit.
+   - 6-digit code, group uses **A**, in this order:
+     1. paused -> `JOIN_PAUSED { retryAfterMs }` (door code not checked, nothing compared; R6);
+     2. no door code -> `DOOR_CODE_REQUIRED` (no failure counted, no app wrong-door budget used);
+     3. **app wrong-door budget used up** (R1b): if the app's wrong-door limiter already holds `DOOR_FAILURES_PER_APP_PER_MINUTE` events in the last minute -> `RATE_LIMITED` with the join-attempt text "Too many join attempts" and `details { retryAfterMs }`, **without comparing** the door code; one `warn` log per app per window, namespace only (`door_failures_app_budget_exhausted`). This check only peeks; it records nothing;
+     4. constant-time compare (both sides validated to `^[0-9]{6}$`, then `timingSafeEqual` on two 6-byte ASCII buffers; R6). Wrong -> record one event in the app wrong-door limiter, `DoorGuard.recordFailure` (R1a: every 5th failure since the last door-code change rotates), reply `DOOR_CODE_WRONG`. Correct -> admit; a correct door code never uses the wrong-door budget.
+
+     The per-group door failure and the app wrong-door event are recorded together under the group lock. The app limiter is a plain synchronous structure, so the peek-then-record pair can't interleave with another group's attempt in the same app (one event-loop turn, no `await` between peek and record).
    - 6-digit code, group uses **B** -> approval (4.6).
    - 8-character code (C) -> admit.
    - QR ticket: group not in memory, generation != current, or D not in methods -> `QR_INVALID`; B group -> approval; else admit.
@@ -294,11 +316,18 @@ as today.
 - Codes: remove every `' '` and `'-'`, uppercase ASCII letters. Result must be
   `^[0-9]{6}$` (group or door code) or `^[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{8}$`
   (alphanumeric code). Anything else is invalid (AC8, AC12).
-- Display name: `trim()`; length 1..32 counted in code points; rejected if it
-  contains `\p{Cc}` (control characters), U+2028/U+2029, or bidi overrides and
-  isolates (U+202A-U+202E, U+2066-U+2069). The bidi rule is an addition to the
-  spec's "no control characters", to stop a name from visually reordering the
-  leader's prompt. Emoji (including ZWJ sequences) stay allowed (AC20).
+- Display name: first rejected if the raw string is not well-formed UTF-16
+  (a lone surrogate such as `\ud800`, checked with a surrogate-pair regex so it
+  doesn't depend on `String.prototype.isWellFormed` being available in every
+  client runtime; R9). Then `trim()`; length 1..32 counted in code points;
+  rejected if it contains `\p{Cc}` (control characters), U+2028/U+2029, bidi
+  overrides and isolates (U+202A-U+202E, U+2066-U+2069), or the invisible
+  format characters U+061C (ALM), U+200B (ZWSP), U+200E (LRM), U+200F (RLM)
+  and U+FEFF (BOM) (R9). The bidi and format-character rules are additions to
+  the spec's "no control characters", to stop a name from visually reordering
+  or hiding text in the leader's prompt. Emoji stay allowed, including ZWJ
+  (U+200D) sequences, variation selectors and emoji tag characters (AC20).
+  The same function runs on server and client.
 - QR ticket: `^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]{43}$`, total <= 256.
 - Codes blob: `^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]{43}$`, total <= 512.
 - Request ID: 22 base64url characters (16 CSPRNG bytes).
@@ -328,6 +357,20 @@ as today.
   (D9), all timers are cancelled, nobody is admitted (AC22).
 - A server restart loses pending requests (Q6.3). The joiner's socket closes,
   so its client rejects the join with `CONNECTION_LOST` and doesn't re-request.
+- **Exactly-once settlement (R11).** Every way a request can end (approve,
+  deny, deadline timer, `join.cancel`, joiner disconnect, group end or drop)
+  takes the group's `KeyedLock` and starts by **removing** the entry from the
+  queue (`take` / `takeBySession` / `drain`). Only the caller that got the entry
+  acts on it; any later caller finds nothing (approve and deny reply
+  `JOIN_REQUEST_NOT_FOUND`, the timer and disconnect do nothing). The deadline
+  timer is cancelled by whoever removed the entry. Approve re-checks, under the
+  lock and after removal, that the joiner's session is still open and still
+  points at this request (`session.pendingJoin`); if not, the leader gets
+  `JOIN_REQUEST_NOT_FOUND` and nobody is added, so no orphan member or token is
+  created. The joiner-disconnect path runs through the same lock (the
+  connection's close handler calls `joins.onDisconnect`, which takes it).
+  Tests race approve against disconnect, cancel and the timer, in both orders,
+  and assert one outcome to each side.
 
 ### 4.7 QR tickets (AC23-AC26)
 
@@ -367,10 +410,14 @@ as today.
   presented blob verified and has the current generation (door rotations while
   the leader was offline show up as changed) (AC34).
 - The server never accepts codes it didn't sign for that group ID (AC33).
-- Accepted limit: a leader-token holder could present an **older** blob of the
-  same group and get older codes back if they are free. Only the leader's own
-  client holds blobs, it always stores the latest, and the leader can rotate.
-  Recorded in section 9.
+- **Older blob replay** (security M1): the server can't tell an older,
+  correctly signed blob from the latest one after a restart (it keeps no
+  state). The control is on the client (R2, 7.3): the client stores the blob's
+  generation next to it and never replaces a stored blob with one of a lower
+  generation for the same group, including across tabs and independent of the
+  token merge rule. So the leader's own clients only ever send the newest blob
+  they have seen. Residual: someone who copied an old blob **and** holds the
+  leader token can still present it; that person already controls the group.
 
 ### 4.9 Frame sizes
 
@@ -414,7 +461,9 @@ the two ceilings and `joinMethodsAllowed`.
 | `JOIN_ATTEMPTS_PER_CONNECTION_PER_MINUTE` | 10 |
 | `JOIN_ATTEMPTS_PER_APP_PER_MINUTE` | 600 |
 | `JOIN_WINDOW_MS` | 60 000 |
-| `DOOR_FAILURES_BEFORE_ROTATION` / `DOOR_FAILURE_WINDOW_MS` | 5 / 600 000 |
+| `DOOR_FAILURES_BEFORE_ROTATION` | 5, counted since the last door-code change (no time window; R1a) |
+| `DOOR_FAILURES_PER_APP_PER_MINUTE` | **30** (planned; value confirmed by the user at Gate 2, Q-E; R1b) |
+| `DOOR_FAILURES_APP_WINDOW_MS` | 60 000 |
 | `DOOR_ROTATIONS_BEFORE_PAUSE` / `DOOR_ROTATION_WINDOW_MS` | 3 / 1 800 000 |
 | `DOOR_PAUSE_MS` | 600 000 |
 | `QR_ISSUE_PER_CONNECTION_PER_MINUTE` | 6 |
@@ -422,12 +471,26 @@ the two ceilings and `joinMethodsAllowed`.
 | `MAX_PENDING_APPROVALS_PER_GROUP` | 10 |
 | `MAX_CODE_DRAWS` | 20 |
 
-Door-failure rotation: on the 5th failure inside the 10-minute window, the
-door code alone is redrawn, the generation bumps (D4), failures reset, and the
-leader gets `codes.updated door_failures`. The rotation is recorded; if it is
-the 3rd inside 30 minutes, method A pauses for 10 minutes (`join.paused` to the
-leader; `join.resumed` from the pause timer). `codes.rotate` resets failures,
-rotation history and any pause (AC29, AC30).
+Door-failure rotation (R1a): `DoorGuard` counts wrong door codes **against the
+current door code**, with no time decay. On the 5th failure since the last
+door-code change (whenever those 5 happened), the door code alone is redrawn,
+the generation bumps (D4), the counter resets to 0, and the leader gets
+`codes.updated door_failures`. So there is no silent sub-threshold guessing:
+every 5 wrong guesses against a door code change it and tell the leader. This
+is stricter than AC29 ("5 within 10 minutes" still rotates) and therefore
+satisfies it. Any door-code change resets the counter: a door rotation, a
+leader `codes.rotate`, and a new code set on recreation. The rotation is
+recorded; if it is the 3rd inside 30 minutes, method A pauses for 10 minutes
+(`join.paused` to the leader; `join.resumed` from the pause timer). Pause rule
+unchanged. `codes.rotate` resets the counter, rotation history and any pause
+(AC29, AC30).
+
+App wrong-door budget (R1b): independent of the per-group counter, at most
+`DOOR_FAILURES_PER_APP_PER_MINUTE` failed door compares per app per sliding
+minute. It is checked before the compare and counted only when the compare
+fails (4.3 step 7). It caps untargeted guessing spread over many groups
+(section 8.1). Correct door codes, `DOOR_CODE_REQUIRED`, paused groups and
+other methods never use it. The 600/min join budget still applies first.
 
 ## 6. Server behavior summary
 
@@ -451,16 +514,21 @@ rotation history and any pause (AC29, AC30).
 ### 6.1 Logging (AC10, AC20, AC31)
 
 Allowed fields only: `event`, `namespace`, `groupRef`, `participantRef` (of the
-connection ID), `method`, `reason` as a fixed enum name, counts and booleans.
-New events: `group_joined` + `method`; `join_rejected { namespace, cause }`
+connection ID), `method`, fixed enum names in fields called `cause` or
+`outcome`, counts and booleans. **No new event uses a field named `reason`**:
+`reason` is a redacted path since #5, so its value would silently disappear
+(R10). New events: `group_joined` + `method`; `join_rejected { namespace, cause }`
 at debug, where `cause` is one of `not_found | door_required | door_wrong |
-paused | qr_invalid | qr_expired` (no group ref for `not_found` / `qr_invalid`,
-so logs aren't an oracle either); `door_code_rotated { groupRef }`;
-`join_paused` / `join_resumed`; `codes_rotated`; `join_requested`,
-`join_settled { outcome }`; `qr_issued`; `codes_restored { changed }`;
-`join_app_budget_exhausted { namespace }` (once per window). Never logged:
-codes, door codes, tickets, blobs, display names, request IDs, raw participant
-IDs, IPs.
+door_budget | paused | qr_invalid | qr_expired` (no group ref for `not_found` /
+`qr_invalid`, so logs aren't an oracle either); `door_code_rotated { groupRef }`;
+`join_paused` / `join_resumed`; `codes_rotated { groupRef, cause }` (`cause`:
+`leader | door_failures`); `join_requested`, `join_settled { outcome }`
+(`outcome`: `admitted | group_full | denied | timeout | cancelled |
+disconnected | group_gone`); `qr_issued`; `codes_restored { changed }`;
+`join_app_budget_exhausted { namespace }` and
+`door_failures_app_budget_exhausted { namespace }` (warn, once per app per
+window, R1b). Never logged: codes, door codes, tickets, blobs, display names,
+request IDs, raw participant IDs, IPs.
 
 ## 7. Client behavior
 
@@ -545,6 +613,16 @@ null ── joinByCode / joinByQr ──> (request in flight, state unchanged)
   ends or the client drops (the server re-sends on return).
 - `join.paused` / `join.resumed` -> `joinPaused { groupId, retryAfterMs }` /
   `joinResumed { groupId }`.
+- **Highest generation wins (R2, security M1).** The stored recovery data
+  holds the blob and its `generation` (from the `JoinCodesPayload`). A write
+  replaces the stored blob only if the new generation is **greater than or
+  equal to** the stored one for that group; a lower generation is ignored. The
+  cross-tab merge applies the same rule per group, separately from the token
+  merge rule (newest token `iat` wins), so a stale tab can never write back a
+  pre-rotation blob. After a successful recreation or leader return the client
+  stores what the server returned (which, after a recreation without a valid
+  blob, has a higher generation anyway). Tests: two tabs, rotate in one, the
+  other's older blob never overwrites the newer one, in either merge order.
 - Recreation sends the stored blob as `group.resume.joinCodes` (AC32); the
   automatic rejoin path does the same.
 - Deleting a group's stored data (#5 AC31 rules) deletes the blob with it (AC40).
@@ -560,7 +638,7 @@ fixed and never include a code, ticket or name (AC42).
 ### 7.5 Client logging (AC42)
 
 New events: `join_requested { method }`, `join_pending`, `join_settled { outcome }`,
-`codes_changed { reason }`, `qr_issued`, `join_request_received { count }`.
+`codes_changed { cause }`, `qr_issued`, `join_request_received { count }`.
 Never logged: codes, door codes, tickets, blob, display names, request IDs.
 
 ## 8. Security-sensitive areas
@@ -572,26 +650,61 @@ Security-sensitive: yes
 | Authentication / admission (new credentials) | `joins/join-service.ts`, `group-service.ts` | Codes and tickets become the only way to get a new identity; `group.join` by ID removed (AC36, AC37). |
 | Authorization (leader-only actions) | `join.approve`, `join.deny`, `qr.issue`, `codes.rotate` | Ownership-checked through the notifier (M4), per-action `NOT_LEADER` texts; approve/deny scoped to the leader's own group queue. |
 | New endpoints accepting user input | 7 new client message types, changed `group.create` and `group.resume` | Bounded zod schemas, normalization, budgets before lookups (4.3). |
-| Brute force and enumeration | Door codes, alphanumeric codes, group codes | Per-connection and per-app budgets, door rotation and pause, constant-time door comparison, identical `CODE_NOT_FOUND` / `QR_INVALID` responses, no logs that act as oracles (4.3, 5.3, 6.1). |
+| Brute force and enumeration | Door codes, alphanumeric codes, group codes | Per-connection and per-app join budgets, per-app wrong-door budget (R1b), door rotation on every 5th failure with no decay (R1a) and pause, constant-time door comparison, identical `CODE_NOT_FOUND` / `QR_INVALID` responses, no logs that act as oracles (4.3, 5.3, 6.1, 8.1). |
 | Crypto (new signed formats) | `tokens/signed-blob.ts`, `qr-tickets.ts`, `codes-blob.ts`, `token-keys.ts` | HKDF per app and per purpose; HMAC-SHA256; constant-time compare across all keys; charset and length before decode; strict claim schema; previous-secret acceptance; token keys unchanged (D2). |
 | Secrets / config | `env.ts`, `apps-config.ts` | Env ceiling for methods, no clamping, no values echoed (AC1-AC3). |
 | PII (possibly minors) | Display names; codes | Display name relayed to the leader only, never stored after settle, never logged; codes leader-only; new redaction paths (AC10, AC20). |
 | DoS surfaces | Approval queue, timers, code index, door guard | All bounded and cleared on end, drop and close (section 3, AC31). |
-| Client credential storage | `token-store.ts` | Codes blob stored with the leader's recovery data, validated on load, deleted with it. |
+| Client credential storage | `token-store.ts` | Codes blob stored with the leader's recovery data, validated on load, deleted with it; highest generation per group wins (R2). |
 | Dependencies | none added | AC45. |
 
 ### 8.1 Brute-force reasoning (for the README and the security review)
 
-- **Door code (A):** with the group code known, at most 5 wrong door codes per
-  10 minutes before the door code changes, and after 3 rotations in 30 minutes
-  a 10-minute pause. That is at most 15 guesses per 40 minutes, about 540 a day,
-  each against a fresh 1-in-10^6 code: about 5 x 10^-4 per day per group. Every
-  rotation and pause is visible to the leader. The per-connection and per-app
-  budgets are additional caps.
+Corrected in revision 1 (R1c). The first version's door-code numbers were per
+group only and also wrong for the targeted case (security H1). Only per-group
+and per-app limits count here: per-connection budgets reset when the attacker
+reconnects (security L4), so they reduce noise but are not a security bound.
+
+- **Door code (A), one targeted group.** The attacker knows the group code.
+  Every 5th wrong door code against the current door code rotates it (R1a,
+  no time decay), and the 3rd rotation within 30 minutes pauses method A for
+  10 minutes. The first 15 guesses can come quickly; after the first pause the
+  earlier rotations are still inside the 30-minute window, so every later
+  rotation pauses again at once. Steady state: **5 guesses per 10 minutes**,
+  about 720 a day, each batch against a fresh 1-in-10^6 code: about
+  **7 x 10^-4 per day per group**. A group lives at most `maxSessionMinutes`
+  (default 180 min), which bounds one session to about 100 guesses, about
+  **10^-4 per group session**. Every rotation and pause is visible to the
+  leader.
+- **Door code (A), untargeted across all groups of one app.** The attacker
+  enumerates live group codes (they are shown openly, and `DOOR_CODE_REQUIRED`
+  vs `CODE_NOT_FOUND` is an accepted oracle, Q2.2) and spreads guesses so that
+  no single group pauses. Two controls now bound this. (1) R1a: there is no
+  silent sub-threshold guessing; every 5 wrong guesses against any door code
+  rotate it and notify that leader. (2) R1b: at most
+  `DOOR_FAILURES_PER_APP_PER_MINUTE` failed door compares per app per minute.
+  Expected break-ins per app per day at a full, nonstop attack =
+  budget x 1440 x 10^-6:
+
+  | Wrong-door budget per app per minute | Expected break-ins per app per day | Door rotations shown to leaders per day |
+  |---|---|---|
+  | none (first version; only the 600/min join budget) | ~0.86 | 0 (silent) |
+  | 60 | ~0.086 (about 1 in 12 days) | ~17 000 |
+  | **30 (planned, Q-E)** | **~0.043 (about 1 in 23 days)** | ~8 600 |
+  | 10 | ~0.014 (about 1 in 70 days) | ~2 900 |
+
+  Such an attack is loud: thousands of `codes.updated door_failures` events
+  reach leaders and the `door_failures_app_budget_exhausted` warning is
+  logged every minute. A 6-digit door code is a **"same room" control** (the
+  joiner can see the screen or hear the leader). Apps that need stronger
+  admission should use C (8-character code) or B (leader approval), or D.
 - **Alphanumeric code (C):** 31^8 = 8.5 x 10^11 codes. With the whole per-app
   budget (600/min = 864 000/day) aimed at an app with 1000 live C groups:
-  864 000 x 1000 / 8.5 x 10^11 = about 1.0 x 10^-3 per day of hitting any group
-  (Q5.6, accepted; to be confirmed by the security plan review).
+  864 000 x 1000 / 8.5 x 10^11 = about **1.0 x 10^-3 per day** of hitting any
+  group (Q5.6, accepted, confirmed by the security review). A and C share the
+  600/min join budget, and wrong door codes are additionally capped at the
+  R1b value, so an attacker can't get the full rate on both. Worst combined
+  case at the planned value: about 0.044 per app per day.
 - **Group codes (A, B):** enumerable by design (they are shown openly). For B
   this lets a guesser reach a leader with requests; bounded by 10 pending per
   group and 1 per connection; the leader denies or rotates.
@@ -611,16 +724,98 @@ group ID until item 4" note with this.
 
 First line: call sites log only the allowed fields (6.1). Second line: new
 `REDACT_PATHS` (`joinCode`, `doorCode`, `groupCode`, `alphaCode`, `codes`,
-`joinCodes`, `ticket`, `requestId`, plus `*.` variants). Errors from the signed
-blob services never carry input; verification returns a result object.
+`joinCodes`, `blob`, `ticket`, `requestId`, plus `*.` variants; R10). `codes`
+alone only covers a `JoinCodesPayload` logged whole at depth 0 or 1, so `blob`
+gets its own paths. No new log field is named `reason` (6.1). Errors from the
+signed blob services never carry input; verification returns a result object.
+`logger.test.ts` asserts each new path, including a nested `{ x: { blob } }`.
+
+### 8.4 Required security controls (security.md section 5) mapped to commits
+
+Every control is part of this plan. Commit numbers refer to section 11.
+
+| # | Control | Where in this plan | Commit |
+|---|---|---|---|
+| R1a | Door failures counted since the last door-code change, no 10-minute decay; every 5th rotates the door code and notifies the leader; pause rule unchanged. Test: 4 failures, 11 min, 1 failure -> rotates; 4 + 4 + ... over hours still rotate on every 5th | 3 (`DoorGuard`), 5.3, 10 (AC29) | 9 |
+| R1b | `DOOR_FAILURES_PER_APP_PER_MINUTE` (planned 30, Gate 2 Q-E): `check` before the compare, `record` only on a wrong compare, `RATE_LIMITED` with the join-attempt text and `retryAfterMs`, one namespace-only warn per window; tests with two apps and with correct door codes not using the budget | 2.2 (`rate-limiter.ts` `check`/`record`), 4.3 step 7, 5.3 | 8 (limiter `check`/`record`, constant), 9 (wiring) |
+| R1c | Corrected numbers: per-group steady state (5 per 10 min, bounded by session length) and per-app aggregate at the chosen R1b value; "same room" wording | 8.1 (done in this revision), 8.6 (spec note, README) | 21 |
+| R2 | Client keeps the highest-generation codes blob per group, across tabs and independent of the token merge | 2.2 (`token-store.ts`), 4.8, 7.3 | 17 |
+| R3 | Generation `max(prev + 1, nowMs)` in milliseconds | D4, 2.1 (`codes.ts`) | 4 |
+| R4 | HKDF `info` exactly `sync-system/token/v1:<ns>` (unchanged, pinned bytes), `sync-system/qr-ticket/v1:<ns>`, `sync-system/codes-blob/v1:<ns>`; keyring cache keyed by purpose and namespace (separate keyring instances per purpose); keys differ per purpose and app; ticket, blob and token never interchangeable in any direction | D2, 2.2 (`token-keys.ts`), 4.7 | 3 |
+| R5 | `verifyCompact`: length cap first, exact two-segment pattern, 43-character signature, constant-time compare against every key, JSON parsed in try/catch, exact claim schema (`v === 1`, `g` matches `GROUP_ID_PATTERN`, `n`/`e` safe non-negative integers, plausibility bound on `e`), result objects, never throwing with input | 2.1 (`signed-blob.ts`), 4.7, 4.8 | 3, 12, 13 |
+| R6 | Door compare: both sides validated to `^[0-9]{6}$`, then `timingSafeEqual` on two 6-byte ASCII buffers; a paused group never compares | 4.3 step 7 | 6, 9 |
+| R7 | `CODE_NOT_FOUND` and `QR_INVALID` each built from one constant (fixed text, no `details`, never echo input); deep-equal tests across unknown code, other app's code, unused code type and every invalid-ticket case; `join_rejected` without group ref for `not_found` / `qr_invalid` | 4.3, 4.4, 6.1 | 6, 12 |
+| R8 | Validation order of 4.3 (busy, per-connection budget, per-app budget, then normalization and lookup); refused attempts never reach `CodeIndex.lookup` (spy test); lookup outside the lock re-checked under the lock | 4.3 | 6, 8 |
+| R9 | Display name: 4.5 rules plus well-formed UTF-16 and no U+061C, U+200B, U+200E, U+200F, U+FEFF; same function on server and client | 4.5 | 1 |
+| R10 | Redact `blob`, `*.blob` in addition to the planned paths; no new log field named `reason` | 2.2 (`logger.ts`), 6.1, 8.3 | 18 (the redact paths themselves land with the first commit that can log the field, see note) |
+| R11 | Approval settles exactly once under the group lock; approve re-checks the joiner session; request IDs from 16 CSPRNG bytes, looked up only in the acting leader's own group queue | 2.1 (`approval-queue.ts`), 4.6 | 11 |
+| R12 | `qr.issue`, `codes.rotate`, `join.approve`, `join.deny` authorized by ownership (notifier, M4), not by cached role; per-action `NOT_LEADER` texts | 4.4, 4.6, 4.7 | 10, 11, 12 |
+| R13 | Codes, blobs and display names sent only to the ownership-checked leader connection (never broadcast, never to members or pending joiners); pending-joiner frames carry no `groupId` (including `GROUP_ENDED`, built by `errorMessage(ErrorCode.GROUP_ENDED)` with no `details`); member-socket frame test | 4.2, 4.6, D9 | 5, 9, 11, 13 |
+| R14 | `CodeIndex` claim all-or-nothing and synchronous; codes released, timers cancelled and limiters forgotten on end, drop and `close()` (ManualScheduler pending = 0) | 2.1 (`code-index.ts`), 6 | 4, 5, 9, 11 |
+| R15 | `group.join` removed from schema, dispatch, `GroupActions` and client; static test that no client message type carries a raw `groupId` admission field | 4.1 | 15 |
+| R16 | READMEs: corrected odds (R1c), per-connection budgets reset on reconnect (L4), pause abuse and `codes.rotate` (M3), group-code squatting limit (M2), QR tickets are bearer credentials (URL fragment, strip with `history.replaceState`, never log or persist; door rotations invalidate them) (L6, Q-B), render display names as text only (L2), block-list residual (AC37) | 8.6 | 21 |
+
+Note on R10: to keep "no secret in logs" true at every commit, each commit
+that introduces a new sensitive field also adds its redact paths (`joinCode`
+and `doorCode` in 6, `codes`, `joinCodes` and `blob` in 5, `ticket` in 12,
+`requestId` in 11). Commit 18 then adds the cross-cutting privacy tests and
+verifies the full list. Commit 18 owns the R10 check either way.
+
+### 8.5 Advisories (no code change in this issue)
+
+| # | Advisory | Handling |
+|---|---|---|
+| M2 | Unlimited group creation lets one client squat the 6-digit code space (pre-existing: no per-connection create rate, no per-app live-group cap). | **Follow-up issue** (the orchestrator opens it): fixed per-connection `group.create` rate and per-app live-group cap. Until then, documented in the README (R16). |
+| M3 | Anyone who knows a group code can keep that group's method A paused. | PRD trade-off (Q5.1). Documented in the README next to the pause, with `codes.rotate` as the leader's way out (R16). R1b caps it at about 60 groups per app at once. Item 5 may add "rotate on pause" UI. |
+| L4 | Per-connection join and `qr.issue` budgets reset on reconnect. | Matches #7 L-2. Odds rest only on per-group and per-app limits (8.1). Stated in the README brute-force paragraph (R16). |
+| L5 | The QR ticket payload is readable (group ID and generation). | Acceptable since the group ID is no longer an admission credential (AC36). The AC36 static test stays (R15). |
+| L6 | `QR_TICKET_SECONDS_CEILING` allows 24-hour multi-use tickets. | Client README: tickets are bearer credentials; keep `qrTicketSeconds` short; read the ticket from the fragment, then remove it from the URL with `history.replaceState`; never log or persist it (R16). |
+
+### 8.6 Spec and README corrections the engineer makes (R1c, R16)
+
+In commit 21. The ACs themselves are not changed: R1a is stricter than AC29
+("5 within 10 minutes" still rotates), so AC29 holds as written, and R1b adds
+an extra cap that no AC forbids. AC43 (README documents the fixed constants
+and odds) now includes `DOOR_FAILURES_PER_APP_PER_MINUTE`.
+
+- `docs/issues/10/spec.md`, "Defaults" table: the row "Door-code failures
+  before rotation" becomes "5 since the last door-code change, per group (no
+  time window; stricter than AC29)"; add a row "Wrong door codes per app |
+  `<Gate 2 value>` per minute | Fixed | Checked before the compare, counted only
+  on a wrong door code".
+- `docs/issues/10/spec.md`, paragraph under the table: replace "about 15
+  door-code tries per 40 minutes, roughly 540 a day ... about 5 x 10^-4 per
+  day" with the 8.1 numbers: targeted steady state 5 per 10 minutes (about
+  7 x 10^-4 per day per group, about 10^-4 per 180-minute session), the
+  per-app aggregate at the chosen value (about 0.043 per app per day at 30),
+  and the "same room" sentence. Add a line "Corrected after the security plan
+  review (docs/issues/10/security.md, H1)".
+- `README.md` brute-force section: the same numbers and table as 8.1, the
+  "same room" sentence with C, B or D as stronger options, per-connection
+  budgets reset on reconnect (L4), pause abuse and `codes.rotate` (M3),
+  group-code squatting until the follow-up issue lands (M2), the new constant
+  in the fixed-limits table.
+- `packages/client/README.md`: QR tickets are bearer credentials, deep link in
+  the fragment, strip it with `history.replaceState`, never log or persist it,
+  keep `qrTicketSeconds` short (L6); a door rotation (and any rotation)
+  invalidates tickets, so re-issue on `codesChanged` (Q-B); render display
+  names as text only, never as HTML (L2); block-list residual (AC37).
 
 ## 9. Risks and edge cases
 
 - **Door rotations kill QR tickets.** AC29 bumps the generation, so an attacker
-  who knows the group code can invalidate QR tickets every 5 wrong guesses (at
-  most 3 times per 30 minutes before the pause stops door guessing). The leader
-  app re-issues on `codesChanged` (D7 recipe). Gate 2 question Q-B offers a
-  separate ticket generation instead.
+  who knows the group code can invalidate QR tickets every 5 wrong guesses.
+  With R1a this no longer depends on timing, but it stays bounded by the pause
+  (steady state one rotation per 10 minutes) and by R1b. The leader app
+  re-issues on `codesChanged` (D7 recipe), and the README says door rotations
+  invalidate tickets. Gate 2 question Q-B (security: keep one generation).
+- **Wrong-door budget as a lever (R1b).** One client can use up an app's 30
+  wrong door codes per minute and make every method A attempt with a door code
+  in that app get `RATE_LIMITED` for the rest of the minute. This is not a new
+  class of DoS (one client can already use up the 600/min join budget, accepted
+  at Gate 1, Q5.2), but it is cheaper. Correct door codes are not counted, so
+  real joiners only feel it while an attack is running. C, B and D joins are
+  unaffected. The warn log makes it visible.
 - **Group code races.** The index lookup is outside the group lock; the flow
   re-checks the mapping under the lock, so a code that rotated or was freed in
   between gets `CODE_NOT_FOUND`, never a join to the wrong group.
@@ -631,19 +826,26 @@ blob services never carry input; verification returns a result object.
 - **Per-app budget exhaustion.** One attacker can spend an app's 600 joins per
   minute and slow real joins for that app (accepted at Gate 1, Q5.2). The
   warning log makes it visible.
-- **Older blob replay** (4.8): only by the leader-token holder; accepted.
-- **Generation and clock.** D4 uses server time. A server clock stepping far
-  back after a restart without a blob could give a lower generation than an
+- **Older blob replay** (4.8, security M1): closed for the leader's own
+  clients by R2 (highest generation wins). Residual only for someone holding
+  both the leader token and a copied older blob.
+- **Generation and clock.** D4 uses server time in milliseconds (R3), so a
+  quick restart can't reuse a generation. A server clock stepping far back
+  after a restart without a blob could still give a lower generation than an
   outstanding ticket; tickets expire within `qrTicketSeconds` (<= 1 h by
   default ceiling), so the window is bounded. NTP assumed (as #5).
+- **Group-code squatting** (security M2, pre-existing): unlimited group
+  creation can fill an app's 6-digit code space. Follow-up issue; README note.
+- **Method A pause griefing** (security M3): accepted trade-off (Q5.1); README
+  note; the leader's way out is `codes.rotate`.
 - **Codes out of memory are not reserved** (Q4.2). After a drop, another group
   can take the code, and the recreating leader gets new codes. People already
   told the old codes must be told again.
 - **Pending requests while the leader is offline** wait until their deadline
   (Q6.2); the leader sees them on return with the remaining time.
-- **Multi-tab leaders.** The blob follows the #5/#7 storage merge rules
-  (newest token `iat` wins); a stale tab could store an older blob, with the
-  replay consequence above.
+- **Multi-tab leaders.** The token follows the #5/#7 storage merge rules
+  (newest token `iat` wins), but the blob has its own rule (R2): the higher
+  generation wins per group, so a stale tab can't store an older blob.
 - **Test churn** (AC44): 18 server and about 20 client test files change from
   `group.join` / `joinGroup` to codes. Tests that join more than 10 times on one
   connection within a minute must advance the scheduler or use new
@@ -691,7 +893,13 @@ stays in every suite.
 | AC26 | HKDF keys differ per purpose and namespace; token keys byte-equal to a pinned value; ticket signed with previous secret accepted until expiry; ticket given as a token -> `TOKEN_INVALID`; token given as a ticket -> `QR_INVALID`; blob given as a ticket and vice versa -> invalid. | `token-keys.test.ts`, `qr-tickets.test.ts`, `codes-blob.test.ts`, `join-qr.int.test.ts` |
 | AC27 | 10 attempts OK (mix of outcomes, including `DOOR_CODE_REQUIRED`), 11th -> `RATE_LIMITED { retryAfterMs }` "Too many join attempts" before lookup (`CodeIndex.lookup` spy not called), socket open; window advance -> OK. | `join-bruteforce.int.test.ts` |
 | AC28 | 61 app-a connections x 10 -> 601st `RATE_LIMITED`; app-b unaffected; no lookup for refused attempts. | `join-bruteforce.int.test.ts` |
-| AC29 | 5 wrong door codes in 10 min -> leader `codes.updated door_failures` with a new door code, same group code, higher generation, new blob; old door code now wrong; 4 failures + 11 min + 1 failure -> no rotation; 3 rotations in 30 min -> `JOIN_PAUSED { retryAfterMs }` for A attempts (correct door code included), leader `join.paused`; C and D still work; after 10 min `join.resumed` and joins work. | `join-bruteforce.int.test.ts`, `door-guard.test.ts` |
+| AC29 + R1a | 5 wrong door codes in 10 min -> leader `codes.updated door_failures` with a new door code, same group code, higher generation, new blob; old door code now wrong. **R1a:** 4 failures + 11 min + 1 failure -> rotates (no decay); 4 failures, then hours later 1 more -> rotates; the counter resets on door rotation, `codes.rotate` and recreation. 3 rotations in 30 min -> `JOIN_PAUSED { retryAfterMs }` for A attempts (correct door code included, no compare), leader `join.paused`; C and D still work; after 10 min `join.resumed` and joins work; the next rotation inside the 30-min window pauses again at once. | `join-bruteforce.int.test.ts`, `door-guard.test.ts` |
+| R1b | Limiter unit: `check` records nothing, `record` adds one, `retryAfterMs` correct. Integration (two apps, many A groups, new connections to dodge per-connection limits): the 31st wrong door code in a minute across different groups -> `RATE_LIMITED` "Too many join attempts" with `retryAfterMs`, the compare is not run (spy on `timingSafeEqual`) and no group's failure counter moves; app-b unaffected; correct door codes, `DOOR_CODE_REQUIRED` and paused attempts never use the budget (31 correct joins pass); window advance -> allowed again; one `door_failures_app_budget_exhausted` warn per window, namespace only. | `rate-limiter.test.ts`, `join-bruteforce.int.test.ts`, `join-privacy.int.test.ts` |
+| R2 | Two storage instances on one fake storage: rotate in tab 1 (higher generation), tab 2 writes its older blob -> stored blob stays the newer one; merge in both orders keeps the higher generation; a stored blob without a valid generation is dropped on load. | `token-store.test.ts`, `client.leader-codes.test.ts` |
+| R3 | `nextGeneration`: millisecond floor; 50 rotations within one millisecond of `TestClock` stay strictly increasing; recreation without a blob after rapid rotations gives a generation above every earlier one, so an older ticket stays `QR_INVALID`; maximal ticket still <= 256. | `codes.test.ts`, `join-qr.int.test.ts`, `qr-tickets.test.ts` |
+| R9 | Names with a lone high or low surrogate, U+061C, U+200B, U+200E, U+200F, U+FEFF -> invalid on server (`INVALID_MESSAGE`) and client (`INVALID_DISPLAY_NAME`); ZWJ family emoji, flag and tag-sequence emoji accepted. | `join.test.ts`, `join-approval.int.test.ts`, `client.join.test.ts` |
+| R10 | Logger test: `blob`, `*.blob` and every new path redacted (nested object case); a static check that no new log call passes a `reason` field (grep-style test over `src/joins/**`). | `logger.test.ts`, `join-privacy.int.test.ts` |
+| R11 | Races with `ManualScheduler`: approve vs joiner disconnect (both orders), approve vs `join.cancel`, approve vs deadline timer, deny vs timeout, approve vs group end: exactly one outcome to the joiner and one to the leader, no participant added for a closed socket, second actor gets `JOIN_REQUEST_NOT_FOUND`, timers pending 0. | `approval-queue.test.ts`, `join-approval.int.test.ts` |
 | AC30 | `codes.rotate`: every code replaced, generation up, old QR ticket `QR_INVALID`, failures reset, pause lifted (`join.resumed`); 7th per minute -> `RATE_LIMITED`; member -> `NOT_LEADER`. | `join-bruteforce.int.test.ts` |
 | AC31 | After group end and after `server.close()`: ManualScheduler pending 0, `CodeIndex.size` 0, queues and limiters empty; log capture shows no codes, names, IPs or raw pids. | `join-bruteforce.int.test.ts`, `join-privacy.int.test.ts` |
 | AC32 | Every `JoinCodesPayload` (create, rotate, door rotation, resume) carries a blob that verifies with the codes key only; client stores it in recovery and sends it in `group.resume`. | `codes-blob.test.ts`, `join-recovery.int.test.ts`, `client.leader-codes.test.ts` |
@@ -705,7 +913,7 @@ stays in every suite.
 | AC40 | `getJoinCodes`, `rotateCodes`, `issueQrTicket` (`expiresAt` from local clock), `approveJoin`, `denyJoin`, events with reasons, dedup of re-sent requests; blob stored, deleted with the token. | `client.leader-codes.test.ts`, `token-store.test.ts` |
 | AC41 | `joinGroup` absent from the class and exports (type test with `@ts-expect-error`); README has no `joinGroup`; token rejoin tests unchanged. | `client.groups.test.ts`, `readme.test.ts`, `client.rejoin.test.ts` |
 | AC42 | Recording logger plus every error's `message`, `details`, `serverMessage` across all new flows: no code, ticket, blob or name sentinel. | `logging.test.ts`, `client.join.test.ts` |
-| AC43 | READMEs reviewed against sections 4-5 and 8.1; `readme.test.ts` asserts the join-flow, leader-API and QR deep-link headings and the fragment advice; example configs parse. | review, `readme.test.ts`, `apps-config.test.ts` |
+| AC43 | READMEs and the spec "Defaults" note reviewed against sections 4-5, 8.1 and the 8.6 list (R1c, R16); `readme.test.ts` asserts the join-flow, leader-API and QR deep-link headings and the fragment advice; example configs parse. | review, `readme.test.ts`, `apps-config.test.ts` |
 | AC44 | Migrated tests pass; every other existing test unchanged. | CI |
 | AC45 | `pnpm lint`, `typecheck`, `test`, `build`, `pnpm audit --audit-level=high`; lockfile unchanged except workspace edits; no Node-only runtime import in the client (existing no-DOM/no-Node typecheck); `ssr-import` test still passes with the new protocol module. | CI |
 
@@ -716,48 +924,56 @@ and ends with the `Refs: #10` trailer. When a protocol change alters a server
 frame the client parses, the same commit updates the client's types and
 fake-socket fixtures (type-level only; client behavior lands in 14-17).
 
+Revision 1 keeps the same 21 commits in the same order; the security controls
+(section 8.4) are folded into them, shown in brackets as `[Rx]`. Two subjects
+change (8 and 17) to say what they now do.
+
 1. `feat(protocol): add join methods, code normalization and display name rules`
-   (join.ts, limits, exports; AC8, AC12, AC20 shared rules)
+   (join.ts, limits, exports; AC8, AC12, AC20 shared rules; [R9] well-formed UTF-16 and invisible-character rejection)
 2. `feat(config): add join methods and join timers to env and apps config`
    (env.ts, apps-config.ts, AppConfig, `hello.ok` fields, client limit bounds and `ConnectedInfo`, example and dev configs, compose; AC1-AC4)
 3. `feat(server): add signed qr tickets and codes blobs with separate keys`
-   (token-keys purpose prefix, signed-blob.ts, qr-tickets.ts, codes-blob.ts; AC26 unit, AC32 format)
+   (token-keys purpose prefix, signed-blob.ts, qr-tickets.ts, codes-blob.ts; AC26 unit, AC32 format; [R4] HKDF labels and per-purpose keyrings with pinned token key bytes, [R5] `verifyCompact` rules)
 4. `feat(server): draw and index join codes per app`
-   (codes.ts, code-index.ts, join-methods.ts; AC7-AC9 unit)
+   (codes.ts, code-index.ts, join-methods.ts; AC7-AC9 unit; [R3] millisecond generation, [R14] all-or-nothing synchronous claim)
 5. `feat(server): issue join codes when a group is created`
-   (protocol `group.create.joinMethods`, `group.created.codes`; GroupRecord fields, `setCodes`; release on end and drop; client fixtures; AC5, AC6, AC9, AC11)
+   (protocol `group.create.joinMethods`, `group.created.codes`; GroupRecord fields, `setCodes`; release on end and drop; client fixtures; redact paths `codes`, `joinCodes`, `blob`; AC5, AC6, AC9, AC11; [R13] codes to the leader only, [R14] release on end and drop)
 6. `feat(server): join groups by group code and door code or alphanumeric code`
-   (JoinService skeleton, `group.joinByCode` for A and C, new error codes and texts; AC12-AC18)
+   (JoinService skeleton, `group.joinByCode` for A and C, new error codes and texts, redact paths `joinCode`, `doorCode`; AC12-AC18; [R6] validated 6-byte constant-time compare, [R7] one constant per `CODE_NOT_FOUND`, [R8] lookup re-checked under the lock)
 7. `test(server): join through codes in server test helpers`
    (helpers and the 18 server test files off `group.join`; AC44)
-8. `feat(server): limit join attempts per connection and per app`
-   (two limiters, action texts, budget warning; AC27, AC28)
+8. `feat(server): limit join attempts and wrong door codes per app`
+   (join limiters per connection and per app, action texts, budget warning; `SlidingWindowRateLimiter.check` / `record`; `DOOR_FAILURES_PER_APP_PER_MINUTE` constant; AC27, AC28; [R8] budgets before lookup, [R1b] limiter infrastructure)
 9. `feat(server): rotate door codes and pause method a after failures`
-   (DoorGuard, `codes.updated door_failures`, `join.paused` / `join.resumed`; AC29)
-10. `feat(server): let the leader rotate join codes` (`codes.rotate`; AC30)
+   (DoorGuard with failures counted since the last door-code change, app wrong-door budget checked before the compare and recorded only on a wrong compare, `codes.updated door_failures`, `join.paused` / `join.resumed`, `door_failures_app_budget_exhausted` warn; AC29; [R1a], [R1b], [R6] paused groups never compare, [R13], [R14] door timers cleared)
+10. `feat(server): let the leader rotate join codes`
+    (`codes.rotate`; AC30; [R12] ownership-checked; resets the R1a counter)
 11. `feat(server): add leader approval for method b joins`
-    (ApprovalQueue, `join.*` messages, timers; AC19-AC22)
-12. `feat(server): issue and accept qr join tickets` (`qr.issue`, `group.joinByQr`; AC23-AC26)
+    (ApprovalQueue, `join.*` messages, timers, redact path `requestId`; AC19-AC22; [R11] exactly-once settlement under the group lock, [R12], [R13] `GROUP_ENDED` without `groupId` or `details`, [R14])
+12. `feat(server): issue and accept qr join tickets`
+    (`qr.issue`, `group.joinByQr`, redact path `ticket`; AC23-AC26; [R5], [R7] one constant for `QR_INVALID`, [R12])
 13. `feat(server): keep join codes across group recreation and leader return`
-    (`group.resume.joinCodes`, `codesChanged`, re-sent requests and pause; AC32-AC34, AC35 in-process)
+    (`group.resume.joinCodes`, `codesChanged`, re-sent requests and pause; AC32-AC34, AC35 in-process; [R5] blob verification, [R13])
 14. `feat(client): join groups by code and qr ticket`
-    (`joinByCode`, `joinByQr`, `cancelJoin`, `awaiting_approval`, indicator, error codes; client tests moved off `joinGroup`; AC12, AC39)
+    (`joinByCode`, `joinByQr`, `cancelJoin`, `awaiting_approval`, indicator, error codes; client tests moved off `joinGroup`; AC12, AC39; [R9] on the client)
 15. `feat(protocol)!: remove join by group id`
-    (schema, server dispatch, `GroupActions.join`, client `joinGroup`, remaining references; AC36, AC41; `BREAKING CHANGE:` footer)
+    (schema, server dispatch, `GroupActions.join`, client `joinGroup`, remaining references; AC36, AC41; `BREAKING CHANGE:` footer; [R15])
 16. `feat(client): add leader api for join codes, qr tickets and approvals`
     (getJoinCodes, rotateCodes, issueQrTicket, approve/deny, events, request list; AC38, AC40)
-17. `feat(client): store the codes blob and send it when recreating a group`
-    (token-store `recovery.joinCodes`, resume and auto-rejoin; AC32, AC40)
+17. `feat(client): keep the newest codes blob and send it when recreating a group`
+    (token-store `recovery.joinCodes` and `joinCodesGeneration`, highest generation wins across writes and tabs, resume and auto-rejoin; AC32, AC40; [R2])
 18. `test(server): verify join codes, tickets and names never reach logs`
-    (redact paths, privacy and cleanup tests; AC10, AC20, AC31)
+    (full redact-path list incl. `blob`, no `reason` log field, privacy and cleanup tests; AC10, AC20, AC31; [R10], [R14] cleanup)
 19. `test(server): keep join codes across a server process restart`
     (child-process restart; AC35)
 20. `test(client): cover join flows against the real server`
     (integration join, approval, QR, restart; recording-logger checks; AC35, AC39, AC42)
 21. `docs: document join methods, brute-force limits and the leader api`
-    (both READMEs, block-list note, QR deep-link advice; AC37, AC43)
+    (both READMEs and the spec "Defaults" note per section 8.6, block-list note, QR deep-link advice; AC37, AC43; [R1c], [R16]; M2, M3, L4, L6 notes)
 
 ## 12. Questions for Gate 2
+
+Each question shows the security review's opinion (security.md section 4).
 
 - **Q-A (AC38). `createGroup` signature.** Proposed: keep
   `createGroup(metadata, initialPosition?, options?)` and add `options.joinMethods`
@@ -765,24 +981,50 @@ fake-socket fixtures (type-level only; client behavior lands in 14-17).
   caller that passes an initial position. Alternative: change to
   `createGroup(metadata, { position?, joinMethods? })` now, since nothing is
   released.
+  *Security:* API shape only, no security impact; either option is fine.
 - **Q-B (AC29 vs AC25). Door rotations and QR tickets.** As specified, every
   rotation bumps the one generation, so an attacker who knows the group code can
-  invalidate the leader's QR tickets with 5 wrong door codes (at most 3 times
-  per 30 minutes before the pause). Proposed: follow the spec, and the leader app
-  re-issues on `codesChanged`. Alternative: a separate ticket generation that
-  only `codes.rotate` (and recreation without a valid blob) bumps.
+  invalidate the leader's QR tickets with 5 wrong door codes (with R1a at any
+  pace, but still bounded by the pause and by the R1b app budget). Proposed:
+  follow the spec, and the leader app re-issues on `codesChanged`. Alternative:
+  a separate ticket generation that only `codes.rotate` (and recreation without
+  a valid blob) bumps.
+  *Security:* keep the single generation (simpler blob, recovery and ticket
+  checks; a second counter adds states to get wrong). Condition: the README
+  states that door rotations invalidate QR tickets, and the D7 recipe re-issues
+  on `codesChanged` (both in commit 21, section 8.6).
 - **Q-C (AC22). Reply to pending joiners when the group ends or leaves memory.**
   Proposed: unsolicited `GROUP_ENDED` for both (D9). Alternative: a new
   `JOIN_REQUEST_CLOSED` code.
+  *Security:* `GROUP_ENDED` is fine, as long as the frame carries no `groupId`
+  and no `details` (as today's `errorMessage(ErrorCode.GROUP_ENDED)`; R13,
+  tested in commit 11).
 - **Q-D (Q3.1). QR refresh.** Proposed: app-driven `issueQrTicket()` with a
   documented refresh recipe; no client timer (D7). Alternative: an opt-in
   client helper that refreshes on a timer while started.
+  *Security:* app-driven preferred: tickets are minted only while the QR is
+  shown, so fewer valid bearer strings exist. An opt-in timer would be
+  acceptable only if it stops when the app says the QR is hidden.
+- **Q-E (new, R1b). Value of `DOOR_FAILURES_PER_APP_PER_MINUTE`.** A fixed
+  constant: wrong door codes allowed per app per minute across all its
+  groups. Recommended: **30** (about 0.043 expected break-ins per app per day
+  under a nonstop untargeted attack, about 1 in 23 days, and every 5 wrong
+  guesses visibly rotate a door code). Alternatives: 60 (~0.086/day, method A
+  harder to block), 10 (~0.014/day, method A cheaper to block for the whole
+  app during an attack). See the table in 8.1.
+  *Security:* recommends 30; the user decides.
 - Informational (no decision needed unless you object):
-  - Time-based generation floor (D4) so post-restart code sets always outrank
-    old tickets.
+  - Time-based generation floor in milliseconds (D4, R3) so post-restart code
+    sets always outrank old tickets.
+  - Door failures counted since the last door-code change (R1a): stricter than
+    AC29, so AC29 still holds; the spec "Defaults" note and README numbers are
+    corrected in commit 21 (8.6).
+  - Advisories without code here: M2 group-code squatting (follow-up issue to
+    open), M3 pause griefing (README), L4, L5, L6 (8.5).
   - Wire field names `joinCode` / `doorCode` / `joinCodes` for redaction (D5).
-  - Display names also reject bidi overrides and isolates, beyond "control
-    characters" (4.5).
+  - Display names also reject bidi overrides and isolates, lone surrogates and
+    invisible format characters (LRM, RLM, ALM, ZWSP, BOM), beyond "control
+    characters" (4.5, R9).
   - Relative `...Ms` fields instead of absolute deadlines (D6).
   - New client indicator value `awaiting_approval`.
   - The dev apps config allows all four methods so every flow can be tried

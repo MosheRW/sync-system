@@ -5,8 +5,8 @@
 - PR: #11 (draft)
 - Plan approved by user: no
 - Security-sensitive: yes (door codes, approval, brute-force limits, QR ticket signing, codes blob, removal of join by group ID)
-- Review rounds: 0
-- Last updated by: security
+- Review rounds: 0 (code review); security plan review rounds: 1 (FAIL), plan revised once
+- Last updated by: architect
 
 ## Notes
 - PRD item 4 of 9. "item N" in spec.md means PRD item N, not GitHub issue N.
@@ -31,11 +31,16 @@
   per app per day). Required: R1a (count failures since last door change),
   R1b (fixed per-app wrong-door budget, recommended 30/min), R1c (corrected odds).
 - Required controls R1a-R16 mapped to planned commits (security.md section 5).
-- Next: architect revises the plan, then security plan review round 2.
+- Plan revision 1 (architect): every required control R1a-R16 added to architecture.md and
+  mapped to the 21 planned commits (architecture.md section 8.4). R1a in DoorGuard, R1b as
+  DOOR_FAILURES_PER_APP_PER_MINUTE (planned 30) checked before the compare, R1c corrected odds
+  in section 8.1 plus spec/README corrections listed in section 8.6 (commit 21). Advisories
+  M2 (follow-up issue), M3, L4, L5, L6 recorded in section 8.5.
+- Next: security plan review round 2, then Gate 2.
 
 ## Open questions
-- Gate 2 (security): value of DOOR_FAILURES_PER_APP_PER_MINUTE (R1b, recommended 30).
-- Gate 2 (architecture.md section 12): Q-A createGroup signature; Q-B door rotations invalidate QR tickets (spec) vs separate ticket generation; Q-C GROUP_ENDED for pending joiners on end/drop; Q-D app-driven QR refresh.
+- Gate 2 (architecture.md section 12, with the security view on each): Q-A createGroup signature; Q-B door rotations invalidate QR tickets (spec) vs separate ticket generation; Q-C GROUP_ENDED for pending joiners on end/drop; Q-D app-driven QR refresh; Q-E value of DOOR_FAILURES_PER_APP_PER_MINUTE (recommended 30).
+- Follow-up to open after Gate 2: M2 group-creation rate and per-app live-group cap.
 
 ## Deviations from plan
 - none
