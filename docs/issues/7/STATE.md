@@ -1,12 +1,12 @@
 # State: #7 Harden token recovery (follow-up to #5)
 - Path: fast
-- Phase: validation
+- Phase: implementation
 - Branch: fix/7-token-recovery-hardening
 - PR: #8
 - Plan approved by user: yes
 - Security-sensitive: yes
 - Review rounds: 1
-- Last updated by: qa
+- Last updated by: engineer
 
 ## Notes
 - Follow-up to #5 (PRD item 3), merged in PR #6 (a9cfa02). GitHub issue numbers are not PRD item numbers.
@@ -40,3 +40,8 @@
 - R5 detail: besides keeping marks on a failed read, a mark made while the read failed uses the last storage state this store saw (`#known`, updated on every successful read and write), so a failed delete during a failed read never marks the group as "had no stored entry" (which would let rule 3 bring the old token back).
 - `rawByteLength` is exported from `ws/connection.ts` (for a unit test). `ERROR_TEXT` and `ACTION_ERROR_TEXT` are exported from `ws/error-messages.ts` (for the table test).
 - README aggregate inbound figure is 10000 x 224 KiB, about 2.1 GiB (2.3 GB); the security review's "~2.2 GiB" rounded the same number.
+- Fix round (Gate 3 findings, requested by the user after round 1 PASS/PASS):
+  - L-a (e25479b): dirty marks made before the store ever read or wrote storage successfully are memory-wins (`DirtyMark.memoryWins`, `#storageSeen`): a removal stays removed and an unsaved token stays until a successful write. R5 unchanged (a failed read never drops or changes a mark). Regression tests in packages/client/test/token-store.test.ts (2 failed before the fix). Client README cross-tab limits list the new remaining case (such a change wins over other tabs' changes until the next successful write).
+  - L-b (56c71a6): `pnpm.overrides` `minimatch: ^11.0.1` in package.json (resolves 11.0.4). No direct bump fixes GHSA-g3hv-75wg-m249: eslint 9/10, @eslint/config-array and @typescript-eslint/typescript-estree still depend on minimatch 3.x/10.x. All consumers use the `Minimatch` class or the named `minimatch` export, which v11 keeps; lint runs and still reports errors. `pnpm audit`: no known vulnerabilities.
+  - QA-1 (e8103ae): the AC6 close test now exhausts the per-app budget (600) and one live connection's per-connection limit, checks the budget state is non-empty, then asserts after close: scheduler pending 0, both limiters and the warning map empty (fails if `close()` stops clearing the app limiter).
+  - Checks: pnpm install --frozen-lockfile, lint, typecheck, test (protocol 42, server 602, client 471), build, pnpm audit (0 vulnerabilities) all exit 0.
