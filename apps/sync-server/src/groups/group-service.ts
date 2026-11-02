@@ -17,7 +17,11 @@ import {
 } from '@sync-system/protocol';
 import type { AppConfig } from '../apps/app-registry.js';
 import { jsonByteLength } from '../limits/json-size.js';
-import { TOKENS_CHECK_PER_MINUTE, TOKENS_CHECK_WINDOW_MS } from '../limits/constants.js';
+import {
+  TOKENS_CHECK_PER_APP_PER_MINUTE,
+  TOKENS_CHECK_PER_MINUTE,
+  TOKENS_CHECK_WINDOW_MS,
+} from '../limits/constants.js';
 import { SlidingWindowRateLimiter } from '../limits/rate-limiter.js';
 import { type Logger, groupRef, participantRef, safeErr } from '../logging/logger.js';
 import type { Scheduler } from '../time/scheduler.js';
@@ -87,9 +91,14 @@ export class GroupService implements GroupActions {
   private readonly refresher: TokenRefresher;
   /** tokens.check limiter, keyed by connection (#5 AC16). */
   private readonly checkLimiter: SlidingWindowRateLimiter;
+  /** tokens.check budget shared by all connections of an app, keyed by namespace (#7 L2). */
+  private readonly appCheckLimiter: SlidingWindowRateLimiter;
+  /** When the app-budget warning was last logged, per namespace (#7 L-2). */
+  private readonly appBudgetWarnedAt = new Map<string, number>();
 
   constructor(private readonly deps: GroupServiceDeps) {
     this.checkLimiter = new SlidingWindowRateLimiter(() => this.now(), TOKENS_CHECK_WINDOW_MS);
+    this.appCheckLimiter = new SlidingWindowRateLimiter(() => this.now(), TOKENS_CHECK_WINDOW_MS);
     this.timers = new GroupTimers(deps.scheduler);
     this.parking = new ParkingLot(deps.scheduler);
     this.refresher = new TokenRefresher(deps.scheduler, deps.refresh);
@@ -100,6 +109,9 @@ export class GroupService implements GroupActions {
     this.timers.clearAll();
     this.parking.clearAll();
     this.refresher.clearAll();
+    this.checkLimiter.clear();
+    this.appCheckLimiter.clear();
+    this.appBudgetWarnedAt.clear();
   }
 
   /**
@@ -385,6 +397,22 @@ export class GroupService implements GroupActions {
     return { type: 'position.ack' };
   }
 
+  /**
+   * One warning per window per app when its shared tokens.check budget is
+   * used up, so operators can see it (#7 L-2). Namespace only: never a
+   * token, participant ID or connection ID.
+   */
+  private warnAppCheckBudget(namespace: string): void {
+    const now = this.now();
+    const last = this.appBudgetWarnedAt.get(namespace);
+    if (last !== undefined && now - last < TOKENS_CHECK_WINDOW_MS) return;
+    this.appBudgetWarnedAt.set(namespace, now);
+    this.deps.logger.warn(
+      { event: 'tokens_check_app_budget_exhausted', namespace },
+      'tokens.check budget for the app is used up',
+    );
+  }
+
   private memberKeys(record: GroupRecord): string[] {
     return record.participantIds
       .filter((id) => id !== record.leaderId)
@@ -392,7 +420,10 @@ export class GroupService implements GroupActions {
   }
 
   /**
-   * tokens.check (#5 AC14-AC16). Limited per connection first. Each token is
+   * tokens.check (#5 AC14-AC16). Limited per connection first, then by the
+   * app's shared budget (#7 L2). The per-connection check comes first so a
+   * connection over its own limit never spends the shared budget. Both run
+   * before any verification or store access (#7 AC5). Each token is
    * verified, and only a verified token leads to a group lookup, so invalid
    * tokens never touch group state (AC15). Results carry only a status, plus
    * a re-signed token for usable previous-secret tokens (AC2).
@@ -405,6 +436,13 @@ export class GroupService implements GroupActions {
       });
     }
     const { app } = session;
+    const appRate = this.appCheckLimiter.tryAcquire(app.namespace, TOKENS_CHECK_PER_APP_PER_MINUTE);
+    if (!appRate.ok) {
+      this.warnAppCheckBudget(app.namespace);
+      return actionErrorMessage(ErrorCode.RATE_LIMITED, 'tokens.check', {
+        details: { retryAfterMs: appRate.retryAfterMs },
+      });
+    }
     const results: TokensResultMessage['results'] = [];
     for (const token of message.tokens) {
       const now = this.now();

@@ -47,4 +47,15 @@ describe('SlidingWindowRateLimiter (AC22)', () => {
     limiter.forget('b');
     expect(limiter.size).toBe(0);
   });
+
+  it('clear() forgets every key (#7 AC6)', () => {
+    const clock = new TestClock();
+    const limiter = new SlidingWindowRateLimiter(clock.now);
+    limiter.tryAcquire('a', 1);
+    limiter.tryAcquire('b', 1);
+    expect(limiter.size).toBe(2);
+    limiter.clear();
+    expect(limiter.size).toBe(0);
+    expect(limiter.tryAcquire('a', 1)).toEqual({ ok: true });
+  });
 });

@@ -32,6 +32,11 @@ export class SlidingWindowRateLimiter {
     this.events.delete(key);
   }
 
+  /** Forgets every key (server shutdown). The limiter holds no timers. */
+  clear(): void {
+    this.events.clear();
+  }
+
   /** Number of tracked keys. For tests only. */
   get size(): number {
     return this.events.size;

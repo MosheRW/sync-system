@@ -66,3 +66,10 @@ export const TOKENS_CHECK_PER_MINUTE = 10;
 
 /** Window of the tokens.check limiter. */
 export const TOKENS_CHECK_WINDOW_MS = 60_000;
+
+/**
+ * tokens.check requests per app per window, shared by every connection of
+ * the app, on top of the per-connection limit (#7 L2, D1). Fixed, not
+ * configurable; there is no global budget.
+ */
+export const TOKENS_CHECK_PER_APP_PER_MINUTE = 600;
