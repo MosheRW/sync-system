@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { ConfigError } from './config-error.js';
+import { TOKENS_CHECK_MAX_FRAME_BYTES } from '../limits/constants.js';
 
 export const LOG_LEVELS = ['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'] as const;
 export type LogLevel = (typeof LOG_LEVELS)[number];
@@ -156,6 +157,12 @@ export function parseEnv(env: EnvSource): ServerEnv {
     rule(
       n.maxBufferedBytes >= 4 * n.maxMessageSizeCeiling,
       `MAX_BUFFERED_BYTES (${n.maxBufferedBytes}) must be >= 4 * MAX_MESSAGE_SIZE_CEILING (${4 * n.maxMessageSizeCeiling})`,
+    );
+    // A tokens.result with the most re-signed tokens (secret rotation) must fit
+    // in an empty outbound buffer, or sending it terminates the socket (#5).
+    rule(
+      n.maxBufferedBytes >= TOKENS_CHECK_MAX_FRAME_BYTES,
+      `MAX_BUFFERED_BYTES (${n.maxBufferedBytes}) must be >= the largest tokens.result frame (${TOKENS_CHECK_MAX_FRAME_BYTES})`,
     );
     rule(
       n.tokenRefreshMinSeconds <= n.tokenRefreshMaxSeconds,

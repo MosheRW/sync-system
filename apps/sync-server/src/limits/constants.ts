@@ -28,7 +28,11 @@ export const LEADER_RATE_WINDOW_MS = 1_000;
  */
 export const RECOVERY_EXTRA_BYTES = 16_384;
 
-/** A tokens.check frame with 20 tokens of 2048 characters plus the envelope. */
+/**
+ * A tokens.check frame with 20 tokens of 2048 characters plus the envelope.
+ * Also bounds the tokens.result reply (20 re-signed tokens during secret
+ * rotation), so MAX_BUFFERED_BYTES must be at least this large (#5).
+ */
 export const TOKENS_CHECK_MAX_FRAME_BYTES = 45_056;
 
 /**

@@ -165,7 +165,7 @@ Numeric variables must be positive integers; anything else (empty, `0`, `-1`,
 | `MAX_PENDING_HANDSHAKES`           | `1000`               | Sockets that have not sent hello yet. Must be <= `MAX_CONNECTIONS`.      |
 | `MAX_INBOUND_MESSAGES_PER_SECOND`  | `20`                 | Per-connection message rate. Must be > `MAX_LEADER_UPDATE_RATE_CEILING`. |
 | `MAX_INBOUND_BURST`                | `40`                 | Per-connection burst. Must be >= `MAX_INBOUND_MESSAGES_PER_SECOND`.      |
-| `MAX_BUFFERED_BYTES`               | `262144`             | Per-socket outbound buffer before it is dropped. >= 4 x message ceiling. |
+| `MAX_BUFFERED_BYTES`               | `262144`             | Outbound buffer per socket before drop. >= 4 x msg ceiling and >= 45056. |
 | `MAX_SESSION_MINUTES_CEILING`      | `480`                | Ceiling for `maxSessionMinutes`.                                         |
 | `INACTIVITY_LIMIT_MINUTES_CEILING` | `60`                 | Ceiling for `inactivityLimitMinutes`.                                    |
 | `TOKEN_REFRESH_ACTIVITIES`         | `10`                 | Leader updates that allow a token refresh after the min interval.        |

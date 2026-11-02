@@ -70,7 +70,7 @@ describe('parseEnv', () => {
       MAX_PENDING_HANDSHAKES: '100',
       MAX_INBOUND_MESSAGES_PER_SECOND: '9',
       MAX_INBOUND_BURST: '9',
-      MAX_BUFFERED_BYTES: '32768',
+      MAX_BUFFERED_BYTES: '49152',
       MAX_SESSION_MINUTES_CEILING: '600',
       INACTIVITY_LIMIT_MINUTES_CEILING: '30',
       TOKEN_REFRESH_ACTIVITIES: '4',
@@ -91,7 +91,7 @@ describe('parseEnv', () => {
       maxPendingHandshakes: 100,
       maxInboundMessagesPerSecond: 9,
       maxInboundBurst: 9,
-      maxBufferedBytes: 32768,
+      maxBufferedBytes: 49152,
       maxSessionMinutesCeiling: 600,
       inactivityLimitMinutesCeiling: 30,
       tokenRefreshActivities: 4,
@@ -179,6 +179,15 @@ describe('parseEnv', () => {
       expect(err.message).toContain('MAX_BUFFERED_BYTES');
       expect(err.message).toContain('MAX_MESSAGE_SIZE_CEILING');
       expect(() => parseEnv({ MAX_BUFFERED_BYTES: '65536' })).not.toThrow();
+    });
+
+    it('MAX_BUFFERED_BYTES fits the largest tokens.result frame (#5)', () => {
+      const small = { MAX_MESSAGE_SIZE_CEILING: '1024' };
+      expect(errorOf({ ...small, MAX_BUFFERED_BYTES: '4096' }).message).toBe(
+        'MAX_BUFFERED_BYTES (4096) must be >= the largest tokens.result frame (45056)',
+      );
+      expect(errorOf({ ...small, MAX_BUFFERED_BYTES: '45055' }).message).toContain('tokens.result');
+      expect(() => parseEnv({ ...small, MAX_BUFFERED_BYTES: '45056' })).not.toThrow();
     });
 
     it('TOKEN_REFRESH_MIN_SECONDS <= TOKEN_REFRESH_MAX_SECONDS (#5)', () => {
