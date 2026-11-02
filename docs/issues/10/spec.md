@@ -26,7 +26,7 @@ This issue adds the four PRD join methods (A to D), lets each app choose its all
 
 ## UI impact
 
-None in this issue. It delivers protocol messages, server behaviour and the core client API (`@sync-system/client`). Code entry screens, displaying the codes, rendering the QR image, camera scanning and the leader's approval prompt are reading-app UI (items 7 and 8), and React hooks for them are item 6. Proposed: skip the designer phase (see Q1.4).
+None in this issue. It delivers protocol messages, server behaviour and the core client API (`@sync-system/client`). Code entry screens, displaying the codes, rendering the QR image, camera scanning and the leader's approval prompt are reading-app UI (items 7 and 8), and React hooks for them are item 6. The designer phase is skipped (Q1.4, accepted at Gate 1).
 
 ## User stories
 
@@ -42,9 +42,9 @@ None in this issue. It delivers protocol messages, server behaviour and the core
 - As a **leader who blocked someone**, I want them unable to get back in through a group-ID back door, so that removal sticks.
 - As a **user who may be a minor**, I want codes, QR strings and display names kept out of server logs, so that nothing personal outlives the session.
 
-## Proposed design decisions (confirm at Gate 1)
+## Design decisions (confirmed at Gate 1)
 
-These are the PM's proposed defaults. Each also appears under Open questions.
+The user accepted every proposed default at Gate 1 (see "Gate 1 decisions" at the end). Each decision also appears there with its question number.
 
 1. **Join by group ID is removed.** `group.join` by group ID goes away from the protocol and the client (`joinGroup(groupId)`). Code joins, QR joins and token resume (#5) are the only ways in. Protocol version stays 1, because nothing has been released yet (same reasoning as #5 Q13). (Q2.1)
 2. **Per-app methods within an env ceiling.** A server env variable lists the methods any app may use. Each app's config lists its own allowed methods, which must be a subset. Listing a method the env does not permit is a startup error, never silently dropped, the same as #1 AC5. (Q1.1, Q1.2)
@@ -122,7 +122,7 @@ These are the PM's proposed defaults. Each also appears under Open questions.
 - [ ] AC44. #1, #3, #5 and #7 behaviour not named here is unchanged. Tests that joined by group ID now join through a code or a test helper (the architect decides which), and every other existing test passes unchanged.
 - [ ] AC45. `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build` and `pnpm audit --audit-level=high` exit 0, and CI passes. No new runtime dependency (no QR rendering library in this issue). The client keeps no Node-only runtime dependency (#3 AC1), and the SSR import rule (#3 AC7) still holds.
 
-## Defaults (proposed)
+## Defaults (confirmed at Gate 1)
 
 | Setting | Default | Ceiling / kind | Notes |
 | --- | --- | --- | --- |
@@ -156,37 +156,91 @@ Under these limits, a guesser who already knows the group code gets about 15 doo
 - Inviting members of a previous group (PRD future work).
 - GitHub #9 (client clock-skew hardening) is unrelated and stays separate.
 
-## Open questions (Gate 1), each with a recommended default
+## Gate 1 decisions (all questions closed)
+
+At Gate 1 the user accepted **every** recommended default below exactly as
+written: Q1.1-Q1.4, Q2.1-Q2.3, Q3.1-Q3.3, Q4.1-Q4.2, Q5.1-Q5.6 and
+Q6.1-Q6.3. The alternatives are kept for the record only; none was chosen.
+In short:
+
+- Q1.1 default app methods `["A","D"]` (intersected with the env list); Q1.2 one
+  `JOIN_METHODS_ALLOWED` allow-list, startup error when an app asks for more;
+  Q1.3 the leader picks the group's methods at creation, A and B exclusive, B
+  dropped from the default when A is allowed; Q1.4 designer phase skipped.
+- Q2.1 join by group ID removed now, protocol stays version 1; Q2.2 one
+  `group.joinByCode` request with `DOOR_CODE_REQUIRED`; Q2.3 codes go to the
+  leader only.
+- Q3.1 QR ticket lifetime 300 s (ceiling 3600 s), refreshed by the leader's
+  client (the architect documents whether the client or the app triggers it);
+  Q3.2 a QR joiner in a B group still needs approval; Q3.3 stateless signed
+  ticket, carried in a URL fragment, no server URL inside.
+- Q4.1 server-signed codes blob from the leader's client, full new set if the
+  blob is missing or invalid or any code is taken; Q4.2 no code reservation
+  while a group is out of memory.
+- Q5.1 door-code rotation after 5 failures in 10 min, then a 10 min method A
+  pause after 3 rotations in 30 min; Q5.2 fixed budgets of 10 join attempts per
+  connection and 600 per app per minute; Q5.3 no per-IP limits; Q5.4 10 pending
+  requests per group, 1 per connection; Q5.5 `codes.rotate` included; Q5.6 the
+  ~10^-3 per day method C guess odds are accepted (to be confirmed by the
+  security plan review).
+- Q6.1 optional display name of 1-32 characters, relayed only to the leader,
+  never logged or kept; Q6.2 pending requests wait until their deadline while
+  the leader is offline and are re-sent on return; Q6.3 pending requests are
+  lost on a server restart and the client does not re-request on its own.
+
+The original questions follow, unchanged apart from a "Decided" line.
+
 
 ### Q1. Configuration and scope
 - **Q1.1 Default app methods.** Recommended: `["A","D"]` (intersected with the env list) when an app omits `joinMethods`, matching the PRD's "reading codes aloud and scanning a QR code". Alternative: all env-permitted methods.
+  - Decided at Gate 1: the recommended default.
 - **Q1.2 Env ceiling form.** Recommended: one allow-list env variable, `JOIN_METHODS_ALLOWED=A,B,C,D`, with a startup error when an app lists more (no clamping). Alternative: one boolean env variable per method.
+  - Decided at Gate 1: the recommended default.
 - **Q1.3 Per-group choice.** Recommended: the leader's client picks the group's methods at creation, within the app's set. A and B can't be combined in one group. The default drops B when A is allowed. Alternative: every group uses all of the app's methods, and an app can't allow both A and B.
+  - Decided at Gate 1: the recommended default.
 - **Q1.4 Designer phase.** Recommended: skip it. This issue has no UI, and code display, QR and approval screens belong to items 7 and 8.
+  - Decided at Gate 1: the recommended default.
 
 ### Q2. Protocol shape
 - **Q2.1 Remove join by group ID.** Recommended: remove it from protocol and client now, staying on protocol version 1, since nothing has been released. That closes #5's accepted block-list bypass. Alternative: keep it behind a test-only or dev-only flag, which keeps test churn lower but leaves a back door to guard.
+  - Decided at Gate 1: the recommended default.
 - **Q2.2 Order of the two A codes.** Recommended: one `group.joinByCode` request. The server answers `DOOR_CODE_REQUIRED` for an A group when the door code is missing, and the UI then asks for it. Distinct errors for a wrong group code and a wrong door code are accepted: the group code is shown openly, and the door code is the secret. Alternative: a separate `code.lookup` step.
+  - Decided at Gate 1: the recommended default.
 - **Q2.3 Codes only to the leader.** Recommended: yes. Members never receive codes, and item 5 decides whether a vice-leader does.
+  - Decided at Gate 1: the recommended default.
 
 ### Q3. QR tickets
 - **Q3.1 Lifetime and refresh.** Recommended: 300 s default (app setting, ceiling 3600 s). The leader's client requests a fresh ticket before expiry while the app shows it, and the client exposes `issueQrTicket()`. Whether the client refreshes automatically or the app calls it is the architect's choice and must be documented.
+  - Decided at Gate 1: the recommended default.
 - **Q3.2 QR in a method B group.** Recommended: a QR joiner in a B group still needs approval, so a photo of the screen can't bypass B. Alternative: QR always admits directly ("same room" trust).
+  - Decided at Gate 1: the recommended default.
 - **Q3.3 Ticket contents.** Recommended: a stateless signed ticket (app, group ID, generation, expiry), opaque to clients, which the app puts in a URL fragment. The server URL is not inside it, because the app already knows its server. Alternative: a self-describing string that includes the server URL, for cross-app scanners.
+  - Decided at Gate 1: the recommended default.
 
 ### Q4. Recovery
 - **Q4.1 Codes on recreation.** Recommended: a server-signed codes blob stored by the leader's client. If any code is taken or the blob is missing or invalid, the server issues a full new set. The server never accepts client-chosen codes. Alternative: replace only the codes that were taken, keeping the rest.
+  - Decided at Gate 1: the recommended default.
 - **Q4.2 Codes while a group is out of memory.** Recommended: codes are freed when the group is dropped (#5 AC22) and are not reserved while the group is "recoverable". If they get taken, AC33 issues new ones, as the PRD's collision rule expects. Alternative: reserve codes for dropped-but-recoverable groups, which means keeping more memory of groups that have left.
+  - Decided at Gate 1: the recommended default.
 
 ### Q5. Brute force and abuse (security-sensitive)
 - **Q5.1 Door-code failure policy.** Recommended: rotate after 5 failures in 10 minutes, then pause method A for 10 minutes after 3 rotations in 30 minutes. Both are fixed constants. Alternative: pause only (no rotation), or make the thresholds app settings.
+  - Decided at Gate 1: the recommended default.
 - **Q5.2 Join-attempt budgets.** Recommended: 10 per connection per minute and 600 per app per minute, both fixed constants like #7 D1. Risk: one attacker can use up an app's 600 per minute and slow real joins for that app. Alternative: make the per-app budget an app setting with an env ceiling (for example default 600, ceiling 6000).
+  - Decided at Gate 1: the recommended default.
 - **Q5.3 Per-IP limits.** Recommended: none. Schools and offices often share one public IP, so a whole class would be throttled. Keeping IPs out of logic also keeps the privacy rule simple. Alternative: an in-memory per-IP budget that is never logged.
+  - Decided at Gate 1: the recommended default.
 - **Q5.4 Approval spam (method B).** Recommended: 10 pending requests per group, 1 per connection, and the join-attempt budgets above. Alternative: also block a denied connection from asking the same group again for a few minutes.
+  - Decided at Gate 1: the recommended default.
 - **Q5.5 Leader-initiated rotation.** Recommended: include `codes.rotate` here. It's cheap, it lifts a pause, and it's the leader's tool against leaked codes and removed members. Alternative: defer it to item 5 with "remove member".
+  - Decided at Gate 1: the recommended default.
 - **Q5.6 Method C guessing odds.** With 1000 live groups in one app and the per-app budget fully used, the chance of guessing some live C code is about 10^-3 per day. Recommended: accept it, and let the security plan review confirm. Alternative: a longer code than the PRD's 8 characters.
+  - Decided at Gate 1: the recommended default.
 
 ### Q6. Approval details
 - **Q6.1 Display name in requests.** Recommended: optional, 1-32 characters, relayed only to the leader, never logged or stored after the request settles. Full display names (generated names, roster) are item 5. Alternative: no name, so the leader sees only "someone wants to join (n pending)".
+  - Decided at Gate 1: the recommended default.
 - **Q6.2 Leader offline with pending requests.** Recommended: requests wait until their deadline and are re-sent when the leader returns. Alternative: reject them at once with a distinct "leader offline" error.
+  - Decided at Gate 1: the recommended default.
 - **Q6.3 Pending requests after a server restart.** Recommended: they are lost. The joiner's client surfaces a typed error and doesn't re-request on its own, and the app decides. Alternative: the client re-sends the request on reconnect.
+  - Decided at Gate 1: the recommended default.
