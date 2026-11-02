@@ -400,6 +400,14 @@ same group is kept. The remaining cross-tab limits:
   it started), it cannot tell what other tabs stored, so a change it made
   then wins over theirs until its next successful write: a group it forgot
   stays forgotten, and a token it stored is written over theirs.
+- If `forgetAllGroups()` can neither delete nor read the stored document, the
+  tab cannot list the groups other tabs stored. It remembers the time of the
+  call instead: until its next successful write, every successful read drops
+  stored tokens issued at or before that second, and that write removes them
+  from storage. Tokens issued strictly later (stored by another tab after the
+  call) are kept. The time is this device's clock against the server's
+  issue time, so a large clock difference can keep an older token or drop
+  one issued in the same few seconds.
 
 ### `checkTokens()`
 

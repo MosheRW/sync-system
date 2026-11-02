@@ -156,6 +156,11 @@ function serialize(entries: readonly StoredEntry[]): string {
  * - A mark made before this store ever read or wrote storage successfully
  *   does not know what storage held, so memory wins for it (a removal stays
  *   removed, an unsaved token stays) until a successful write (#7 L-a).
+ * - If `removeAll()` can neither delete the key nor read it, groups other
+ *   tabs stored that this store never saw get no mark. A cut-off (the `iat`
+ *   second of the failed call) is kept instead: until a successful write,
+ *   every successful read drops stored entries issued at or before it, so
+ *   only tokens issued strictly later survive (#7 L-c).
  */
 export class TokenStore {
   readonly #storage: TokenStorage;
@@ -173,6 +178,12 @@ export class TokenStore {
   #keyKnown = false;
   /** Whether `#known` comes from a real read or write (false until then, #7 L-a). */
   #storageSeen = false;
+  /**
+   * Set when `removeAll()` failed to delete and to read (#7 L-c): stored
+   * entries with `iat` at or before it are dropped on read until a write
+   * succeeds.
+   */
+  #removeAllCutoff: number | undefined;
   #positionTimer: TimerHandle | undefined;
 
   constructor(
@@ -338,6 +349,7 @@ export class TokenStore {
         this.#known = new Map();
         this.#keyKnown = false;
         this.#storageSeen = true;
+        this.#removeAllCutoff = undefined;
       } catch (error) {
         this.#log('warn', 'storage_error', { op: 'remove', name: storageErrorName(error) });
         // Best effort: if this read fails too, the groups this store knows
@@ -347,6 +359,10 @@ export class TokenStore {
           this.#known = byGroup(raw.entries);
           this.#keyKnown = raw.keyExists;
           this.#storageSeen = true;
+        } else {
+          // Groups other tabs stored that this store never saw cannot be
+          // marked: drop what was issued up to now on the next read (#7 L-c).
+          this.#removeAllCutoff = Math.floor(now() / 1000);
         }
         const groups = new Set([
           ...this.#known.keys(),
@@ -401,6 +417,7 @@ export class TokenStore {
       this.#known = byGroup(next);
       this.#keyKnown = true;
       this.#storageSeen = true;
+      this.#removeAllCutoff = undefined;
     } catch (error) {
       this.#log('warn', 'storage_error', { op: 'set', name: storageErrorName(error) });
       const before = byGroup(read.merged);
@@ -469,8 +486,10 @@ export class TokenStore {
 
   /**
    * The stored entries, with each dirty group taken from memory unless
-   * another tab's change wins (#7 L5). On a read failure, the in-memory copy,
-   * with every mark left unchanged (#7 R5).
+   * another tab's change wins (#7 L5). Stored entries issued at or before a
+   * pending `removeAll()` cut-off are left out (#7 L-c); the in-memory
+   * entries are not, since `removeAll()` cleared them. On a read failure, the
+   * in-memory copy, with every mark and the cut-off left unchanged (#7 R5).
    */
   async #read(): Promise<ReadResult> {
     const raw = await this.#readStored();
@@ -478,15 +497,17 @@ export class TokenStore {
     this.#known = byGroup(raw.entries);
     this.#keyKnown = raw.keyExists;
     this.#storageSeen = true;
-    if (this.#dirty.size === 0) return { raw, merged: raw.entries };
+    const cutoff = this.#removeAllCutoff;
+    const kept = (entry: StoredEntry): boolean => cutoff === undefined || entry.claims.iat > cutoff;
+    if (this.#dirty.size === 0) return { raw, merged: raw.entries.filter(kept) };
     const memory = byGroup(this.#entries);
-    const merged = raw.entries.filter((entry) => !this.#dirty.has(entry.claims.gid));
+    const merged = raw.entries.filter((entry) => !this.#dirty.has(entry.claims.gid) && kept(entry));
     for (const [gid, mark] of [...this.#dirty]) {
       const stored = this.#known.get(gid);
       const mine = memory.get(gid);
       if (this.#storageWins(mark, stored, mine, raw.keyExists)) {
         this.#dirty.delete(gid);
-        if (stored !== undefined) merged.push(stored);
+        if (stored !== undefined && kept(stored)) merged.push(stored);
       } else if (mine !== undefined) {
         merged.push(mine);
       }

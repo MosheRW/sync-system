@@ -599,4 +599,41 @@ describe('TokenStore: failed forgetAllGroups (#7 AC17, R5)', () => {
     await tabA.tokens.saveToken(fakeToken({ gid: C, role: 'member' }));
     expect([...area.stored().keys()]).toEqual([C]);
   });
+
+  it('drops groups other tabs stored before it when this tab never read storage (L-c)', async () => {
+    const area = sharedArea();
+    const tabA = area.tab();
+    const tabB = area.tab();
+    const NOW_S = Math.floor(Date.now() / 1000);
+    await tabB.tokens.saveToken(fakeToken({ gid: X, iat: NOW_S - 60, role: 'member' }));
+    tabA.fail.get = true;
+    tabA.fail.remove = true;
+    await tabA.tokens.removeAll(); // delete and fallback read both fail
+    expect(await tabA.tokens.load()).toEqual([]); // a failed read changes nothing (R5)
+    tabA.fail.get = false;
+    tabA.fail.remove = false;
+    expect(await tabA.tokens.load()).toEqual([]);
+    await tabA.tokens.saveToken(fakeToken({ gid: C, role: 'member' }));
+    expect([...area.stored().keys()]).toEqual([C]);
+    expect(await tabA.tokens.load()).toHaveLength(1);
+  });
+
+  it('keeps a strictly newer token another tab stores after that forget (L-c)', async () => {
+    const area = sharedArea();
+    const tabA = area.tab();
+    const tabB = area.tab();
+    const NOW_S = Math.floor(Date.now() / 1000);
+    await tabB.tokens.saveToken(fakeToken({ gid: X, iat: NOW_S - 60, role: 'member' }));
+    tabA.fail.get = true;
+    tabA.fail.remove = true;
+    await tabA.tokens.removeAll();
+    const newer = fakeToken({ gid: X, iat: NOW_S + 5, role: 'member' });
+    await tabB.tokens.saveToken(newer);
+    tabA.fail.get = false;
+    tabA.fail.remove = false;
+    expect((await tabA.tokens.findFresh(X))?.token).toBe(newer);
+    await tabA.tokens.saveToken(fakeToken({ gid: C, role: 'member' }));
+    expect(area.stored().get(X)).toBe(newer);
+    expect(area.stored().has(C)).toBe(true);
+  });
 });
