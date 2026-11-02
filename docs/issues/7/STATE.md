@@ -2,7 +2,7 @@
 - Path: fast
 - Phase: architecture
 - Branch: fix/7-token-recovery-hardening
-- PR: none
+- PR: #8 (draft)
 - Plan approved by user: no
 - Security-sensitive: yes
 - Review rounds: 0
