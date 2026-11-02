@@ -43,7 +43,7 @@ describe('inbound validation (AC10)', () => {
     ['too deep', `${'['.repeat(70)}${']'.repeat(70)}`],
     [
       'too long',
-      JSON.stringify({ type: 'position.updated', groupId: 'g', position: 'x'.repeat(20_000) }),
+      JSON.stringify({ type: 'position.updated', groupId: 'g', position: 'x'.repeat(50_000) }),
     ],
   ])('emits INVALID_SERVER_MESSAGE for %s and stays connected', async (_name, frame) => {
     const { client, socket } = await connectedClient();

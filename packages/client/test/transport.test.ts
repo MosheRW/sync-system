@@ -110,7 +110,15 @@ describe('limits (M1)', () => {
         maxMessageBytes: 1000,
         maxSessionMinutes: 180,
       }),
-    ).toBe(2000 + 8192);
+    ).toBe(45_056);
+    expect(
+      maxInboundChars({
+        maxGroupSize: 2,
+        maxLeaderUpdatesPerSecond: 1,
+        maxMessageBytes: 30_000,
+        maxSessionMinutes: 180,
+      }),
+    ).toBe(60_000 + 8192 + 2048);
   });
 });
 

@@ -31,6 +31,8 @@ import { type LogFields, type LogLevel, log } from './logger.js';
 import { type ResolvedOptions, type SyncClientOptions, resolveOptions } from './options.js';
 import { type RejoinStrategy, memberRejoinByGroupId } from './rejoin.js';
 import { type PendingRequest, RequestTracker } from './requests.js';
+import { type TokenStorage, resolveStorage } from './storage.js';
+import { TokenStore, storageKey } from './token-store.js';
 import type {
   ConnectedInfo,
   ConnectionState,
@@ -146,6 +148,10 @@ export class SyncClient {
    * timer or overwrites the state the app just set (AC28).
    */
   #generation = 0;
+  /** Resolved on first use (after hello.ok), never at construction (#5 AC32). */
+  #storage: TokenStorage | undefined;
+  /** Tokens for the current server and app (#5 AC31, AC33). */
+  #tokens: TokenStore | undefined;
   /** Group handling across reconnects (Q1). Item 3 swaps in token rejoin. */
   readonly #rejoin: RejoinStrategy = memberRejoinByGroupId;
 
@@ -230,6 +236,8 @@ export class SyncClient {
       this.#failureStreak = 0;
     }
     this.#teardown(error);
+    // Tokens are kept on close() (resume later); a pending position is written.
+    void this.#tokens?.flush();
     this.#endGroup('closed');
     // A groupEnded listener called close() or connect() itself.
     if (generation !== this.#generation) return;
@@ -264,6 +272,12 @@ export class SyncClient {
     this.#trackGroupRequest('group.create', reqId, message, {
       resolve: (reply) => {
         if (reply.type !== 'group.created') return;
+        void this.#tokens?.saveToken(reply.token, {
+          metadata,
+          hasPosition: initialPosition !== undefined,
+          ...(initialPosition === undefined ? {} : { position: initialPosition }),
+          blockList: [],
+        });
         this.#startGroup({
           status: 'active',
           groupId: reply.groupId,
@@ -329,6 +343,8 @@ export class SyncClient {
     // Serialized once: the checked text is what goes out, even if the app
     // mutates `position` while the update waits in the throttle.
     const json = this.#checkPayload('position', position);
+    // Recovery data: the latest position the leader sent (#5 AC34).
+    this.#tokens?.savePosition(group.groupId, position);
     this.#update({ group: { ...group, hasPosition: true, position } });
     this.#throttle?.submit(json);
   }
@@ -481,6 +497,7 @@ export class SyncClient {
       {
         resolve: (reply) => {
           if (reply.type !== 'group.joined') return;
+          void this.#tokens?.saveToken(reply.token);
           const joined: JoinedGroup = Object.freeze({
             groupId: reply.groupId,
             role: 'member',
@@ -703,12 +720,37 @@ export class SyncClient {
     // The backoff is not reset here; see the stability rule in #connectionLost (H1).
     this.#connectedAt = now();
     this.#transport?.setMaxInboundChars(maxInboundChars(limits));
+    this.#openTokenStore(message.namespace, maxSessionMinutes);
     const generation = this.#generation;
     const run = this.#takeRun();
     this.#update({ connection: { status: 'connected', ...info } });
     run?.resolve(info);
     if (generation !== this.#generation) return;
     this.#rejoinGroup();
+  }
+
+  /**
+   * The token store for this server and app, keyed by the namespace from
+   * hello.ok and the URL host (#5 AC33). Storage is resolved here, on first
+   * use. The stored document is loaded (and pruned) right away.
+   */
+  #openTokenStore(namespace: string, maxSessionMinutes: number): void {
+    const log = (level: LogLevel, event: string, fields?: LogFields) =>
+      this.#log(level, event, fields);
+    const key = storageKey(namespace, this.#opts.storageHost);
+    if (this.#tokens?.key === key) {
+      this.#tokens.setMaxSessionMinutes(maxSessionMinutes);
+    } else {
+      this.#storage ??= resolveStorage(this.#opts.storage, log);
+      this.#tokens = new TokenStore(
+        this.#storage,
+        namespace,
+        this.#opts.storageHost,
+        log,
+        maxSessionMinutes,
+      );
+    }
+    void this.#tokens.load();
   }
 
   /** After each hello.ok: a member gets back into its group, or is told it is not (AC29). */
@@ -767,6 +809,10 @@ export class SyncClient {
         );
         return;
       }
+      case 'token.refreshed':
+        // A newer leader token replaces the stored one (#5 AC12, AC31).
+        void this.#tokens?.saveToken(message.token);
+        return;
       case 'group.ended': {
         const group = this.#snapshot.group;
         if (group?.status === 'active' && group.groupId === message.groupId) {
