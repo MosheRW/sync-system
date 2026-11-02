@@ -57,7 +57,11 @@ describe('group.end (#5 AC29)', () => {
     ts = await startTestServer();
     const { members, leader } = await createGroupWithMembers(ts, 1);
     members[0]!.send({ type: 'group.end', reqId: 'm' });
-    expect(await members[0]!.next('error')).toMatchObject({ reqId: 'm', code: 'NOT_LEADER' });
+    expect(await members[0]!.next('error')).toMatchObject({
+      reqId: 'm',
+      code: 'NOT_LEADER',
+      message: 'Only the leader can end the group',
+    });
     const outsider = await ts.connectReady();
     outsider.send({ type: 'group.end' });
     expect(await outsider.next('error')).toMatchObject({ code: 'NOT_IN_GROUP' });

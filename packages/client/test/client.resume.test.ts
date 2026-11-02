@@ -234,7 +234,10 @@ describe('endGroup and leaveGroup (#5 AC29, AC30, AC31)', () => {
     await expect(lead.c.leaveGroup()).rejects.toMatchObject({ code: 'LEADER_CANNOT_LEAVE' });
     lead.c.close();
     const mem = await member();
-    await expect(mem.c.endGroup()).rejects.toMatchObject({ code: 'NOT_LEADER' });
+    await expect(mem.c.endGroup()).rejects.toMatchObject({
+      code: 'NOT_LEADER',
+      message: 'Only the leader can end the group',
+    });
     mem.c.close();
     const { client: none } = await client(memoryStorage());
     await expect(none.endGroup()).rejects.toMatchObject({ code: 'NOT_IN_GROUP' });

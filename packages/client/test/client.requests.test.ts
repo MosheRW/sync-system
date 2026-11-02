@@ -244,12 +244,9 @@ describe('updatePosition rules (AC18)', () => {
     });
     await joining;
     const sentBefore = socket.sent.length;
-    expect(
-      isSyncClientError(
-        thrown(() => client.updatePosition(1)),
-        'NOT_LEADER',
-      ),
-    ).toBe(true);
+    const notLeader = thrown(() => client.updatePosition(1));
+    expect(isSyncClientError(notLeader, 'NOT_LEADER')).toBe(true);
+    expect((notLeader as Error).message).toBe('Only the leader can update the position');
     expect(socket.sent).toHaveLength(sentBefore);
     client.close();
   });

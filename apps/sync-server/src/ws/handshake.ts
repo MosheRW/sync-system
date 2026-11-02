@@ -9,17 +9,18 @@ import {
 import semver from 'semver';
 import type { AppConfig, AppRegistry } from '../apps/app-registry.js';
 import type { ConnectionCounter } from './connection-counter.js';
+import type { GenericErrorCode } from './error-messages.js';
 
 export type HandshakeResult =
   | { ok: true; app: AppConfig }
   | {
       ok: false;
-      code: ErrorCode;
+      code: GenericErrorCode;
       closeCode: number;
       details?: Record<string, JsonValue>;
     };
 
-function reject(code: ErrorCode, details?: Record<string, JsonValue>): HandshakeResult {
+function reject(code: GenericErrorCode, details?: Record<string, JsonValue>): HandshakeResult {
   const closeCode =
     code === ErrorCode.APP_CONNECTION_LIMIT
       ? CloseCode.APP_CONNECTION_LIMIT

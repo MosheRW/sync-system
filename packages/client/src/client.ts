@@ -170,6 +170,13 @@ export class SyncClient {
   #runAttempts = 0;
   /** When the current connection reached `connected` (H1). */
   #connectedAt = 0;
+  /**
+   * Set while the automatic group.resume after a reconnect has not settled
+   * (storage read included). A drop meanwhile is not a stable connection
+   * (#7 L4, L-1). Compared by identity, so a stale resume never clears a
+   * newer one.
+   */
+  #autoResume: object | undefined;
   /** When the last socket was constructed (R2-L6). */
   #lastSocketOpenAt: number | undefined;
   /**
@@ -475,7 +482,7 @@ export class SyncClient {
     const invalid = localError(() => {
       const group = this.#checkInGroup();
       if (group.status === 'waiting' || group.role !== 'leader') {
-        throw new SyncClientError('NOT_LEADER');
+        throw new SyncClientError('NOT_LEADER', { request: 'group.end' });
       }
     });
     if (invalid) return Promise.reject(invalid);
@@ -572,7 +579,7 @@ export class SyncClient {
     const group = this.#snapshot.group;
     if (group === null || group.status === 'ended') throw new SyncClientError('NOT_IN_GROUP');
     if (group.status !== 'active' || group.role !== 'leader') {
-      throw new SyncClientError('NOT_LEADER');
+      throw new SyncClientError('NOT_LEADER', { request: 'position.update' });
     }
     // Serialized once: the checked text is what goes out, even if the app
     // mutates `position` while the update waits in the throttle.
@@ -1098,7 +1105,23 @@ export class SyncClient {
     this.#rejoin.onReady(
       {
         group: this.#snapshot.group,
-        resume: (groupId, callbacks) => this.#resume(groupId, undefined, callbacks),
+        resume: (groupId, callbacks) => {
+          const marker = {};
+          this.#autoResume = marker;
+          const settled = () => {
+            if (this.#autoResume === marker) this.#autoResume = undefined;
+          };
+          this.#resume(groupId, undefined, {
+            resolve: (resumed) => {
+              settled();
+              callbacks.resolve(resumed);
+            },
+            reject: (error) => {
+              settled();
+              callbacks.reject(error);
+            },
+          });
+        },
       },
       (outcome) => {
         if (outcome.kind === 'rejoined') {
@@ -1410,6 +1433,7 @@ export class SyncClient {
   #teardown(requestError: SyncClientError, closeReason?: string): void {
     clearTimer(this.#attemptTimer);
     this.#attemptTimer = undefined;
+    this.#autoResume = undefined;
     const transport = this.#transport;
     this.#transport = undefined;
     transport?.retire(1000, closeReason);
@@ -1440,16 +1464,21 @@ export class SyncClient {
    * A retryable failure or an unexpected drop (AC26). Every failure grows the
    * streak, timeouts included (M4); busy signals start at a higher streak
    * (M3). A connection that stayed up for `stableAfterMs` resets the streak
-   * and the attempt count first (H1, R2-L5).
+   * and the attempt count first (H1, R2-L5), unless its group.resume timed
+   * out or was still pending (#7 L4, L-1): a resume that never completed is
+   * not a stable connection, so a server that ignores it cannot keep the
+   * client reconnecting forever.
    */
   #connectionLost(error: SyncClientError, busy?: BusySignal): void {
     const generation = this.#generation;
     this.#log('info', 'connection_lost', { code: error.code });
     const wasConnected = this.#phase === 'ready';
+    // Read before teardown, which settles the pending resume.
+    const resumeUnsettled = this.#autoResume !== undefined || isResumeTimeout(error);
     const group = this.#snapshot.group;
     this.#teardown(new SyncClientError('CONNECTION_LOST'));
     if (generation !== this.#generation) return;
-    if (wasConnected) {
+    if (wasConnected && !resumeUnsettled) {
       const connectedFor = now() - this.#connectedAt;
       if (streakAfterDrop(this.#failureStreak, connectedFor, this.#opts.stableAfterMs) === 0) {
         this.#failureStreak = 0;
@@ -1535,6 +1564,15 @@ export class SyncClient {
     if (generation !== this.#generation) return;
     this.#emitError(error);
   }
+}
+
+/** The client-side timeout of a group.resume request (#7 L4). */
+function isResumeTimeout(error: SyncClientError): boolean {
+  return (
+    error.code === 'REQUEST_TIMEOUT' &&
+    error.request === 'group.resume' &&
+    error.source === 'client'
+  );
 }
 
 /** Factory alias for apps that prefer functions. */

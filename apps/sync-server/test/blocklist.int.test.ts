@@ -64,7 +64,10 @@ describe('blocklist.set while live (#5 AC26)', () => {
     ts = await startTestServer();
     const group = await createGroupWithMembers(ts, 1);
     group.members[0]!.send({ type: 'blocklist.set', blockList: [] });
-    expect(await group.members[0]!.next('error')).toMatchObject({ code: 'NOT_LEADER' });
+    expect(await group.members[0]!.next('error')).toMatchObject({
+      code: 'NOT_LEADER',
+      message: 'Only the leader can set the block list',
+    });
     const outsider = await ts.connectReady();
     outsider.send({ type: 'blocklist.set', blockList: [] });
     expect(await outsider.next('error')).toMatchObject({ code: 'NOT_IN_GROUP' });

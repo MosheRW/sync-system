@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { AppRegistry } from '@sync-system/server/src/apps/app-registry.js';
 import { parseAppsConfig } from '@sync-system/server/src/config/apps-config.js';
 import { parseEnv } from '@sync-system/server/src/config/env.js';
@@ -76,7 +77,8 @@ export async function startRealServer(options: RealServerOptions = {}): Promise<
     env,
     registry,
     logger,
-    ...(options.tokenSecrets ? { tokenSecrets: options.tokenSecrets } : {}),
+    // A random per-instance secret unless the test passes its own (#7 L1).
+    tokenSecrets: options.tokenSecrets ?? { current: randomBytes(32), source: 'random' },
   });
   const port = await listenWithRetry(server, options.port ?? 0);
   return {

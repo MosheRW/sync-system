@@ -175,8 +175,16 @@ Numeric variables must be positive integers; anything else (empty, `0`, `-1`,
 Fixed limits: hello within 5 s, at most 32 queued messages per connection, JSON
 nesting at most 64 levels, heartbeat ping every 30 s, HTTP header timeout 10 s
 and request timeout 15 s. Tokens: 365 days `exp`, at most 2048 characters, 20
-per `tokens.check`, 10 checks per connection per minute, block lists of at
-most 256 IDs, ended groups remembered for at most 100 000 groups.
+per `tokens.check`, 10 checks per connection per minute and 600 per app per
+minute (shared by all of the app's connections), block lists of at most 256
+IDs, ended groups remembered for at most 100 000 groups.
+
+The per-app token check budget caps the HMAC work one app's clients can cause.
+The accepted cost: the app key is public, so one client with many sockets can
+use up the budget, and the app's real users then get `RATE_LIMITED` from
+`checkTokens()` until the window moves on (resume, join and position updates
+are not affected). The server then logs one `tokens_check_app_budget_exhausted`
+warning per app per minute, with the namespace only.
 
 Memory sizing: outbound buffers alone can reach
 `MAX_CONNECTIONS x MAX_BUFFERED_BYTES` (10000 x 256 KiB, about 2.5 GiB at the
@@ -188,8 +196,21 @@ or `MAX_BUFFERED_BYTES` to fit the machine.
 Inbound frames: the transport limit is
 `max(2 x MAX_MESSAGE_SIZE_CEILING + 8192 + 16384, 45056)` bytes (57 344 at the
 defaults; a recreation request carries metadata, a position, a token and a
-block list). With 32 queued messages per connection, the worst case is about
-32 x 57 KiB per socket; size the machine for it at your `MAX_CONNECTIONS`.
+block list). Queued inbound frames per connection are capped at 32 messages
+and at 4 x the transport limit in bytes (229 376 at the defaults, including
+the frame being handled); a frame over either cap closes the socket with
+`TOO_MANY_MESSAGES` (4008). The worst case is about 224 KiB per socket, so at
+`MAX_CONNECTIONS` (10000 x 224 KiB) inbound queues alone can reach about
+2.1 GiB (2.3 GB), on top of the outbound buffers above. Size the machine for
+both, or lower `MAX_CONNECTIONS`.
+
+### Upgrading
+
+- **`MAX_BUFFERED_BYTES` minimum (since #5):** the server refuses to start
+  when `MAX_BUFFERED_BYTES` is below 45056, the largest `tokens.result` reply
+  (20 re-signed tokens). Earlier versions accepted smaller values, such as
+  `32768`. To fix the config, unset it (default 262144) or set it to at least
+  `max(45056, 4 x MAX_MESSAGE_SIZE_CEILING)`.
 
 ### Token secret
 

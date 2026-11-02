@@ -34,6 +34,8 @@ export interface ConnectionDeps {
   now: () => number;
   /** Outbound buffer limit per socket (H2). */
   maxBufferedBytes: number;
+  /** Cap on queued, not yet handled inbound bytes per socket (#7 L3). */
+  maxQueuedBytes: number;
   groups: GroupActions;
   /** Called once when the socket has closed. */
   onClosed: (connection: Connection) => void;
@@ -47,6 +49,12 @@ function toBuffer(data: RawData): Buffer {
   if (Buffer.isBuffer(data)) return data;
   if (Array.isArray(data)) return Buffer.concat(data);
   return Buffer.from(data);
+}
+
+/** Size of a received frame in bytes, without copying it (#7 L3). */
+export function rawByteLength(data: RawData): number {
+  if (Array.isArray(data)) return data.reduce((total, chunk) => total + chunk.length, 0);
+  return data.byteLength;
 }
 
 /** Echo a client `reqId` only if it is a short string. */
@@ -75,6 +83,8 @@ export class Connection implements HeartbeatTarget {
   private handshakeTimer: NodeJS.Timeout | undefined;
   private readonly limiter: InboundLimiter;
   private queueLength = 0;
+  /** Bytes of the queued frames, including the one being handled (#7 L3). */
+  private queuedBytes = 0;
   private flooded = false;
 
   constructor(
@@ -142,17 +152,26 @@ export class Connection implements HeartbeatTarget {
 
   private onMessage(data: RawData, isBinary: boolean): void {
     if (this.closed || this.flooded || this.state === 'closing') return;
-    // A token is taken for every frame before any parsing (H3).
-    if (!this.limiter.take() || this.queueLength >= MAX_QUEUED_MESSAGES) {
+    // A token is taken for every frame before any parsing (H3). The byte cap
+    // is checked before the frame is queued (#7 L3); a single legal frame is
+    // at most maxPayload, so it always fits an empty queue.
+    const size = rawByteLength(data);
+    if (
+      !this.limiter.take() ||
+      this.queueLength >= MAX_QUEUED_MESSAGES ||
+      this.queuedBytes + size > this.deps.maxQueuedBytes
+    ) {
       this.closeFlooded();
       return;
     }
     this.queueLength += 1;
+    this.queuedBytes += size;
     this.enqueue(async () => {
       try {
         await this.process(data, isBinary);
       } finally {
         this.queueLength -= 1;
+        this.queuedBytes -= size;
       }
     });
   }

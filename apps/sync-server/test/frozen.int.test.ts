@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { InMemoryGroupStore } from '../src/groups/in-memory-group-store.js';
-import { createGroupWithMembers } from './helpers/groups.js';
+import { createGroupWithMembers, resumeWith } from './helpers/groups.js';
 import { ManualScheduler } from './helpers/manual-scheduler.js';
 import {
   KEY_A,
@@ -64,6 +64,60 @@ describe('frozen groups (#5 AC18)', () => {
     const late = await ts.connectReady();
     late.send({ type: 'group.join', groupId });
     expect(await late.next('error')).toMatchObject({ code: 'GROUP_FULL' });
+  });
+});
+
+describe('member resume into a frozen group (#7 A3)', () => {
+  it('keeps the member’s ID and position; the returning leader’s server position wins', async () => {
+    const { ts } = await start();
+    // Two members, so the group is not dropped while one of them is away.
+    const group = await createGroupWithMembers(ts, 2, { position: { page: 3 } });
+    const [away, staying] = group.members as [(typeof group.members)[0], (typeof group.members)[0]];
+    await group.leader.close();
+    await away.next('leader.offline');
+    await staying.next('leader.offline');
+
+    // The member drops and resumes while the leader is offline (AC22).
+    away.terminate();
+    await away.closed();
+    const { client: member, reply } = await resumeWith(ts, group.memberTokens[0], { reqId: 'm' });
+    expect(reply).toMatchObject({
+      type: 'group.joined',
+      reqId: 'm',
+      groupId: group.groupId,
+      participantId: group.memberIds[0],
+      role: 'member',
+      leaderOnline: false,
+      hasPosition: true,
+      position: { page: 3 },
+    });
+
+    // The leader returns with a stale position: the server's wins (Q14, AC23).
+    const { client: leader, reply: resumed } = await resumeWith(ts, group.leaderToken, {
+      position: { page: 1 },
+    });
+    expect(resumed).toMatchObject({
+      type: 'group.resumed',
+      participantId: group.leaderId,
+      role: 'leader',
+      hasPosition: true,
+      position: { page: 3 },
+    });
+    for (const client of [member, staying]) {
+      expect(await client.next('leader.online')).toEqual({
+        type: 'leader.online',
+        groupId: group.groupId,
+      });
+    }
+
+    // The resumed member gets the leader's updates again.
+    leader.send({ type: 'position.update', position: { page: 4 } });
+    await leader.next('position.ack');
+    expect(await member.next('position.updated')).toEqual({
+      type: 'position.updated',
+      groupId: group.groupId,
+      position: { page: 4 },
+    });
   });
 });
 

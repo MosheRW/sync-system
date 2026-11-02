@@ -17,12 +17,16 @@ import {
 } from '@sync-system/protocol';
 import type { AppConfig } from '../apps/app-registry.js';
 import { jsonByteLength } from '../limits/json-size.js';
-import { TOKENS_CHECK_PER_MINUTE, TOKENS_CHECK_WINDOW_MS } from '../limits/constants.js';
+import {
+  TOKENS_CHECK_PER_APP_PER_MINUTE,
+  TOKENS_CHECK_PER_MINUTE,
+  TOKENS_CHECK_WINDOW_MS,
+} from '../limits/constants.js';
 import { SlidingWindowRateLimiter } from '../limits/rate-limiter.js';
 import { type Logger, groupRef, participantRef, safeErr } from '../logging/logger.js';
 import type { Scheduler } from '../time/scheduler.js';
 import type { TokenService } from '../tokens/token-service.js';
-import { errorMessage } from '../ws/error-messages.js';
+import { actionErrorMessage, errorMessage } from '../ws/error-messages.js';
 import { type GroupRecord, type GroupStore, connectedCount } from './group-store.js';
 import type { EndedGroups } from './ended-groups.js';
 import { GroupTimers } from './group-timers.js';
@@ -87,9 +91,14 @@ export class GroupService implements GroupActions {
   private readonly refresher: TokenRefresher;
   /** tokens.check limiter, keyed by connection (#5 AC16). */
   private readonly checkLimiter: SlidingWindowRateLimiter;
+  /** tokens.check budget shared by all connections of an app, keyed by namespace (#7 L2). */
+  private readonly appCheckLimiter: SlidingWindowRateLimiter;
+  /** When the app-budget warning was last logged, per namespace (#7 L-2). */
+  private readonly appBudgetWarnedAt = new Map<string, number>();
 
   constructor(private readonly deps: GroupServiceDeps) {
     this.checkLimiter = new SlidingWindowRateLimiter(() => this.now(), TOKENS_CHECK_WINDOW_MS);
+    this.appCheckLimiter = new SlidingWindowRateLimiter(() => this.now(), TOKENS_CHECK_WINDOW_MS);
     this.timers = new GroupTimers(deps.scheduler);
     this.parking = new ParkingLot(deps.scheduler);
     this.refresher = new TokenRefresher(deps.scheduler, deps.refresh);
@@ -100,6 +109,9 @@ export class GroupService implements GroupActions {
     this.timers.clearAll();
     this.parking.clearAll();
     this.refresher.clearAll();
+    this.checkLimiter.clear();
+    this.appCheckLimiter.clear();
+    this.appBudgetWarnedAt.clear();
   }
 
   /**
@@ -338,7 +350,9 @@ export class GroupService implements GroupActions {
     // Authorized by ownership, not by the cached role alone (M4).
     const membership = this.owned(session);
     if (membership === undefined) return errorMessage(ErrorCode.NOT_IN_GROUP);
-    if (membership.role !== 'leader') return errorMessage(ErrorCode.NOT_LEADER);
+    if (membership.role !== 'leader') {
+      return actionErrorMessage(ErrorCode.NOT_LEADER, 'position.update');
+    }
 
     const { app } = session;
     const namespace = app.namespace;
@@ -353,7 +367,7 @@ export class GroupService implements GroupActions {
       app.maxLeaderUpdatesPerSecond,
     );
     if (!rate.ok) {
-      return errorMessage(ErrorCode.RATE_LIMITED, {
+      return actionErrorMessage(ErrorCode.RATE_LIMITED, 'position.update', {
         details: {
           maxLeaderUpdatesPerSecond: app.maxLeaderUpdatesPerSecond,
           retryAfterMs: rate.retryAfterMs,
@@ -383,6 +397,22 @@ export class GroupService implements GroupActions {
     return { type: 'position.ack' };
   }
 
+  /**
+   * One warning per window per app when its shared tokens.check budget is
+   * used up, so operators can see it (#7 L-2). Namespace only: never a
+   * token, participant ID or connection ID.
+   */
+  private warnAppCheckBudget(namespace: string): void {
+    const now = this.now();
+    const last = this.appBudgetWarnedAt.get(namespace);
+    if (last !== undefined && now - last < TOKENS_CHECK_WINDOW_MS) return;
+    this.appBudgetWarnedAt.set(namespace, now);
+    this.deps.logger.warn(
+      { event: 'tokens_check_app_budget_exhausted', namespace },
+      'tokens.check budget for the app is used up',
+    );
+  }
+
   private memberKeys(record: GroupRecord): string[] {
     return record.participantIds
       .filter((id) => id !== record.leaderId)
@@ -390,7 +420,10 @@ export class GroupService implements GroupActions {
   }
 
   /**
-   * tokens.check (#5 AC14-AC16). Limited per connection first. Each token is
+   * tokens.check (#5 AC14-AC16). Limited per connection first, then by the
+   * app's shared budget (#7 L2). The per-connection check comes first so a
+   * connection over its own limit never spends the shared budget. Both run
+   * before any verification or store access (#7 AC5). Each token is
    * verified, and only a verified token leads to a group lookup, so invalid
    * tokens never touch group state (AC15). Results carry only a status, plus
    * a re-signed token for usable previous-secret tokens (AC2).
@@ -398,9 +431,18 @@ export class GroupService implements GroupActions {
   async checkTokens(session: Session, message: TokensCheckMessage): Promise<ServerMessage> {
     const rate = this.checkLimiter.tryAcquire(session.connectionId, TOKENS_CHECK_PER_MINUTE);
     if (!rate.ok) {
-      return errorMessage(ErrorCode.RATE_LIMITED, { details: { retryAfterMs: rate.retryAfterMs } });
+      return actionErrorMessage(ErrorCode.RATE_LIMITED, 'tokens.check', {
+        details: { retryAfterMs: rate.retryAfterMs },
+      });
     }
     const { app } = session;
+    const appRate = this.appCheckLimiter.tryAcquire(app.namespace, TOKENS_CHECK_PER_APP_PER_MINUTE);
+    if (!appRate.ok) {
+      this.warnAppCheckBudget(app.namespace);
+      return actionErrorMessage(ErrorCode.RATE_LIMITED, 'tokens.check', {
+        details: { retryAfterMs: appRate.retryAfterMs },
+      });
+    }
     const results: TokensResultMessage['results'] = [];
     for (const token of message.tokens) {
       const now = this.now();
@@ -439,10 +481,14 @@ export class GroupService implements GroupActions {
    * in memory only and never logged (a count at most).
    */
   async setBlockList(session: Session, message: BlockListSetMessage): Promise<ServerMessage> {
-    if (session.parked !== undefined) return errorMessage(ErrorCode.NOT_LEADER);
+    if (session.parked !== undefined) {
+      return actionErrorMessage(ErrorCode.NOT_LEADER, 'blocklist.set');
+    }
     const membership = this.owned(session);
     if (membership === undefined) return errorMessage(ErrorCode.NOT_IN_GROUP);
-    if (membership.role !== 'leader') return errorMessage(ErrorCode.NOT_LEADER);
+    if (membership.role !== 'leader') {
+      return actionErrorMessage(ErrorCode.NOT_LEADER, 'blocklist.set');
+    }
     const { app } = session;
     const { groupId } = membership;
     return this.locks.run(groupKey(app.namespace, groupId), async () => {
@@ -498,10 +544,14 @@ export class GroupService implements GroupActions {
    */
   async end(session: Session, _message: GroupEndMessage): Promise<ServerMessage> {
     // A parked session is a member waiting for its leader.
-    if (session.parked !== undefined) return errorMessage(ErrorCode.NOT_LEADER);
+    if (session.parked !== undefined) {
+      return actionErrorMessage(ErrorCode.NOT_LEADER, 'group.end');
+    }
     const membership = this.owned(session);
     if (membership === undefined) return errorMessage(ErrorCode.NOT_IN_GROUP);
-    if (membership.role !== 'leader') return errorMessage(ErrorCode.NOT_LEADER);
+    if (membership.role !== 'leader') {
+      return actionErrorMessage(ErrorCode.NOT_LEADER, 'group.end');
+    }
     const { app } = session;
     const { groupId } = membership;
     return this.locks.run(groupKey(app.namespace, groupId), async () => {

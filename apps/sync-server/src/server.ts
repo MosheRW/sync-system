@@ -1,7 +1,6 @@
 import { type Server, createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { CloseCode } from '@sync-system/protocol';
-import { randomBytes } from 'node:crypto';
 import { type ServerOptions, WebSocketServer } from 'ws';
 import type { AppRegistry } from './apps/app-registry.js';
 import { EndedGroups } from './groups/ended-groups.js';
@@ -10,7 +9,8 @@ import type { GroupStore } from './groups/group-store.js';
 import { InMemoryGroupStore } from './groups/in-memory-group-store.js';
 import { LocalNotifier } from './groups/notifier.js';
 import type { ServerEnv } from './config/env.js';
-import type { TokenSecrets } from './config/token-secret.js';
+import { ConfigError } from './config/config-error.js';
+import { MIN_TOKEN_SECRET_BYTES, type TokenSecrets } from './config/token-secret.js';
 import { handleHttpRequest } from './http/health.js';
 import {
   CLOSE_TIMEOUT_MS,
@@ -20,6 +20,7 @@ import {
   HTTP_CONNECTION_MARGIN,
   HTTP_HEADERS_TIMEOUT_MS,
   HTTP_REQUEST_TIMEOUT_MS,
+  maxQueuedInboundBytes,
   transportMaxPayload,
 } from './limits/constants.js';
 import { SlidingWindowRateLimiter } from './limits/rate-limiter.js';
@@ -50,10 +51,10 @@ export interface SyncServerOptions {
   /** Defaults to HANDSHAKE_TIMEOUT_MS; shortened by tests. */
   handshakeTimeoutMs?: number;
   /**
-   * Token signing secrets. `main` always passes them; tests that omit them
-   * get a random per-instance secret.
+   * Token signing secrets from `parseTokenSecrets()` (required, #7 L1).
+   * There is no fallback: a missing or malformed value refuses to start.
    */
-  tokenSecrets?: TokenSecrets;
+  tokenSecrets: TokenSecrets;
 }
 
 export interface SyncServer {
@@ -72,7 +73,37 @@ export interface SyncServer {
 /** How long close() waits for clients to complete the close handshake. */
 const SHUTDOWN_GRACE_MS = 1_000;
 
+const TOKEN_SECRETS_REQUIRED =
+  'tokenSecrets is required: pass the secrets from parseTokenSecrets()';
+
+function isSecretBuffer(value: unknown): boolean {
+  return Buffer.isBuffer(value) && value.length >= MIN_TOKEN_SECRET_BYTES;
+}
+
+/**
+ * Runtime check for untyped callers (#7 L1, R1): `current` and, when set,
+ * `previous` must be Buffers of at least 32 bytes. The message names the
+ * field only, never a value.
+ */
+function assertTokenSecrets(value: unknown): asserts value is TokenSecrets {
+  if (typeof value !== 'object' || value === null) throw new ConfigError(TOKEN_SECRETS_REQUIRED);
+  const { current, previous } = value as { current?: unknown; previous?: unknown };
+  if (!isSecretBuffer(current)) {
+    throw new ConfigError(
+      `${TOKEN_SECRETS_REQUIRED} (tokenSecrets.current must be a Buffer of at least ${MIN_TOKEN_SECRET_BYTES} bytes)`,
+    );
+  }
+  if (previous !== undefined && !isSecretBuffer(previous)) {
+    throw new ConfigError(
+      `${TOKEN_SECRETS_REQUIRED} (tokenSecrets.previous must be a Buffer of at least ${MIN_TOKEN_SECRET_BYTES} bytes)`,
+    );
+  }
+}
+
 export function createSyncServer(options: SyncServerOptions): SyncServer {
+  // Before anything is created, so a bad config binds no socket (R1).
+  const tokenSecrets: unknown = options.tokenSecrets;
+  assertTokenSecrets(tokenSecrets);
   const { env, logger, registry } = options;
   const handshakeTimeoutMs = options.handshakeTimeoutMs ?? HANDSHAKE_TIMEOUT_MS;
   const scheduler = options.scheduler ?? realScheduler(options.now ?? Date.now);
@@ -114,7 +145,6 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
   const store = options.store ?? new InMemoryGroupStore();
   const ended = new EndedGroups(now, logger);
   let sweepTimer: NodeJS.Timeout | undefined;
-  const tokenSecrets = options.tokenSecrets ?? { current: randomBytes(32) };
   const tokens = new TokenService(new TokenKeyring(tokenSecrets));
   const groups = new GroupService({
     store,
@@ -150,6 +180,7 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
           inbound: { ratePerSecond: env.maxInboundMessagesPerSecond, burst: env.maxInboundBurst },
           now,
           maxBufferedBytes: env.maxBufferedBytes,
+          maxQueuedBytes: maxQueuedInboundBytes(env.maxMessageSizeCeiling),
           onClosed: (closed) => connections.delete(closed),
         });
         connections.add(connection);

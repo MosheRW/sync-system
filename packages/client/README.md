@@ -328,8 +328,8 @@ fix the configuration.
 | `GROUP_FULL`             | server | `details.maxGroupSize`.                                                     |
 | `ALREADY_IN_GROUP`       | both   | Create/join while in a group (also checked locally).                        |
 | `NOT_IN_GROUP`           | both   | Position update outside a group.                                            |
-| `NOT_LEADER`             | both   | Position update by a member.                                                |
-| `RATE_LIMITED`           | server | `details.maxLeaderUpdatesPerSecond`, `details.retryAfterMs`.                |
+| `NOT_LEADER`             | both   | Position update, `endGroup()` or block list change by a member.             |
+| `RATE_LIMITED`           | server | Position updates or `checkTokens()`. `details.retryAfterMs` (+ max rate).   |
 | `MESSAGE_TOO_LARGE`      | both   | `details.field`, `details.limitBytes`, `details.sizeBytes?`.                |
 | `LEADER_CANNOT_LEAVE`    | both   | The leader called `leaveGroup()`; it ends the group with `endGroup()`.      |
 | `TOKEN_INVALID`          | server | The stored token is not valid here (any cause, same answer). Deleted.       |
@@ -372,12 +372,44 @@ group ends. Use a strict Content Security Policy, and pick `'memory'` or
 `sessionStorage` when tokens should not outlive the tab. **Shared devices:**
 call `forgetAllGroups()` on "log out" or when the device is shared (works
 without a connection; pass the namespace if the client never connected).
+Call it with the app's other tabs closed: a tab that stays open keeps its
+tokens in memory and can still write one back in the case described below.
 
 **Multiple tabs** share one document. Writes re-read the document first, so
 tabs rarely overwrite each other, but custom async stores can still race. If
 another tab resumes the same group, this tab's group ends with `replaced`
 (token kept, not resumed automatically): show "opened on another device". For
 a leader this may also signal a stolen token.
+
+When a write fails (for example a full quota), the tab keeps that group's
+change in memory and writes it with its next successful write. Another tab's
+later change still wins: a group the other tab forgot (`forgetGroup()` or
+`forgetAllGroups()`) is not written back, and a newer token it stored for the
+same group is kept. The remaining cross-tab limits:
+
+- Outside that case the last writer wins; there is no live sync between tabs
+  (the client does not listen to the `storage` event). Another tab's changes
+  are picked up on this tab's next storage operation.
+- A token this tab stored for a group that had no stored entry yet, whose
+  write failed, can still be written back after another tab's
+  `forgetAllGroups()`: always if the document did not exist at the failed
+  write, otherwise only if some tab wrote the document again before this
+  tab's next storage operation. Closing the other tabs before
+  `forgetAllGroups()` avoids it.
+- If this tab has never read storage successfully (every read failed since
+  it started), it cannot tell what other tabs stored, so a change it made
+  then wins over theirs until its next successful write: a group it forgot
+  stays forgotten, and a token it stored is written over theirs. Such a
+  token also undoes another tab's `forgetGroup()` or `forgetAllGroups()` for
+  that group: the group is stored again.
+- If `forgetAllGroups()` can neither delete nor read the stored document, the
+  tab cannot list the groups other tabs stored. It remembers the time of the
+  call instead: until its next successful write, every successful read drops
+  stored tokens issued at or before that second, and that write removes them
+  from storage. Tokens issued strictly later (stored by another tab after the
+  call) are kept. The time is this device's clock against the server's
+  issue time, so a large clock difference can keep an older token or drop
+  one issued in the same few seconds.
 
 ### `checkTokens()`
 

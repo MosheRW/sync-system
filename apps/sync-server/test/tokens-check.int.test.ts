@@ -1,10 +1,15 @@
 import { randomBytes } from 'node:crypto';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { TokenSecrets } from '../src/config/token-secret.js';
 import type { GroupRecord } from '../src/groups/group-store.js';
+import { GroupService } from '../src/groups/group-service.js';
 import { InMemoryGroupStore } from '../src/groups/in-memory-group-store.js';
 import { TokenKeyring, deriveAppKey } from '../src/tokens/token-keys.js';
 import { TokenService } from '../src/tokens/token-service.js';
+import {
+  TOKENS_CHECK_PER_APP_PER_MINUTE,
+  TOKENS_CHECK_PER_MINUTE,
+} from '../src/limits/constants.js';
 import { createGroupWithMembers } from './helpers/groups.js';
 import { ManualScheduler } from './helpers/manual-scheduler.js';
 import type { TestClient } from './helpers/test-client.js';
@@ -164,6 +169,7 @@ describe('rate limit (#5 AC16)', () => {
       type: 'error',
       reqId: 'r11',
       code: 'RATE_LIMITED',
+      message: 'Too many token checks',
       details: { retryAfterMs: 60_000 },
     });
     expect(client.isClosed).toBe(false);
@@ -177,7 +183,149 @@ describe('rate limit (#5 AC16)', () => {
   });
 });
 
+/** Sends `count` checks of one garbage token each, then reads the replies. */
+async function checkMany(client: TestClient, count: number) {
+  for (let i = 0; i < count; i++) {
+    client.send({ type: 'tokens.check', reqId: `m${i}`, tokens: ['garbage'] });
+  }
+  const replies = [];
+  for (let i = 0; i < count; i++) replies.push(await client.next());
+  return replies;
+}
+
+/** Uses up app A's shared budget with 60 connections x 10 checks. */
+async function exhaustAppBudget(server: TestServer): Promise<void> {
+  expect(TOKENS_CHECK_PER_APP_PER_MINUTE).toBe(600);
+  for (let i = 0; i < TOKENS_CHECK_PER_APP_PER_MINUTE / 10; i++) {
+    const client = await server.connectReady();
+    const replies = await checkMany(client, 10);
+    expect(replies.every((reply) => reply.type === 'tokens.result')).toBe(true);
+    client.terminate();
+  }
+}
+
+describe('per-app tokens.check budget (#7 L2)', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('refuses the 601st check of an app before any verification; other apps unaffected (AC4, AC5)', async () => {
+    const scheduler = new ManualScheduler();
+    const store = new CountingStore();
+    ts = await startTestServer({ scheduler, store });
+    await exhaustAppBudget(ts);
+
+    const verify = vi.spyOn(TokenService.prototype, 'verify');
+    const gets = store.gets;
+    const client = await ts.connectReady();
+    const limited = await check(client, ['garbage'], 'over');
+    expect(limited).toEqual({
+      type: 'error',
+      reqId: 'over',
+      code: 'RATE_LIMITED',
+      message: 'Too many token checks',
+      details: { retryAfterMs: expect.any(Number) as number },
+    });
+    if (limited.type === 'error') {
+      const retry = limited.details?.retryAfterMs as number;
+      expect(retry).toBeGreaterThan(0);
+      expect(retry).toBeLessThanOrEqual(MINUTE);
+    }
+    expect(verify).not.toHaveBeenCalled();
+    expect(store.gets).toBe(gets);
+    expect(client.isClosed).toBe(false);
+
+    // App B has its own budget.
+    const other = await ts.connectReady(KEY_B);
+    expect((await check(other, ['garbage'])).type).toBe('tokens.result');
+    expect(verify).toHaveBeenCalledTimes(1);
+
+    // The budget refills after the window.
+    scheduler.advance(MINUTE);
+    const later = await ts.connectReady();
+    expect((await check(later, ['garbage'])).type).toBe('tokens.result');
+  });
+
+  it('logs one warning per window per app, with the namespace only (L-2, AC6)', async () => {
+    const scheduler = new ManualScheduler();
+    ts = await startTestServer({ scheduler });
+    await exhaustAppBudget(ts);
+    const client = await ts.connectReady();
+    const token = forgeLooking();
+    expect(await check(client, [token], 'a')).toMatchObject({ code: 'RATE_LIMITED' });
+    expect(await check(client, [token], 'b')).toMatchObject({ code: 'RATE_LIMITED' });
+
+    const warnings = ts.logs
+      .records()
+      .filter((record) => record.event === 'tokens_check_app_budget_exhausted');
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatchObject({ level: 40, namespace: 'app-a' });
+    expect(ts.logs.text).not.toContain(token);
+  });
+
+  it('leaves no timers and no budget state after close, with both limits used up (AC6)', async () => {
+    const scheduler = new ManualScheduler();
+    const checkTokens = vi.spyOn(GroupService.prototype, 'checkTokens');
+    ts = await startTestServer({ scheduler });
+    await exhaustAppBudget(ts);
+
+    // One live connection at its own limit too: 10 checks spend its
+    // per-connection budget (refused by the app budget), the 11th is
+    // refused by the per-connection limit.
+    const client = await ts.connectReady();
+    const replies = await checkMany(client, TOKENS_CHECK_PER_MINUTE + 1);
+    expect(replies.every((reply) => reply.type === 'error' && reply.code === 'RATE_LIMITED')).toBe(
+      true,
+    );
+
+    const service = checkTokens.mock.contexts[0] as BudgetState;
+    expect(service.appCheckLimiter.size).toBe(1);
+    expect(service.checkLimiter.size).toBeGreaterThanOrEqual(1);
+    expect(service.appBudgetWarnedAt.size).toBe(1);
+
+    await ts.close();
+    ts = undefined;
+    expect(scheduler.pending).toBe(0);
+    expect(service.appCheckLimiter.size).toBe(0);
+    expect(service.checkLimiter.size).toBe(0);
+    expect(service.appBudgetWarnedAt.size).toBe(0);
+  });
+});
+
+/** GroupService's private tokens.check budget state, read by the AC6 test only. */
+interface BudgetState {
+  readonly checkLimiter: { readonly size: number };
+  readonly appCheckLimiter: { readonly size: number };
+  readonly appBudgetWarnedAt: ReadonlyMap<string, number>;
+}
+
+/** A token-shaped string that must never reach the logs. */
+function forgeLooking(): string {
+  return `SENTINEL.${randomBytes(12).toString('base64url')}.${randomBytes(12).toString('base64url')}`;
+}
+
 describe('secret rotation (#5 AC2)', () => {
+  it('still delivers tokens.result with 20 re-signed tokens under the inbound byte cap (#7 AC9)', async () => {
+    const old = secrets();
+    const fresh = secrets();
+    ts = await startTestServer({ tokenSecrets: old });
+    const tokens: string[] = [];
+    for (let i = 0; i < 20; i++) tokens.push((await createGroupWithMembers(ts, 0)).leaderToken);
+    await ts.close();
+    ts = await startTestServer({
+      tokenSecrets: { current: fresh.current, previous: old.current, source: 'env' },
+    });
+    const client = await ts.connectReady();
+    const reply = await check(client, tokens);
+    if (reply.type !== 'tokens.result') throw new Error('expected tokens.result');
+    expect(reply.results).toHaveLength(20);
+    for (const result of reply.results) {
+      expect(result.status).toBe('recoverable');
+      expect(typeof result.token).toBe('string');
+    }
+    expect(client.isClosed).toBe(false);
+  });
+
   it('returns a current-secret token for usable previous-secret tokens only', async () => {
     const old = secrets();
     const fresh = secrets();
