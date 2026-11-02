@@ -6,9 +6,9 @@
 - Plan approved by user: yes
 - Security-sensitive: yes
 - QA loops: 0
-- Review rounds: 1 (security plan review round 1: PASS; code review round 1: QA PASS)
-- QA verdict: PASS (round 1, head abe874e)
-- Last updated by: engineer
+- Review rounds: 2 (security plan review round 1: PASS; code review round 1: QA PASS; code review round 2: QA PASS)
+- QA verdict: PASS (round 2, head e250964)
+- Last updated by: qa
 
 ## Notes
 - PRD item 3 of 9. "item N" in spec.md means PRD item N, not GitHub issue N.
@@ -64,6 +64,12 @@
 - Checks: lint, typecheck, test (protocol 42, server 574, client 441), build, audit (exit 0, 2 moderate) and CI all pass. No lockfile or dependency change.
 - Acceptance criteria: 43/43 met; evidence in the QA review comment on PR #6.
 - Deviations judged acceptable (see review). Non-blocking advisories: A1 fixed error texts for RATE_LIMITED ("Too many position updates") and NOT_LEADER ("...update the position") are now misleading for tokens.check, group.end and blocklist.set; A2 commit 445aab3 alone is not lint-clean (fixed by 75b63c2); A3 no committed test for a member resume into a frozen group (verified manually).
+
+## QA round 2 (PASS)
+- Delta b0f61de..e250964 (Copilot fix round: 3425fca, 5d998a9, 8bbac72). Each fix verified with its regression test.
+- Checks: lint, typecheck, test (protocol 42, server 575, client 445), build, audit (exit 0, 2 moderate) and CI (push + pull_request) all pass. No lockfile or dependency change.
+- Acceptance criteria: 43/43 met; evidence in the round-2 QA review comment on PR #6.
+- Advisories: A1-A3 from round 1 still apply. A4: 3425fca rejects configs #1 accepted (MAX_BUFFERED_BYTES < 45056, e.g. the #1 fixture 32768); accepted under AC42 as a constraint introduced by this issue, worth a release note. A5: dirty-group tracking compares entries by identity, so it may be broader than needed (safe).
 
 ## Open questions
 - none
