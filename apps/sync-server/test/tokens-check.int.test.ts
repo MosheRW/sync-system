@@ -2,10 +2,14 @@ import { randomBytes } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { TokenSecrets } from '../src/config/token-secret.js';
 import type { GroupRecord } from '../src/groups/group-store.js';
+import { GroupService } from '../src/groups/group-service.js';
 import { InMemoryGroupStore } from '../src/groups/in-memory-group-store.js';
 import { TokenKeyring, deriveAppKey } from '../src/tokens/token-keys.js';
 import { TokenService } from '../src/tokens/token-service.js';
-import { TOKENS_CHECK_PER_APP_PER_MINUTE } from '../src/limits/constants.js';
+import {
+  TOKENS_CHECK_PER_APP_PER_MINUTE,
+  TOKENS_CHECK_PER_MINUTE,
+} from '../src/limits/constants.js';
 import { createGroupWithMembers } from './helpers/groups.js';
 import { ManualScheduler } from './helpers/manual-scheduler.js';
 import type { TestClient } from './helpers/test-client.js';
@@ -259,16 +263,41 @@ describe('per-app tokens.check budget (#7 L2)', () => {
     expect(ts.logs.text).not.toContain(token);
   });
 
-  it('leaves no timers and no budget state after close (AC6)', async () => {
+  it('leaves no timers and no budget state after close, with both limits used up (AC6)', async () => {
     const scheduler = new ManualScheduler();
+    const checkTokens = vi.spyOn(GroupService.prototype, 'checkTokens');
     ts = await startTestServer({ scheduler });
+    await exhaustAppBudget(ts);
+
+    // One live connection at its own limit too: 10 checks spend its
+    // per-connection budget (refused by the app budget), the 11th is
+    // refused by the per-connection limit.
     const client = await ts.connectReady();
-    await checkMany(client, 3);
+    const replies = await checkMany(client, TOKENS_CHECK_PER_MINUTE + 1);
+    expect(replies.every((reply) => reply.type === 'error' && reply.code === 'RATE_LIMITED')).toBe(
+      true,
+    );
+
+    const service = checkTokens.mock.contexts[0] as BudgetState;
+    expect(service.appCheckLimiter.size).toBe(1);
+    expect(service.checkLimiter.size).toBeGreaterThanOrEqual(1);
+    expect(service.appBudgetWarnedAt.size).toBe(1);
+
     await ts.close();
     ts = undefined;
     expect(scheduler.pending).toBe(0);
+    expect(service.appCheckLimiter.size).toBe(0);
+    expect(service.checkLimiter.size).toBe(0);
+    expect(service.appBudgetWarnedAt.size).toBe(0);
   });
 });
+
+/** GroupService's private tokens.check budget state, read by the AC6 test only. */
+interface BudgetState {
+  readonly checkLimiter: { readonly size: number };
+  readonly appCheckLimiter: { readonly size: number };
+  readonly appBudgetWarnedAt: ReadonlyMap<string, number>;
+}
 
 /** A token-shaped string that must never reach the logs. */
 function forgeLooking(): string {
