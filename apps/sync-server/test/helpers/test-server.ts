@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { AppRegistry } from '../../src/apps/app-registry.js';
 import { parseAppsConfig } from '../../src/config/apps-config.js';
 import { parseEnv } from '../../src/config/env.js';
@@ -65,7 +66,10 @@ export async function startTestServer(options: StartOptions = {}): Promise<TestS
   const registry = new AppRegistry(parseAppsConfig(JSON.stringify({ apps: appInputs }), env));
   const logs = new LogCapture();
   const logger = createLogger({ level: env.logLevel, destination: logs });
-  const server = createSyncServer({ env, registry, logger, ...rest });
+  // A random per-instance secret unless the test passes its own (#7 L1:
+  // createSyncServer itself no longer has a fallback).
+  const tokenSecrets = rest.tokenSecrets ?? { current: randomBytes(32), source: 'random' };
+  const server = createSyncServer({ env, registry, logger, ...rest, tokenSecrets });
   const port = await server.listen(0, '127.0.0.1');
   const url = `ws://127.0.0.1:${port}/ws`;
   const clients: TestClient[] = [];
