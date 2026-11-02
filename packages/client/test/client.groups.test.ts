@@ -33,6 +33,7 @@ describe('createGroup (AC15)', () => {
     expect(sent).toEqual({ type: 'group.create', reqId: 'c2', metadata, position: { page: 1 } });
     socket.receive({
       type: 'group.created',
+      token: 'h.p.s',
       reqId: 'c2',
       groupId: GROUP_ID,
       participantId: PARTICIPANT_ID,
@@ -47,9 +48,10 @@ describe('createGroup (AC15)', () => {
       status: 'active',
       groupId: GROUP_ID,
       role: 'leader',
-      metadata: null,
+      metadata,
       hasPosition: true,
       position: { page: 1 },
+      leaderOnline: true,
     });
     client.close();
   });
@@ -101,6 +103,8 @@ describe('joinGroup (AC16)', () => {
     const metadata = { book: 'b1' };
     socket.receive({
       type: 'group.joined',
+      token: 'h.p.s',
+      leaderOnline: true,
       reqId: 'c2',
       groupId: GROUP_ID,
       participantId: PARTICIPANT_ID,
@@ -133,6 +137,8 @@ describe('joinGroup (AC16)', () => {
     const joining = client.joinGroup(GROUP_ID);
     socket.receive({
       type: 'group.joined',
+      token: 'h.p.s',
+      leaderOnline: true,
       reqId: 'c2',
       groupId: GROUP_ID,
       participantId: PARTICIPANT_ID,
@@ -184,6 +190,8 @@ describe('group events (AC19, AC20)', () => {
     const joining = client.joinGroup(GROUP_ID);
     socket.receive({
       type: 'group.joined',
+      token: 'h.p.s',
+      leaderOnline: true,
       reqId: 'c2',
       groupId: GROUP_ID,
       participantId: PARTICIPANT_ID,
@@ -212,7 +220,7 @@ describe('group events (AC19, AC20)', () => {
     client.on('positionUpdated', listener);
     client.on('groupEnded', listener);
     socket.receive({ type: 'position.updated', groupId: 'H'.repeat(43), position: 1 });
-    socket.receive({ type: 'group.ended', groupId: 'H'.repeat(43), reason: 'leader_disconnected' });
+    socket.receive({ type: 'group.ended', groupId: 'H'.repeat(43), reason: 'ended_by_leader' });
     expect(listener).not.toHaveBeenCalled();
     client.close();
   });
@@ -221,12 +229,12 @@ describe('group events (AC19, AC20)', () => {
     const { client, socket } = await member();
     const ended: GroupEndedInfo[] = [];
     client.on('groupEnded', (e) => ended.push(e));
-    socket.receive({ type: 'group.ended', groupId: GROUP_ID, reason: 'leader_disconnected' });
-    expect(ended).toEqual([{ groupId: GROUP_ID, reason: 'leader_disconnected' }]);
+    socket.receive({ type: 'group.ended', groupId: GROUP_ID, reason: 'ended_by_leader' });
+    expect(ended).toEqual([{ groupId: GROUP_ID, reason: 'ended_by_leader' }]);
     expect(client.getSnapshot().group).toEqual({
       status: 'ended',
       groupId: GROUP_ID,
-      reason: 'leader_disconnected',
+      reason: 'ended_by_leader',
     });
     // An ended group allows a new create or join.
     void client.joinGroup(GROUP_ID).catch(() => {});

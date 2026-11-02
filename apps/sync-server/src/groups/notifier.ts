@@ -2,37 +2,49 @@ import type { ServerMessage } from '@sync-system/protocol';
 import type { Session } from './session.js';
 
 /**
- * Delivers events to participants. Local fan-out now; a pub/sub
- * implementation can replace it for multiple instances later.
+ * Delivers events to group members, keyed by membership
+ * (`namespace:groupId:participantId`, see `membershipKey`). The attachment map
+ * is the source of truth for which session owns a membership (M4). Local
+ * fan-out now; a pub/sub implementation can replace it for multiple
+ * instances later.
  */
 export interface Notifier {
-  register(session: Session): void;
-  unregister(participantId: string): void;
-  get(participantId: string): Session | undefined;
-  /** Serializes `message` once and delivers the same string to each participant. */
-  broadcast(participantIds: readonly string[], message: ServerMessage): void;
+  /** Attaches `session` as the owner of `key`, replacing any previous owner. */
+  register(key: string, session: Session): void;
+  /** Detaches `key` only if `session` still owns it. Returns whether it did. */
+  unregister(key: string, session: Session): boolean;
+  get(key: string): Session | undefined;
+  /** Serializes `message` once and delivers the same string to each attached key. */
+  broadcast(keys: readonly string[], message: ServerMessage): void;
 }
 
 export class LocalNotifier implements Notifier {
   private readonly sessions = new Map<string, Session>();
 
-  register(session: Session): void {
-    this.sessions.set(session.participantId, session);
+  /** Number of attachments. For tests only. */
+  get size(): number {
+    return this.sessions.size;
   }
 
-  unregister(participantId: string): void {
-    this.sessions.delete(participantId);
+  register(key: string, session: Session): void {
+    this.sessions.set(key, session);
   }
 
-  get(participantId: string): Session | undefined {
-    return this.sessions.get(participantId);
+  unregister(key: string, session: Session): boolean {
+    if (this.sessions.get(key) !== session) return false;
+    this.sessions.delete(key);
+    return true;
   }
 
-  broadcast(participantIds: readonly string[], message: ServerMessage): void {
-    if (participantIds.length === 0) return;
+  get(key: string): Session | undefined {
+    return this.sessions.get(key);
+  }
+
+  broadcast(keys: readonly string[], message: ServerMessage): void {
+    if (keys.length === 0) return;
     const text = JSON.stringify(message);
-    for (const participantId of participantIds) {
-      this.sessions.get(participantId)?.deliver(text);
+    for (const key of keys) {
+      this.sessions.get(key)?.deliver(text);
     }
   }
 }

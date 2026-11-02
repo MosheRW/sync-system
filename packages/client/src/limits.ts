@@ -1,4 +1,4 @@
-import type { AppLimits } from '@sync-system/protocol';
+import { type AppLimits, MAX_TOKEN_LENGTH } from '@sync-system/protocol';
 
 /**
  * Largest `hello.ok` limits the client accepts (M1). Far above the server
@@ -9,6 +9,7 @@ export const CLIENT_LIMIT_BOUNDS: Readonly<AppLimits> = Object.freeze({
   maxGroupSize: 10_000,
   maxLeaderUpdatesPerSecond: 100,
   maxMessageBytes: 1_048_576,
+  maxSessionMinutes: 10_080,
 });
 
 /** Longest inbound frame (UTF-16 units) before `hello.ok`. */
@@ -17,7 +18,15 @@ export const PRE_HANDSHAKE_MAX_CHARS = 8_192;
 /** Room for the envelope around metadata and position in one frame. */
 export const FRAME_OVERHEAD_CHARS = 8_192;
 
-const LIMIT_KEYS = ['maxGroupSize', 'maxLeaderUpdatesPerSecond', 'maxMessageBytes'] as const;
+/** A tokens.result with 20 re-signed tokens of 2048 characters plus the envelope (#5). */
+export const TOKENS_CHECK_MAX_FRAME_CHARS = 45_056;
+
+const LIMIT_KEYS = [
+  'maxGroupSize',
+  'maxLeaderUpdatesPerSecond',
+  'maxMessageBytes',
+  'maxSessionMinutes',
+] as const;
 
 /** The first limit that is not a positive safe integer within the client bounds, if any. */
 export function findOutOfBoundsLimit(limits: AppLimits): keyof AppLimits | undefined {
@@ -29,11 +38,15 @@ export function findOutOfBoundsLimit(limits: AppLimits): keyof AppLimits | undef
 }
 
 /**
- * Inbound length guard: `group.joined` can carry metadata and a position of
- * up to `maxMessageBytes` each. A string's UTF-16 length is never more than
- * its UTF-8 byte count, so the guard cannot reject a legal frame.
+ * Inbound length guard: `group.joined` and `group.resumed` can carry
+ * metadata and a position of up to `maxMessageBytes` each plus a token, and
+ * `tokens.result` up to 20 tokens. A string's UTF-16 length is never more
+ * than its UTF-8 byte count, so the guard cannot reject a legal frame.
  */
 export function maxInboundChars(limits: AppLimits | undefined): number {
   if (limits === undefined) return PRE_HANDSHAKE_MAX_CHARS;
-  return 2 * limits.maxMessageBytes + FRAME_OVERHEAD_CHARS;
+  return Math.max(
+    2 * limits.maxMessageBytes + FRAME_OVERHEAD_CHARS + MAX_TOKEN_LENGTH,
+    TOKENS_CHECK_MAX_FRAME_CHARS,
+  );
 }

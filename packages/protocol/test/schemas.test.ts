@@ -104,6 +104,31 @@ describe('client message schemas', () => {
   });
 });
 
+describe('token messages (#5)', () => {
+  const PID = '0b6a3f5e-8c1d-4e2f-9a7b-1c2d3e4f5a6b';
+
+  it('parses group.resume, group.end and group.leave', () => {
+    expect(ok({ type: 'group.resume', token: 't' }).type).toBe('group.resume');
+    expect(
+      ok({ type: 'group.resume', token: 't', metadata: {}, position: null, blockList: [PID] }).type,
+    ).toBe('group.resume');
+    expect(ok({ type: 'group.end', reqId: 'e' }).type).toBe('group.end');
+    expect(ok({ type: 'group.leave' }).type).toBe('group.leave');
+  });
+
+  it('bounds the token and the block list (AC24)', () => {
+    ok({ type: 'group.resume', token: 'x'.repeat(2048) });
+    fails({ type: 'group.resume', token: 'x'.repeat(2049) });
+    fails({ type: 'group.resume' });
+    fails({ type: 'group.resume', token: 1 });
+    ok({ type: 'group.resume', token: 't', blockList: Array.from({ length: 256 }, () => PID) });
+    fails({ type: 'group.resume', token: 't', blockList: Array.from({ length: 257 }, () => PID) });
+    fails({ type: 'group.resume', token: 't', blockList: ['not-a-uuid'] });
+    fails({ type: 'group.resume', token: 't', blockList: PID });
+    fails({ type: 'group.resume', token: 't', metadata: [] });
+  });
+});
+
 describe('server message schemas', () => {
   it('parses every server message type', () => {
     const messages = [
@@ -111,15 +136,23 @@ describe('server message schemas', () => {
       {
         type: 'hello.ok',
         participantId: 'p',
-        limits: { maxGroupSize: 30, maxLeaderUpdatesPerSecond: 5, maxMessageBytes: 4096 },
+        namespace: 'app-a',
+        limits: {
+          maxGroupSize: 30,
+          maxLeaderUpdatesPerSecond: 5,
+          maxMessageBytes: 4096,
+          maxSessionMinutes: 180,
+        },
       },
-      { type: 'group.created', groupId: GROUP_ID, participantId: 'p', role: 'leader' },
+      { type: 'group.created', groupId: GROUP_ID, participantId: 'p', role: 'leader', token: 't' },
       {
         type: 'group.joined',
         groupId: GROUP_ID,
         participantId: 'p',
         role: 'member',
         metadata: {},
+        token: 't',
+        leaderOnline: true,
         hasPosition: true,
         position: null,
       },
@@ -129,16 +162,55 @@ describe('server message schemas', () => {
         participantId: 'p',
         role: 'member',
         metadata: {},
+        token: 't',
+        leaderOnline: false,
         hasPosition: false,
       },
       { type: 'position.ack', reqId: 'r' },
       { type: 'position.updated', groupId: GROUP_ID, position: [1] },
-      { type: 'group.ended', groupId: GROUP_ID, reason: 'leader_disconnected' },
+      { type: 'group.ended', groupId: GROUP_ID, reason: 'ended_by_leader' },
+      { type: 'group.ended', groupId: GROUP_ID, reason: 'leader_timeout' },
+      { type: 'group.ended', groupId: GROUP_ID, reason: 'max_session' },
+      { type: 'group.ended', groupId: GROUP_ID, reason: 'replaced' },
+      { type: 'group.ended', groupId: GROUP_ID, reason: 'removed' },
+      { type: 'leader.offline', groupId: GROUP_ID },
+      { type: 'leader.online', groupId: GROUP_ID },
       { type: 'error', code: 'GROUP_FULL', message: 'full', details: { maxGroupSize: 3 } },
     ];
     for (const message of messages) {
       expect(parseServerMessage(message).ok, message.type).toBe(true);
     }
     expect(parseServerMessage({ type: 'error', code: 'NOPE', message: '' }).ok).toBe(false);
+    expect(
+      parseServerMessage({ type: 'group.ended', groupId: GROUP_ID, reason: 'leader_disconnected' })
+        .ok,
+    ).toBe(false);
+  });
+
+  it('requires a bounded token and a valid namespace (#5)', () => {
+    const created = {
+      type: 'group.created',
+      groupId: GROUP_ID,
+      participantId: 'p',
+      role: 'leader',
+    };
+    expect(parseServerMessage(created).ok).toBe(false);
+    expect(parseServerMessage({ ...created, token: '' }).ok).toBe(false);
+    expect(parseServerMessage({ ...created, token: 'x'.repeat(2049) }).ok).toBe(false);
+    expect(parseServerMessage({ ...created, token: 'x'.repeat(2048) }).ok).toBe(true);
+    const helloOk = {
+      type: 'hello.ok',
+      participantId: 'p',
+      namespace: 'app-a',
+      limits: {
+        maxGroupSize: 3,
+        maxLeaderUpdatesPerSecond: 1,
+        maxMessageBytes: 1,
+        maxSessionMinutes: 1,
+      },
+    };
+    expect(parseServerMessage(helloOk).ok).toBe(true);
+    expect(parseServerMessage({ ...helloOk, namespace: 'Bad App' }).ok).toBe(false);
+    expect(parseServerMessage({ ...helloOk, namespace: undefined }).ok).toBe(false);
   });
 });

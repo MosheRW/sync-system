@@ -18,6 +18,8 @@ export interface TestAppInput {
   maxLeaderUpdatesPerSecond?: number;
   maxMessageBytes?: number;
   maxConnections?: number;
+  maxSessionMinutes?: number;
+  inactivityLimitMinutes?: number;
 }
 
 export const DEFAULT_TEST_APPS: TestAppInput[] = [

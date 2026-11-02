@@ -39,6 +39,7 @@ async function leader(limits = LIMITS): Promise<{ client: SyncClient; socket: Fa
   const reqId = socket.lastMessage().reqId;
   socket.receive({
     type: 'group.created',
+    token: 'h.p.s',
     reqId,
     groupId: GROUP_ID,
     participantId: PARTICIPANT_ID,
@@ -208,6 +209,7 @@ describe('one group request in flight (L5, R2-L4)', () => {
     socket.receive({ type: 'welcome', protocolVersion: 1, minProtocolVersion: 1 });
     socket.receive({
       type: 'hello.ok',
+      namespace: 'app-a',
       reqId: socket.lastMessage().reqId,
       participantId: 'p2',
       limits: LIMITS,
@@ -231,6 +233,8 @@ describe('updatePosition rules (AC18)', () => {
     const joining = client.joinGroup(GROUP_ID);
     socket.receive({
       type: 'group.joined',
+      token: 'h.p.s',
+      leaderOnline: true,
       reqId: 'c2',
       groupId: GROUP_ID,
       participantId: PARTICIPANT_ID,
@@ -462,7 +466,7 @@ describe('position ack timeout (M4, Q-C)', () => {
     client.updatePosition(1);
     for (let t = 0; t < 20_000; t += 5_000) {
       vi.advanceTimersByTime(5_000);
-      socket.receive({ type: 'leader.offline' });
+      socket.receive({ type: 'roster.updated' });
     }
     expect(errors.map((e) => [e.code, e.request])).toEqual([
       ['REQUEST_TIMEOUT', 'position.update'],

@@ -30,12 +30,25 @@ export const ClientErrorCode = {
   INVALID_SERVER_MESSAGE: 'INVALID_SERVER_MESSAGE',
   /** A group create or join is already in flight (L5). */
   REQUEST_IN_PROGRESS: 'REQUEST_IN_PROGRESS',
+  /** No stored token for that group on this server and app (#5 AC38). */
+  TOKEN_NOT_FOUND: 'TOKEN_NOT_FOUND',
+  /** The block list would hold more than 256 participant IDs (#5 AC34). */
+  BLOCK_LIST_FULL: 'BLOCK_LIST_FULL',
 } as const;
 
 export type ClientErrorCode = (typeof ClientErrorCode)[keyof typeof ClientErrorCode];
 
 /** Which request an error belongs to, if any. */
-export type RequestKind = 'hello' | 'group.create' | 'group.join' | 'position.update';
+export type RequestKind =
+  | 'hello'
+  | 'group.create'
+  | 'group.join'
+  | 'position.update'
+  | 'group.resume'
+  | 'tokens.check'
+  | 'group.end'
+  | 'group.leave'
+  | 'blocklist.set';
 
 interface KnownDetails {
   PROTOCOL_TOO_OLD: { minProtocolVersion?: number };
@@ -53,6 +66,7 @@ interface KnownDetails {
   GROUP_FULL: { maxGroupSize?: number };
   INVALID_SERVER_MESSAGE: { issues: string[] };
   INVALID_OPTIONS: { field: string };
+  BLOCK_LIST_FULL: { limit: number };
 }
 
 /** Typed `details` per code; `undefined` for codes without details. */
@@ -80,6 +94,11 @@ const MESSAGES: Record<ClientErrorCode, string> = {
   MESSAGE_TOO_LARGE: 'Message too large',
   TOO_MANY_MESSAGES: 'Too many messages',
   INTERNAL_ERROR: 'Internal server error',
+  LEADER_CANNOT_LEAVE: 'The leader cannot leave the group; end it instead',
+  TOKEN_INVALID: 'The stored token is not valid on this server',
+  TOKEN_EXPIRED: 'The stored token has expired',
+  GROUP_ENDED: 'The group has ended',
+  PARTICIPANT_BLOCKED: 'The leader blocked this participant',
   NOT_CONNECTED: 'Not connected',
   CLOSED: 'The client was closed',
   CONNECTION_LOST: 'The connection was lost',
@@ -92,6 +111,8 @@ const MESSAGES: Record<ClientErrorCode, string> = {
   INVALID_PAYLOAD: 'The value is not a valid JSON payload',
   INVALID_SERVER_MESSAGE: 'The server sent an invalid message',
   REQUEST_IN_PROGRESS: 'A group request is already in progress',
+  TOKEN_NOT_FOUND: 'No stored token for this group',
+  BLOCK_LIST_FULL: 'The block list is full',
 };
 
 /** Longest server `message` text kept in `serverMessage` (L2). */

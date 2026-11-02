@@ -1,6 +1,7 @@
 # Local development only. It uses the public dev API key from
-# config/apps.dev.json, so it binds to loopback and sets NODE_ENV=development
-# (in production the dev key is refused at startup). See README.md.
+# config/apps.dev.json and the public dev token secret below, so it binds to
+# loopback and sets NODE_ENV=development (outside development and test both
+# are refused at startup). See README.md.
 services:
   sync-server:
     build:
@@ -18,6 +19,11 @@ services:
       PORT: '8080'
       HOST: 0.0.0.0
       LOG_LEVEL: info
+      # Public development token secret (committed, so never use it for real).
+      # A fixed value lets tokens survive a container restart, so restart
+      # recovery can be tried locally. Generate a real one with
+      # `openssl rand -base64 32`.
+      TOKEN_SECRET: dev-only-insecure-token-secret-change-me-please
       MAX_GROUP_SIZE_CEILING: '100'
       MAX_LEADER_UPDATE_RATE_CEILING: '10'
       MAX_MESSAGE_SIZE_CEILING: '16384'
@@ -27,6 +33,11 @@ services:
       MAX_INBOUND_MESSAGES_PER_SECOND: '20'
       MAX_INBOUND_BURST: '40'
       MAX_BUFFERED_BYTES: '262144'
+      MAX_SESSION_MINUTES_CEILING: '480'
+      INACTIVITY_LIMIT_MINUTES_CEILING: '60'
+      TOKEN_REFRESH_ACTIVITIES: '10'
+      TOKEN_REFRESH_MIN_SECONDS: '60'
+      TOKEN_REFRESH_MAX_SECONDS: '300'
     healthcheck:
       test:
         - CMD

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { indicatorOf } from '../../src/state.js';
 import { closeClients, newClient, nextEvent } from '../helpers/int.js';
 import { type RealServer, startRealServer } from '../helpers/real-server.js';
 import { type TcpProxy, startTcpProxy } from '../helpers/tcp-proxy.js';
@@ -59,7 +60,7 @@ describe('reconnect against the real server (AC26, AC27, AC29, AC30)', () => {
     expect((await updated).position).toEqual({ page: 5 });
   });
 
-  it('a member whose group ended while it was away gets groupEnded rejoin_failed', async () => {
+  it('a member whose group was dropped while it was away waits for its leader (#5 AC25)', async () => {
     server = await startRealServer();
     proxy = await startTcpProxy(server.port);
     const { client: leader } = newClient(server.url);
@@ -73,23 +74,31 @@ describe('reconnect against the real server (AC26, AC27, AC29, AC30)', () => {
     const { groupId } = await leader.createGroup({});
     await member.joinGroup(groupId);
 
-    const ended = nextEvent(member, 'groupEnded');
     proxy.cutAll();
     leader.close();
-    expect(await ended).toEqual({ groupId, reason: 'rejoin_failed', code: 'GROUP_NOT_FOUND' });
+    await waitUntil(() => member.getSnapshot().group?.status === 'waiting', 5000, 'waiting');
+    expect(member.getSnapshot().group).toEqual({ status: 'waiting', groupId, role: 'member' });
+    expect(indicatorOf(member.getSnapshot())).toBe('leader_offline');
     expect(member.getState().status).toBe('connected');
   });
 
-  it('a leader dropped abnormally sees groupEnded at once and reconnects with no group', async () => {
+  it('a leader dropped abnormally resumes its group with its token (#5 AC35)', async () => {
     server = await startRealServer();
     proxy = await startTcpProxy(server.port);
     const { client: leader } = newClient(proxy.url);
     await leader.connect();
-    const { groupId } = await leader.createGroup({});
-    const ended = nextEvent(leader, 'groupEnded');
+    const { groupId } = await leader.createGroup({ book: 'b' }, { page: 2 });
+    const rejoined = nextEvent(leader, 'rejoined');
     proxy.cutAll();
-    expect(await ended).toEqual({ groupId, reason: 'leader_disconnected' });
-    await waitUntil(() => leader.getState().status === 'connected', 5000, 'reconnected');
-    expect(leader.getSnapshot().group).toMatchObject({ status: 'ended' });
+    await waitUntil(() => leader.getSnapshot().group?.status === 'rejoining', 3000, 'rejoining');
+    expect(await rejoined).toMatchObject({
+      groupId,
+      role: 'leader',
+      status: 'active',
+      // Alone in the group, so the server dropped it and the token recreated it.
+      recreated: true,
+      position: { page: 2 },
+    });
+    expect(leader.getSnapshot().group).toMatchObject({ status: 'active', role: 'leader' });
   });
 });

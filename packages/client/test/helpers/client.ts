@@ -10,6 +10,7 @@ export const LIMITS: AppLimits = {
   maxGroupSize: 30,
   maxLeaderUpdatesPerSecond: 5,
   maxMessageBytes: 4096,
+  maxSessionMinutes: 180,
 };
 
 export const PARTICIPANT_ID = 'participant-1';
@@ -38,6 +39,7 @@ export function serverHandshake(
     type: 'hello.ok',
     reqId: hello.reqId,
     participantId: options.participantId ?? PARTICIPANT_ID,
+    namespace: 'app-a',
     limits: options.limits ?? LIMITS,
   });
 }

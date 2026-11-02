@@ -23,6 +23,14 @@ const KNOWN_TYPES: ReadonlySet<string> = new Set<ServerMessage['type']>([
   'position.ack',
   'position.updated',
   'group.ended',
+  'group.resumed',
+  'group.waiting',
+  'group.left',
+  'tokens.result',
+  'blocklist.ack',
+  'leader.offline',
+  'leader.online',
+  'token.refreshed',
   'error',
 ]);
 

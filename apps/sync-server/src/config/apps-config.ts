@@ -1,12 +1,16 @@
 import { readFileSync } from 'node:fs';
 import semver from 'semver';
 import { z } from 'zod';
-import { MAX_API_KEY_LENGTH, MAX_APP_VERSION_LENGTH } from '@sync-system/protocol';
+import {
+  MAX_API_KEY_LENGTH,
+  MAX_APP_VERSION_LENGTH,
+  NAMESPACE_PATTERN,
+} from '@sync-system/protocol';
 import { type AppConfig, hashApiKey } from '../apps/app-registry.js';
 import { ConfigError } from './config-error.js';
 import type { ServerEnv } from './env.js';
 
-export const NAMESPACE_PATTERN = /^[a-z0-9][a-z0-9_-]{0,62}$/;
+export { NAMESPACE_PATTERN };
 export const MIN_API_KEY_LENGTH = 32;
 
 const BOM = String.fromCharCode(0xfeff);
@@ -16,6 +20,8 @@ export const APP_DEFAULTS = {
   maxLeaderUpdatesPerSecond: 5,
   maxMessageBytes: 4096,
   maxConnections: 1000,
+  maxSessionMinutes: 180,
+  inactivityLimitMinutes: 20,
 } as const;
 
 type Ceilings = Pick<
@@ -24,6 +30,8 @@ type Ceilings = Pick<
   | 'maxLeaderUpdateRateCeiling'
   | 'maxMessageSizeCeiling'
   | 'maxAppConnectionsCeiling'
+  | 'maxSessionMinutesCeiling'
+  | 'inactivityLimitMinutesCeiling'
 >;
 
 interface LimitField {
@@ -58,6 +66,18 @@ const LIMIT_FIELDS: readonly LimitField[] = [
     ceilingName: 'MAX_APP_CONNECTIONS_CEILING',
     ceiling: (env) => env.maxAppConnectionsCeiling,
   },
+  {
+    field: 'maxSessionMinutes',
+    min: 1,
+    ceilingName: 'MAX_SESSION_MINUTES_CEILING',
+    ceiling: (env) => env.maxSessionMinutesCeiling,
+  },
+  {
+    field: 'inactivityLimitMinutes',
+    min: 1,
+    ceilingName: 'INACTIVITY_LIMIT_MINUTES_CEILING',
+    ceiling: (env) => env.inactivityLimitMinutesCeiling,
+  },
 ];
 
 const limitSchema = z.number().int();
@@ -70,6 +90,8 @@ const appEntrySchema = z.strictObject({
   maxLeaderUpdatesPerSecond: limitSchema.optional(),
   maxMessageBytes: limitSchema.optional(),
   maxConnections: limitSchema.optional(),
+  maxSessionMinutes: limitSchema.optional(),
+  inactivityLimitMinutes: limitSchema.optional(),
 });
 
 const FIELD_RULES: Record<string, string> = {

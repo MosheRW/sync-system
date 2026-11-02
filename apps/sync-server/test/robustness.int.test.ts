@@ -59,7 +59,7 @@ class DeferredStore extends InMemoryGroupStore {
 }
 
 describe('join racing a leader disconnect, with a slow store', () => {
-  it('replies group.joined before group.ended and leaves the joiner groupless', async () => {
+  it('replies group.joined before leader.offline and keeps the joiner in the frozen group', async () => {
     const store = new DeferredStore();
     ts = await startTestServer({ store });
     const { groupId, leader } = await createGroupWithMembers(ts, 0);
@@ -73,40 +73,36 @@ describe('join racing a leader disconnect, with a slow store', () => {
     await sleep(50);
     store.release();
 
-    expect(await joiner.next('group.joined')).toMatchObject({ groupId });
-    expect(await joiner.next('group.ended')).toMatchObject({
-      groupId,
-      reason: 'leader_disconnected',
-    });
-    await waitUntil(() => store.size === 0);
-    // Not stuck in the dead group.
+    expect(await joiner.next('group.joined')).toMatchObject({ groupId, leaderOnline: true });
+    expect(await joiner.next('leader.offline')).toMatchObject({ groupId });
+    expect(await store.get('app-a', groupId)).toMatchObject({ leaderOnline: false });
+    // In the frozen group, not stranded outside it.
     joiner.send({ type: 'group.create', metadata: {} });
-    expect(await joiner.next('group.created')).toMatchObject({ role: 'leader' });
+    expect(await joiner.next('error')).toMatchObject({ code: 'ALREADY_IN_GROUP' });
   });
 
-  it('never strands a joiner whose insert lands while teardown reads the group', async () => {
+  it('never strands a joiner whose insert lands while the frozen group is dropped', async () => {
     const store = new DeferredStore();
     ts = await startTestServer({ store });
-    const { groupId, leader } = await createGroupWithMembers(ts, 0);
+    const { groupId, leader, members } = await createGroupWithMembers(ts, 1);
+    leader.terminate();
+    await members[0]!.next('leader.offline');
     const joiner = await ts.connectReady();
 
-    // Teardown has read the member list; its delete has not run yet.
-    store.holdNext('get');
-    leader.terminate();
-    await waitUntil(() => store.reached);
+    // The join's insert has run; the last old member leaves meanwhile.
+    store.holdNext('addParticipant');
     joiner.send({ type: 'group.join', groupId });
+    await waitUntil(() => store.reached);
+    members[0]!.terminate();
     await sleep(50);
     store.release();
 
-    const first = await joiner.next();
-    if (first.type === 'group.joined') {
-      expect((await joiner.next('group.ended')).groupId).toBe(groupId);
-    } else {
-      expect(first).toMatchObject({ code: 'GROUP_NOT_FOUND' });
-    }
+    expect(await joiner.next('group.joined')).toMatchObject({ groupId, leaderOnline: false });
+    // The joiner keeps the group in memory; it is dropped when it leaves.
+    await sleep(50);
+    expect(store.size).toBe(1);
+    joiner.terminate();
     await waitUntil(() => store.size === 0);
-    joiner.send({ type: 'group.create', metadata: {} });
-    expect(await joiner.next('group.created')).toMatchObject({ role: 'leader' });
   });
 });
 
@@ -205,8 +201,8 @@ describe('robustness (H4)', () => {
       const { leader, members } = await createGroupWithMembers(ts, 2);
       leader.terminate();
       members[0]!.terminate();
-      // The surviving member gets group.ended and stays usable.
-      expect((await members[1]!.next('group.ended')).reason).toBe('leader_disconnected');
+      // The surviving member is told the leader is offline and stays usable.
+      expect((await members[1]!.next('leader.offline')).type).toBe('leader.offline');
       members[1]!.terminate();
     }
     await waitUntil(() => ts!.server.stats().total === 0);
@@ -221,10 +217,11 @@ describe('robustness (H4)', () => {
       const joiner = await ts.connectReady();
       joiner.send({ type: 'group.join', groupId });
       leader.terminate();
-      // Either joined then ended, or not found: never a crash.
+      // Either joined then told the leader is offline, or not found
+      // (the empty group was dropped): never a crash.
       const first = await joiner.next();
       if (first.type === 'group.joined') {
-        expect((await joiner.next('group.ended')).groupId).toBe(groupId);
+        expect((await joiner.next('leader.offline')).groupId).toBe(groupId);
       } else {
         expect(first).toMatchObject({ code: 'GROUP_NOT_FOUND' });
       }

@@ -31,6 +31,11 @@ export class FailingStore implements GroupStore {
     return this.inner.create(group);
   }
 
+  async createIfAbsent(group: GroupRecord): Promise<'created' | 'exists'> {
+    this.check('createIfAbsent');
+    return this.inner.createIfAbsent(group);
+  }
+
   async get(namespace: string, id: string): Promise<GroupRecord | undefined> {
     this.check('get');
     return this.inner.get(namespace, id);
@@ -50,14 +55,38 @@ export class FailingStore implements GroupStore {
     namespace: string,
     id: string,
     participantId: string,
-  ): Promise<{ remaining: number } | undefined> {
+  ): Promise<{ connected: number } | undefined> {
     this.check('removeParticipant');
     return this.inner.removeParticipant(namespace, id, participantId);
   }
 
-  async setPosition(namespace: string, id: string, payload: JsonValue): Promise<boolean> {
+  async setLeaderOnline(
+    namespace: string,
+    id: string,
+    online: boolean,
+    at?: number,
+  ): Promise<GroupRecord | undefined> {
+    this.check('setLeaderOnline');
+    return this.inner.setLeaderOnline(namespace, id, online, at);
+  }
+
+  async setPosition(
+    namespace: string,
+    id: string,
+    payload: JsonValue,
+    at: number,
+  ): Promise<boolean> {
     this.check('setPosition');
-    return this.inner.setPosition(namespace, id, payload);
+    return this.inner.setPosition(namespace, id, payload, at);
+  }
+
+  async setBlockList(
+    namespace: string,
+    id: string,
+    blockList: readonly string[],
+  ): Promise<{ removed: string[] } | undefined> {
+    this.check('setBlockList');
+    return this.inner.setBlockList(namespace, id, blockList);
   }
 
   async delete(namespace: string, id: string): Promise<void> {

@@ -55,15 +55,17 @@ describe('connect and handshake (AC8, AC9)', () => {
 
     socket.receive({
       type: 'hello.ok',
+      namespace: 'app-a',
       reqId: 'c1',
       participantId: PARTICIPANT_ID,
       limits: LIMITS,
     });
     const info = await connecting;
-    expect(info).toEqual({ participantId: PARTICIPANT_ID, limits: LIMITS });
+    expect(info).toEqual({ participantId: PARTICIPANT_ID, namespace: 'app-a', limits: LIMITS });
     expect(client.getState()).toEqual({
       status: 'connected',
       participantId: PARTICIPANT_ID,
+      namespace: 'app-a',
       limits: LIMITS,
     });
     expect(client.getSnapshot().connection).toBe(client.getState());
@@ -122,7 +124,13 @@ describe('client-side version check (AC12)', () => {
       const socket = FakeWebSocket.last;
       socket.open();
       socket.receive({ type: 'welcome', protocolVersion: 1, minProtocolVersion: 1 });
-      socket.receive({ type: 'hello.ok', reqId: 'c1', participantId: 'p', limits });
+      socket.receive({
+        type: 'hello.ok',
+        reqId: 'c1',
+        participantId: 'p',
+        namespace: 'app-a',
+        limits,
+      });
       const error = await rejection(connecting);
       expect(isSyncClientError(error, 'SERVER_UNSUPPORTED')).toBe(true);
       if (!isSyncClientError(error, 'SERVER_UNSUPPORTED')) return;

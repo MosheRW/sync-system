@@ -116,9 +116,11 @@ describe('logs never contain personal or secret data (AC24, L5, L8)', () => {
     });
     await raw.closed();
 
-    // Disconnects with a client close reason.
-    await member.close(4000, SENTINEL.closeReason);
+    // Disconnects with a client close reason: the leader first (frozen),
+    // then the last member (dropped).
     await leader.close(4000, SENTINEL.closeReason);
+    await member.next('leader.offline');
+    await member.close(4000, SENTINEL.closeReason);
     await waitUntil(() => ts.server.stats().total === 0);
 
     // Dev key warning through the same kind of logger.
@@ -132,6 +134,8 @@ describe('logs never contain personal or secret data (AC24, L5, L8)', () => {
           maxLeaderUpdatesPerSecond: 5,
           maxMessageBytes: 4096,
           maxConnections: 1000,
+          maxSessionMinutes: 180,
+          inactivityLimitMinutes: 20,
         },
       ],
       'development',
@@ -149,7 +153,8 @@ describe('logs never contain personal or secret data (AC24, L5, L8)', () => {
       'internal_error',
       'flood_closed',
       'ws_closed',
-      'group_ended',
+      'group_frozen',
+      'group_dropped',
       'dev_api_key',
     ]) {
       expect(events, event).toContain(event);

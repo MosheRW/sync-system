@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { isSyncClientError } from '../../src/errors.js';
 import { closeClients, newClient, nextEvent } from '../helpers/int.js';
 import { KEY_A, type RealServer, startRealServer } from '../helpers/real-server.js';
@@ -82,15 +82,18 @@ describe('groups against the real server (AC15-AC19, AC30)', () => {
     expect(() => member.updatePosition(1)).toThrow(expect.objectContaining({ code: 'NOT_LEADER' }));
   });
 
-  it('the member gets groupEnded when the leader disconnects', async () => {
+  // #5 AC18: a leader disconnect freezes the group instead of ending it.
+  it('the member stays in the group when the leader disconnects', async () => {
     const leader = await connected();
     const member = await connected();
     const { groupId } = await leader.createGroup({});
     await member.joinGroup(groupId);
-    const ended = nextEvent(member, 'groupEnded');
+    const ended = vi.fn();
+    member.on('groupEnded', ended);
     leader.close();
-    expect(await ended).toEqual({ groupId, reason: 'leader_disconnected' });
-    expect(member.getSnapshot().group).toMatchObject({ status: 'ended' });
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(ended).not.toHaveBeenCalled();
+    expect(member.getSnapshot().group).toMatchObject({ status: 'active', groupId });
     expect(member.getState().status).toBe('connected');
   });
 });

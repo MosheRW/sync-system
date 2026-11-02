@@ -39,6 +39,20 @@ export const ErrorCode = {
   TOO_MANY_MESSAGES: 'TOO_MANY_MESSAGES',
   /** An unexpected server error while handling a message. */
   INTERNAL_ERROR: 'INTERNAL_ERROR',
+  /** The leader sent group.leave; it must end the group instead (#5 Q-D). */
+  LEADER_CANNOT_LEAVE: 'LEADER_CANNOT_LEAVE',
+  /**
+   * The token is not valid here: bad signature or shape, another app's
+   * token, an unknown format version or an expired `exp`. The same bytes for
+   * every cause (#5 AC7, AC8, AC15).
+   */
+  TOKEN_INVALID: 'TOKEN_INVALID',
+  /** The token is past the group's max session time or recovery window (#5 AC9). */
+  TOKEN_EXPIRED: 'TOKEN_EXPIRED',
+  /** The token's group ended in this server's lifetime (#5 AC27, AC29). */
+  GROUP_ENDED: 'GROUP_ENDED',
+  /** The participant is on the leader's block list (#5 AC17, AC26). */
+  PARTICIPANT_BLOCKED: 'PARTICIPANT_BLOCKED',
 } as const;
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];

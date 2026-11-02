@@ -7,7 +7,9 @@ export type { Logger };
 /**
  * Second line of defense: these keys are removed if they ever reach the
  * logger. The first line is that call sites only log allowed fields
- * (event, namespace, groupRef, participantRef, codes, counts, port).
+ * (event, namespace, groupRef, participantRef, codes, counts, port). The
+ * participantRef is always of the connection ID, never of a group-scoped
+ * participant ID (L7).
  */
 export const REDACT_PATHS = [
   'apiKey',
@@ -24,6 +26,17 @@ export const REDACT_PATHS = [
   '*.displayName',
   'reason',
   'message',
+  // #5: tokens, group-scoped participant IDs, block lists and secrets (AC10).
+  'token',
+  '*.token',
+  'tokens',
+  '*.tokens',
+  'blockList',
+  '*.blockList',
+  'participantId',
+  '*.participantId',
+  'secret',
+  '*.secret',
 ];
 
 export interface LoggerOptions {

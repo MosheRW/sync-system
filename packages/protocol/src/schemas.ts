@@ -5,10 +5,20 @@ import type { JsonObject, JsonValue } from './json.js';
 import {
   MAX_API_KEY_LENGTH,
   MAX_APP_VERSION_INPUT_LENGTH,
+  MAX_BLOCK_LIST_SIZE,
   MAX_GROUP_ID_INPUT_LENGTH,
   MAX_REQ_ID_LENGTH,
+  MAX_TOKEN_LENGTH,
+  MAX_TOKENS_PER_CHECK,
+  NAMESPACE_PATTERN,
+  PARTICIPANT_ID_PATTERN,
 } from './limits.js';
-import type { ClientMessage, ServerMessage } from './messages.js';
+import {
+  type ClientMessage,
+  GROUP_ENDED_REASONS,
+  type ServerMessage,
+  TOKEN_STATUSES,
+} from './messages.js';
 
 // Every schema below is built with zod's `jitless` option on. Without it,
 // building the first z.object runs zod's eval probe at import time: it reads
@@ -65,18 +75,52 @@ const schemas = buildJitless(() => {
     position: opaqueValue,
   });
 
+  const inboundToken = z.string().max(MAX_TOKEN_LENGTH);
+
+  /** Participant IDs: at most 256, each in the participant ID format (#5 AC24). */
+  const blockList = z.array(z.string().regex(PARTICIPANT_ID_PATTERN)).max(MAX_BLOCK_LIST_SIZE);
+
+  const groupResumeSchema = z.object({
+    type: z.literal('group.resume'),
+    reqId,
+    token: inboundToken,
+    metadata: opaqueObject.optional(),
+    position: opaqueValue.optional(),
+    blockList: blockList.optional(),
+  });
+
+  const tokensCheckSchema = z.object({
+    type: z.literal('tokens.check'),
+    reqId,
+    tokens: z.array(inboundToken).min(1).max(MAX_TOKENS_PER_CHECK),
+  });
+
+  const blockListSetSchema = z.object({ type: z.literal('blocklist.set'), reqId, blockList });
+
+  const groupEndSchema = z.object({ type: z.literal('group.end'), reqId });
+
+  const groupLeaveSchema = z.object({ type: z.literal('group.leave'), reqId });
+
   const clientMessageSchema = z.discriminatedUnion('type', [
     helloSchema,
     groupCreateSchema,
     groupJoinSchema,
     positionUpdateSchema,
+    groupResumeSchema,
+    tokensCheckSchema,
+    blockListSetSchema,
+    groupEndSchema,
+    groupLeaveSchema,
   ]);
 
   const appLimitsSchema = z.object({
     maxGroupSize: z.number().int().positive(),
     maxLeaderUpdatesPerSecond: z.number().int().positive(),
     maxMessageBytes: z.number().int().positive(),
+    maxSessionMinutes: z.number().int().positive(),
   });
+
+  const token = z.string().min(1).max(MAX_TOKEN_LENGTH);
 
   const groupJoinedBase = {
     type: z.literal('group.joined'),
@@ -85,6 +129,19 @@ const schemas = buildJitless(() => {
     participantId: z.string(),
     role: z.literal('member'),
     metadata: opaqueObject,
+    token,
+    leaderOnline: z.boolean(),
+  };
+
+  const groupResumedBase = {
+    type: z.literal('group.resumed'),
+    reqId,
+    groupId: z.string(),
+    participantId: z.string(),
+    role: z.literal('leader'),
+    metadata: opaqueObject,
+    token,
+    recreated: z.boolean(),
   };
 
   const serverMessageSchema = z.union([
@@ -97,6 +154,7 @@ const schemas = buildJitless(() => {
       type: z.literal('hello.ok'),
       reqId,
       participantId: z.string(),
+      namespace: z.string().regex(NAMESPACE_PATTERN),
       limits: appLimitsSchema,
     }),
     z.object({
@@ -105,16 +163,33 @@ const schemas = buildJitless(() => {
       groupId: z.string(),
       participantId: z.string(),
       role: z.literal('leader'),
+      token,
     }),
     z.object({ ...groupJoinedBase, hasPosition: z.literal(true), position: opaqueValue }),
     z.object({ ...groupJoinedBase, hasPosition: z.literal(false) }),
+    z.object({ ...groupResumedBase, hasPosition: z.literal(true), position: opaqueValue }),
+    z.object({ ...groupResumedBase, hasPosition: z.literal(false) }),
+    z.object({ type: z.literal('group.waiting'), reqId, groupId: z.string() }),
+    z.object({
+      type: z.literal('tokens.result'),
+      reqId,
+      results: z
+        .array(z.object({ status: z.enum(TOKEN_STATUSES), token: token.optional() }))
+        .max(MAX_TOKENS_PER_CHECK),
+    }),
     z.object({ type: z.literal('position.ack'), reqId }),
     z.object({ type: z.literal('position.updated'), groupId: z.string(), position: opaqueValue }),
     z.object({
       type: z.literal('group.ended'),
+      reqId,
       groupId: z.string(),
-      reason: z.literal('leader_disconnected'),
+      reason: z.enum(GROUP_ENDED_REASONS),
     }),
+    z.object({ type: z.literal('group.left'), reqId, groupId: z.string() }),
+    z.object({ type: z.literal('blocklist.ack'), reqId }),
+    z.object({ type: z.literal('token.refreshed'), groupId: z.string(), token }),
+    z.object({ type: z.literal('leader.offline'), groupId: z.string() }),
+    z.object({ type: z.literal('leader.online'), groupId: z.string() }),
     z.object({
       type: z.literal('error'),
       reqId,
@@ -129,6 +204,7 @@ const schemas = buildJitless(() => {
     groupCreateSchema,
     groupJoinSchema,
     positionUpdateSchema,
+    groupResumeSchema,
     clientMessageSchema,
     serverMessageSchema,
   };
@@ -138,6 +214,7 @@ export const helloSchema = schemas.helloSchema;
 export const groupCreateSchema = schemas.groupCreateSchema;
 export const groupJoinSchema = schemas.groupJoinSchema;
 export const positionUpdateSchema = schemas.positionUpdateSchema;
+export const groupResumeSchema = schemas.groupResumeSchema;
 export const clientMessageSchema = schemas.clientMessageSchema;
 export const serverMessageSchema = schemas.serverMessageSchema;
 

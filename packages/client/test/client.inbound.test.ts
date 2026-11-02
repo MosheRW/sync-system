@@ -21,10 +21,10 @@ describe('inbound validation (AC10)', () => {
     client.on('positionUpdated', events);
     client.on('groupEnded', events);
     const before = client.getSnapshot();
-    socket.receive({ type: 'leader.offline', groupId: 'g' });
+    socket.receive({ type: 'roster.updated', groupId: 'g' });
     expect(events).not.toHaveBeenCalled();
     expect(client.getSnapshot()).toBe(before);
-    expect(debug).toHaveBeenCalledWith('unknown_message', { type: 'leader.offline' });
+    expect(debug).toHaveBeenCalledWith('unknown_message', { type: 'roster.updated' });
     client.close();
   });
 
@@ -43,7 +43,7 @@ describe('inbound validation (AC10)', () => {
     ['too deep', `${'['.repeat(70)}${']'.repeat(70)}`],
     [
       'too long',
-      JSON.stringify({ type: 'position.updated', groupId: 'g', position: 'x'.repeat(20_000) }),
+      JSON.stringify({ type: 'position.updated', groupId: 'g', position: 'x'.repeat(50_000) }),
     ],
   ])('emits INVALID_SERVER_MESSAGE for %s and stays connected', async (_name, frame) => {
     const { client, socket } = await connectedClient();
@@ -94,6 +94,7 @@ describe('handshake messages after connected (L8)', () => {
     socket.receive({ type: 'welcome', protocolVersion: 1, minProtocolVersion: 1 });
     socket.receive({
       type: 'hello.ok',
+      namespace: 'app-a',
       participantId: 'other',
       limits: { ...LIMITS, maxMessageBytes: 100_000 },
     });

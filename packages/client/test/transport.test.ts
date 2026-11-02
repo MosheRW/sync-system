@@ -29,9 +29,9 @@ describe('decodeFrame (AC10)', () => {
   });
 
   it('marks unknown types as unknown', () => {
-    expect(decodeFrame('{"type":"leader.offline","x":1}', 8192)).toEqual({
+    expect(decodeFrame('{"type":"roster.updated","x":1}', 8192)).toEqual({
       kind: 'unknown',
-      type: 'leader.offline',
+      type: 'roster.updated',
     });
   });
 
@@ -76,6 +76,7 @@ describe('limits (M1)', () => {
         maxGroupSize: 30,
         maxLeaderUpdatesPerSecond: 5,
         maxMessageBytes: 4096,
+        maxSessionMinutes: 180,
       }),
     ).toBeUndefined();
     expect(findOutOfBoundsLimit({ ...CLIENT_LIMIT_BOUNDS })).toBeUndefined();
@@ -88,16 +89,36 @@ describe('limits (M1)', () => {
     ['maxLeaderUpdatesPerSecond', 0],
     ['maxLeaderUpdatesPerSecond', 1.5],
     ['maxGroupSize', 10_001],
+    ['maxSessionMinutes', 10_081],
+    ['maxSessionMinutes', 0],
   ] as const)('names %s = %d as out of bounds', (key, value) => {
-    const limits = { maxGroupSize: 30, maxLeaderUpdatesPerSecond: 5, maxMessageBytes: 4096 };
+    const limits = {
+      maxGroupSize: 30,
+      maxLeaderUpdatesPerSecond: 5,
+      maxMessageBytes: 4096,
+      maxSessionMinutes: 180,
+    };
     expect(findOutOfBoundsLimit({ ...limits, [key]: value })).toBe(key);
   });
 
   it('sizes the inbound guard from the limits', () => {
     expect(maxInboundChars(undefined)).toBe(PRE_HANDSHAKE_MAX_CHARS);
     expect(
-      maxInboundChars({ maxGroupSize: 2, maxLeaderUpdatesPerSecond: 1, maxMessageBytes: 1000 }),
-    ).toBe(2000 + 8192);
+      maxInboundChars({
+        maxGroupSize: 2,
+        maxLeaderUpdatesPerSecond: 1,
+        maxMessageBytes: 1000,
+        maxSessionMinutes: 180,
+      }),
+    ).toBe(45_056);
+    expect(
+      maxInboundChars({
+        maxGroupSize: 2,
+        maxLeaderUpdatesPerSecond: 1,
+        maxMessageBytes: 30_000,
+        maxSessionMinutes: 180,
+      }),
+    ).toBe(60_000 + 8192 + 2048);
   });
 });
 

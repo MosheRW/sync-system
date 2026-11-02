@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { ConfigError } from './config-error.js';
+import { TOKENS_CHECK_MAX_FRAME_BYTES } from '../limits/constants.js';
 
 export const LOG_LEVELS = ['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'] as const;
 export type LogLevel = (typeof LOG_LEVELS)[number];
@@ -28,6 +29,16 @@ export interface ServerEnv {
   maxInboundBurst: number;
   /** Per-socket outbound buffer limit before terminate (H2). */
   maxBufferedBytes: number;
+  /** Ceiling for app `maxSessionMinutes` (#5 AC4). */
+  maxSessionMinutesCeiling: number;
+  /** Ceiling for app `inactivityLimitMinutes` (#5 AC4). */
+  inactivityLimitMinutesCeiling: number;
+  /** Leader activities that allow a token refresh after the min interval (#5 AC12). */
+  tokenRefreshActivities: number;
+  /** Minimum seconds between leader token refreshes (#5 AC12). */
+  tokenRefreshMinSeconds: number;
+  /** Maximum seconds between leader token refreshes; also the recovery slack (#5 AC12, Q10). */
+  tokenRefreshMaxSeconds: number;
 }
 
 export type EnvSource = Readonly<Record<string, string | undefined>>;
@@ -54,6 +65,20 @@ const NUMERIC_VARS: readonly NumericVar[] = [
   },
   { key: 'maxInboundBurst', name: 'MAX_INBOUND_BURST', defaultValue: 40 },
   { key: 'maxBufferedBytes', name: 'MAX_BUFFERED_BYTES', defaultValue: 262_144 },
+  { key: 'maxSessionMinutesCeiling', name: 'MAX_SESSION_MINUTES_CEILING', defaultValue: 480 },
+  {
+    key: 'inactivityLimitMinutesCeiling',
+    name: 'INACTIVITY_LIMIT_MINUTES_CEILING',
+    defaultValue: 60,
+  },
+  { key: 'tokenRefreshActivities', name: 'TOKEN_REFRESH_ACTIVITIES', defaultValue: 10 },
+  { key: 'tokenRefreshMinSeconds', name: 'TOKEN_REFRESH_MIN_SECONDS', defaultValue: 60 },
+  {
+    key: 'tokenRefreshMaxSeconds',
+    name: 'TOKEN_REFRESH_MAX_SECONDS',
+    defaultValue: 300,
+    max: 3600,
+  },
 ];
 
 /** Digits only, no sign, no leading zero, no decimal point. */
@@ -133,6 +158,16 @@ export function parseEnv(env: EnvSource): ServerEnv {
       n.maxBufferedBytes >= 4 * n.maxMessageSizeCeiling,
       `MAX_BUFFERED_BYTES (${n.maxBufferedBytes}) must be >= 4 * MAX_MESSAGE_SIZE_CEILING (${4 * n.maxMessageSizeCeiling})`,
     );
+    // A tokens.result with the most re-signed tokens (secret rotation) must fit
+    // in an empty outbound buffer, or sending it terminates the socket (#5).
+    rule(
+      n.maxBufferedBytes >= TOKENS_CHECK_MAX_FRAME_BYTES,
+      `MAX_BUFFERED_BYTES (${n.maxBufferedBytes}) must be >= the largest tokens.result frame (${TOKENS_CHECK_MAX_FRAME_BYTES})`,
+    );
+    rule(
+      n.tokenRefreshMinSeconds <= n.tokenRefreshMaxSeconds,
+      `TOKEN_REFRESH_MIN_SECONDS (${n.tokenRefreshMinSeconds}) must be <= TOKEN_REFRESH_MAX_SECONDS (${n.tokenRefreshMaxSeconds})`,
+    );
   }
 
   if (errors.length > 0) {
@@ -155,5 +190,10 @@ export function parseEnv(env: EnvSource): ServerEnv {
     maxInboundMessagesPerSecond: n.maxInboundMessagesPerSecond,
     maxInboundBurst: n.maxInboundBurst,
     maxBufferedBytes: n.maxBufferedBytes,
+    maxSessionMinutesCeiling: n.maxSessionMinutesCeiling,
+    inactivityLimitMinutesCeiling: n.inactivityLimitMinutesCeiling,
+    tokenRefreshActivities: n.tokenRefreshActivities,
+    tokenRefreshMinSeconds: n.tokenRefreshMinSeconds,
+    tokenRefreshMaxSeconds: n.tokenRefreshMaxSeconds,
   };
 }

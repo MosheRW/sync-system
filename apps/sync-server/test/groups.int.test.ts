@@ -1,7 +1,7 @@
-import { GROUP_ID_PATTERN } from '@sync-system/protocol';
+import { GROUP_ID_PATTERN, PARTICIPANT_ID_PATTERN } from '@sync-system/protocol';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { InMemoryGroupStore } from '../src/groups/in-memory-group-store.js';
-import { type TestServer, startTestServer } from './helpers/test-server.js';
+import { KEY_A, type TestServer, startTestServer } from './helpers/test-server.js';
 import { waitUntil } from './helpers/wait.js';
 
 let ts: TestServer;
@@ -29,6 +29,7 @@ describe('group create (AC11)', () => {
       groupId: expect.stringMatching(GROUP_ID_PATTERN) as string,
       participantId: expect.any(String) as string,
       role: 'leader',
+      token: expect.any(String) as string,
     });
     expect(store.size).toBe(1);
   });
@@ -76,6 +77,8 @@ describe('group join (AC12)', () => {
       participantId: expect.any(String) as string,
       role: 'member',
       metadata: METADATA,
+      token: expect.any(String) as string,
+      leaderOnline: true,
       hasPosition: true,
       position: { page: 3 },
     });
@@ -110,6 +113,19 @@ describe('group join (AC12)', () => {
     member.send({ type: 'group.join', groupId: created.groupId });
     const joined = await member.next('group.joined');
     expect(joined.participantId).not.toBe(created.participantId);
+  });
+
+  it('mints group-scoped participant IDs, distinct from the connection ID (#5 AC6)', async () => {
+    const leader = await ts.connect();
+    const hello = await leader.hello({ apiKey: KEY_A });
+    if (hello.type !== 'hello.ok') throw new Error('hello failed');
+    leader.send({ type: 'group.create', metadata: {} });
+    const created = await leader.next('group.created');
+    expect(created.participantId).toMatch(PARTICIPANT_ID_PATTERN);
+    expect(created.participantId).not.toBe(hello.participantId);
+    const record = await store.get('app-a', created.groupId);
+    expect(record?.leaderId).toBe(created.participantId);
+    expect(record?.participantIds).toEqual([created.participantId]);
   });
 
   it('answers an unknown group ID with GROUP_NOT_FOUND', async () => {

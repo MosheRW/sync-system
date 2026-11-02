@@ -1,16 +1,20 @@
 import { type Server, createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { CloseCode } from '@sync-system/protocol';
+import { randomBytes } from 'node:crypto';
 import { type ServerOptions, WebSocketServer } from 'ws';
 import type { AppRegistry } from './apps/app-registry.js';
+import { EndedGroups } from './groups/ended-groups.js';
 import { GroupService } from './groups/group-service.js';
 import type { GroupStore } from './groups/group-store.js';
 import { InMemoryGroupStore } from './groups/in-memory-group-store.js';
 import { LocalNotifier } from './groups/notifier.js';
 import type { ServerEnv } from './config/env.js';
+import type { TokenSecrets } from './config/token-secret.js';
 import { handleHttpRequest } from './http/health.js';
 import {
   CLOSE_TIMEOUT_MS,
+  ENDED_SWEEP_MS,
   HANDSHAKE_TIMEOUT_MS,
   HEARTBEAT_INTERVAL_MS,
   HTTP_CONNECTION_MARGIN,
@@ -19,6 +23,9 @@ import {
   transportMaxPayload,
 } from './limits/constants.js';
 import { SlidingWindowRateLimiter } from './limits/rate-limiter.js';
+import { type Scheduler, realScheduler } from './time/scheduler.js';
+import { TokenKeyring } from './tokens/token-keys.js';
+import { TokenService } from './tokens/token-service.js';
 import type { Logger } from './logging/logger.js';
 import { Connection } from './ws/connection.js';
 import { ConnectionCounter, type ConnectionStats } from './ws/connection-counter.js';
@@ -29,14 +36,24 @@ export interface SyncServerOptions {
   env: ServerEnv;
   registry: AppRegistry;
   logger: Logger;
-  /** Clock in ms; injected by tests. */
+  /** Clock in ms; injected by tests. Ignored when `scheduler` is given. */
   now?: () => number;
+  /**
+   * Clock and timers for group timers; injected by tests (a manual
+   * scheduler). Defaults to real, unref()ed timers on `now`.
+   */
+  scheduler?: Scheduler;
   /** Defaults to a new InMemoryGroupStore. */
   store?: GroupStore;
   /** Defaults to HEARTBEAT_INTERVAL_MS; shortened by tests. */
   heartbeatMs?: number;
   /** Defaults to HANDSHAKE_TIMEOUT_MS; shortened by tests. */
   handshakeTimeoutMs?: number;
+  /**
+   * Token signing secrets. `main` always passes them; tests that omit them
+   * get a random per-instance secret.
+   */
+  tokenSecrets?: TokenSecrets;
 }
 
 export interface SyncServer {
@@ -58,7 +75,8 @@ const SHUTDOWN_GRACE_MS = 1_000;
 export function createSyncServer(options: SyncServerOptions): SyncServer {
   const { env, logger, registry } = options;
   const handshakeTimeoutMs = options.handshakeTimeoutMs ?? HANDSHAKE_TIMEOUT_MS;
-  const now = options.now ?? Date.now;
+  const scheduler = options.scheduler ?? realScheduler(options.now ?? Date.now);
+  const now = (): number => scheduler.now();
 
   const httpServer = createServer(handleHttpRequest);
   // Slowloris protection and a hard socket backstop above the WS cap (H1).
@@ -94,12 +112,23 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
   });
 
   const store = options.store ?? new InMemoryGroupStore();
+  const ended = new EndedGroups(now, logger);
+  let sweepTimer: NodeJS.Timeout | undefined;
+  const tokenSecrets = options.tokenSecrets ?? { current: randomBytes(32) };
+  const tokens = new TokenService(new TokenKeyring(tokenSecrets));
   const groups = new GroupService({
     store,
     notifier: new LocalNotifier(),
     logger,
-    now,
     rateLimiter: new SlidingWindowRateLimiter(now),
+    tokens,
+    scheduler,
+    refresh: {
+      activities: env.tokenRefreshActivities,
+      minMs: env.tokenRefreshMinSeconds * 1000,
+      maxMs: env.tokenRefreshMaxSeconds * 1000,
+    },
+    ended,
   });
   const counter = new ConnectionCounter();
   const connections = new Set<Connection>();
@@ -179,6 +208,8 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
           httpServer.off('error', onError);
           port = (httpServer.address() as AddressInfo).port;
           heartbeat.start();
+          sweepTimer = setInterval(() => ended.sweep(), ENDED_SWEEP_MS);
+          sweepTimer.unref();
           resolve(port);
         };
         httpServer.once('error', onError);
@@ -188,6 +219,8 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
     },
     async close() {
       heartbeat.stop();
+      clearInterval(sweepTimer);
+      groups.close();
       const httpClosed = new Promise<void>((resolve) => {
         if (!httpServer.listening) {
           resolve();
@@ -200,6 +233,8 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
       httpServer.closeAllConnections();
       await httpClosed;
       await new Promise<void>((resolve) => wss.close(() => resolve()));
+      // Disconnect handling may have armed timers while sockets closed.
+      groups.close();
     },
   };
 }

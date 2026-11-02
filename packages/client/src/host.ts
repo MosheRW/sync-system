@@ -36,6 +36,8 @@ interface TextEncoderLike {
 export interface UrlLike {
   readonly href: string;
   readonly protocol: string;
+  /** Hostname plus a non-default port. */
+  readonly host: string;
   readonly hostname: string;
   readonly username: string;
   readonly password: string;
@@ -48,6 +50,7 @@ interface HostGlobals {
   clearTimeout?: (handle: unknown) => void;
   TextEncoder?: new () => TextEncoderLike;
   URL?: new (url: string) => UrlLike;
+  localStorage?: unknown;
 }
 
 function host(): HostGlobals {
@@ -58,6 +61,14 @@ function host(): HostGlobals {
 export function globalWebSocket(): WebSocketConstructorLike | undefined {
   const ctor = host().WebSocket;
   return typeof ctor === 'function' ? ctor : undefined;
+}
+
+/**
+ * The browser's `localStorage`, read only when token storage is first
+ * needed (#5 AC32). May throw (sandboxed iframes, some private modes).
+ */
+export function localStorageGlobal(): unknown {
+  return host().localStorage;
 }
 
 /** Largest delay `setTimeout` honours; larger values fire after about 1 ms (M1). */

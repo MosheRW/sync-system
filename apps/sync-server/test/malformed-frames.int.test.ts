@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type FrameOptions, Opcode, RawClient, encodeFrame } from './helpers/raw-client.js';
 import { KEY_A, type TestServer, httpGet, startTestServer } from './helpers/test-server.js';
+import { transportMaxPayload } from '../src/limits/constants.js';
 
 let ts: TestServer;
 
@@ -13,7 +14,7 @@ afterAll(async () => {
 });
 
 const HELLO = { type: 'hello', protocolVersion: 1, appVersion: '1.0.0', apiKey: KEY_A };
-const MAX_PAYLOAD = 2 * 16384 + 8192;
+const MAX_PAYLOAD = transportMaxPayload(16384);
 
 async function readyRaw(): Promise<RawClient> {
   const raw = await RawClient.connect(ts.port);

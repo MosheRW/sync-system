@@ -62,7 +62,8 @@ function rawReqId(frame: unknown): string | undefined {
  * rejects; every handler runs inside try/catch (H4).
  */
 export class Connection implements HeartbeatTarget {
-  readonly participantId = newParticipantId();
+  /** Per-connection ID, sent as `hello.ok.participantId`. */
+  readonly connectionId = newParticipantId();
   /** Set on hello.ok. */
   session: Session | undefined;
   awaitingPong = false;
@@ -249,10 +250,9 @@ export class Connection implements HeartbeatTarget {
     this.state = 'ready';
     this.deps.counter.authenticated(app.namespace);
     this.session = {
-      participantId: this.participantId,
+      connectionId: this.connectionId,
       app,
-      groupId: undefined,
-      role: undefined,
+      membership: undefined,
       deliver: (text) => {
         this.transmit(text);
       },
@@ -263,23 +263,25 @@ export class Connection implements HeartbeatTarget {
         });
       },
     };
-    this.deps.groups.attach(this.session);
     this.deps.logger.info(
       {
         event: 'handshake_ok',
         namespace: app.namespace,
-        participantRef: participantRef(this.participantId),
+        participantRef: participantRef(this.connectionId),
       },
       'handshake ok',
     );
     this.reply({
       type: 'hello.ok',
       ...(message.reqId !== undefined ? { reqId: message.reqId } : {}),
-      participantId: this.participantId,
+      participantId: this.connectionId,
+      // Not secret: clients key token storage by it (#5 AC33).
+      namespace: app.namespace,
       limits: {
         maxGroupSize: app.maxGroupSize,
         maxLeaderUpdatesPerSecond: app.maxLeaderUpdatesPerSecond,
         maxMessageBytes: app.maxMessageBytes,
+        maxSessionMinutes: app.maxSessionMinutes,
       },
     });
   }
@@ -301,6 +303,21 @@ export class Connection implements HeartbeatTarget {
         break;
       case 'position.update':
         response = await groups.update(session, message);
+        break;
+      case 'group.resume':
+        response = await groups.resume(session, message);
+        break;
+      case 'tokens.check':
+        response = await groups.checkTokens(session, message);
+        break;
+      case 'blocklist.set':
+        response = await groups.setBlockList(session, message);
+        break;
+      case 'group.end':
+        response = await groups.end(session, message);
+        break;
+      case 'group.leave':
+        response = await groups.leave(session, message);
         break;
     }
     this.reply(withReqId(response, message.reqId));
@@ -364,6 +381,12 @@ function canCarryReqId(message: ServerMessage): boolean {
     message.type === 'group.created' ||
     message.type === 'group.joined' ||
     message.type === 'position.ack' ||
-    message.type === 'hello.ok'
+    message.type === 'hello.ok' ||
+    message.type === 'group.resumed' ||
+    message.type === 'group.waiting' ||
+    message.type === 'tokens.result' ||
+    message.type === 'group.ended' ||
+    message.type === 'group.left' ||
+    message.type === 'blocklist.ack'
   );
 }

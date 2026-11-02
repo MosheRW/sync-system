@@ -38,7 +38,8 @@ pnpm audit               # high and critical advisories
 ```sh
 pnpm install
 cp config/apps.example.json config/apps.json   # then put real keys in it
-SYNC_CONFIG_PATH="$PWD/config/apps.json" pnpm --filter @sync-system/server dev
+TOKEN_SECRET="$(openssl rand -base64 32)" \
+  SYNC_CONFIG_PATH="$PWD/config/apps.json" pnpm --filter @sync-system/server dev
 ```
 
 The `dev` script (tsx watch) runs in `apps/sync-server`, and
@@ -46,7 +47,9 @@ The `dev` script (tsx watch) runs in `apps/sync-server`, and
 absolute path as above. For a quick start with the public dev key, run
 `NODE_ENV=development SYNC_CONFIG_PATH="$PWD/config/apps.dev.json" pnpm --filter @sync-system/server dev`
 instead: the dev key is refused unless `NODE_ENV` is exactly `development`
-or `test`.
+or `test`. In those two environments `TOKEN_SECRET` may be left unset: the
+server then uses a random secret per process and warns that tokens will not
+survive a restart (see [Token secret](#token-secret)).
 
 Production build: `pnpm build`, then from the repo root
 `node apps/sync-server/dist/index.js` (which reads `./config/apps.json` by
@@ -71,7 +74,10 @@ cap to its default, health-checks `/health`, and binds the port to `127.0.0.1`
 only. It sets `NODE_ENV=development`, because the dev registry uses a public
 API key: the log shows a `dev api key in use` warning. With any other
 `NODE_ENV` (the image default is `production`) the server refuses that key
-and exits 1.
+and exits 1. Compose also sets the public development token secret
+(`dev-only-insecure-token-secret-change-me-please`, logged as
+`dev_token_secret`), so tokens survive `docker compose restart` and restart
+recovery can be tried locally. It is refused outside `development`/`test`.
 
 To run the image yourself, mount your own registry and point
 `SYNC_CONFIG_PATH` at it. The image never contains a config file:
@@ -80,7 +86,8 @@ To run the image yourself, mount your own registry and point
 docker build -f apps/sync-server/Dockerfile -t sync-server .
 docker run -p 127.0.0.1:8080:8080 \
   -v "$PWD/config/apps.json:/config/apps.json:ro" \
-  -e SYNC_CONFIG_PATH=/config/apps.json sync-server
+  -e SYNC_CONFIG_PATH=/config/apps.json \
+  -e TOKEN_SECRET="$(cat /run/secrets/sync_token_secret)" sync-server
 ```
 
 ### Config file (registered client apps)
@@ -99,21 +106,25 @@ The server loads its client apps from a JSON file at `SYNC_CONFIG_PATH`.
       "maxGroupSize": 30,
       "maxLeaderUpdatesPerSecond": 5,
       "maxMessageBytes": 4096,
-      "maxConnections": 1000
+      "maxConnections": 1000,
+      "maxSessionMinutes": 180,
+      "inactivityLimitMinutes": 20
     }
   ]
 }
 ```
 
-| Field                       | Required | Default | Rule                                                      |
-| --------------------------- | -------- | ------- | --------------------------------------------------------- |
-| `namespace`                 | yes      |         | `^[a-z0-9][a-z0-9_-]{0,62}$`, unique.                     |
-| `apiKey`                    | yes      |         | 32-256 characters, unique. Stored only as a sha256 hash.  |
-| `minAppVersion`             | yes      |         | Valid semver. Older clients get `APP_VERSION_TOO_OLD`.    |
-| `maxGroupSize`              | no       | 30      | Integer >= 2, <= `MAX_GROUP_SIZE_CEILING`. Leader counts. |
-| `maxLeaderUpdatesPerSecond` | no       | 5       | Integer >= 1, <= `MAX_LEADER_UPDATE_RATE_CEILING`.        |
-| `maxMessageBytes`           | no       | 4096    | Integer >= 1, <= `MAX_MESSAGE_SIZE_CEILING`. Per field.   |
-| `maxConnections`            | no       | 1000    | Integer >= 1, <= `MAX_APP_CONNECTIONS_CEILING`.           |
+| Field                       | Required | Default | Rule                                                        |
+| --------------------------- | -------- | ------- | ----------------------------------------------------------- |
+| `namespace`                 | yes      |         | `^[a-z0-9][a-z0-9_-]{0,62}$`, unique.                       |
+| `apiKey`                    | yes      |         | 32-256 characters, unique. Stored only as a sha256 hash.    |
+| `minAppVersion`             | yes      |         | Valid semver. Older clients get `APP_VERSION_TOO_OLD`.      |
+| `maxGroupSize`              | no       | 30      | Integer >= 2, <= `MAX_GROUP_SIZE_CEILING`. Leader counts.   |
+| `maxLeaderUpdatesPerSecond` | no       | 5       | Integer >= 1, <= `MAX_LEADER_UPDATE_RATE_CEILING`.          |
+| `maxMessageBytes`           | no       | 4096    | Integer >= 1, <= `MAX_MESSAGE_SIZE_CEILING`. Per field.     |
+| `maxConnections`            | no       | 1000    | Integer >= 1, <= `MAX_APP_CONNECTIONS_CEILING`.             |
+| `maxSessionMinutes`         | no       | 180     | Integer >= 1, <= `MAX_SESSION_MINUTES_CEILING`. Group life. |
+| `inactivityLimitMinutes`    | no       | 20      | Integer >= 1, <= `INACTIVITY_LIMIT_MINUTES_CEILING`.        |
 
 - Unknown fields are rejected (catches typos).
 - A value above its env ceiling is a startup error naming the app and field;
@@ -137,26 +148,35 @@ what keeps groups apart in this version.
 Numeric variables must be positive integers; anything else (empty, `0`, `-1`,
 `1.5`, `abc`) is a startup error naming the variable. Unset means the default.
 
-| Variable                          | Default              | Purpose                                                                  |
-| --------------------------------- | -------------------- | ------------------------------------------------------------------------ |
-| `SYNC_CONFIG_PATH`                | `./config/apps.json` | Apps registry file (relative to the working directory).                  |
-| `PORT`                            | `8080`               | Listen port, 1-65535.                                                    |
-| `HOST`                            | `0.0.0.0`            | Bind address.                                                            |
-| `LOG_LEVEL`                       | `info`               | `fatal`, `error`, `warn`, `info`, `debug`, `trace` or `silent`.          |
-| `NODE_ENV`                        | unset                | The public dev API key is refused unless this is `development`/`test`.   |
-| `MAX_GROUP_SIZE_CEILING`          | `100`                | Ceiling for `maxGroupSize`.                                              |
-| `MAX_LEADER_UPDATE_RATE_CEILING`  | `10`                 | Ceiling for `maxLeaderUpdatesPerSecond`.                                 |
-| `MAX_MESSAGE_SIZE_CEILING`        | `16384`              | Ceiling for `maxMessageBytes` (bytes).                                   |
-| `MAX_APP_CONNECTIONS_CEILING`     | `10000`              | Ceiling for `maxConnections`. Must be <= `MAX_CONNECTIONS`.              |
-| `MAX_CONNECTIONS`                 | `10000`              | Concurrent WebSockets, pending and authenticated. Over it: HTTP 503.     |
-| `MAX_PENDING_HANDSHAKES`          | `1000`               | Sockets that have not sent hello yet. Must be <= `MAX_CONNECTIONS`.      |
-| `MAX_INBOUND_MESSAGES_PER_SECOND` | `20`                 | Per-connection message rate. Must be > `MAX_LEADER_UPDATE_RATE_CEILING`. |
-| `MAX_INBOUND_BURST`               | `40`                 | Per-connection burst. Must be >= `MAX_INBOUND_MESSAGES_PER_SECOND`.      |
-| `MAX_BUFFERED_BYTES`              | `262144`             | Per-socket outbound buffer before it is dropped. >= 4 x message ceiling. |
+| Variable                           | Default              | Purpose                                                                  |
+| ---------------------------------- | -------------------- | ------------------------------------------------------------------------ |
+| `SYNC_CONFIG_PATH`                 | `./config/apps.json` | Apps registry file (relative to the working directory).                  |
+| `PORT`                             | `8080`               | Listen port, 1-65535.                                                    |
+| `HOST`                             | `0.0.0.0`            | Bind address.                                                            |
+| `LOG_LEVEL`                        | `info`               | `fatal`, `error`, `warn`, `info`, `debug`, `trace` or `silent`.          |
+| `NODE_ENV`                         | unset                | The public dev API key is refused unless this is `development`/`test`.   |
+| `TOKEN_SECRET`                     | none                 | Token signing secret; see [Token secret](#token-secret). Never logged.   |
+| `TOKEN_SECRET_PREVIOUS`            | unset                | Old secret, verify only, during a rotation.                              |
+| `MAX_GROUP_SIZE_CEILING`           | `100`                | Ceiling for `maxGroupSize`.                                              |
+| `MAX_LEADER_UPDATE_RATE_CEILING`   | `10`                 | Ceiling for `maxLeaderUpdatesPerSecond`.                                 |
+| `MAX_MESSAGE_SIZE_CEILING`         | `16384`              | Ceiling for `maxMessageBytes` (bytes).                                   |
+| `MAX_APP_CONNECTIONS_CEILING`      | `10000`              | Ceiling for `maxConnections`. Must be <= `MAX_CONNECTIONS`.              |
+| `MAX_CONNECTIONS`                  | `10000`              | Concurrent WebSockets, pending and authenticated. Over it: HTTP 503.     |
+| `MAX_PENDING_HANDSHAKES`           | `1000`               | Sockets that have not sent hello yet. Must be <= `MAX_CONNECTIONS`.      |
+| `MAX_INBOUND_MESSAGES_PER_SECOND`  | `20`                 | Per-connection message rate. Must be > `MAX_LEADER_UPDATE_RATE_CEILING`. |
+| `MAX_INBOUND_BURST`                | `40`                 | Per-connection burst. Must be >= `MAX_INBOUND_MESSAGES_PER_SECOND`.      |
+| `MAX_BUFFERED_BYTES`               | `262144`             | Outbound buffer per socket before drop. >= 4 x msg ceiling and >= 45056. |
+| `MAX_SESSION_MINUTES_CEILING`      | `480`                | Ceiling for `maxSessionMinutes`.                                         |
+| `INACTIVITY_LIMIT_MINUTES_CEILING` | `60`                 | Ceiling for `inactivityLimitMinutes`.                                    |
+| `TOKEN_REFRESH_ACTIVITIES`         | `10`                 | Leader updates that allow a token refresh after the min interval.        |
+| `TOKEN_REFRESH_MIN_SECONDS`        | `60`                 | Min seconds between leader token refreshes. <= the max.                  |
+| `TOKEN_REFRESH_MAX_SECONDS`        | `300`                | Max seconds between refreshes (<= 3600); also the recovery slack.        |
 
 Fixed limits: hello within 5 s, at most 32 queued messages per connection, JSON
 nesting at most 64 levels, heartbeat ping every 30 s, HTTP header timeout 10 s
-and request timeout 15 s.
+and request timeout 15 s. Tokens: 365 days `exp`, at most 2048 characters, 20
+per `tokens.check`, 10 checks per connection per minute, block lists of at
+most 256 IDs, ended groups remembered for at most 100 000 groups.
 
 Memory sizing: outbound buffers alone can reach
 `MAX_CONNECTIONS x MAX_BUFFERED_BYTES` (10000 x 256 KiB, about 2.5 GiB at the
@@ -164,6 +184,85 @@ defaults), and one app's clients up to its `maxConnections x MAX_BUFFERED_BYTES`
 (1000 x 256 KiB, about 250 MiB at the default). Give the process (and its
 container memory limit) at least that much headroom, or lower `MAX_CONNECTIONS`
 or `MAX_BUFFERED_BYTES` to fit the machine.
+
+Inbound frames: the transport limit is
+`max(2 x MAX_MESSAGE_SIZE_CEILING + 8192 + 16384, 45056)` bytes (57 344 at the
+defaults; a recreation request carries metadata, a position, a token and a
+block list). With 32 queued messages per connection, the worst case is about
+32 x 57 KiB per socket; size the machine for it at your `MAX_CONNECTIONS`.
+
+### Token secret
+
+Every participant gets a signed token (HS256 JWT) per group. Each app gets its
+own signing key, derived from `TOKEN_SECRET` with HKDF, so one app's tokens
+are useless on another. Generate the secret with:
+
+```sh
+openssl rand -base64 32
+```
+
+Rules, checked at startup (`Config error: ...`, exit 1, the value is never
+printed):
+
+- `TOKEN_SECRET` is **required** unless `NODE_ENV` is exactly `development`
+  or `test` (an unset `NODE_ENV` counts as production). There, a missing
+  secret means a random secret per process and the warning
+  `token_secret_random`: tokens do not survive a restart.
+- In every environment a set secret must be at least 32 bytes, have at least
+  16 different byte values, must not start or end with whitespace (nothing is
+  trimmed), and must not be an example value from these docs
+  (`REPLACE-with-output-of-openssl-rand-base64-32`).
+- The public development secret is accepted only in `development` and `test`.
+- `TOKEN_SECRET_PREVIOUS` follows the same rules and must differ from
+  `TOKEN_SECRET`. While it is set, the log shows `token_secret_previous_set`
+  at startup, so it is not forgotten.
+- Keep the secret out of git, images and logs; inject it from your secret store.
+  Every instance of one deployment must use the same secret. Keep server clocks
+  in sync (NTP): token times are server times, with 5 minutes of tolerance.
+
+**Routine rotation** (no downtime, nobody logged out):
+
+1. Set the new secret as `TOKEN_SECRET` and the old one as
+   `TOKEN_SECRET_PREVIOUS`, and restart. Old tokens still verify, and every
+   check, resume or refresh hands back a token signed with the new secret.
+2. After `MAX_SESSION_MINUTES_CEILING` + `TOKEN_REFRESH_MAX_SECONDS` (8 h 5 min
+   by default) remove `TOKEN_SECRET_PREVIOUS` and restart. Every old token is
+   expired by then anyway.
+
+**After a leak** (compromise): replace `TOKEN_SECRET` with a new value and
+do **not** set the leaked one as `TOKEN_SECRET_PREVIOUS`. Otherwise tokens
+forged with the leaked secret would be re-signed with the new one. All tokens
+become invalid; clients delete them and groups must be created again. That is
+the price of a leak.
+
+Changing the HKDF label or salt in the code has the same effect as a new
+secret.
+
+### Recovery and tokens
+
+The server still keeps nothing on disk; the leader's client is the group's
+database.
+
+- A leader disconnect **freezes** the group: members get `leader.offline` and
+  stay in it. The leader comes back with `group.resume` and its token (members
+  get `leader.online`; the server's position wins). A frozen group ends with
+  `leader_timeout` when `inactivityLimitMinutes` + `TOKEN_REFRESH_MAX_SECONDS`
+  have passed since the leader's last activity.
+- Every group ends with `max_session` at `maxSessionMinutes` after it was
+  created, leader online or not.
+- A group nobody is connected to is dropped from memory (not ended). After a
+  restart, or later ("resume later"), the leader's `group.resume` with its
+  token **recreates** it with the same ID, creation time and leader, plus the
+  metadata, position and block list its client sends. Members that resumed
+  first wait (`group.waiting`) and are admitted automatically.
+- The leader can `group.end` the group; a member can `group.leave`. Ended
+  groups are remembered (as hashes) until their max-session deadline, so their
+  tokens get `GROUP_ENDED`; a restart forgets that (accepted: the leader's
+  client deletes its token on end).
+- Leader tokens are refreshed (`token.refreshed`) after activity; member
+  tokens are not.
+- The block list binds token identities only. Until join codes (item 4), a
+  blocked person can still join again **by group ID** with a new identity.
 
 ### Protocol (v1) in brief
 
@@ -179,14 +278,27 @@ and the types are exported by `@sync-system/protocol`.
 3. `group.create` (`metadata`, optional `position`) makes the sender leader;
    `group.join` (`groupId`) returns the metadata and current position (or
    `hasPosition: false`); `position.update` from the leader is relayed to every
-   member as `position.updated`.
-4. When the leader disconnects, members get `group.ended` and the group is gone.
-   Groups live in memory only: a restart forgets them.
+   member as `position.updated`. `group.created` and `group.joined` carry the
+   participant's token; `hello.ok` carries the app `namespace` and
+   `limits.maxSessionMinutes`.
+4. `group.resume` (`token`, plus `metadata`, `position` and `blockList` from a
+   leader) answers `group.resumed` (leader), `group.joined` or `group.waiting`
+   (member). `tokens.check` (up to 20 tokens) answers one status per token:
+   `live`, `recoverable`, `waiting`, `blocked`, `ended`, `expired` or
+   `invalid`. `group.end`, `group.leave` and `blocklist.set` (leader) complete
+   the set. See [`docs/issues/5/architecture.md`](docs/issues/5/architecture.md)
+   (section 4).
+5. `group.ended` reasons: `ended_by_leader`, `leader_timeout`, `max_session`,
+   `replaced` (the same participant resumed on another connection) and
+   `removed` (blocked).
 
 Errors carry a stable `code` (`GROUP_NOT_FOUND`, `GROUP_FULL`, `NOT_LEADER`,
-`RATE_LIMITED`, `MESSAGE_TOO_LARGE`, `TOO_MANY_MESSAGES`, ...). A connection
-that floods messages gets `TOO_MANY_MESSAGES` and close 4008, even if it is the
-leader (which ends its group).
+`RATE_LIMITED`, `MESSAGE_TOO_LARGE`, `TOO_MANY_MESSAGES`, `TOKEN_INVALID`,
+`TOKEN_EXPIRED`, `GROUP_ENDED`, `PARTICIPANT_BLOCKED`, `LEADER_CANNOT_LEAVE`,
+...). Every token failure gets the same `TOKEN_INVALID`, so errors reveal
+nothing about other groups. A connection that floods messages gets
+`TOO_MANY_MESSAGES` and close 4008, even if it is the leader (which freezes its
+group).
 
 ### Deployment security
 
@@ -198,8 +310,12 @@ leader (which ends its group).
   deliberately does not look at client IPs (behind a proxy they are the
   proxy's, and IPs stay out of the app and its logs).
 - **Logs** never contain client IPs, display names, API keys, positions,
-  metadata or raw group IDs (groups appear as a hash prefix). Keep it that way
-  at the proxy too, or keep proxy logs short-lived.
+  metadata, tokens, participant IDs, block lists, secrets or raw group IDs
+  (groups appear as a hash prefix). Keep it that way at the proxy too, or keep
+  proxy logs short-lived.
+- **Tokens are bearer credentials.** Whoever holds a leader token can take the
+  lead back until the group ends. `wss://` keeps them off the wire; the
+  client README covers storing them.
 - **Never commit real registries or `.env` files**; mount the registry at
   runtime.
 
