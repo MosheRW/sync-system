@@ -50,6 +50,33 @@ export interface StoredEntry {
 
 type Change = (entries: readonly StoredEntry[]) => readonly StoredEntry[];
 
+/**
+ * What storage held for a dirty group when its write failed (#7 L5). Kept in
+ * memory only; the stored document format is unchanged.
+ */
+interface DirtyMark {
+  /** The group's stored token then; undefined if it had no stored entry. */
+  readonly storedToken: string | undefined;
+  readonly storedIat: number | undefined;
+  /** Whether the storage key existed then (#7 L-4). */
+  readonly keyExisted: boolean;
+}
+
+/** One read of the raw stored document; `ok: false` if the read itself failed. */
+type StoredRead =
+  | { readonly ok: true; readonly entries: readonly StoredEntry[]; readonly keyExists: boolean }
+  | { readonly ok: false };
+
+interface ReadResult {
+  readonly raw: StoredRead;
+  /** The stored entries merged with the dirty groups' in-memory state. */
+  readonly merged: readonly StoredEntry[];
+}
+
+function byGroup(entries: readonly StoredEntry[]): Map<string, StoredEntry> {
+  return new Map(entries.map((entry) => [entry.claims.gid, entry]));
+}
+
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -115,6 +142,12 @@ function serialize(entries: readonly StoredEntry[]): string {
  *   in-memory entry (or its absence) wins over what storage returns, so a
  *   readable store whose writes fail (quota full) never brings back a stale
  *   token. Other groups still merge in from storage.
+ * - Another tab's later change still wins over a dirty group (#7 L5): the
+ *   mark keeps the group's stored token at the failed write, and storage
+ *   wins if that entry was removed since, now holds a newer token (higher
+ *   `iat`), or the whole key was removed (only `removeAll()` does that).
+ *   These rules apply only to a document that was really read: a read
+ *   failure never drops or changes a mark (#7 R5).
  */
 export class TokenStore {
   readonly #storage: TokenStorage;
@@ -126,7 +159,10 @@ export class TokenStore {
   #chain: Promise<void> = Promise.resolve();
   #pendingPositions = new Map<string, { hasPosition: boolean; position?: JsonValue }>();
   /** Groups whose latest change is only in memory because a write failed. */
-  readonly #dirty = new Set<string>();
+  readonly #dirty = new Map<string, DirtyMark>();
+  /** Storage as last read or written by this store, for marks made while reads fail. */
+  #known = new Map<string, StoredEntry>();
+  #keyKnown = false;
   #positionTimer: TimerHandle | undefined;
 
   constructor(
@@ -164,7 +200,7 @@ export class TokenStore {
   /** Reads the document again (another tab may have written) and returns the entries. */
   load(): Promise<readonly StoredEntry[]> {
     return this.#run(async () => {
-      this.#entries = this.#prune(this.#applyPending(await this.#read()));
+      this.#entries = this.#prune(this.#applyPending((await this.#read()).merged));
       return this.#entries;
     });
   }
@@ -217,8 +253,8 @@ export class TokenStore {
     { ok: true; blockList: readonly string[] } | { ok: false; reason: 'not_found' | 'full' }
   > {
     return this.#run(async () => {
-      const base = await this.#read();
-      const current = this.#prune(this.#applyPending(base));
+      const read = await this.#read();
+      const current = this.#prune(this.#applyPending(read.merged));
       const entry = current.find((e) => e.claims.gid === groupId);
       if (entry?.claims.role !== 'leader' || entry.recovery === undefined) {
         this.#entries = current;
@@ -234,7 +270,7 @@ export class TokenStore {
       );
       this.#pendingPositions.clear();
       this.#entries = next;
-      await this.#write(base, next);
+      await this.#write(read, next);
       return { ok: true, blockList } as const;
     });
   }
@@ -284,9 +320,11 @@ export class TokenStore {
       try {
         await this.#storage.removeItem(this.#key);
         this.#dirty.clear();
+        this.#known = new Map();
+        this.#keyKnown = false;
       } catch (error) {
         this.#log('warn', 'storage_error', { op: 'remove', name: storageErrorName(error) });
-        for (const entry of previous) this.#dirty.add(entry.claims.gid);
+        for (const entry of previous) this.#mark(entry.claims.gid, { ok: false });
       }
       this.#log('debug', 'token_deleted', { count });
     });
@@ -310,11 +348,11 @@ export class TokenStore {
   #mutate(change: Change, event?: string, count?: number): Promise<void> {
     return this.#run(async () => {
       // Pending positions go on top: they are newer than anything stored.
-      const base = await this.#read();
-      const next = this.#prune(this.#applyPending(change(base)));
+      const read = await this.#read();
+      const next = this.#prune(this.#applyPending(change(read.merged)));
       this.#pendingPositions.clear();
       this.#entries = next;
-      await this.#write(base, next);
+      await this.#write(read, next);
       if (event !== undefined) {
         this.#log('debug', event, count === undefined ? undefined : { count });
       }
@@ -322,22 +360,66 @@ export class TokenStore {
   }
 
   /**
-   * Writes `next`, which was derived from `base`. On success nothing is dirty
-   * any more (the document holds every in-memory change). On failure, every
-   * group whose entry differs between `base` and `next` becomes dirty.
+   * Writes `next`, which was derived from `read.merged`. On success nothing
+   * is dirty any more (the document holds every in-memory change). On
+   * failure, every group whose entry differs between the two becomes dirty,
+   * marked with what storage held for it (#7 L5).
    */
-  async #write(base: readonly StoredEntry[], next: readonly StoredEntry[]): Promise<void> {
+  async #write(read: ReadResult, next: readonly StoredEntry[]): Promise<void> {
     try {
       await this.#storage.setItem(this.#key, serialize(next));
       this.#dirty.clear();
+      this.#known = byGroup(next);
+      this.#keyKnown = true;
     } catch (error) {
       this.#log('warn', 'storage_error', { op: 'set', name: storageErrorName(error) });
-      const before = new Map(base.map((entry) => [entry.claims.gid, entry]));
-      const after = new Map(next.map((entry) => [entry.claims.gid, entry]));
+      const before = byGroup(read.merged);
+      const after = byGroup(next);
       for (const gid of new Set([...before.keys(), ...after.keys()])) {
-        if (before.get(gid) !== after.get(gid)) this.#dirty.add(gid);
+        if (before.get(gid) !== after.get(gid)) this.#mark(gid, read.raw);
       }
     }
+  }
+
+  /**
+   * Marks `gid` dirty with its stored entry from `raw`. If that read failed,
+   * an existing mark is kept as it is (#7 R5); a new one uses the last
+   * storage state this store saw.
+   */
+  #mark(gid: string, raw: StoredRead): void {
+    if (!raw.ok && this.#dirty.has(gid)) return;
+    const stored = raw.ok ? byGroup(raw.entries).get(gid) : this.#known.get(gid);
+    this.#dirty.set(gid, {
+      storedToken: stored?.token,
+      storedIat: stored?.claims.iat,
+      keyExisted: raw.ok ? raw.keyExists : this.#keyKnown,
+    });
+  }
+
+  /**
+   * Whether another tab's change wins over the dirty group (#7 L5), given
+   * its stored entry `stored` and in-memory entry `memory` now:
+   * 1. stored entry unchanged since the failed write: memory wins;
+   * 2. it had a stored token that is gone now: storage wins (removed);
+   * 3. it now holds a newer token than memory and the mark: storage wins;
+   * 4. otherwise (changed, but not newer): memory wins.
+   * Before these, a key that existed then and is missing now can only have
+   * been removed by `removeAll()` in another tab, so storage wins (#7 L-4).
+   */
+  #storageWins(
+    mark: DirtyMark,
+    stored: StoredEntry | undefined,
+    memory: StoredEntry | undefined,
+    keyExists: boolean,
+  ): boolean {
+    if (mark.keyExisted && !keyExists) return true;
+    if (stored?.token === mark.storedToken) return false;
+    if (stored === undefined) return true;
+    const known = Math.max(
+      memory?.claims.iat ?? Number.NEGATIVE_INFINITY,
+      mark.storedIat ?? Number.NEGATIVE_INFINITY,
+    );
+    return stored.claims.iat > known;
   }
 
   /** Pending positions applied onto `entries`. */
@@ -351,25 +433,46 @@ export class TokenStore {
     return result;
   }
 
-  /** The stored entries, with dirty groups taken from memory instead. */
-  async #read(): Promise<readonly StoredEntry[]> {
-    const stored = await this.#readStored();
-    if (this.#dirty.size === 0) return stored;
-    return [
-      ...stored.filter((entry) => !this.#dirty.has(entry.claims.gid)),
-      ...this.#entries.filter((entry) => this.#dirty.has(entry.claims.gid)),
-    ];
+  /**
+   * The stored entries, with each dirty group taken from memory unless
+   * another tab's change wins (#7 L5). On a read failure, the in-memory copy,
+   * with every mark left unchanged (#7 R5).
+   */
+  async #read(): Promise<ReadResult> {
+    const raw = await this.#readStored();
+    if (!raw.ok) return { raw, merged: this.#entries };
+    this.#known = byGroup(raw.entries);
+    this.#keyKnown = raw.keyExists;
+    if (this.#dirty.size === 0) return { raw, merged: raw.entries };
+    const memory = byGroup(this.#entries);
+    const merged = raw.entries.filter((entry) => !this.#dirty.has(entry.claims.gid));
+    for (const [gid, mark] of [...this.#dirty]) {
+      const stored = this.#known.get(gid);
+      const mine = memory.get(gid);
+      if (this.#storageWins(mark, stored, mine, raw.keyExists)) {
+        this.#dirty.delete(gid);
+        if (stored !== undefined) merged.push(stored);
+      } else if (mine !== undefined) {
+        merged.push(mine);
+      }
+    }
+    return { raw, merged };
   }
 
-  /** Reads and validates the stored document. On a read failure, the in-memory copy. */
-  async #readStored(): Promise<readonly StoredEntry[]> {
+  /** Reads and validates the stored document. Unusable content reads as no entries. */
+  async #readStored(): Promise<StoredRead> {
     let text: unknown;
     try {
       text = await this.#storage.getItem(this.#key);
     } catch (error) {
       this.#log('warn', 'storage_error', { op: 'get', name: storageErrorName(error) });
-      return this.#entries;
+      return { ok: false };
     }
+    const keyExists = text !== null && text !== undefined;
+    return { ok: true, entries: this.#parseStored(text), keyExists };
+  }
+
+  #parseStored(text: unknown): readonly StoredEntry[] {
     if (typeof text !== 'string' || text.length > MAX_STORED_DOCUMENT_CHARS) return [];
     let document: unknown;
     try {
