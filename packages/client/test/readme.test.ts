@@ -33,4 +33,21 @@ describe('README drift guard (AC31)', () => {
       expect(readme).toContain(text);
     }
   });
+
+  it('documents token storage, recovery and the XSS caveat (#5 AC41)', () => {
+    for (const text of [
+      '### Token storage',
+      '### `checkTokens()`',
+      '### `resumeGroup(groupId, options?)`',
+      '### Block list',
+      '### Ending and leaving',
+      'XSS caveat',
+      'forgetAllGroups()',
+      'sync-system:v1:<namespace>@<host[:port]>',
+      '`replaced`',
+      '`waiting`',
+    ]) {
+      expect(readme, text).toContain(text);
+    }
+  });
 });

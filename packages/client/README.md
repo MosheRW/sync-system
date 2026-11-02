@@ -90,36 +90,43 @@ bad value. The options object is not kept; the API key lives in a private
 field and never appears in `JSON.stringify`, `util.inspect`, the snapshot,
 errors, events or logs.
 
-| Option                     | Default            | Notes                                                                  |
-| -------------------------- | ------------------ | ---------------------------------------------------------------------- |
-| `url`                      | required           | `wss://...`. See "Transport security".                                 |
-| `apiKey`                   | required           | 1 to 256 characters.                                                   |
-| `appVersion`               | required           | 1 to 256 characters; the server checks semver.                         |
-| `WebSocket`                | global `WebSocket` | Constructor to use (`ws`, a wrapper, a test fake).                     |
-| `reconnect.initialDelayMs` | `500`              | First backoff cap. At least 100.                                       |
-| `reconnect.maxDelayMs`     | `10000`            | Largest backoff cap. At least 1000 and at least `initialDelayMs`.      |
-| `reconnect.maxAttempts`    | `Infinity`         | Reconnect attempts per `connect()` run (reset by a stable connection). |
-| `reconnect.stableAfterMs`  | `10000`            | Connected this long before the backoff resets. At least 1000.          |
-| `requestTimeoutMs`         | `10000`            | Open + handshake, create and join. Position acks wait twice this.      |
-| `allowInsecureTransport`   | `false`            | Must be exactly `true` to allow `ws://` to a non-loopback host.        |
-| `logger`                   | none               | Opt-in logger, see "Logging".                                          |
-| `random`                   | `Math.random`      | Jitter source in `[0, 1)`; tests inject it.                            |
+| Option                     | Default            | Notes                                                                        |
+| -------------------------- | ------------------ | ---------------------------------------------------------------------------- |
+| `url`                      | required           | `wss://...`. See "Transport security".                                       |
+| `apiKey`                   | required           | 1 to 256 characters.                                                         |
+| `appVersion`               | required           | 1 to 256 characters; the server checks semver.                               |
+| `WebSocket`                | global `WebSocket` | Constructor to use (`ws`, a wrapper, a test fake).                           |
+| `reconnect.initialDelayMs` | `500`              | First backoff cap. At least 100.                                             |
+| `reconnect.maxDelayMs`     | `10000`            | Largest backoff cap. At least 1000 and at least `initialDelayMs`.            |
+| `reconnect.maxAttempts`    | `Infinity`         | Reconnect attempts per `connect()` run (reset by a stable connection).       |
+| `reconnect.stableAfterMs`  | `10000`            | Connected this long before the backoff resets. At least 1000.                |
+| `requestTimeoutMs`         | `10000`            | Open + handshake, create and join. Position acks wait twice this.            |
+| `allowInsecureTransport`   | `false`            | Must be exactly `true` to allow `ws://` to a non-loopback host.              |
+| `logger`                   | none               | Opt-in logger, see "Logging".                                                |
+| `random`                   | `Math.random`      | Jitter source in `[0, 1)`; tests inject it.                                  |
+| `storage`                  | `'local'`          | Token storage: `'local'`, `'memory'` or a custom store. See "Token storage". |
 
 Every `*Ms` value must be a finite number up to 2^31-1 ms.
 
 ### Methods
 
-| Method                                         | Returns                       | Notes                                                                                                                                                                        |
-| ---------------------------------------------- | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `connect()`                                    | `Promise<ConnectedInfo>`      | Resolves on `hello.ok` with `{ participantId, limits }`. Returns the current attempt if one is running. Rejects on a fatal error, `close()` or giving up: always `catch` it. |
-| `close()`                                      | `void`                        | Idempotent. Closes the socket (1000), rejects pending requests and `connect()` with `CLOSED`, stops every timer. Never reconnects by itself.                                 |
-| `createGroup(metadata, initialPosition?)`      | `Promise<CreatedGroup>`       | `{ groupId, role: 'leader', participantId }`.                                                                                                                                |
-| `joinGroup(groupId)`                           | `Promise<JoinedGroup>`        | `{ groupId, role: 'member', participantId, metadata, hasPosition, position? }`. `hasPosition: false` means "no position yet".                                                |
-| `updatePosition(position)`                     | `void`                        | Leader only. Throws local errors synchronously; server rejections arrive as `error` events.                                                                                  |
-| `getState()`                                   | `ConnectionState`             | Same as `getSnapshot().connection`.                                                                                                                                          |
-| `getSnapshot()`                                | `SyncClientSnapshot`          | `{ connection, group }`, frozen, same object until something changes.                                                                                                        |
-| `subscribe(listener)`                          | unsubscribe function          | Called after every snapshot change. Fits `useSyncExternalStore`.                                                                                                             |
-| `on(event, listener)` / `off(event, listener)` | unsubscribe function / `void` | Typed events, below.                                                                                                                                                         |
+| Method                                                                                         | Returns                        | Notes                                                                                                                                                                        |
+| ---------------------------------------------------------------------------------------------- | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `connect()`                                                                                    | `Promise<ConnectedInfo>`       | Resolves on `hello.ok` with `{ participantId, limits }`. Returns the current attempt if one is running. Rejects on a fatal error, `close()` or giving up: always `catch` it. |
+| `close()`                                                                                      | `void`                         | Idempotent. Closes the socket (1000), rejects pending requests and `connect()` with `CLOSED`, stops every timer. Never reconnects by itself.                                 |
+| `createGroup(metadata, initialPosition?)`                                                      | `Promise<CreatedGroup>`        | `{ groupId, role: 'leader', participantId }`.                                                                                                                                |
+| `joinGroup(groupId)`                                                                           | `Promise<JoinedGroup>`         | `{ groupId, role: 'member', participantId, metadata, hasPosition, position? }`. `hasPosition: false` means "no position yet".                                                |
+| `updatePosition(position)`                                                                     | `void`                         | Leader only. Throws local errors synchronously; server rejections arrive as `error` events.                                                                                  |
+| `getState()`                                                                                   | `ConnectionState`              | Same as `getSnapshot().connection`.                                                                                                                                          |
+| `getSnapshot()`                                                                                | `SyncClientSnapshot`           | `{ connection, group }`, frozen, same object until something changes.                                                                                                        |
+| `subscribe(listener)`                                                                          | unsubscribe function           | Called after every snapshot change. Fits `useSyncExternalStore`.                                                                                                             |
+| `on(event, listener)` / `off(event, listener)`                                                 | unsubscribe function / `void`  | Typed events, below.                                                                                                                                                         |
+| `checkTokens()`                                                                                | `Promise<StoredGroupStatus[]>` | See "Stored groups and recovery".                                                                                                                                            |
+| `resumeGroup(groupId, options?)`                                                               | `Promise<ResumedGroup>`        | See "Stored groups and recovery".                                                                                                                                            |
+| `endGroup()`                                                                                   | `Promise<void>`                | Leader ends the group for everyone.                                                                                                                                          |
+| `leaveGroup()`                                                                                 | `Promise<void>`                | Member leaves (or stops waiting).                                                                                                                                            |
+| `getBlockList(groupId)` / `addToBlockList(groupId, ids)` / `removeFromBlockList(groupId, ids)` | `Promise<string[]>`            | See "Block list".                                                                                                                                                            |
+| `forgetGroup(groupId, namespace?)` / `forgetAllGroups(namespace?)`                             | `Promise<void>`                | Delete stored tokens locally, no server call.                                                                                                                                |
 
 Group calls made while not `connected` fail at once with `NOT_CONNECTED`;
 nothing is queued, and nothing is ever sent before `hello.ok`. Only one
@@ -131,13 +138,14 @@ fields, and passes the received objects through as they are.
 
 ### Events
 
-| Event             | Payload                      | When                                                                                                                        |
-| ----------------- | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `state`           | `ConnectionState`            | Every connection-state change.                                                                                              |
-| `positionUpdated` | `{ groupId, position }`      | A member receives the leader's position.                                                                                    |
-| `groupEnded`      | `{ groupId, reason, code? }` | `leader_disconnected` (server `group.ended`, or the leader's own socket dropped), `rejoin_failed`, or `closed` (`close()`). |
-| `rejoined`        | `JoinedGroup`                | A member got back into its group after a reconnect.                                                                         |
-| `error`           | `SyncClientError`            | Errors not tied to a promise: each failed connection attempt, server rejections of position updates, invalid server frames. |
+| Event             | Payload                      | When                                                                                                                                               |
+| ----------------- | ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `state`           | `ConnectionState`            | Every connection-state change.                                                                                                                     |
+| `positionUpdated` | `{ groupId, position }`      | A member receives the leader's position.                                                                                                           |
+| `groupEnded`      | `{ groupId, reason, code? }` | `ended_by_leader`, `leader_timeout`, `max_session`, `removed`, `replaced`, `left`, `rejoin_failed` or `closed` (see "Stored groups and recovery"). |
+| `rejoined`        | `ResumedGroup`               | Leader or member got back into its group after a reconnect, or a waiting member was admitted.                                                      |
+| `leaderStatus`    | `{ groupId, online }`        | A member's leader went offline (group frozen) or came back.                                                                                        |
+| `error`           | `SyncClientError`            | Errors not tied to a promise: each failed connection attempt, server rejections of position updates, invalid server frames.                        |
 
 A listener that throws does not affect other listeners or the client. A
 listener removed during an emit is not called.
@@ -166,45 +174,49 @@ not only from `error` events.
 | -------------- | --------------------------------------------- | ----------------------------------------------------------------------------------- |
 | `idle`         |                                               | Created; `connect()` not called yet.                                                |
 | `connecting`   |                                               | First attempt after `connect()`: socket opening and handshake.                      |
-| `connected`    | `participantId`, `limits`                     | `hello.ok` received; group calls are allowed.                                       |
+| `connected`    | `participantId`, `namespace`, `limits`        | `hello.ok` received; group calls are allowed.                                       |
 | `reconnecting` | `attempt`, `delayMs`, `retryAt`, `attempting` | Waiting for the backoff timer (`attempting: false`) or retrying (`true`).           |
 | `closed`       | `reason`, `error?`                            | `reason` is `client` (`close()`), `fatal` or `gave_up`. Terminal until `connect()`. |
 
 `GroupState` (in `snapshot.group`) is `active` (with `role`, `metadata`,
-`hasPosition`, `position`), `rejoining` (a member waiting to get back in), or
-`ended` (with `reason` and `code?`). It is `null` before any group, and again
-after `connect()` on a closed client.
+`hasPosition`, `position`, `leaderOnline`), `rejoining` (leader or member,
+resuming after a drop), `waiting` (a member parked until its leader recreates
+the group), or `ended` (with `reason` and `code?`). It is `null` before any
+group, and again after `connect()` on a closed client.
 
 ### Indicator mapping
 
 `indicatorOf(snapshot)` gives the PRD's sync indicator:
 
-| Snapshot                                                              | Indicator        |
-| --------------------------------------------------------------------- | ---------------- |
-| group `ended` (any connection state), except reason `closed`          | `leader_offline` |
-| connection `connecting`/`reconnecting`, group `active` or `rejoining` | `reconnecting`   |
-| connection `connected`, group `rejoining`                             | `reconnecting`   |
-| connection `connected`, group `active`, role `member`                 | `following`      |
-| connection `connected`, group `active`, role `leader`                 | `leading`        |
-| anything else (no group, idle, closed, group ended by `close()`)      | `none`           |
+| Snapshot                                                                         | Indicator        |
+| -------------------------------------------------------------------------------- | ---------------- |
+| no group, or group `ended` (any reason)                                          | `none`           |
+| connection `connecting`/`reconnecting`, group `active`, `rejoining` or `waiting` | `reconnecting`   |
+| connection `connected`, group `rejoining`                                        | `reconnecting`   |
+| connection `connected`, group `waiting`                                          | `leader_offline` |
+| connection `connected`, group `active`, role `member`, `leaderOnline: false`     | `leader_offline` |
+| connection `connected`, group `active`, role `member`, `leaderOnline: true`      | `following`      |
+| connection `connected`, group `active`, role `leader`                            | `leading`        |
+| anything else (idle, closed)                                                     | `none`           |
 
-In this version a leader disconnect ends the group, so `leader_offline` means
-"group ended". Item 5 adds a grace period on top.
+A leader disconnect freezes the group (`leader_offline` for members); an
+`ended` group is really over.
 
 ## Reconnect and groups
 
 After an unexpected disconnect the client reconnects by itself, and repeats
 the handshake and version checks every time.
 
-- **Leader:** the server ends the group as soon as the leader's socket
-  closes. The client marks the group `ended` (`leader_disconnected`) and emits
-  `groupEnded` at the moment of the drop. After reconnecting it is
-  `connected` with no group; it never re-creates one.
-- **Member:** the group becomes `rejoining`, keeping the last metadata and
-  position. After the next `hello.ok` the client sends `group.join` for the
-  same group ID. Success: the group is `active` again and `rejoined` carries
-  the current position. Any error or timeout (for example `GROUP_NOT_FOUND`):
-  the group is `ended` (`rejoin_failed`, with the code) and `groupEnded` fires.
+- **Leader and member:** the group becomes `rejoining`, keeping the last
+  metadata and position. After the next `hello.ok` the client sends
+  `group.resume` with the stored token (a leader adds its saved metadata,
+  latest position and block list, read from storage). Success: the group is
+  `active` again (the server's position wins) and `rejoined` fires; a member
+  whose group is not in memory becomes `waiting` and is admitted when the
+  leader comes back. `TOKEN_INVALID`, `TOKEN_EXPIRED`, `GROUP_ENDED`,
+  `PARTICIPANT_BLOCKED` (token deleted), `GROUP_FULL`, `TOKEN_NOT_FOUND` or a
+  timeout: the group is `ended` (`rejoin_failed`, with the code).
+- A group ended with `replaced` is never resumed automatically.
 - `close()`, a fatal error and giving up turn an `active` or `rejoining` group
   into `ended`, so a closed client never shows a live group.
 
@@ -331,6 +343,76 @@ non-JSON, too deep or too long frame never reaches app callbacks: it gives
 `INVALID_SERVER_MESSAGE` (and ends the attempt if it arrives before
 `hello.ok`).
 
+## Stored groups and recovery
+
+The client stores each participant token it gets (create, join, resume,
+refresh), one per group, plus, for a leader, the group's metadata, latest
+position and block list. With these a leader can recreate its group after a
+server restart or a page reload.
+
+### Token storage
+
+One versioned JSON document per server and app, under the key
+`sync-system:v1:<namespace>@<host[:port]>`. The `storage` option picks where:
+
+- `'local'` (default): the browser's `localStorage`, looked up on first use
+  (never at import). If it is missing or throws, memory is used and a
+  `storage_unavailable` warning is logged.
+- `'memory'`: lost with the page; nothing persists.
+- a custom store with `getItem`, `setItem` and `removeItem` (sync or async),
+  for example `sessionStorage` or React Native `AsyncStorage`.
+
+At most 20 tokens are kept; tokens past their group's max session time are
+dropped on load, then the oldest. Corrupt stored data is discarded. Storage
+failures never reject a call (`storage_error` is logged).
+
+**XSS caveat:** anything stored in `localStorage` can be read by any script
+on the page. A stolen leader token lets its holder take the lead until the
+group ends. Use a strict Content Security Policy, and pick `'memory'` or
+`sessionStorage` when tokens should not outlive the tab. **Shared devices:**
+call `forgetAllGroups()` on "log out" or when the device is shared (works
+without a connection; pass the namespace if the client never connected).
+
+**Multiple tabs** share one document. Writes re-read the document first, so
+tabs rarely overwrite each other, but custom async stores can still race. If
+another tab resumes the same group, this tab's group ends with `replaced`
+(token kept, not resumed automatically): show "opened on another device". For
+a leader this may also signal a stolen token.
+
+### `checkTokens()`
+
+Sends all stored tokens (up to 20) and resolves with `{ groupId, role,
+status }` each: `live`, `recoverable` (leader, group not in memory),
+`waiting` (member, group not in memory), `blocked`, `ended`, `expired` or
+`invalid`. The last four delete the token. It is never called
+automatically; call it at startup to offer "return to your group". The server
+allows 10 checks per minute (`RATE_LIMITED`).
+
+### `resumeGroup(groupId, options?)`
+
+Resumes a stored group. A leader returns to it, or recreates it with its
+saved metadata, position and block list (`options.metadata` /
+`options.position` override them). A member rejoins, or resolves with
+`status: 'waiting'` until its leader recreates the group. Rejects with
+`TOKEN_NOT_FOUND`, or the server's code.
+
+### Ending and leaving
+
+`endGroup()` (leader) ends the group for everyone; `leaveGroup()` (member)
+leaves it, and a leader gets `LEADER_CANNOT_LEAVE`. Both delete the token.
+The token is also deleted on every `group.ended` except `replaced`; `close()`
+keeps tokens ("resume later").
+
+### Block list
+
+`addToBlockList(groupId, ids)` and `removeFromBlockList(groupId, ids)` change a
+leader group's stored list (participant IDs, at most 256: `BLOCK_LIST_FULL`).
+While the group is active and led by this client the full list is sent to
+the server, which removes blocked members (`groupEnded` reason `removed`);
+otherwise it is sent with the next resume. `getBlockList(groupId)` reads it.
+Until join codes (item 4), a blocked person can still join again by group ID
+with a new identity.
+
 ## Logging
 
 The client logs nothing by default and never uses `console`. Pass a logger to
@@ -346,8 +428,8 @@ const client = new SyncClient({
 `debug`, `info`, `warn` and `error` are all optional. Each call gets a fixed
 event name and fields with primitive values only (state names, attempt
 numbers, delays, error and close codes, message types). The API key, the URL,
-group and participant IDs, metadata, positions and server message text are
-never passed.
+group and participant IDs, tokens, block lists, storage keys, metadata,
+positions and server message text are never passed.
 
 ## Security notes
 
