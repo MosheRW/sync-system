@@ -399,7 +399,9 @@ same group is kept. The remaining cross-tab limits:
 - If this tab has never read storage successfully (every read failed since
   it started), it cannot tell what other tabs stored, so a change it made
   then wins over theirs until its next successful write: a group it forgot
-  stays forgotten, and a token it stored is written over theirs.
+  stays forgotten, and a token it stored is written over theirs. Such a
+  token also undoes another tab's `forgetGroup()` or `forgetAllGroups()` for
+  that group: the group is stored again.
 - If `forgetAllGroups()` can neither delete nor read the stored document, the
   tab cannot list the groups other tabs stored. It remembers the time of the
   call instead: until its next successful write, every successful read drops
