@@ -7,7 +7,7 @@ export type RejoinOutcome =
   | { kind: 'waiting' }
   /** The server refused, or there was no token: the group is gone for this client. */
   | { kind: 'failed'; code: ClientErrorCode }
-  /** The connection dropped again before an answer; the next reconnect retries. */
+  /** The connection dropped or the request timed out; the next reconnect retries. */
   | { kind: 'lost' };
 
 export interface RejoinContext {
@@ -65,9 +65,13 @@ export const tokenRejoin: RejoinStrategy = {
       resolve: (resumed) =>
         done(resumed.status === 'waiting' ? { kind: 'waiting' } : { kind: 'rejoined', resumed }),
       reject: (error) => {
+        // A client-side timeout is not a server refusal: the socket is dropped
+        // right after it (timeoutKind 'drop'), so the next reconnect retries.
         const lost =
           error.source === 'client' &&
-          (error.code === 'CONNECTION_LOST' || error.code === 'CLOSED');
+          (error.code === 'CONNECTION_LOST' ||
+            error.code === 'CLOSED' ||
+            error.code === 'REQUEST_TIMEOUT');
         done(lost ? { kind: 'lost' } : { kind: 'failed', code: error.code });
       },
     });

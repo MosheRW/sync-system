@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SyncClient } from '../src/client.js';
+import { DEFAULT_REQUEST_TIMEOUT_MS } from '../src/options.js';
 import { type TokenStorage, memoryStorage } from '../src/storage.js';
 import type { GroupEndedInfo, LeaderStatusEvent, ResumedGroup } from '../src/state.js';
 import { connectedClient, serverHandshake } from './helpers/client.js';
@@ -320,6 +321,25 @@ describe('token rejoin after an unexpected drop (#5 AC35, AC36)', () => {
     expect(next.lastMessage()).toMatchObject({ type: 'group.resume' });
     const third = await dropAndReconnect(client, next);
     expect(client.getSnapshot().group).toMatchObject({ status: 'rejoining' });
+    expect(third.lastMessage()).toMatchObject({ type: 'group.resume', token });
+    client.close();
+  });
+
+  it('stays rejoining when the automatic resume times out, then retries', async () => {
+    const { client, socket, token } = await member();
+    const ended = vi.fn();
+    client.on('groupEnded', ended);
+    const next = await dropAndReconnect(client, socket);
+    expect(next.lastMessage()).toMatchObject({ type: 'group.resume' });
+    vi.advanceTimersByTime(DEFAULT_REQUEST_TIMEOUT_MS);
+    expect(ended).not.toHaveBeenCalled();
+    expect(client.getSnapshot().group).toMatchObject({ status: 'rejoining', groupId: GROUP_ID });
+    const state = client.getState();
+    if (state.status !== 'reconnecting') throw new Error('expected reconnecting');
+    vi.advanceTimersByTime(state.delayMs);
+    const third = FakeWebSocket.last;
+    serverHandshake(third, { participantId: 'participant-3' });
+    await settle();
     expect(third.lastMessage()).toMatchObject({ type: 'group.resume', token });
     client.close();
   });
