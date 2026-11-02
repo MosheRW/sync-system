@@ -6,7 +6,7 @@
 - Plan approved by user: yes
 - Security-sensitive: yes
 - Review rounds: 2
-- Last updated by: qa
+- Last updated by: engineer
 
 ## Notes
 - Follow-up to #5 (PRD item 3), merged in PR #6 (a9cfa02). GitHub issue numbers are not PRD item numbers.
@@ -46,3 +46,8 @@
   - L-b (56c71a6): `pnpm.overrides` `minimatch: ^11.0.1` in package.json (resolves 11.0.4). No direct bump fixes GHSA-g3hv-75wg-m249: eslint 9/10, @eslint/config-array and @typescript-eslint/typescript-estree still depend on minimatch 3.x/10.x. All consumers use the `Minimatch` class or the named `minimatch` export, which v11 keeps; lint runs and still reports errors. `pnpm audit`: no known vulnerabilities.
   - QA-1 (e8103ae): the AC6 close test now exhausts the per-app budget (600) and one live connection's per-connection limit, checks the budget state is non-empty, then asserts after close: scheduler pending 0, both limiters and the warning map empty (fails if `close()` stops clearing the app limiter).
   - Checks: pnpm install --frozen-lockfile, lint, typecheck, test (protocol 42, server 602, client 471), build, pnpm audit (0 vulnerabilities) all exit 0.
+- Fix round 2 (Gate 3 findings, requested by the user after round 2 PASS/PASS):
+  - L-c (760e8be): when `removeAll()` fails to delete and its fallback read fails too, the store keeps a cut-off (`#removeAllCutoff`, the current second from the local clock, compared with token `iat`). Until the next successful write, every successful read drops stored entries with `iat` at or before it (entries from storage only; in-memory entries were cleared by `removeAll()`, so they are kept); the next successful write persists the removal and clears the cut-off, as does a successful delete. Dirty-mark rules still use the unfiltered stored entry, so a token this tab saved after the forget is not lost. R5 unchanged: a failed read changes neither marks nor the cut-off. No stored-format change. Applies whenever the fallback read fails, not only when the tab never read storage (same gap: groups stored since this tab's last read). Regression test fails before the fix; a second test shows a strictly newer token from another tab survives. README cross-tab limits describe it, including the clock-difference caveat.
+  - L-d (cc36d0f): README L-a bullet says such a token also undoes another tab's `forgetGroup()` / `forgetAllGroups()` for that group.
+  - QA nit (ab17c23): test title reworded to "keeps a group deleted that was forgotten while storage was never readable (L-a)".
+  - Checks: lint, typecheck, test (protocol 42, server 602, client 473), build, pnpm audit (no known vulnerabilities) all exit 0.
