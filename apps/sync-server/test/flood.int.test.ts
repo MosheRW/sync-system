@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { GroupRecord } from '../src/groups/group-store.js';
 import { InMemoryGroupStore } from '../src/groups/in-memory-group-store.js';
+import { parseEnv } from '../src/config/env.js';
+import { maxQueuedInboundBytes, transportMaxPayload } from '../src/limits/constants.js';
+import { rawByteLength } from '../src/ws/connection.js';
 import { Opcode, RawClient, encodeFrame } from './helpers/raw-client.js';
 import type { TestClient } from './helpers/test-client.js';
 import { KEY_A, type TestServer, TestClock, startTestServer } from './helpers/test-server.js';
@@ -153,6 +156,99 @@ describe('inbound message limit (H3)', () => {
     } finally {
       release();
     }
+  });
+});
+
+/** A store whose create() waits for `release()`, so later frames stay queued. */
+function blockingStore(): { store: InMemoryGroupStore; release: () => void } {
+  let release: () => void = () => undefined;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const inner = new InMemoryGroupStore();
+  const store = Object.assign(Object.create(inner) as InMemoryGroupStore, {
+    create: async (group: GroupRecord) => {
+      await gate;
+      return inner.create(group);
+    },
+  });
+  return { store, release };
+}
+
+describe('queued inbound bytes cap (#7 L3)', () => {
+  const ceiling = parseEnv({}).maxMessageSizeCeiling;
+  const maxPayload = transportMaxPayload(ceiling);
+  const cap = maxQueuedInboundBytes(ceiling);
+  const CREATE = { type: 'group.create', metadata: {} };
+  const createBytes = Buffer.byteLength(JSON.stringify(CREATE));
+
+  it('is 4 x the transport frame limit (AC7)', () => {
+    expect(cap).toBe(4 * maxPayload);
+  });
+
+  it('keeps a queue exactly at the cap open and closes on the next byte (AC8)', async () => {
+    const { store, release } = blockingStore();
+    ts = await startTestServer({ store, now: new TestClock().now });
+    const client = await ts.connectReady();
+    try {
+      // The create blocks in the store and still counts while it is handled.
+      client.send(CREATE);
+      for (let i = 0; i < 3; i++) client.sendRaw('x'.repeat(maxPayload));
+      client.sendRaw('x'.repeat(cap - createBytes - 3 * maxPayload));
+      await sleep(50);
+      expect(client.isClosed).toBe(false);
+
+      // Six frames are far below the 32-message cap: only the bytes count.
+      client.sendRaw('x');
+      expect(await client.next('error')).toMatchObject({ code: 'TOO_MANY_MESSAGES' });
+      expect(await client.closed()).toEqual({ code: 4008, reason: 'TOO_MANY_MESSAGES' });
+      expect(client.pending).toBe(0);
+    } finally {
+      release();
+    }
+  });
+
+  it('closes when a large frame would go over the cap (AC8)', async () => {
+    const { store, release } = blockingStore();
+    ts = await startTestServer({ store, now: new TestClock().now });
+    const client = await ts.connectReady();
+    try {
+      client.send(CREATE);
+      for (let i = 0; i < 3; i++) client.sendRaw('x'.repeat(maxPayload));
+      await sleep(50);
+      expect(client.isClosed).toBe(false);
+      client.sendRaw('x'.repeat(maxPayload));
+      expect(await client.next('error')).toMatchObject({ code: 'TOO_MANY_MESSAGES' });
+      expect((await client.closed()).code).toBe(4008);
+    } finally {
+      release();
+    }
+  });
+
+  it('releases the bytes once frames are handled', async () => {
+    const { store, release } = blockingStore();
+    ts = await startTestServer({ store, now: new TestClock().now });
+    const client = await ts.connectReady();
+    client.send(CREATE);
+    for (let i = 0; i < 3; i++) client.sendRaw('x'.repeat(maxPayload));
+    await sleep(50);
+    release();
+    await client.next('group.created');
+    for (let i = 0; i < 3; i++) await client.next('error');
+    // The queue is empty again, so four more large frames fit one by one.
+    for (let i = 0; i < 4; i++) {
+      client.sendRaw('x'.repeat(maxPayload));
+      expect(await client.next('error')).toMatchObject({ code: 'INVALID_MESSAGE' });
+    }
+    expect(client.isClosed).toBe(false);
+  });
+});
+
+describe('rawByteLength (#7 L3)', () => {
+  it('measures a Buffer, an ArrayBuffer and fragments', () => {
+    expect(rawByteLength(Buffer.from('abc'))).toBe(3);
+    expect(rawByteLength(new ArrayBuffer(7))).toBe(7);
+    expect(rawByteLength([Buffer.from('ab'), Buffer.from('cde')])).toBe(5);
   });
 });
 

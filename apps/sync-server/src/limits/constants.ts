@@ -49,6 +49,18 @@ export function transportMaxPayload(maxMessageSizeCeiling: number): number {
   );
 }
 
+/**
+ * Cap on queued inbound bytes per connection, as a multiple of the transport
+ * frame limit, next to the MAX_QUEUED_MESSAGES count cap (#7 L3, D2). Fixed,
+ * not configurable.
+ */
+export const INBOUND_QUEUE_PAYLOAD_FACTOR = 4;
+
+/** Most bytes of inbound frames queued but not yet handled on one connection. */
+export function maxQueuedInboundBytes(maxMessageSizeCeiling: number): number {
+  return INBOUND_QUEUE_PAYLOAD_FACTOR * transportMaxPayload(maxMessageSizeCeiling);
+}
+
 /** Token lifetime: `exp = iat + TOKEN_TTL_SECONDS` (365 days, #5 AC5). */
 export const TOKEN_TTL_SECONDS = 365 * 86_400;
 

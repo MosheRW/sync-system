@@ -20,6 +20,7 @@ import {
   HTTP_CONNECTION_MARGIN,
   HTTP_HEADERS_TIMEOUT_MS,
   HTTP_REQUEST_TIMEOUT_MS,
+  maxQueuedInboundBytes,
   transportMaxPayload,
 } from './limits/constants.js';
 import { SlidingWindowRateLimiter } from './limits/rate-limiter.js';
@@ -179,6 +180,7 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
           inbound: { ratePerSecond: env.maxInboundMessagesPerSecond, burst: env.maxInboundBurst },
           now,
           maxBufferedBytes: env.maxBufferedBytes,
+          maxQueuedBytes: maxQueuedInboundBytes(env.maxMessageSizeCeiling),
           onClosed: (closed) => connections.delete(closed),
         });
         connections.add(connection);

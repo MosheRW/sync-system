@@ -276,6 +276,27 @@ function forgeLooking(): string {
 }
 
 describe('secret rotation (#5 AC2)', () => {
+  it('still delivers tokens.result with 20 re-signed tokens under the inbound byte cap (#7 AC9)', async () => {
+    const old = secrets();
+    const fresh = secrets();
+    ts = await startTestServer({ tokenSecrets: old });
+    const tokens: string[] = [];
+    for (let i = 0; i < 20; i++) tokens.push((await createGroupWithMembers(ts, 0)).leaderToken);
+    await ts.close();
+    ts = await startTestServer({
+      tokenSecrets: { current: fresh.current, previous: old.current, source: 'env' },
+    });
+    const client = await ts.connectReady();
+    const reply = await check(client, tokens);
+    if (reply.type !== 'tokens.result') throw new Error('expected tokens.result');
+    expect(reply.results).toHaveLength(20);
+    for (const result of reply.results) {
+      expect(result.status).toBe('recoverable');
+      expect(typeof result.token).toBe('string');
+    }
+    expect(client.isClosed).toBe(false);
+  });
+
   it('returns a current-secret token for usable previous-secret tokens only', async () => {
     const old = secrets();
     const fresh = secrets();
