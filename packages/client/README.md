@@ -300,6 +300,7 @@ fix the configuration.
 | `INVALID_SERVER_MESSAGE` | client | The server sent an invalid frame (`details.issues`: schema paths only).     |
 | `REQUEST_IN_PROGRESS`    | client | A create/join is already in flight.                                         |
 | `TOKEN_NOT_FOUND`        | client | No stored token for that group (`resumeGroup`, block-list methods, rejoin). |
+| `BLOCK_LIST_FULL`        | client | The block list would hold more than 256 IDs (`details.limit`).              |
 | `INVALID_API_KEY`        | server | Unknown or missing key. Fatal.                                              |
 | `INVALID_APP_VERSION`    | server | `appVersion` is not semver. Fatal.                                          |
 | `PROTOCOL_TOO_OLD`       | server | This client's protocol is too old. Fatal.                                   |

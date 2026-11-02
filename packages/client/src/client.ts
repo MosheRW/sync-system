@@ -3,7 +3,9 @@ import {
   type JsonObject,
   type JsonValue,
   MAX_GROUP_ID_INPUT_LENGTH,
+  MAX_BLOCK_LIST_SIZE,
   MAX_TOKENS_PER_CHECK,
+  PARTICIPANT_ID_PATTERN,
   type TokenStatus,
   MAX_JSON_DEPTH,
   type ServerMessage,
@@ -94,6 +96,7 @@ const REPLY_TYPES: Record<RequestKind, readonly ServerMessage['type'][]> = {
   'tokens.check': ['tokens.result'],
   'group.end': ['group.ended'],
   'group.leave': ['group.left'],
+  'blocklist.set': ['blocklist.ack'],
 };
 
 /** Statuses after which a stored token is useless and deleted (#5 AC31). */
@@ -497,6 +500,43 @@ export class SyncClient {
   }
 
   /**
+   * A leader group's stored block list (#5 AC34). Rejects with
+   * TOKEN_NOT_FOUND unless a leader token is stored for the group, and with
+   * NOT_CONNECTED before the first `hello.ok`.
+   */
+  async getBlockList(groupId: string): Promise<readonly string[]> {
+    const store = this.#tokens;
+    if (store === undefined) throw new SyncClientError('NOT_CONNECTED');
+    const entry = await store.findFresh(groupId);
+    if (entry?.claims.role !== 'leader' || entry.recovery === undefined) {
+      throw new SyncClientError('TOKEN_NOT_FOUND');
+    }
+    return Object.freeze([...entry.recovery.blockList]);
+  }
+
+  /**
+   * Adds participant IDs to a leader group's block list and resolves with the
+   * new list (#5 AC34). While the group is active and led by this client the
+   * full list is sent (blocklist.set) and the call resolves on the server's
+   * ack: blocked members are removed at once. Otherwise the list is only
+   * stored and goes with the next resume. Rejects with INVALID_PAYLOAD,
+   * BLOCK_LIST_FULL (`details.limit`: 256), TOKEN_NOT_FOUND or NOT_CONNECTED.
+   */
+  addToBlockList(groupId: string, participantIds: readonly string[]): Promise<readonly string[]> {
+    return this.#editBlockList(groupId, participantIds, (current, ids) => [...current, ...ids]);
+  }
+
+  /** Removes participant IDs from a leader group's block list (#5 AC34). Same rules as add. */
+  removeFromBlockList(
+    groupId: string,
+    participantIds: readonly string[],
+  ): Promise<readonly string[]> {
+    return this.#editBlockList(groupId, participantIds, (current, ids) =>
+      current.filter((id) => !ids.includes(id)),
+    );
+  }
+
+  /**
    * Deletes the stored token and recovery data of one group, locally, with
    * no server call (#5 M6). Uses the namespace of the last `hello.ok`, or
    * `namespace` if given; rejects with NOT_CONNECTED when neither is known.
@@ -665,6 +705,55 @@ export class SyncClient {
       },
     });
     this.#send({ type: kind, reqId });
+    return result.promise;
+  }
+
+  async #editBlockList(
+    groupId: string,
+    participantIds: readonly string[],
+    change: (current: readonly string[], ids: readonly string[]) => readonly string[],
+  ): Promise<readonly string[]> {
+    const raw: unknown = participantIds;
+    if (
+      !Array.isArray(raw) ||
+      !raw.every((id): id is string => typeof id === 'string' && PARTICIPANT_ID_PATTERN.test(id))
+    ) {
+      throw new SyncClientError('INVALID_PAYLOAD');
+    }
+    const store = this.#tokens;
+    if (store === undefined) throw new SyncClientError('NOT_CONNECTED');
+    const ids: string[] = [...raw];
+    const result = await store.editBlockList(groupId, (current) => change(current, ids));
+    if (!result.ok) {
+      throw result.reason === 'full'
+        ? new SyncClientError('BLOCK_LIST_FULL', { details: { limit: MAX_BLOCK_LIST_SIZE } })
+        : new SyncClientError('TOKEN_NOT_FOUND');
+    }
+    const blockList = Object.freeze([...result.blockList]);
+    const group = this.#snapshot.group;
+    const live =
+      this.#snapshot.connection.status === 'connected' &&
+      group?.status === 'active' &&
+      group.role === 'leader' &&
+      group.groupId === groupId;
+    if (!live) return blockList;
+    await this.#sendBlockList(blockList);
+    return blockList;
+  }
+
+  /** Sends the full block list to the server and resolves on blocklist.ack (#5 AC26). */
+  #sendBlockList(blockList: readonly string[]): Promise<void> {
+    const reqId = this.#requests.nextId();
+    const result = deferred<undefined>();
+    this.#requests.add(reqId, {
+      kind: 'blocklist.set',
+      timeoutKind: 'ack',
+      timeoutMs: this.#opts.requestTimeoutMs,
+      resolve: () => result.resolve(undefined),
+      reject: (error) => result.reject(error),
+    });
+    this.#send({ type: 'blocklist.set', reqId, blockList: [...blockList] });
+    this.#log('debug', 'block_list_sent', { count: blockList.length });
     return result.promise;
   }
 
@@ -1196,6 +1285,7 @@ export class SyncClient {
       case 'group.waiting':
       case 'group.left':
       case 'tokens.result':
+      case 'blocklist.ack':
       case 'position.ack':
         this.#onReply(message);
         return;

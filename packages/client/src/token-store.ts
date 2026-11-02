@@ -200,6 +200,43 @@ export class TokenStore {
   }
 
   /**
+   * Changes a leader's stored block list in one read-merge-write step (#5
+   * AC34). `not_found` without a stored leader token for the group; `full`
+   * (nothing written) if the result would hold more than 256 IDs.
+   */
+  editBlockList(
+    groupId: string,
+    change: (current: readonly string[]) => readonly string[],
+  ): Promise<
+    { ok: true; blockList: readonly string[] } | { ok: false; reason: 'not_found' | 'full' }
+  > {
+    return this.#run(async () => {
+      const current = this.#prune(this.#applyPending(await this.#read()));
+      const entry = current.find((e) => e.claims.gid === groupId);
+      if (entry?.claims.role !== 'leader' || entry.recovery === undefined) {
+        this.#entries = current;
+        return { ok: false, reason: 'not_found' } as const;
+      }
+      const blockList = [...new Set(change(entry.recovery.blockList))];
+      if (blockList.length > MAX_BLOCK_LIST_SIZE) {
+        this.#entries = current;
+        return { ok: false, reason: 'full' } as const;
+      }
+      const next = current.map((e) =>
+        e === entry ? { ...entry, recovery: { ...entry.recovery!, blockList } } : e,
+      );
+      this.#pendingPositions.clear();
+      this.#entries = next;
+      try {
+        await this.#storage.setItem(this.#key, serialize(next));
+      } catch (error) {
+        this.#log('warn', 'storage_error', { op: 'set', name: storageErrorName(error) });
+      }
+      return { ok: true, blockList } as const;
+    });
+  }
+
+  /**
    * Records the leader's latest position. The in-memory copy changes at
    * once; storage is written at most once per second.
    */
