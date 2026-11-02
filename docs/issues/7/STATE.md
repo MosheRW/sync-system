@@ -1,17 +1,19 @@
 # State: #7 Harden token recovery (follow-up to #5)
 - Path: fast
-- Phase: grooming
+- Phase: architecture
 - Branch: fix/7-token-recovery-hardening
 - PR: none
 - Plan approved by user: no
 - Security-sensitive: yes
 - Review rounds: 0
-- Last updated by: pm
+- Last updated by: architect
 
 ## Notes
 - Follow-up to #5 (PRD item 3), merged in PR #6 (a9cfa02). GitHub issue numbers are not PRD item numbers.
 - Spec: docs/issues/7/spec.md (25 acceptance criteria covering L1-L5, A1, A3, A4).
 - Out of scope: A2 (history only), A5 (safe, no fix needed).
+- Plan: docs/issues/7/architecture.md (10 planned commits, no new dependencies, no protocol change). Security-sensitive: yes, so security plan review is due before Gate 2.
+- Advisory for Gate 2: client-side fallback texts in packages/client/src/errors.ts for RATE_LIMITED / NOT_LEADER are left unchanged (spec scopes A1 to the server).
 
 ## User decisions (Gate 1)
 - D1 (L2): per-app tokens.check budget 600/min, fixed constant, on top of the per-connection limit; no global budget.
