@@ -5,8 +5,8 @@
 - PR: #8
 - Plan approved by user: yes
 - Security-sensitive: yes
-- Review rounds: 2
-- Last updated by: engineer
+- Review rounds: 3
+- Last updated by: qa
 
 ## Notes
 - Follow-up to #5 (PRD item 3), merged in PR #6 (a9cfa02). GitHub issue numbers are not PRD item numbers.
@@ -18,6 +18,7 @@
 - Implementation: all 10 planned commits plus one extra (client text alignment). Required controls R1-R8 implemented. Approved advisories L-1, L-2, L-4, L-5 implemented (L-3 is part of R1). Checks: pnpm lint, typecheck, test (protocol 42, server 602, client 468), build and audit --audit-level=high all exit 0; lockfile unchanged.
 - QA round 1 (head 415c584): PASS. lint, typecheck, test (protocol 42, server 602, client 468), build, audit --audit-level=high all exit 0 (2 pre-existing moderate advisories); CI 2/2 pass; acceptance criteria 25/25 met; engineer deviations judged acceptable. Non-blocking notes: AC6 no-timers test does not exhaust the per-app budget; pre-existing moderate audit advisories. Review comment posted on PR #8.
 - QA round 2 (head 8ee7612, Gate 3 fix round): PASS. pnpm install --frozen-lockfile, lint, typecheck, test (protocol 42, server 602, client 471), build, pnpm audit (0 vulnerabilities) and audit --audit-level=high all exit 0; CI 2/2 pass; acceptance criteria 25/25 met. Verified lint still works with minimatch 11.0.4 (typed and client-scoped rules fire, server glob scoping and dist ignores apply). L-a, L-b and QA-1 resolved. Non-blocking nit: garbled test title at packages/client/test/token-store.test.ts:487. Review comment posted on PR #8.
+- QA round 3 (head 9477cfe, Gate 3 fix round 2): PASS. pnpm install --frozen-lockfile, lint, typecheck, test (protocol 42, server 602, client 473), build, pnpm audit (no known vulnerabilities) and audit --audit-level=high all exit 0; CI 2/2 pass; acceptance criteria 25/25 met. L-c regression test confirmed to fail against the pre-fix token-store.ts; R5 holds (failed read leaves marks and cut-off unchanged); L-c deviation (any failed fallback read) judged acceptable. L-d and the round-2 test-title nit resolved. Non-blocking note: a tab that only reads after a fully failed forget keeps the cut-off for the store's lifetime (documented behaviour). Review comment posted on PR #8.
 
 ## User decisions (Gate 1)
 - D1 (L2): per-app tokens.check budget 600/min, fixed constant, on top of the per-connection limit; no global budget.
