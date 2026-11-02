@@ -41,6 +41,7 @@ describe('public API (AC3)', () => {
         'createSyncClient',
         'indicatorOf',
         'isSyncClientError',
+        'memoryStorage',
       ].sort(),
     );
     expect(api.createSyncClient).toBeTypeOf('function');

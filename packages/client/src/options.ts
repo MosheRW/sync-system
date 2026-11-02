@@ -2,7 +2,8 @@ import { MAX_API_KEY_LENGTH, MAX_APP_VERSION_INPUT_LENGTH } from '@sync-system/p
 import { SyncClientError } from './errors.js';
 import { MAX_TIMER_MS, type WebSocketConstructorLike } from './host.js';
 import type { SyncClientLogger } from './logger.js';
-import { checkServerUrl } from './url-policy.js';
+import { type StorageOption, isTokenStorage } from './storage.js';
+import { checkServerUrl, serverHost } from './url-policy.js';
 
 export interface ReconnectOptions {
   /** First backoff cap in ms. Default 500, at least 100 (R2-L1). */
@@ -33,6 +34,13 @@ export interface SyncClientOptions {
   logger?: SyncClientLogger;
   /** Random source for backoff jitter, in `[0, 1)`. Default `Math.random`. */
   random?: () => number;
+  /**
+   * Where participant tokens and leader recovery data are kept (#5 AC32):
+   * `'local'` (default, the browser's `localStorage`, looked up when first
+   * needed), `'memory'`, or an object with `getItem`, `setItem` and
+   * `removeItem` (sync or async).
+   */
+  storage?: StorageOption;
 }
 
 /** Validated copy of the options. The original object is never kept (L4). */
@@ -49,6 +57,9 @@ export interface ResolvedOptions {
   allowInsecureTransport: boolean;
   logger: SyncClientLogger | undefined;
   random: (() => number) | undefined;
+  storage: StorageOption;
+  /** WHATWG host of `url`, for the storage key. */
+  storageHost: string;
 }
 
 export const DEFAULT_INITIAL_DELAY_MS = 500;
@@ -111,6 +122,7 @@ export function resolveOptions(options: unknown): ResolvedOptions {
     allowInsecureTransport: options.allowInsecureTransport,
     logger: options.logger,
     random: options.random,
+    storage: options.storage,
   };
 
   const apiKey = readString(source, 'apiKey', MAX_API_KEY_LENGTH);
@@ -127,6 +139,10 @@ export function resolveOptions(options: unknown): ResolvedOptions {
   }
   if (source.logger !== undefined && !isRecord(source.logger)) throw invalid('logger');
   if (source.random !== undefined && typeof source.random !== 'function') throw invalid('random');
+  const storage = source.storage === undefined ? 'local' : source.storage;
+  if (storage !== 'local' && storage !== 'memory' && !isTokenStorage(storage)) {
+    throw invalid('storage');
+  }
 
   if (typeof source.url !== 'string') throw invalid('url');
   const url = checkServerUrl(source.url, source.allowInsecureTransport === true);
@@ -196,5 +212,7 @@ export function resolveOptions(options: unknown): ResolvedOptions {
     allowInsecureTransport: source.allowInsecureTransport === true,
     logger: source.logger,
     random: source.random as (() => number) | undefined,
+    storage,
+    storageHost: serverHost(url),
   };
 }

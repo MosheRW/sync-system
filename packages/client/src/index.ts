@@ -6,6 +6,8 @@ export type { ErrorDetailsMap, RequestKind } from './errors.js';
 export type { WebSocketConstructorLike, WebSocketLike } from './host.js';
 export type { LogFields, SyncClientLogger } from './logger.js';
 export type { ReconnectOptions, SyncClientOptions } from './options.js';
+export { memoryStorage } from './storage.js';
+export type { StorageOption, TokenStorage } from './storage.js';
 export type {
   ClosedReason,
   ConnectedInfo,

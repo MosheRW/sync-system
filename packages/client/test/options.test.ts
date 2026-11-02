@@ -27,7 +27,26 @@ describe('resolveOptions', () => {
       WebSocket: undefined,
       logger: undefined,
       random: undefined,
+      storage: 'local',
     });
+  });
+
+  it('accepts the storage option and records the server host (#5 AC32, AC33)', () => {
+    const custom = { getItem: () => null, setItem: () => undefined, removeItem: () => undefined };
+    expect(resolveOptions({ ...BASE, storage: 'memory' }).storage).toBe('memory');
+    expect(resolveOptions({ ...BASE, storage: custom }).storage).toBe(custom);
+    for (const storage of ['session', 42, {}, { getItem() {}, setItem() {} }, null]) {
+      expect(fieldOf(() => resolveOptions({ ...BASE, storage }))).toBe('storage');
+    }
+    expect(resolveOptions({ ...BASE, url: 'wss://sync.example.com/ws' }).storageHost).toBe(
+      'sync.example.com',
+    );
+    expect(resolveOptions({ ...BASE, url: 'wss://sync.example.com:443/ws' }).storageHost).toBe(
+      'sync.example.com',
+    );
+    expect(resolveOptions({ ...BASE, url: 'ws://localhost:8080/ws' }).storageHost).toBe(
+      'localhost:8080',
+    );
   });
 
   it('keeps no reference to the options object (L4)', () => {

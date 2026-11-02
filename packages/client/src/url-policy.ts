@@ -18,6 +18,14 @@ function invalidUrl(): SyncClientError<'INVALID_OPTIONS'> {
  *   substring checks and no DNS;
  * - no username, password or fragment.
  */
+/**
+ * The WHATWG `host` (hostname plus non-default port) of an already checked
+ * URL. Part of the token storage key (#5 AC33).
+ */
+export function serverHost(href: string): string {
+  return parseUrl(href).host;
+}
+
 export function checkServerUrl(url: string, allowInsecureTransport: boolean): string {
   let parsed: UrlLike;
   try {
