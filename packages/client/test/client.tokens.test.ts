@@ -171,3 +171,135 @@ describe('token capture (#5 AC31, AC34)', () => {
     }
   });
 });
+
+describe('checkTokens (#5 AC37)', () => {
+  async function settle(): Promise<void> {
+    for (let i = 0; i < 50; i++) await Promise.resolve();
+  }
+
+  function seed(storage: TokenStorage, tokens: string[]): void {
+    void storage.setItem(
+      KEY,
+      JSON.stringify({ v: 1, entries: tokens.map((token) => ({ token })) }),
+    );
+  }
+
+  it('resolves [] without sending anything when nothing is stored, and never runs on connect', async () => {
+    const { client, socket } = await connectedClient({ storage: memoryStorage() });
+    await settle();
+    expect(socket.messages.map((m) => m.type)).toEqual(['hello']);
+    await expect(client.checkTokens()).resolves.toEqual([]);
+    expect(socket.messages.map((m) => m.type)).toEqual(['hello']);
+    client.close();
+  });
+
+  it('maps results to group and role, deletes dead tokens and stores re-signed ones', async () => {
+    const storage = memoryStorage();
+    const live = fakeToken({ gid: groupIdOf('A') });
+    const waiting = fakeToken({ gid: groupIdOf('B'), role: 'member' });
+    const ended = fakeToken({ gid: groupIdOf('C') });
+    const blocked = fakeToken({ gid: groupIdOf('D'), role: 'member' });
+    seed(storage, [live, waiting, ended, blocked]);
+    const { client, socket } = await connectedClient({ storage });
+    await settle();
+    const checking = client.checkTokens();
+    await settle();
+    const sent = socket.lastMessage();
+    expect(sent).toEqual({
+      type: 'tokens.check',
+      reqId: sent.reqId,
+      tokens: [live, waiting, ended, blocked],
+    });
+    const resigned = fakeToken({ gid: groupIdOf('A') });
+    socket.receive({
+      type: 'tokens.result',
+      reqId: sent.reqId,
+      results: [
+        { status: 'live', token: resigned },
+        { status: 'waiting' },
+        { status: 'ended' },
+        { status: 'blocked' },
+      ],
+    });
+    await expect(checking).resolves.toEqual([
+      { groupId: groupIdOf('A'), role: 'leader', status: 'live' },
+      { groupId: groupIdOf('B'), role: 'member', status: 'waiting' },
+      { groupId: groupIdOf('C'), role: 'leader', status: 'ended' },
+      { groupId: groupIdOf('D'), role: 'member', status: 'blocked' },
+    ]);
+    await settle();
+    expect(stored(storage).map((e) => e.token)).toEqual([waiting, resigned]);
+    client.close();
+  });
+
+  it('allows one check at a time and rejects a wrong-length answer', async () => {
+    const storage = memoryStorage();
+    seed(storage, [fakeToken({ gid: groupIdOf('A') })]);
+    const { client, socket } = await connectedClient({ storage });
+    await settle();
+    const first = client.checkTokens();
+    await expect(client.checkTokens()).rejects.toMatchObject({ code: 'REQUEST_IN_PROGRESS' });
+    await settle();
+    socket.receive({ type: 'tokens.result', reqId: socket.lastMessage().reqId, results: [] });
+    await expect(first).rejects.toMatchObject({ code: 'INVALID_SERVER_MESSAGE' });
+    client.close();
+    await expect(client.checkTokens()).rejects.toMatchObject({ code: 'NOT_CONNECTED' });
+  });
+
+  it('passes RATE_LIMITED through with fixed-key details', async () => {
+    const storage = memoryStorage();
+    seed(storage, [fakeToken({ gid: groupIdOf('A') })]);
+    const { client, socket } = await connectedClient({ storage });
+    await settle();
+    const checking = client.checkTokens();
+    await settle();
+    socket.receive({
+      type: 'error',
+      reqId: socket.lastMessage().reqId,
+      code: 'RATE_LIMITED',
+      message: 'x',
+      details: { retryAfterMs: 1234, token: 'SENTINEL' },
+    });
+    const error = await checking.catch((e: unknown) => e);
+    expect(error).toMatchObject({ code: 'RATE_LIMITED', details: { retryAfterMs: 1234 } });
+    expect(JSON.stringify(error)).not.toContain('SENTINEL');
+    client.close();
+  });
+});
+
+describe('forgetGroup and forgetAllGroups (#5 M6)', () => {
+  async function settle(): Promise<void> {
+    for (let i = 0; i < 50; i++) await Promise.resolve();
+  }
+
+  it('deletes stored data locally, also after close()', async () => {
+    const storage = memoryStorage();
+    void storage.setItem(
+      KEY,
+      JSON.stringify({
+        v: 1,
+        entries: [
+          { token: fakeToken({ gid: groupIdOf('A') }) },
+          { token: fakeToken({ gid: groupIdOf('B') }) },
+        ],
+      }),
+    );
+    const { client } = await connectedClient({ storage });
+    await settle();
+    client.close();
+    await client.forgetGroup(groupIdOf('A'));
+    expect(stored(storage)).toHaveLength(1);
+    await client.forgetAllGroups();
+    expect(storage.getItem(KEY)).toBeNull();
+  });
+
+  it('works without any connection when the namespace is given', async () => {
+    const storage = memoryStorage();
+    void storage.setItem(KEY, JSON.stringify({ v: 1, entries: [{ token: fakeToken() }] }));
+    const { makeClient } = await import('./helpers/client.js');
+    const client = makeClient({ storage });
+    await expect(client.forgetAllGroups()).rejects.toMatchObject({ code: 'NOT_CONNECTED' });
+    await client.forgetAllGroups('app-a');
+    expect(storage.getItem(KEY)).toBeNull();
+  });
+});

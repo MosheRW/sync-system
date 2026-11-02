@@ -38,7 +38,14 @@ export type ClientErrorCode = (typeof ClientErrorCode)[keyof typeof ClientErrorC
 
 /** Which request an error belongs to, if any. */
 export type RequestKind =
-  'hello' | 'group.create' | 'group.join' | 'position.update' | 'group.resume';
+  | 'hello'
+  | 'group.create'
+  | 'group.join'
+  | 'position.update'
+  | 'group.resume'
+  | 'tokens.check'
+  | 'group.end'
+  | 'group.leave';
 
 interface KnownDetails {
   PROTOCOL_TOO_OLD: { minProtocolVersion?: number };

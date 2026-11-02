@@ -25,6 +25,8 @@ const KNOWN_TYPES: ReadonlySet<string> = new Set<ServerMessage['type']>([
   'group.ended',
   'group.resumed',
   'group.waiting',
+  'group.left',
+  'tokens.result',
   'leader.offline',
   'leader.online',
   'token.refreshed',
