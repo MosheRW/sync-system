@@ -1,11 +1,38 @@
 import type { ErrorCode, ErrorMessage, JsonValue } from '@sync-system/protocol';
 
 /**
+ * Codes that more than one action can return. Each action has its own text
+ * (#7 A1, D4), so these codes are only sent through actionErrorMessage().
+ */
+export type ActionErrorCode = 'RATE_LIMITED' | 'NOT_LEADER';
+
+/** Codes with one fixed text, sent through errorMessage(). */
+export type GenericErrorCode = Exclude<ErrorCode, ActionErrorCode>;
+
+/**
+ * Fixed text per code and action (#7 A1). Like ERROR_TEXT, a text never
+ * includes a received value (AC18 from #1, #7 AC20).
+ */
+export const ACTION_ERROR_TEXT = {
+  RATE_LIMITED: {
+    'position.update': 'Too many position updates',
+    'tokens.check': 'Too many token checks',
+  },
+  NOT_LEADER: {
+    'position.update': 'Only the leader can update the position',
+    'group.end': 'Only the leader can end the group',
+    'blocklist.set': 'Only the leader can set the block list',
+  },
+} as const satisfies Record<ActionErrorCode, Record<string, string>>;
+
+export type ErrorAction<C extends ActionErrorCode> = keyof (typeof ACTION_ERROR_TEXT)[C];
+
+/**
  * Fixed human-readable text per code. Messages never include received
  * values, so the error for another app's group ID is byte-identical to the
  * one for a nonexistent ID (AC18).
  */
-const ERROR_TEXT: Record<ErrorCode, string> = {
+export const ERROR_TEXT: Record<GenericErrorCode, string> = {
   INVALID_MESSAGE: 'Invalid message',
   HANDSHAKE_REQUIRED: 'Send hello before any other message',
   HANDSHAKE_TIMEOUT: 'No hello received in time',
@@ -19,8 +46,6 @@ const ERROR_TEXT: Record<ErrorCode, string> = {
   GROUP_FULL: 'Group is full',
   ALREADY_IN_GROUP: 'Already in a group',
   NOT_IN_GROUP: 'Not in a group',
-  NOT_LEADER: 'Only the leader can update the position',
-  RATE_LIMITED: 'Too many position updates',
   MESSAGE_TOO_LARGE: 'Message too large',
   TOO_MANY_MESSAGES: 'Too many messages',
   INTERNAL_ERROR: 'Internal error',
@@ -31,12 +56,28 @@ const ERROR_TEXT: Record<ErrorCode, string> = {
   PARTICIPANT_BLOCKED: 'Participant is blocked',
 };
 
-export function errorMessage(
-  code: ErrorCode,
-  options: { reqId?: string | undefined; details?: Record<string, JsonValue> | undefined } = {},
-): ErrorMessage {
-  const message: ErrorMessage = { type: 'error', code, message: ERROR_TEXT[code] };
+interface ErrorOptions {
+  reqId?: string | undefined;
+  details?: Record<string, JsonValue> | undefined;
+}
+
+function build(code: ErrorCode, text: string, options: ErrorOptions): ErrorMessage {
+  const message: ErrorMessage = { type: 'error', code, message: text };
   if (options.reqId !== undefined) message.reqId = options.reqId;
   if (options.details !== undefined) message.details = options.details;
   return message;
+}
+
+export function errorMessage(code: GenericErrorCode, options: ErrorOptions = {}): ErrorMessage {
+  return build(code, ERROR_TEXT[code], options);
+}
+
+/** An error for a code several actions share; the text names `action` (#7 A1). */
+export function actionErrorMessage<C extends ActionErrorCode>(
+  code: C,
+  action: ErrorAction<C>,
+  options: ErrorOptions = {},
+): ErrorMessage {
+  const texts: Record<PropertyKey, string> = ACTION_ERROR_TEXT[code];
+  return build(code, texts[action], options);
 }

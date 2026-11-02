@@ -22,7 +22,7 @@ import { SlidingWindowRateLimiter } from '../limits/rate-limiter.js';
 import { type Logger, groupRef, participantRef, safeErr } from '../logging/logger.js';
 import type { Scheduler } from '../time/scheduler.js';
 import type { TokenService } from '../tokens/token-service.js';
-import { errorMessage } from '../ws/error-messages.js';
+import { actionErrorMessage, errorMessage } from '../ws/error-messages.js';
 import { type GroupRecord, type GroupStore, connectedCount } from './group-store.js';
 import type { EndedGroups } from './ended-groups.js';
 import { GroupTimers } from './group-timers.js';
@@ -338,7 +338,9 @@ export class GroupService implements GroupActions {
     // Authorized by ownership, not by the cached role alone (M4).
     const membership = this.owned(session);
     if (membership === undefined) return errorMessage(ErrorCode.NOT_IN_GROUP);
-    if (membership.role !== 'leader') return errorMessage(ErrorCode.NOT_LEADER);
+    if (membership.role !== 'leader') {
+      return actionErrorMessage(ErrorCode.NOT_LEADER, 'position.update');
+    }
 
     const { app } = session;
     const namespace = app.namespace;
@@ -353,7 +355,7 @@ export class GroupService implements GroupActions {
       app.maxLeaderUpdatesPerSecond,
     );
     if (!rate.ok) {
-      return errorMessage(ErrorCode.RATE_LIMITED, {
+      return actionErrorMessage(ErrorCode.RATE_LIMITED, 'position.update', {
         details: {
           maxLeaderUpdatesPerSecond: app.maxLeaderUpdatesPerSecond,
           retryAfterMs: rate.retryAfterMs,
@@ -398,7 +400,9 @@ export class GroupService implements GroupActions {
   async checkTokens(session: Session, message: TokensCheckMessage): Promise<ServerMessage> {
     const rate = this.checkLimiter.tryAcquire(session.connectionId, TOKENS_CHECK_PER_MINUTE);
     if (!rate.ok) {
-      return errorMessage(ErrorCode.RATE_LIMITED, { details: { retryAfterMs: rate.retryAfterMs } });
+      return actionErrorMessage(ErrorCode.RATE_LIMITED, 'tokens.check', {
+        details: { retryAfterMs: rate.retryAfterMs },
+      });
     }
     const { app } = session;
     const results: TokensResultMessage['results'] = [];
@@ -439,10 +443,14 @@ export class GroupService implements GroupActions {
    * in memory only and never logged (a count at most).
    */
   async setBlockList(session: Session, message: BlockListSetMessage): Promise<ServerMessage> {
-    if (session.parked !== undefined) return errorMessage(ErrorCode.NOT_LEADER);
+    if (session.parked !== undefined) {
+      return actionErrorMessage(ErrorCode.NOT_LEADER, 'blocklist.set');
+    }
     const membership = this.owned(session);
     if (membership === undefined) return errorMessage(ErrorCode.NOT_IN_GROUP);
-    if (membership.role !== 'leader') return errorMessage(ErrorCode.NOT_LEADER);
+    if (membership.role !== 'leader') {
+      return actionErrorMessage(ErrorCode.NOT_LEADER, 'blocklist.set');
+    }
     const { app } = session;
     const { groupId } = membership;
     return this.locks.run(groupKey(app.namespace, groupId), async () => {
@@ -498,10 +506,14 @@ export class GroupService implements GroupActions {
    */
   async end(session: Session, _message: GroupEndMessage): Promise<ServerMessage> {
     // A parked session is a member waiting for its leader.
-    if (session.parked !== undefined) return errorMessage(ErrorCode.NOT_LEADER);
+    if (session.parked !== undefined) {
+      return actionErrorMessage(ErrorCode.NOT_LEADER, 'group.end');
+    }
     const membership = this.owned(session);
     if (membership === undefined) return errorMessage(ErrorCode.NOT_IN_GROUP);
-    if (membership.role !== 'leader') return errorMessage(ErrorCode.NOT_LEADER);
+    if (membership.role !== 'leader') {
+      return actionErrorMessage(ErrorCode.NOT_LEADER, 'group.end');
+    }
     const { app } = session;
     const { groupId } = membership;
     return this.locks.run(groupKey(app.namespace, groupId), async () => {

@@ -164,6 +164,7 @@ describe('rate limit (#5 AC16)', () => {
       type: 'error',
       reqId: 'r11',
       code: 'RATE_LIMITED',
+      message: 'Too many token checks',
       details: { retryAfterMs: 60_000 },
     });
     expect(client.isClosed).toBe(false);

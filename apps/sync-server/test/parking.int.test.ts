@@ -85,7 +85,15 @@ describe('members waiting for their leader (#5 AC25)', () => {
     client.send({ type: 'group.create', metadata: {} });
     expect(await client.next('error')).toMatchObject({ code: 'ALREADY_IN_GROUP' });
     client.send({ type: 'group.end' });
-    expect(await client.next('error')).toMatchObject({ code: 'NOT_LEADER' });
+    expect(await client.next('error')).toMatchObject({
+      code: 'NOT_LEADER',
+      message: 'Only the leader can end the group',
+    });
+    client.send({ type: 'blocklist.set', blockList: [] });
+    expect(await client.next('error')).toMatchObject({
+      code: 'NOT_LEADER',
+      message: 'Only the leader can set the block list',
+    });
     client.send({ type: 'position.update', position: 1 });
     expect(await client.next('error')).toMatchObject({ code: 'NOT_IN_GROUP' });
   });

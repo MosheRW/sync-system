@@ -1,0 +1,82 @@
+import { ErrorCode } from '@sync-system/protocol';
+import { describe, expect, it } from 'vitest';
+import {
+  ACTION_ERROR_TEXT,
+  ERROR_TEXT,
+  actionErrorMessage,
+  errorMessage,
+} from '../src/ws/error-messages.js';
+
+/** Words each action's text must contain (#7 AC19). */
+const NAMES: Record<string, RegExp> = {
+  'position.update': /position/i,
+  'tokens.check': /token check/i,
+  'group.end': /end the group/i,
+  'blocklist.set': /block list/i,
+};
+
+describe('per-action error texts (#7 A1)', () => {
+  it('gives each action its own text that names the action (AC19)', () => {
+    for (const [code, rows] of Object.entries(ACTION_ERROR_TEXT)) {
+      const texts = Object.values(rows);
+      expect(new Set(texts).size, code).toBe(texts.length);
+      for (const [action, text] of Object.entries(rows)) {
+        expect(text, `${code} ${action}`).toMatch(NAMES[action]!);
+      }
+    }
+  });
+
+  it('has exactly the planned rows and texts', () => {
+    expect(ACTION_ERROR_TEXT).toEqual({
+      RATE_LIMITED: {
+        'position.update': 'Too many position updates',
+        'tokens.check': 'Too many token checks',
+      },
+      NOT_LEADER: {
+        'position.update': 'Only the leader can update the position',
+        'group.end': 'Only the leader can end the group',
+        'blocklist.set': 'Only the leader can set the block list',
+      },
+    });
+  });
+
+  it('keeps texts fixed: no placeholders or received values (AC20)', () => {
+    const all = [
+      ...Object.values(ERROR_TEXT),
+      ...Object.values(ACTION_ERROR_TEXT).flatMap((rows) => Object.values(rows)),
+    ];
+    for (const text of all) expect(text).not.toMatch(/[{}$%<>]/);
+  });
+
+  it('has no generic text for the shared codes', () => {
+    expect(Object.keys(ERROR_TEXT)).not.toContain(ErrorCode.RATE_LIMITED);
+    expect(Object.keys(ERROR_TEXT)).not.toContain(ErrorCode.NOT_LEADER);
+  });
+
+  it('keeps the code, reqId and details unchanged', () => {
+    expect(
+      actionErrorMessage(ErrorCode.RATE_LIMITED, 'tokens.check', {
+        reqId: 'r1',
+        details: { retryAfterMs: 5 },
+      }),
+    ).toEqual({
+      type: 'error',
+      code: 'RATE_LIMITED',
+      message: 'Too many token checks',
+      reqId: 'r1',
+      details: { retryAfterMs: 5 },
+    });
+    expect(actionErrorMessage(ErrorCode.NOT_LEADER, 'group.end')).toEqual({
+      type: 'error',
+      code: 'NOT_LEADER',
+      message: 'Only the leader can end the group',
+    });
+  });
+
+  it('rejects shared codes without an action at compile time (AC21)', () => {
+    // @ts-expect-error RATE_LIMITED must go through actionErrorMessage
+    expect(() => errorMessage(ErrorCode.RATE_LIMITED)).toBeDefined();
+    // @ts-expect-error an action from another code's row set
+    expect(() => actionErrorMessage(ErrorCode.RATE_LIMITED, 'group.end')).toBeDefined();
+  });
+});

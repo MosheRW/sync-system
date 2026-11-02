@@ -69,7 +69,11 @@ describe('only the leader updates (AC15)', () => {
     const [sender, other] = members as [(typeof members)[0], (typeof members)[0]];
 
     sender.send({ type: 'position.update', reqId: 'm1', position: { page: 99 } });
-    expect(await sender.next('error')).toMatchObject({ code: 'NOT_LEADER', reqId: 'm1' });
+    expect(await sender.next('error')).toMatchObject({
+      code: 'NOT_LEADER',
+      message: 'Only the leader can update the position',
+      reqId: 'm1',
+    });
     await other.expectNoMessage();
     await leader.expectNoMessage();
 
