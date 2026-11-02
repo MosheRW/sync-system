@@ -1,12 +1,12 @@
 # State: #7 Harden token recovery (follow-up to #5)
 - Path: fast
-- Phase: implementation
+- Phase: validation
 - Branch: fix/7-token-recovery-hardening
 - PR: #8
 - Plan approved by user: yes
 - Security-sensitive: yes
-- Review rounds: 1
-- Last updated by: engineer
+- Review rounds: 2
+- Last updated by: qa
 
 ## Notes
 - Follow-up to #5 (PRD item 3), merged in PR #6 (a9cfa02). GitHub issue numbers are not PRD item numbers.
@@ -17,6 +17,7 @@
 - Advisory for Gate 2: client-side fallback texts in packages/client/src/errors.ts for RATE_LIMITED / NOT_LEADER are left unchanged (spec scopes A1 to the server). Superseded at Gate 2: aligned in this PR (see deviations).
 - Implementation: all 10 planned commits plus one extra (client text alignment). Required controls R1-R8 implemented. Approved advisories L-1, L-2, L-4, L-5 implemented (L-3 is part of R1). Checks: pnpm lint, typecheck, test (protocol 42, server 602, client 468), build and audit --audit-level=high all exit 0; lockfile unchanged.
 - QA round 1 (head 415c584): PASS. lint, typecheck, test (protocol 42, server 602, client 468), build, audit --audit-level=high all exit 0 (2 pre-existing moderate advisories); CI 2/2 pass; acceptance criteria 25/25 met; engineer deviations judged acceptable. Non-blocking notes: AC6 no-timers test does not exhaust the per-app budget; pre-existing moderate audit advisories. Review comment posted on PR #8.
+- QA round 2 (head 8ee7612, Gate 3 fix round): PASS. pnpm install --frozen-lockfile, lint, typecheck, test (protocol 42, server 602, client 471), build, pnpm audit (0 vulnerabilities) and audit --audit-level=high all exit 0; CI 2/2 pass; acceptance criteria 25/25 met. Verified lint still works with minimatch 11.0.4 (typed and client-scoped rules fire, server glob scoping and dist ignores apply). L-a, L-b and QA-1 resolved. Non-blocking nit: garbled test title at packages/client/test/token-store.test.ts:487. Review comment posted on PR #8.
 
 ## User decisions (Gate 1)
 - D1 (L2): per-app tokens.check budget 600/min, fixed constant, on top of the per-connection limit; no global budget.
