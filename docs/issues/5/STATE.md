@@ -1,13 +1,14 @@
 # State: #5 Participant tokens, token rejoin and restart recovery
 - Path: full
-- Phase: implementation
+- Phase: validation
 - Branch: feat/5-tokens-recovery
 - PR: #6 (ready for review)
 - Plan approved by user: yes
 - Security-sensitive: yes
 - QA loops: 0
-- Review rounds: 1 (security plan review round 1: PASS)
-- Last updated by: engineer
+- Review rounds: 1 (security plan review round 1: PASS; code review round 1: QA PASS)
+- QA verdict: PASS (round 1, head abe874e)
+- Last updated by: qa
 
 ## Notes
 - PRD item 3 of 9. "item N" in spec.md means PRD item N, not GitHub issue N.
@@ -58,6 +59,11 @@
 - R12 (M6, L8): `hello.ok.limits.maxSessionMinutes`; client prunes by `gct + maxSession` on load and write; `forgetGroup` / `forgetAllGroups`; stored document over 256 KB ignored, at most 20 entries parsed. Commits 7185bf8, d37051d, e81c553.
 - R13 (L6): `replaced` is final (no auto-resume, reason surfaced); tokens never in snapshots, events, errors or logs (tested). Commits 464381a, e81c553, 2720a7c.
 - R14: README: routine vs compromise rotation, secret generation, shared-device and CSP guidance, XSS caveat, join-by-ID block bypass until item 4, frame memory sizing. Commit 5d203e2.
+
+## QA round 1 (PASS)
+- Checks: lint, typecheck, test (protocol 42, server 574, client 441), build, audit (exit 0, 2 moderate) and CI all pass. No lockfile or dependency change.
+- Acceptance criteria: 43/43 met; evidence in the QA review comment on PR #6.
+- Deviations judged acceptable (see review). Non-blocking advisories: A1 fixed error texts for RATE_LIMITED ("Too many position updates") and NOT_LEADER ("...update the position") are now misleading for tokens.check, group.end and blocklist.set; A2 commit 445aab3 alone is not lint-clean (fixed by 75b63c2); A3 no committed test for a member resume into a frozen group (verified manually).
 
 ## Open questions
 - none
