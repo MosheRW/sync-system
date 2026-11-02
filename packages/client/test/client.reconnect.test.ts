@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SyncClient } from '../src/client.js';
 import { type SyncClientError, isSyncClientError } from '../src/errors.js';
+import type { SyncClientOptions } from '../src/options.js';
+import { DEFAULT_REQUEST_TIMEOUT_MS, DEFAULT_STABLE_AFTER_MS } from '../src/options.js';
+import { type TokenStorage, memoryStorage } from '../src/storage.js';
 import type { ConnectionState, GroupEndedInfo } from '../src/state.js';
 import {
   LIMITS,
@@ -10,6 +13,7 @@ import {
   serverHandshake,
 } from './helpers/client.js';
 import { FakeWebSocket } from './helpers/fake-websocket.js';
+import { fakeToken } from './helpers/tokens.js';
 
 const GROUP_ID = 'G'.repeat(43);
 
@@ -336,6 +340,127 @@ describe('leader drop (#5 AC35, replaces #3 AC29)', () => {
       }),
     );
     expect(next.messages.map((m) => m.type)).toEqual(['hello']);
+    client.close();
+  });
+});
+
+describe('resume timeouts are not stable connections (#7 L4)', () => {
+  const KEY = 'sync-system:v1:app-a@127.0.0.1:1';
+
+  /** Lets storage promise chains run. */
+  async function settle(): Promise<void> {
+    for (let i = 0; i < 50; i++) await Promise.resolve();
+  }
+
+  function storedTokens(storage: TokenStorage): string[] {
+    const text = storage.getItem(KEY) as string | null;
+    if (text === null) return [];
+    return (JSON.parse(text) as { entries: Array<{ token: string }> }).entries.map((e) => e.token);
+  }
+
+  /** A connected member with a stored token, then dropped once. */
+  async function droppedMember(extra: Partial<SyncClientOptions>) {
+    const storage = memoryStorage();
+    const { client, socket } = await connectedClient({ storage, ...extra });
+    const joining = client.joinGroup(GROUP_ID);
+    const token = fakeToken({ gid: GROUP_ID, role: 'member' });
+    socket.receive({
+      type: 'group.joined',
+      reqId: socket.lastMessage().reqId,
+      groupId: GROUP_ID,
+      participantId: 'member-pid',
+      role: 'member',
+      metadata: {},
+      token,
+      leaderOnline: true,
+      hasPosition: false,
+    });
+    await joining;
+    await settle();
+    socket.serverClose(1006);
+    return { client, storage, token };
+  }
+
+  /** Opens the next socket, completes hello and waits for the automatic resume. */
+  async function reconnectAndResume(client: SyncClient): Promise<FakeWebSocket> {
+    const socket = nextSocket(client);
+    serverHandshake(socket);
+    await settle();
+    expect(socket.lastMessage().type).toBe('group.resume');
+    return socket;
+  }
+
+  it('gives up after maxAttempts against a server that never answers group.resume (AC10-AC12)', async () => {
+    // Default timings: requestTimeoutMs == stableAfterMs == 10 s.
+    expect(DEFAULT_REQUEST_TIMEOUT_MS).toBe(DEFAULT_STABLE_AFTER_MS);
+    const { client, storage, token } = await droppedMember({ reconnect: { maxAttempts: 4 } });
+    const errors: string[] = [];
+    client.on('error', (e) => errors.push(e.code));
+    const attempts: number[] = [];
+    for (let i = 0; i < 4; i += 1) {
+      attempts.push(reconnecting(client).attempt);
+      await reconnectAndResume(client);
+      vi.advanceTimersByTime(DEFAULT_REQUEST_TIMEOUT_MS);
+    }
+    expect(attempts).toEqual([1, 2, 3, 4]);
+    expect(client.getState()).toMatchObject({ status: 'closed', reason: 'gave_up' });
+    expect(errors).toContain('RECONNECT_FAILED');
+    // The token is kept for a later checkTokens() or connect() (AC12).
+    await settle();
+    expect(storedTokens(storage)).toEqual([token]);
+  });
+
+  it('does not reset the backoff either', async () => {
+    const { client } = await droppedMember({});
+    const delays: number[] = [];
+    for (let i = 0; i < 3; i += 1) {
+      delays.push(reconnecting(client).delayMs);
+      await reconnectAndResume(client);
+      vi.advanceTimersByTime(DEFAULT_REQUEST_TIMEOUT_MS);
+    }
+    delays.push(reconnecting(client).delayMs);
+    expect(delays).toEqual([500, 1000, 2000, 4000]);
+    client.close();
+  });
+
+  it('does not count a drop while the automatic resume is still pending (L-1)', async () => {
+    // The resume timer is longer than the stability window, so the server
+    // can close after stableAfterMs while the resume is still unanswered.
+    const { client } = await droppedMember({ requestTimeoutMs: 30_000 });
+    let socket = await reconnectAndResume(client);
+    vi.advanceTimersByTime(DEFAULT_STABLE_AFTER_MS + 5_000);
+    socket.serverClose(1006);
+    expect(reconnecting(client)).toMatchObject({ attempt: 2, delayMs: 1000 });
+    socket = await reconnectAndResume(client);
+    vi.advanceTimersByTime(DEFAULT_STABLE_AFTER_MS + 5_000);
+    socket.serverClose(1006);
+    expect(reconnecting(client)).toMatchObject({ attempt: 3, delayMs: 2000 });
+    client.close();
+  });
+
+  it('still resets after a successful resume and stableAfterMs connected (AC13)', async () => {
+    const { client } = await droppedMember({});
+    // One failed resume first, so the reset is visible.
+    await reconnectAndResume(client);
+    vi.advanceTimersByTime(DEFAULT_REQUEST_TIMEOUT_MS);
+    expect(reconnecting(client).attempt).toBe(2);
+    const socket = await reconnectAndResume(client);
+    socket.receive({
+      type: 'group.joined',
+      reqId: socket.lastMessage().reqId,
+      groupId: GROUP_ID,
+      participantId: 'member-pid',
+      role: 'member',
+      metadata: {},
+      token: fakeToken({ gid: GROUP_ID, role: 'member' }),
+      leaderOnline: true,
+      hasPosition: false,
+    });
+    await settle();
+    expect(client.getSnapshot().group).toMatchObject({ status: 'active' });
+    vi.advanceTimersByTime(DEFAULT_STABLE_AFTER_MS);
+    socket.serverClose(1006);
+    expect(reconnecting(client)).toMatchObject({ attempt: 1, delayMs: 500 });
     client.close();
   });
 });
