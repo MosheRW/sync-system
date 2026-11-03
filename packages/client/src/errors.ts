@@ -50,7 +50,6 @@ export type ClientErrorCode = (typeof ClientErrorCode)[keyof typeof ClientErrorC
 export type RequestKind =
   | 'hello'
   | 'group.create'
-  | 'group.join'
   | 'group.joinByCode'
   | 'group.joinByQr'
   | 'join.cancel'

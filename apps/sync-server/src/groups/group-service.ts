@@ -8,11 +8,9 @@ import {
   type QrIssueMessage,
   ErrorCode,
   type ErrorMessage,
-  GROUP_ID_PATTERN,
   type GroupCreateMessage,
   type GroupEndMessage,
   type GroupEndedReason,
-  type GroupJoinMessage,
   type GroupJoinByCodeMessage,
   type JoinMethod,
   type GroupLeaveMessage,
@@ -346,41 +344,6 @@ export class GroupService implements GroupActions {
       joinMethods: [...record.joinMethods],
       codes: this.joins.payload(record),
     };
-  }
-
-  async join(session: Session, message: GroupJoinMessage): Promise<ServerMessage> {
-    if (this.busy(session)) return errorMessage(ErrorCode.ALREADY_IN_GROUP);
-
-    const { app } = session;
-    const { groupId } = message;
-    // A malformed ID gets the same answer as an unknown one: no oracle (L3).
-    if (!GROUP_ID_PATTERN.test(groupId)) return errorMessage(ErrorCode.GROUP_NOT_FOUND);
-
-    // Serialized with the group's teardown: the insert and the session
-    // commit happen together, either fully before the group ends (so the
-    // teardown sees and notifies this member) or after it (not found).
-    // Without this, a slow insert reply could commit the session to a
-    // group that was already deleted.
-    return this.locks.run(groupKey(app.namespace, groupId), async () => {
-      const participantId = newParticipantId();
-      const added = await this.deps.store.addParticipant(
-        app.namespace,
-        groupId,
-        participantId,
-        app.maxGroupSize,
-      );
-      if (added.status === 'not_found') return errorMessage(ErrorCode.GROUP_NOT_FOUND);
-      // A freshly minted ID is never blocked; checked for completeness.
-      if (added.status === 'blocked') return errorMessage(ErrorCode.PARTICIPANT_BLOCKED);
-      // The leader counts toward the size (AC21).
-      if (added.status === 'full') {
-        return errorMessage(ErrorCode.GROUP_FULL, { details: { maxGroupSize: app.maxGroupSize } });
-      }
-      // The snapshot comes from the same atomic insert. A second read could
-      // fail after the insert and leave the participant in the group while
-      // the session stays groupless.
-      return this.commitJoin(session, participantId, added.group);
-    });
   }
 
   /**

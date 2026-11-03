@@ -105,6 +105,15 @@ describe('createGroup (AC15)', () => {
   });
 });
 
+describe('join by group ID is gone (#10 AC41)', () => {
+  it('has no joinGroup method', async () => {
+    const { client } = await connectedClient();
+    // @ts-expect-error joinGroup was removed in #10.
+    expect(client.joinGroup).toBeUndefined();
+    client.close();
+  });
+});
+
 describe('joinByCode (AC16, #10 AC39)', () => {
   it('resolves with metadata and the current position', async () => {
     const { client, socket } = await connectedClient();

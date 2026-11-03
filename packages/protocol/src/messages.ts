@@ -53,12 +53,6 @@ export interface GroupCreateMessage {
   joinMethods?: JoinMethod[];
 }
 
-export interface GroupJoinMessage {
-  type: 'group.join';
-  reqId?: string;
-  groupId: string;
-}
-
 /**
  * Join by code (#10 AC12): a 6-digit group code (methods A, B) or an
  * 8-character alphanumeric code (method C), told apart by format after
@@ -185,7 +179,6 @@ export interface JoinDenyMessage {
 export type ClientMessage =
   | HelloMessage
   | GroupCreateMessage
-  | GroupJoinMessage
   | GroupJoinByCodeMessage
   | GroupJoinByQrMessage
   | QrIssueMessage

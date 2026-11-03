@@ -12,6 +12,11 @@ describe('README drift guard (AC31)', () => {
     }
   });
 
+  it('no longer documents join by group ID (#10 AC41)', () => {
+    expect(readme).not.toContain('joinGroup');
+    expect(readme).not.toMatch(/`group\.join`/);
+  });
+
   it('mentions every connection state and indicator value', () => {
     for (const name of [
       'idle',

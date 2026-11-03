@@ -8,7 +8,6 @@ import type {
   QrIssueMessage,
   GroupCreateMessage,
   GroupEndMessage,
-  GroupJoinMessage,
   GroupJoinByCodeMessage,
   GroupLeaveMessage,
   GroupResumeMessage,
@@ -78,7 +77,6 @@ export function membershipKey(namespace: string, groupId: string, participantId:
 /** Group operations a connection dispatches to. Each returns the direct reply. */
 export interface GroupActions {
   create(session: Session, message: GroupCreateMessage): Promise<ServerMessage>;
-  join(session: Session, message: GroupJoinMessage): Promise<ServerMessage>;
   /** Join by group code (+ door code) or alphanumeric code (#10 AC12-AC18). */
   joinByCode(session: Session, message: GroupJoinByCodeMessage): Promise<ServerMessage>;
   update(session: Session, message: PositionUpdateMessage): Promise<ServerMessage>;

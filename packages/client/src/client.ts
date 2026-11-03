@@ -100,7 +100,6 @@ const SAFE_TYPE = /^[a-z.]{1,64}$/;
 const REPLY_TYPES: Record<RequestKind, readonly ServerMessage['type'][]> = {
   hello: ['hello.ok'],
   'group.create': ['group.created'],
-  'group.join': ['group.joined'],
   'group.joinByCode': ['group.joined', 'join.pending'],
   'group.joinByQr': ['group.joined', 'join.pending'],
   'join.cancel': ['join.cancelled'],
@@ -389,31 +388,6 @@ export class SyncClient {
           }),
         );
       },
-      reject: (error) => result.reject(error),
-    });
-    return result.promise;
-  }
-
-  /**
-   * Joins a group as member (AC16). Rejects locally with NOT_CONNECTED,
-   * ALREADY_IN_GROUP, REQUEST_IN_PROGRESS or INVALID_PAYLOAD, and with the
-   * server's code (GROUP_NOT_FOUND, GROUP_FULL, ...) otherwise.
-   */
-  joinGroup(groupId: string): Promise<JoinedGroup> {
-    const invalid = localError(() => {
-      this.#checkGroupRequest();
-      if (
-        typeof groupId !== 'string' ||
-        groupId.length === 0 ||
-        groupId.length > MAX_GROUP_ID_INPUT_LENGTH
-      ) {
-        throw new SyncClientError('INVALID_PAYLOAD');
-      }
-    });
-    if (invalid) return Promise.reject(invalid);
-    const result = deferred<JoinedGroup>();
-    this.#join(groupId, {
-      resolve: (joined) => result.resolve(joined),
       reject: (error) => result.reject(error),
     });
     return result.promise;
@@ -1064,7 +1038,7 @@ export class SyncClient {
    * error, a timeout, a drop and `close()` alike (R2-L4).
    */
   #trackGroupRequest(
-    kind: 'group.create' | 'group.join' | 'group.joinByCode' | 'group.joinByQr' | 'group.resume',
+    kind: 'group.create' | 'group.joinByCode' | 'group.joinByQr' | 'group.resume',
     reqId: string,
     message: object,
     callbacks: RequestCallbacks,
@@ -1085,43 +1059,6 @@ export class SyncClient {
     });
     // A throwing socket is handled as a drop, which rejects the request above.
     this.#send(message);
-  }
-
-  #join(
-    groupId: string,
-    callbacks: { resolve(joined: JoinedGroup): void; reject(error: SyncClientError): void },
-  ): void {
-    const reqId = this.#requests.nextId();
-    this.#trackGroupRequest(
-      'group.join',
-      reqId,
-      { type: 'group.join', reqId, groupId },
-      {
-        resolve: (reply) => {
-          if (reply.type !== 'group.joined') return;
-          void this.#tokens?.saveToken(reply.token);
-          const joined: JoinedGroup = Object.freeze({
-            groupId: reply.groupId,
-            role: 'member',
-            participantId: reply.participantId,
-            metadata: reply.metadata,
-            hasPosition: reply.hasPosition,
-            ...(reply.hasPosition ? { position: reply.position } : {}),
-          });
-          this.#startGroup({
-            status: 'active',
-            groupId: reply.groupId,
-            role: 'member',
-            metadata: reply.metadata,
-            hasPosition: reply.hasPosition,
-            position: reply.hasPosition ? reply.position : undefined,
-            leaderOnline: reply.leaderOnline,
-          });
-          callbacks.resolve(joined);
-        },
-        reject: (error) => callbacks.reject(error),
-      },
-    );
   }
 
   #startGroup(group: Extract<GroupState, { status: 'active' }>): void {

@@ -36,7 +36,7 @@ export const CREATED_FIELDS = { joinMethods: ['A', 'D'], codes: TEST_CODES };
 export const JOIN_CODE = '123456';
 export const DOOR_CODE = '654321';
 
-/** Joins the fake group by code, as `joinGroup(groupId)` did before #10. */
+/** Joins the fake group by code (#10: there is no join by group ID). */
 export function joinTestGroup(client: SyncClient): Promise<JoinedGroup> {
   return client.joinByCode(JOIN_CODE, { doorCode: DOOR_CODE });
 }

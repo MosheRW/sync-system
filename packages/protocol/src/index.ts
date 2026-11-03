@@ -56,7 +56,6 @@ export type {
   GroupEndedReason,
   HelloMessage,
   GroupCreateMessage,
-  GroupJoinMessage,
   GroupJoinByCodeMessage,
   PositionUpdateMessage,
   GroupResumeMessage,
@@ -109,7 +108,6 @@ export type {
 export {
   helloSchema,
   groupCreateSchema,
-  groupJoinSchema,
   positionUpdateSchema,
   groupResumeSchema,
   clientMessageSchema,

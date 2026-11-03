@@ -115,7 +115,6 @@ Every `*Ms` value must be a finite number up to 2^31-1 ms.
 | `connect()`                                                                                    | `Promise<ConnectedInfo>`       | Resolves on `hello.ok` with `{ participantId, limits }`. Returns the current attempt if one is running. Rejects on a fatal error, `close()` or giving up: always `catch` it. |
 | `close()`                                                                                      | `void`                         | Idempotent. Closes the socket (1000), rejects pending requests and `connect()` with `CLOSED`, stops every timer. Never reconnects by itself.                                 |
 | `createGroup(metadata, initialPosition?)`                                                      | `Promise<CreatedGroup>`        | `{ groupId, role: 'leader', participantId }`.                                                                                                                                |
-| `joinGroup(groupId)`                                                                           | `Promise<JoinedGroup>`         | `{ groupId, role: 'member', participantId, metadata, hasPosition, position? }`. `hasPosition: false` means "no position yet".                                                |
 | `updatePosition(position)`                                                                     | `void`                         | Leader only. Throws local errors synchronously; server rejections arrive as `error` events.                                                                                  |
 | `getState()`                                                                                   | `ConnectionState`              | Same as `getSnapshot().connection`.                                                                                                                                          |
 | `getSnapshot()`                                                                                | `SyncClientSnapshot`           | `{ connection, group }`, frozen, same object until something changes.                                                                                                        |
@@ -130,7 +129,7 @@ Every `*Ms` value must be a finite number up to 2^31-1 ms.
 
 Group calls made while not `connected` fail at once with `NOT_CONNECTED`;
 nothing is queued, and nothing is ever sent before `hello.ok`. Only one
-`createGroup`/`joinGroup` may be in flight; another one fails locally with
+`createGroup`/`joinByCode`/`joinByQr` may be in flight; another one fails locally with
 `REQUEST_IN_PROGRESS`.
 
 Metadata and positions are opaque: the client never reads or changes their
@@ -248,7 +247,7 @@ the handshake and version checks every time.
 
 ### Request timeouts
 
-- Open + handshake, `group.create`, `group.join`: no reply within
+- Open + handshake, `group.create`, `group.joinByCode`, `group.joinByQr`: no reply within
   `requestTimeoutMs` (10 s) rejects with `REQUEST_TIMEOUT` and drops the
   socket, then reconnects (this detects half-open connections and avoids
   orphan groups).

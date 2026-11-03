@@ -18,7 +18,6 @@ import {
   MAX_JOIN_CODE_INPUT_LENGTH,
   MAX_QR_TICKET_INPUT_LENGTH,
   MAX_QR_TICKET_LENGTH,
-  MAX_GROUP_ID_INPUT_LENGTH,
   MAX_REQ_ID_LENGTH,
   MAX_TOKEN_LENGTH,
   MAX_TOKENS_PER_CHECK,
@@ -77,12 +76,6 @@ const schemas = buildJitless(() => {
     metadata: opaqueObject,
     position: opaqueValue.optional(),
     joinMethods: joinMethodList.optional(),
-  });
-
-  const groupJoinSchema = z.object({
-    type: z.literal('group.join'),
-    reqId,
-    groupId: z.string().max(MAX_GROUP_ID_INPUT_LENGTH),
   });
 
   const joinCode = z.string().max(MAX_JOIN_CODE_INPUT_LENGTH);
@@ -153,7 +146,6 @@ const schemas = buildJitless(() => {
   const clientMessageSchema = z.discriminatedUnion('type', [
     helloSchema,
     groupCreateSchema,
-    groupJoinSchema,
     groupJoinByCodeSchema,
     groupJoinByQrSchema,
     qrIssueSchema,
@@ -321,7 +313,6 @@ const schemas = buildJitless(() => {
   return {
     helloSchema,
     groupCreateSchema,
-    groupJoinSchema,
     positionUpdateSchema,
     groupResumeSchema,
     clientMessageSchema,
@@ -331,7 +322,6 @@ const schemas = buildJitless(() => {
 
 export const helloSchema = schemas.helloSchema;
 export const groupCreateSchema = schemas.groupCreateSchema;
-export const groupJoinSchema = schemas.groupJoinSchema;
 export const positionUpdateSchema = schemas.positionUpdateSchema;
 export const groupResumeSchema = schemas.groupResumeSchema;
 export const clientMessageSchema = schemas.clientMessageSchema;

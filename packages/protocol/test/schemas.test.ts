@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   MAX_API_KEY_LENGTH,
   MAX_APP_VERSION_INPUT_LENGTH,
-  MAX_GROUP_ID_INPUT_LENGTH,
   MAX_REQ_ID_LENGTH,
+  clientMessageSchema,
   parseClientMessage,
   parseServerMessage,
 } from '../src/index.js';
@@ -33,13 +33,20 @@ describe('client message schemas', () => {
     expect(ok({ type: 'group.create', metadata: { a: 1 }, position: null }).type).toBe(
       'group.create',
     );
-    expect(ok({ type: 'group.join', groupId: GROUP_ID, reqId: 'r1' }).type).toBe('group.join');
+    expect(ok({ type: 'group.joinByCode', joinCode: '123456', reqId: 'r1' }).type).toBe(
+      'group.joinByCode',
+    );
     expect(ok({ type: 'position.update', position: 'p' }).type).toBe('position.update');
   });
 
   it('ignores unknown extra fields', () => {
-    const message = ok({ type: 'group.join', groupId: GROUP_ID, displayName: 'x', extra: [1] });
-    expect(message).toEqual({ type: 'group.join', groupId: GROUP_ID });
+    const message = ok({
+      type: 'group.joinByCode',
+      joinCode: '123456',
+      groupId: GROUP_ID,
+      extra: [1],
+    });
+    expect(message).toEqual({ type: 'group.joinByCode', joinCode: '123456' });
   });
 
   it('accepts a hello without an apiKey so the handshake can report INVALID_API_KEY', () => {
@@ -49,7 +56,7 @@ describe('client message schemas', () => {
   it('rejects unknown types, missing fields and non-objects', () => {
     fails({ type: 'group.list' });
     fails({ type: 'position.update' });
-    fails({ type: 'group.join' });
+    fails({ type: 'group.joinByCode' });
     fails({ type: 'hello', appVersion: '1.0.0', apiKey: KEY });
     fails({ type: 'hello', protocolVersion: 1.5, appVersion: '1.0.0' });
     fails({});
@@ -80,10 +87,19 @@ describe('client message schemas', () => {
     fails({ ...hello, apiKey: 'k'.repeat(MAX_API_KEY_LENGTH + 1) });
     ok({ ...hello, appVersion: '1'.repeat(MAX_APP_VERSION_INPUT_LENGTH) });
     fails({ ...hello, appVersion: '1'.repeat(MAX_APP_VERSION_INPUT_LENGTH + 1) });
-    ok({ type: 'group.join', groupId: 'g'.repeat(MAX_GROUP_ID_INPUT_LENGTH) });
-    fails({ type: 'group.join', groupId: 'g'.repeat(MAX_GROUP_ID_INPUT_LENGTH + 1) });
-    ok({ type: 'group.join', groupId: GROUP_ID, reqId: 'r'.repeat(MAX_REQ_ID_LENGTH) });
-    fails({ type: 'group.join', groupId: GROUP_ID, reqId: 'r'.repeat(MAX_REQ_ID_LENGTH + 1) });
+    ok({ type: 'group.end', reqId: 'r'.repeat(MAX_REQ_ID_LENGTH) });
+    fails({ type: 'group.end', reqId: 'r'.repeat(MAX_REQ_ID_LENGTH + 1) });
+  });
+
+  it('no longer accepts group.join by group ID (#10 AC36, R15)', () => {
+    fails({ type: 'group.join', groupId: GROUP_ID });
+    fails({ type: 'group.join', groupId: GROUP_ID, reqId: 'r1' });
+  });
+
+  it('has no client message that takes a raw group ID as a field (#10 AC36, R15)', () => {
+    for (const option of clientMessageSchema.options) {
+      expect(Object.keys(option.shape), option.shape.type.value).not.toContain('groupId');
+    }
   });
 
   it('never echoes received values in issues', () => {
