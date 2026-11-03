@@ -7,7 +7,7 @@
 - Security-sensitive: yes (door codes, approval, brute-force limits, QR ticket signing, codes blob, removal of join by group ID)
 - Review rounds: 1 (code review); security plan review rounds: 3 (round 1 FAIL, round 2 PASS, round 3 targeted PASS)
 - QA verdict: PASS (round 1, head 30e93df)
-- Last updated by: qa
+- Last updated by: engineer (fix round, Gate 3 low findings)
 
 ## Notes
 - PRD item 4 of 9. "item N" in spec.md means PRD item N, not GitHub issue N.
@@ -122,3 +122,19 @@ Recorded in architecture.md section 12 (plan revision 2).
   `requestTimeoutMs` passes, the join rejects with REQUEST_TIMEOUT and the
   connection is dropped (as other request timeouts do), so the server
   withdraws the request.
+- Fix round (Gate 3 findings): the user asked to fix the three low
+  security findings A1-A3 from code review round 1 before merging.
+  - A1 (5e76b9f): `displayName` and `*.displayName` were already in
+    `REDACT_PATHS` (since 29d3bf4, #5), at the same depth as the join
+    code fields, so no logger change was needed. Committed as
+    `test(server)` instead of the requested `fix(server)`: a new test
+    logs join message shapes carrying a display name (spread, nested,
+    request entry) and proves the name is removed (verified to fail
+    without the paths).
+  - A2 (eab3a13): the shared `normalizeDisplayName` also rejects U+00AD,
+    U+115F, U+180E, U+2060-U+2064, U+3164 and U+FFA0; names made only of
+    whitespace and such characters are rejected. Tests per character.
+  - A3 (18dd4f6): architecture.md N4 AC33 text says "higher" ticket
+    generation, matching spec AC33.
+  - Checks: lint, typecheck, test (protocol 81, server 820, client 537),
+    build and `pnpm audit --audit-level=high` all exit 0.
