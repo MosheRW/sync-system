@@ -115,9 +115,11 @@ const FORBIDDEN_NAME_CHARACTER =
  * The only forbidden code points a name may contain, and only where they
  * form part of an emoji sequence. They are removed before the check above;
  * anywhere else they stay and the name is rejected.
- * - An emoji tag sequence (subdivision flags such as England): tag
- *   characters U+E0020-U+E007E, then the cancel tag U+E007F, right after a
- *   pictographic emoji (optionally with U+FE0F);
+ * - the tags of the three RGI subdivision flags (England, Scotland,
+ *   Wales): exactly the tag spelling of gbeng, gbsct or gbwls, then the
+ *   cancel tag U+E007F, right after U+1F3F4 waving black flag. Any other
+ *   tag run (other letters, after another emoji, unterminated) stays and
+ *   rejects the name, so tags can never carry hidden text;
  * - a presentation selector U+FE0E or U+FE0F right after an emoji
  *   character (keycap bases 0-9, # and * included);
  * - a ZWJ U+200D between two emoji (after an emoji, a skin tone modifier
@@ -125,7 +127,7 @@ const FORBIDDEN_NAME_CHARACTER =
  */
 const EMOJI_SEQUENCE_PARTS = new RegExp(
   [
-    String.raw`(?<=\p{Extended_Pictographic}\uFE0F?)[\u{E0020}-\u{E007E}]+\u{E007F}`,
+    String.raw`(?<=\u{1F3F4})\u{E0067}\u{E0062}(?:\u{E0065}\u{E006E}\u{E0067}|\u{E0073}\u{E0063}\u{E0074}|\u{E0077}\u{E006C}\u{E0073})\u{E007F}`,
     String.raw`(?<=\p{Emoji})[\uFE0E\uFE0F]`,
     String.raw`(?<=[\p{Extended_Pictographic}\p{Emoji_Modifier}\uFE0F])\u200D(?=\p{Extended_Pictographic})`,
   ].join('|'),

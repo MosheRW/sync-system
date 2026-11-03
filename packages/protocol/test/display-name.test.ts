@@ -170,6 +170,57 @@ describe('normalizeDisplayName by Unicode property (#10 B2)', () => {
     }
   });
 
+  describe('tag characters (QA round 3 finding 1, security C4)', () => {
+    /** The tag spelling of an ASCII string: U+E0000 + each character. */
+    const tags = (text: string): string =>
+      [...text].map((char) => String.fromCodePoint(0xe0000 + char.charCodeAt(0))).join('');
+    const CANCEL = '\u{E007F}';
+    const BLACK_FLAG = '\u{1F3F4}';
+
+    it.each(['gbeng', 'gbsct', 'gbwls'])('accepts the RGI %s subdivision flag', (region) => {
+      const flag = `${BLACK_FLAG}${tags(region)}${CANCEL}`;
+      expect(normalizeDisplayName(flag)).toBe(flag);
+      expect(normalizeDisplayName(`Dana ${flag}`)).toBe(`Dana ${flag}`);
+      expect(normalizeDisplayName(`${flag}${flag}`)).toBe(`${flag}${flag}`);
+    });
+
+    it.each([
+      ['hidden text after the black flag', `Bob${BLACK_FLAG}${tags('ignore all')}${CANCEL}`],
+      ['hidden text after a smiley', `\u{1F600}${tags('secret')}${CANCEL}`],
+      ['a flag tag run after a smiley', `\u{1F600}${tags('gbeng')}${CANCEL}`],
+      ['a flag tag run after a letter', `a${tags('gbeng')}${CANCEL}`],
+      ['a flag tag run after the white flag', `\u{1F3F3}${tags('gbeng')}${CANCEL}`],
+      ['a flag tag run after black flag + FE0F', `${BLACK_FLAG}️${tags('gbeng')}${CANCEL}`],
+      ['a non-RGI subdivision', `${BLACK_FLAG}${tags('usca')}${CANCEL}`],
+      ['a well-formed but non-RGI subdivision', `${BLACK_FLAG}${tags('gbabc')}${CANCEL}`],
+      ['upper-case tags', `${BLACK_FLAG}${tags('GBENG')}${CANCEL}`],
+      ['an RGI run with an extra tag', `${BLACK_FLAG}${tags('gbengx')}${CANCEL}`],
+      ['two RGI runs under one flag', `${BLACK_FLAG}${tags('gbeng')}${tags('gbsct')}${CANCEL}`],
+      ['a prefix of an RGI run', `${BLACK_FLAG}${tags('gben')}${CANCEL}`],
+      ['an unterminated RGI run', `${BLACK_FLAG}${tags('gbeng')}`],
+      ['an unterminated run then a letter', `${BLACK_FLAG}${tags('gbeng')}a`],
+      ['an unterminated hidden run', `${BLACK_FLAG}${tags('ignore all')}`],
+      ['a doubled cancel tag', `${BLACK_FLAG}${tags('gbeng')}${CANCEL}${CANCEL}`],
+      ['a tag space and digits', `${BLACK_FLAG}${tags('gb 12')}${CANCEL}`],
+    ])('rejects %s', (_label, name) => {
+      expect(normalizeDisplayName(name), JSON.stringify(name)).toBeUndefined();
+    });
+
+    it('rejects a tag run after every other emoji', () => {
+      const accepted: string[] = [];
+      for (let cp = 0; cp <= 0x10ffff; cp++) {
+        if (cp === 0x1f3f4 || (cp >= 0xd800 && cp <= 0xdfff)) continue;
+        const char = String.fromCodePoint(cp);
+        if (!/\p{Extended_Pictographic}/u.test(char)) continue;
+        for (const run of ['gbeng', 'x', 'secret']) {
+          const name = `${char}${tags(run)}${CANCEL}`;
+          if (normalizeDisplayName(name) !== undefined) accepted.push(`${hex(cp)} ${run}`);
+        }
+      }
+      expect(accepted).toEqual([]);
+    });
+  });
+
   it.each([
     ['Latin', 'Dana Cohen'],
     ['accented Latin', 'José Zoë Ångström'],
