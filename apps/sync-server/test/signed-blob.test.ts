@@ -1,4 +1,5 @@
 import * as crypto from 'node:crypto';
+import type * as Crypto from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import {
   hasExactKeys,
@@ -12,7 +13,7 @@ const KEY = Buffer.alloc(32, 1);
 const OTHER = Buffer.alloc(32, 2);
 
 vi.mock('node:crypto', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('node:crypto')>();
+  const actual = await importOriginal<typeof Crypto>();
   return { ...actual, timingSafeEqual: vi.fn(actual.timingSafeEqual) };
 });
 
