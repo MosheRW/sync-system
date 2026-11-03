@@ -92,37 +92,69 @@ export function isCodesBlobShape(value: unknown): value is string {
   );
 }
 
-/** A lone high or low surrogate: the string is not well-formed UTF-16. */
-const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+/**
+ * Code points a display name may never contain (AC20, architecture 4.5, R9,
+ * security review B2), chosen by Unicode property rather than by list, so
+ * every character of a class is covered, including reserved ones:
+ * - `Cc` control characters and `Cf` format characters (bidi controls,
+ *   zero-width characters, interlinear annotation, invisible operators);
+ * - `Cs` lone surrogates (the string is not well-formed UTF-16);
+ * - `Co` private use and `Cn` unassigned code points (render unpredictably);
+ * - `Zl` / `Zp` line and paragraph separators;
+ * - `Default_Ignorable_Code_Point` (variation selectors, Hangul fillers,
+ *   combining grapheme joiner, tags, and so on) and `Bidi_Control`;
+ * - the few characters in visible categories that still render blank:
+ *   U+2800 braille blank, the Hangul fillers U+115F, U+1160, U+3164,
+ *   U+FFA0 (also default-ignorable) and U+1D159 musical null notehead.
+ * Exception: the parts of emoji sequences, see EMOJI_SEQUENCE_PARTS.
+ */
+const FORBIDDEN_NAME_CHARACTER =
+  /[\p{Cc}\p{Cf}\p{Cs}\p{Co}\p{Cn}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}\p{Bidi_Control}\u2800\u115F\u1160\u3164\uFFA0\u{1D159}]/u;
 
 /**
- * Characters a display name may not contain (AC20, architecture 4.5, R9):
- * control characters, line and paragraph separators, bidi overrides and
- * isolates, and invisible format characters that could hide or reorder text
- * in the leader's prompt. That includes characters that render blank or
- * invisible and that trim() keeps: the soft hyphen (U+00AD), the Hangul
- * fillers (U+115F, U+3164, U+FFA0), the Mongolian vowel separator
- * (U+180E), the word joiner and invisible operators (U+2060-U+2064). A name
- * made only of whitespace and such characters is therefore rejected too.
- * ZWJ (U+200D), variation selectors and emoji tag characters stay allowed,
- * so emoji sequences work.
+ * The only forbidden code points a name may contain, and only where they
+ * form part of an emoji sequence. They are removed before the check above;
+ * anywhere else they stay and the name is rejected.
+ * - An emoji tag sequence (subdivision flags such as England): tag
+ *   characters U+E0020-U+E007E, then the cancel tag U+E007F, right after a
+ *   pictographic emoji (optionally with U+FE0F);
+ * - a presentation selector U+FE0E or U+FE0F right after an emoji
+ *   character (keycap bases 0-9, # and * included);
+ * - a ZWJ U+200D between two emoji (after an emoji, a skin tone modifier
+ *   or U+FE0F, before a pictographic emoji).
  */
-const FORBIDDEN_NAME_CHARACTERS =
-  /[\p{Cc}\u2028\u2029\u202A-\u202E\u2066-\u2069\u061C\u200B\u200E\u200F\uFEFF\u00AD\u115F\u180E\u2060-\u2064\u3164\uFFA0]/u;
+const EMOJI_SEQUENCE_PARTS = new RegExp(
+  [
+    String.raw`(?<=\p{Extended_Pictographic}\uFE0F?)[\u{E0020}-\u{E007E}]+\u{E007F}`,
+    String.raw`(?<=\p{Emoji})[\uFE0E\uFE0F]`,
+    String.raw`(?<=[\p{Extended_Pictographic}\p{Emoji_Modifier}\uFE0F])\u200D(?=\p{Extended_Pictographic})`,
+  ].join('|'),
+  'gu',
+);
+
+/**
+ * A visible character: a letter, number, symbol or punctuation. Every name
+ * needs one, so names made only of spaces, combining marks, selectors or
+ * joiners are rejected. The blank-looking characters in these categories
+ * are forbidden above.
+ */
+const VISIBLE_CHARACTER = /[\p{L}\p{N}\p{S}\p{P}]/u;
 
 /**
  * Validates and trims an optional display name (AC20). Returns the trimmed
- * name, or undefined when it is not acceptable: over the raw input cap, not
- * well-formed UTF-16, empty after trimming, longer than 32 code points, or
- * containing a forbidden character. Server and client run this same
- * function, so both accept exactly the same names.
+ * name, or undefined when it is not acceptable: over the raw input cap,
+ * empty after trimming, longer than 32 code points, containing a forbidden
+ * code point outside an emoji sequence (including a lone surrogate), or
+ * without any visible character. Server and client run this same function,
+ * so both accept exactly the same names (given the same Unicode data; the
+ * server is authoritative).
  */
 export function normalizeDisplayName(raw: string): string | undefined {
   if (raw.length > MAX_DISPLAY_NAME_INPUT_LENGTH) return undefined;
-  if (LONE_SURROGATE.test(raw)) return undefined;
   const trimmed = raw.trim();
   const length = [...trimmed].length;
   if (length < 1 || length > MAX_DISPLAY_NAME_LENGTH) return undefined;
-  if (FORBIDDEN_NAME_CHARACTERS.test(trimmed)) return undefined;
+  if (FORBIDDEN_NAME_CHARACTER.test(trimmed.replace(EMOJI_SEQUENCE_PARTS, ''))) return undefined;
+  if (!VISIBLE_CHARACTER.test(trimmed)) return undefined;
   return trimmed;
 }

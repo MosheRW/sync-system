@@ -240,8 +240,11 @@ removed and letters uppercased (`' 048-213 '`, `'abcd-efgh'`). A code that is
 neither 6 digits nor 8 alphabet characters fails locally with
 `INVALID_JOIN_CODE` (`details.field`: `code` or `doorCode`); a code type the
 app does not allow with `JOIN_METHOD_UNAVAILABLE`. A display name is 1 to 32
-characters after trimming, without control, bidi or invisible characters
-(`INVALID_DISPLAY_NAME`); it is shown only to the leader.
+characters after trimming, with at least one visible character (letter,
+number, symbol or punctuation) and no control, format, bidi, invisible,
+private-use or unassigned characters; zero-width joiners, variation selectors
+and tag characters are allowed only inside emoji sequences
+(`INVALID_DISPLAY_NAME`). It is shown only to the leader.
 
 The join promise resolves when the joiner is admitted, method B included.
 While it waits, `snapshot.group` is `awaiting_approval` and `indicatorOf`
