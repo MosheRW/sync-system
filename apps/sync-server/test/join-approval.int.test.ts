@@ -87,10 +87,9 @@ describe('method B requests (#10 AC19, AC20)', () => {
     expect((await leader.next('join.requested')).displayName).toBe(family.repeat(4));
   });
 
-  it('rejects bad display names with INVALID_MESSAGE (AC20, R9)', async () => {
+  it('rejects bad display names with INVALID_MESSAGE (AC20, R9, B2)', async () => {
     const { server } = await start();
     const { join } = await bGroup(server);
-    const joiner = await server.connectReady();
     const bad = [
       '',
       '   ',
@@ -100,10 +99,22 @@ describe('method B requests (#10 AC19, AC20)', () => {
       `a${String.fromCharCode(0xd800)}`,
       `a${String.fromCharCode(0x200b)}b`,
       `a${String.fromCharCode(0xfeff)}b`,
+      // Blank or invisible by Unicode property (#10 B2).
+      String.fromCodePoint(0x2800),
+      String.fromCodePoint(0x1160),
+      String.fromCodePoint(0x034f),
+      String.fromCodePoint(0xfe0f),
+      String.fromCodePoint(0xe0067, 0xe007f),
+      `a${String.fromCodePoint(0x200c)}b`,
+      `a${String.fromCodePoint(0xfff9)}b`,
     ];
+    // A fresh connection per name, so the per-connection attempt budget
+    // never answers first.
     for (const displayName of bad) {
+      const joiner = await server.connectReady();
       joiner.send({ type: 'group.joinByCode', joinCode: join.joinCode, displayName });
       expect(await joiner.next('error')).toMatchObject({ code: 'INVALID_MESSAGE' });
+      await joiner.close();
     }
   });
 
