@@ -51,6 +51,8 @@ const SENSITIVE_KEYS = [
   // Free text that may carry input (#5).
   'reason',
   'message',
+  // pino's message key (QA round 3 finding 2, security C1).
+  'msg',
 ] as const;
 
 /** The shapes each key is logged in: top level, deep, arrays, mixed. */
@@ -230,6 +232,24 @@ describe('log redaction at any depth (#10 B1)', () => {
     expect(out.text).not.toContain('SENTINEL');
     expect(out.records()[0]).toMatchObject({ event: 'test', side: 'x' });
     expect(out.records()[1]).toMatchObject({ event: 'grandchild', side: 'y', side2: 'z' });
+  });
+
+  it('never writes a msg field, and keeps the real message (QA round 3 finding 2)', () => {
+    const { out, logger } = capture();
+    logger.info({ msg: 'SENTINEL-1' });
+    logger.info({ msg: 'SENTINEL-2' }, 'real');
+    logger.info({ event: 'test', msg: 'SENTINEL-3' }, 'real');
+    logger.info({ event: 'test', MSG: 'SENTINEL-4', a: [{ msg: 'SENTINEL-5' }] }, 'real');
+    logger.child({ msg: 'SENTINEL-6' }).info({ event: 'child' }, 'real');
+    expect(out.text).not.toContain('SENTINEL');
+    expect(out.lines).toHaveLength(5);
+    const [first, ...rest] = out.lines;
+    expect(first).not.toContain('"msg"');
+    for (const line of rest) {
+      // Exactly one msg key per line, and it is the real message.
+      expect(line.match(/"msg":/g)).toHaveLength(1);
+      expect(JSON.parse(line)).toMatchObject({ msg: 'real' });
+    }
   });
 
   it('does not mutate the logged object', () => {

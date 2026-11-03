@@ -43,6 +43,10 @@ export const SENSITIVE_LOG_KEYS: ReadonlySet<string> = new Set([
   // Free text that may carry input (#5); never a log field (R10).
   'reason',
   'message',
+  // pino's own message key: a field named `msg` would be written as a
+  // second message. The real message (the string argument) is added by pino
+  // after the fields are redacted, so it is kept.
+  'msg',
   // #10: the codes payload (R10).
   'codes',
   // Client-chosen free text the server echoes.
