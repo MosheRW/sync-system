@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { types } from 'node:util';
 import { type DestinationStream, type Logger, pino } from 'pino';
 import type { LogLevel } from '../config/env.js';
 
@@ -108,7 +109,7 @@ export function redactLogValue(value: unknown): unknown {
 
 function redactWalk(value: unknown, ancestors: Set<object>, depth: number): unknown {
   if (value === null || typeof value !== 'object') return value;
-  if (value instanceof Error) return safeErr(value);
+  if (isError(value)) return safeErr(value);
   if (ancestors.has(value)) return '[Circular]';
   if (depth >= MAX_LOG_DEPTH) return '[Truncated]';
   ancestors.add(value);
@@ -138,7 +139,7 @@ function redactWalk(value: unknown, ancestors: Set<object>, depth: number): unkn
 }
 
 function redactFields(value: object): Record<string, unknown> {
-  if (value instanceof Error) return { err: safeErr(value) };
+  if (isError(value)) return { err: safeErr(value) };
   return redactLogValue(value) as Record<string, unknown>;
 }
 
@@ -234,17 +235,47 @@ export interface SafeError {
  * (L5): the name, a string `code` if present, and the stack frames only.
  */
 export function safeErr(err: unknown): SafeError {
-  if (!(err instanceof Error)) {
+  if (!isError(err)) {
     return { name: typeof err, frames: [] };
   }
   const result: SafeError = {
     name: err.name,
-    frames: (err.stack ?? '')
-      .split('\n')
-      .filter((line) => /^\s+at /.test(line))
-      .map((line) => line.trim()),
+    frames: stackFrames(err),
   };
   const code = (err as { code?: unknown }).code;
   if (typeof code === 'string') result.code = code;
   return result;
+}
+
+/** An error from this realm or another one (vm contexts, workers). */
+function isError(value: unknown): value is Error {
+  return value instanceof Error || types.isNativeError(value);
+}
+
+/**
+ * The stack frames of an error, without its header. V8 writes the stack as
+ * a header (`<name>: <message>`, or `<name> [<code>]: <message>` for Node
+ * errors) and then one `    at ...` line per frame, so a multi-line message
+ * that contains `\n    at <input>` would look like a frame. The header is
+ * skipped first, up to the end of the message, then only frame lines are
+ * kept (C3). When the message is not found in the stack (it was changed
+ * after the stack was written, or the stack was replaced), no frame is
+ * trusted.
+ */
+function stackFrames(err: Error): string[] {
+  const stack = typeof err.stack === 'string' ? err.stack : '';
+  const message = typeof err.message === 'string' ? err.message : '';
+  let afterMessage = 0;
+  if (message.length > 0) {
+    const start = stack.indexOf(message);
+    if (start < 0) return [];
+    afterMessage = start + message.length;
+  }
+  const headerEnd = stack.indexOf('\n', afterMessage);
+  if (headerEnd < 0) return [];
+  return stack
+    .slice(headerEnd + 1)
+    .split('\n')
+    .filter((line) => /^\s+at /.test(line))
+    .map((line) => line.trim());
 }

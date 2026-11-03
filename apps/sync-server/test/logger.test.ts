@@ -117,6 +117,53 @@ describe('safeErr (L5)', () => {
     expect(JSON.stringify(safe)).not.toContain('SENTINEL');
   });
 
+  it('never takes message lines that look like frames for frames (C3)', () => {
+    const inject = 'bad\n    at SENTINEL-1 (evil.js:1:1)\n    at SENTINEL-2';
+    const plain = new Error(inject);
+    const typed = new RangeError(`x\n  at SENTINEL-3\n\tat SENTINEL-4`);
+    const coded = Object.assign(new Error(inject), { code: 'E_TEST' });
+    const empty = new Error('');
+    for (const err of [plain, typed, coded, empty]) {
+      const safe = safeErr(err);
+      expect(safe.frames.length).toBeGreaterThan(0);
+      expect(safe.frames.every((frame) => frame.startsWith('at '))).toBe(true);
+      expect(safe.frames[0]).toContain('logger.test');
+      expect(JSON.stringify(safe)).not.toContain('SENTINEL');
+    }
+  });
+
+  it('skips the header of a Node error with a code in brackets (C3)', () => {
+    let nodeError: unknown;
+    try {
+      Buffer.alloc(-1);
+    } catch (err) {
+      nodeError = err;
+    }
+    const safe = safeErr(nodeError);
+    expect(safe.name).toBe('RangeError');
+    expect(safe.code).toBe('ERR_OUT_OF_RANGE');
+    expect(safe.frames.length).toBeGreaterThan(0);
+  });
+
+  it('trusts no frame when the message no longer matches the stack (C3)', () => {
+    const err = new Error('first\n    at SENTINEL-1');
+    void err.stack; // the stack text is written on first read
+    err.message = 'changed';
+    expect(safeErr(err).frames).toEqual([]);
+    const replaced = new Error('m');
+    replaced.stack = 'SENTINEL-2\n    at SENTINEL-3';
+    expect(JSON.stringify(safeErr(replaced))).not.toContain('SENTINEL');
+  });
+
+  it('describes errors from another realm (C3)', async () => {
+    const { runInNewContext } = await import('node:vm');
+    const foreign = runInNewContext('new TypeError("SENTINEL-1")') as unknown;
+    expect(foreign instanceof Error).toBe(false);
+    const safe = safeErr(foreign);
+    expect(safe.name).toBe('TypeError');
+    expect(JSON.stringify(safe)).not.toContain('SENTINEL');
+  });
+
   it('handles non-errors', () => {
     expect(safeErr('SENTINEL')).toEqual({ name: 'string', frames: [] });
     expect(safeErr(undefined)).toEqual({ name: 'undefined', frames: [] });
