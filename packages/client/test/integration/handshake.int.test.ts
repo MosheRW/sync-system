@@ -43,7 +43,10 @@ describe('handshake against the real server (AC8, AC9, AC30)', () => {
       maxLeaderUpdatesPerSecond: 3,
       maxMessageBytes: 2048,
       maxSessionMinutes: 180,
+      qrTicketSeconds: 300,
+      approvalTimeoutSeconds: 120,
     });
+    expect(info.joinMethods).toEqual(['A', 'D']);
     expect(client.getState()).toMatchObject({
       status: 'connected',
       participantId: info.participantId,

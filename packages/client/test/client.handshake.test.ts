@@ -58,14 +58,21 @@ describe('connect and handshake (AC8, AC9)', () => {
       namespace: 'app-a',
       reqId: 'c1',
       participantId: PARTICIPANT_ID,
+      joinMethods: ['A', 'D'],
       limits: LIMITS,
     });
     const info = await connecting;
-    expect(info).toEqual({ participantId: PARTICIPANT_ID, namespace: 'app-a', limits: LIMITS });
+    expect(info).toEqual({
+      participantId: PARTICIPANT_ID,
+      namespace: 'app-a',
+      joinMethods: ['A', 'D'],
+      limits: LIMITS,
+    });
     expect(client.getState()).toEqual({
       status: 'connected',
       participantId: PARTICIPANT_ID,
       namespace: 'app-a',
+      joinMethods: ['A', 'D'],
       limits: LIMITS,
     });
     expect(client.getSnapshot().connection).toBe(client.getState());
@@ -117,6 +124,8 @@ describe('client-side version check (AC12)', () => {
       { ...LIMITS, maxMessageBytes: 1_048_577 },
       { ...LIMITS, maxLeaderUpdatesPerSecond: 1e6 },
       { ...LIMITS, maxGroupSize: 10_001 },
+      { ...LIMITS, qrTicketSeconds: 86_401 },
+      { ...LIMITS, approvalTimeoutSeconds: 3_601 },
     ]) {
       FakeWebSocket.reset();
       const client = makeClient();
@@ -129,6 +138,7 @@ describe('client-side version check (AC12)', () => {
         reqId: 'c1',
         participantId: 'p',
         namespace: 'app-a',
+        joinMethods: ['A'],
         limits,
       });
       const error = await rejection(connecting);

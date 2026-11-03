@@ -44,13 +44,41 @@ describe('handshake', () => {
       reqId: 'h1',
       participantId: expect.stringMatching(/^[0-9a-f-]{36}$/) as string,
       namespace: 'app-a',
+      joinMethods: ['A', 'D'],
       limits: {
         maxGroupSize: 30,
         maxLeaderUpdatesPerSecond: 5,
         maxMessageBytes: 4096,
         maxSessionMinutes: 180,
+        qrTicketSeconds: 300,
+        approvalTimeoutSeconds: 120,
       },
     });
+  });
+
+  it('sends the app join methods and join timers in hello.ok (#10 AC4)', async () => {
+    const custom = await startTestServer({
+      apps: [
+        {
+          namespace: 'app-c',
+          apiKey: KEY_A,
+          joinMethods: ['D', 'C', 'B'],
+          qrTicketSeconds: 60,
+          approvalTimeoutSeconds: 30,
+        },
+      ],
+    });
+    try {
+      const client = await custom.connect();
+      const reply = await client.hello({ apiKey: KEY_A });
+      expect(reply).toMatchObject({
+        type: 'hello.ok',
+        joinMethods: ['B', 'C', 'D'],
+        limits: { qrTicketSeconds: 60, approvalTimeoutSeconds: 30 },
+      });
+    } finally {
+      await custom.close();
+    }
   });
 
   it('rejects an unknown key with INVALID_API_KEY and close 4001 (AC7)', async () => {

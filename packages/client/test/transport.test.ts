@@ -77,6 +77,8 @@ describe('limits (M1)', () => {
         maxLeaderUpdatesPerSecond: 5,
         maxMessageBytes: 4096,
         maxSessionMinutes: 180,
+        qrTicketSeconds: 300,
+        approvalTimeoutSeconds: 120,
       }),
     ).toBeUndefined();
     expect(findOutOfBoundsLimit({ ...CLIENT_LIMIT_BOUNDS })).toBeUndefined();
@@ -91,12 +93,18 @@ describe('limits (M1)', () => {
     ['maxGroupSize', 10_001],
     ['maxSessionMinutes', 10_081],
     ['maxSessionMinutes', 0],
+    ['qrTicketSeconds', 86_401],
+    ['qrTicketSeconds', 0],
+    ['approvalTimeoutSeconds', 3_601],
+    ['approvalTimeoutSeconds', 0],
   ] as const)('names %s = %d as out of bounds', (key, value) => {
     const limits = {
       maxGroupSize: 30,
       maxLeaderUpdatesPerSecond: 5,
       maxMessageBytes: 4096,
       maxSessionMinutes: 180,
+      qrTicketSeconds: 300,
+      approvalTimeoutSeconds: 120,
     };
     expect(findOutOfBoundsLimit({ ...limits, [key]: value })).toBe(key);
   });
@@ -109,6 +117,8 @@ describe('limits (M1)', () => {
         maxLeaderUpdatesPerSecond: 1,
         maxMessageBytes: 1000,
         maxSessionMinutes: 180,
+        qrTicketSeconds: 300,
+        approvalTimeoutSeconds: 120,
       }),
     ).toBe(45_056);
     expect(
@@ -117,6 +127,8 @@ describe('limits (M1)', () => {
         maxLeaderUpdatesPerSecond: 1,
         maxMessageBytes: 30_000,
         maxSessionMinutes: 180,
+        qrTicketSeconds: 300,
+        approvalTimeoutSeconds: 120,
       }),
     ).toBe(60_000 + 8192 + 2048);
   });

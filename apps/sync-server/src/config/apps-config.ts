@@ -2,6 +2,8 @@ import { readFileSync } from 'node:fs';
 import semver from 'semver';
 import { z } from 'zod';
 import {
+  JOIN_METHODS,
+  type JoinMethod,
   MAX_API_KEY_LENGTH,
   MAX_APP_VERSION_LENGTH,
   NAMESPACE_PATTERN,
@@ -22,7 +24,12 @@ export const APP_DEFAULTS = {
   maxConnections: 1000,
   maxSessionMinutes: 180,
   inactivityLimitMinutes: 20,
+  qrTicketSeconds: 300,
+  approvalTimeoutSeconds: 120,
 } as const;
+
+/** Methods an app gets when it omits `joinMethods`, before the env intersection (#10 Q1.1). */
+export const DEFAULT_APP_JOIN_METHODS: readonly JoinMethod[] = ['A', 'D'];
 
 type Ceilings = Pick<
   ServerEnv,
@@ -32,6 +39,9 @@ type Ceilings = Pick<
   | 'maxAppConnectionsCeiling'
   | 'maxSessionMinutesCeiling'
   | 'inactivityLimitMinutesCeiling'
+  | 'qrTicketSecondsCeiling'
+  | 'approvalTimeoutSecondsCeiling'
+  | 'joinMethodsAllowed'
 >;
 
 interface LimitField {
@@ -78,6 +88,18 @@ const LIMIT_FIELDS: readonly LimitField[] = [
     ceilingName: 'INACTIVITY_LIMIT_MINUTES_CEILING',
     ceiling: (env) => env.inactivityLimitMinutesCeiling,
   },
+  {
+    field: 'qrTicketSeconds',
+    min: 30,
+    ceilingName: 'QR_TICKET_SECONDS_CEILING',
+    ceiling: (env) => env.qrTicketSecondsCeiling,
+  },
+  {
+    field: 'approvalTimeoutSeconds',
+    min: 15,
+    ceilingName: 'APPROVAL_TIMEOUT_SECONDS_CEILING',
+    ceiling: (env) => env.approvalTimeoutSecondsCeiling,
+  },
 ];
 
 const limitSchema = z.number().int();
@@ -92,12 +114,16 @@ const appEntrySchema = z.strictObject({
   maxConnections: limitSchema.optional(),
   maxSessionMinutes: limitSchema.optional(),
   inactivityLimitMinutes: limitSchema.optional(),
+  qrTicketSeconds: limitSchema.optional(),
+  approvalTimeoutSeconds: limitSchema.optional(),
+  joinMethods: z.array(z.enum(JOIN_METHODS)).min(1).max(JOIN_METHODS.length).optional(),
 });
 
 const FIELD_RULES: Record<string, string> = {
   namespace: 'must match ^[a-z0-9][a-z0-9_-]{0,62}$',
   apiKey: `must be a string of ${MIN_API_KEY_LENGTH}-${MAX_API_KEY_LENGTH} characters`,
   minAppVersion: `must be a semver string of at most ${MAX_APP_VERSION_LENGTH} characters`,
+  joinMethods: 'must be a non-empty array of distinct methods "A", "B", "C", "D"',
 };
 
 /**
@@ -108,6 +134,8 @@ function describeIssue(issue: z.core.$ZodIssue, entry: Record<string, unknown>):
   if (issue.code === 'unrecognized_keys') {
     return `unknown field(s): ${issue.keys.join(', ')}`;
   }
+  // Every problem inside the array is reported as the field's rule.
+  if (issue.path[0] === 'joinMethods') return `joinMethods ${FIELD_RULES.joinMethods}`;
   const field = issue.path.map(String).join('.');
   if (field !== '' && !(field in entry)) {
     return `${field} is required`;
@@ -211,6 +239,12 @@ export function parseAppsConfig(text: string, env: Ceilings, source = 'apps conf
       limits[spec.field] = value;
     }
 
+    const joinMethods = resolveAppJoinMethods(app.joinMethods, env.joinMethodsAllowed);
+    if (!joinMethods.ok) {
+      errors.push(...joinMethods.errors.map((error) => `${where}: ${error}`));
+      entryOk = false;
+    }
+
     const firstWithNamespace = seenNamespaces.get(app.namespace);
     if (firstWithNamespace !== undefined) {
       errors.push(
@@ -238,6 +272,7 @@ export function parseAppsConfig(text: string, env: Ceilings, source = 'apps conf
         apiKeyHash,
         minAppVersion: app.minAppVersion,
         ...limits,
+        joinMethods: joinMethods.ok ? joinMethods.methods : [],
       });
     }
   });
@@ -246,6 +281,44 @@ export function parseAppsConfig(text: string, env: Ceilings, source = 'apps conf
     throw new ConfigError(errors.map((e) => `${source}: ${e}`).join('\n'));
   }
   return result;
+}
+
+type JoinMethodsResult =
+  { ok: true; methods: readonly JoinMethod[] } | { ok: false; errors: string[] };
+
+/**
+ * An app's join methods (#10 AC2): the listed ones, each allowed by
+ * JOIN_METHODS_ALLOWED, or `["A", "D"]` intersected with it when omitted.
+ * Never clamped or dropped: a listed method the env does not allow is an
+ * error. The result is frozen and in canonical order.
+ */
+function resolveAppJoinMethods(
+  listed: readonly JoinMethod[] | undefined,
+  allowed: readonly JoinMethod[],
+): JoinMethodsResult {
+  if (listed === undefined) {
+    const methods = DEFAULT_APP_JOIN_METHODS.filter((method) => allowed.includes(method));
+    if (methods.length === 0) {
+      return {
+        ok: false,
+        errors: ['joinMethods is required because JOIN_METHODS_ALLOWED does not include A or D'],
+      };
+    }
+    return { ok: true, methods: Object.freeze(methods) };
+  }
+  if (new Set(listed).size !== listed.length) {
+    return { ok: false, errors: [`joinMethods ${FIELD_RULES.joinMethods}`] };
+  }
+  const notAllowed = JOIN_METHODS.filter(
+    (method) => listed.includes(method) && !allowed.includes(method),
+  );
+  if (notAllowed.length > 0) {
+    return {
+      ok: false,
+      errors: notAllowed.map((method) => `joinMethods "${method}" is not in JOIN_METHODS_ALLOWED`),
+    };
+  }
+  return { ok: true, methods: Object.freeze(JOIN_METHODS.filter((m) => listed.includes(m))) };
 }
 
 /** Reads and parses the apps registry file at `path`. */

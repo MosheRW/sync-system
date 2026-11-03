@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { ErrorCode } from './errors.js';
 import { buildJitless } from './jitless.js';
+import { JOIN_METHODS } from './join.js';
 import type { JsonObject, JsonValue } from './json.js';
 import {
   MAX_API_KEY_LENGTH,
@@ -118,7 +119,11 @@ const schemas = buildJitless(() => {
     maxLeaderUpdatesPerSecond: z.number().int().positive(),
     maxMessageBytes: z.number().int().positive(),
     maxSessionMinutes: z.number().int().positive(),
+    qrTicketSeconds: z.number().int().positive(),
+    approvalTimeoutSeconds: z.number().int().positive(),
   });
+
+  const joinMethods = z.array(z.enum(JOIN_METHODS)).min(1).max(JOIN_METHODS.length);
 
   const token = z.string().min(1).max(MAX_TOKEN_LENGTH);
 
@@ -155,6 +160,7 @@ const schemas = buildJitless(() => {
       reqId,
       participantId: z.string(),
       namespace: z.string().regex(NAMESPACE_PATTERN),
+      joinMethods,
       limits: appLimitsSchema,
     }),
     z.object({

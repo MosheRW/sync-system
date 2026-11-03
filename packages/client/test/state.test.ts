@@ -12,12 +12,20 @@ const LIMITS = {
   maxLeaderUpdatesPerSecond: 5,
   maxMessageBytes: 4096,
   maxSessionMinutes: 180,
+  qrTicketSeconds: 300,
+  approvalTimeoutSeconds: 120,
 };
 
 const connections: Record<string, ConnectionState> = {
   idle: { status: 'idle' },
   connecting: { status: 'connecting' },
-  connected: { status: 'connected', participantId: 'p', namespace: 'app-a', limits: LIMITS },
+  connected: {
+    status: 'connected',
+    participantId: 'p',
+    namespace: 'app-a',
+    joinMethods: ['A', 'D'],
+    limits: LIMITS,
+  },
   reconnecting: { status: 'reconnecting', attempt: 1, delayMs: 500, retryAt: 0, attempting: false },
   closed: { status: 'closed', reason: 'fatal', error: new SyncClientError('INVALID_API_KEY') },
 };

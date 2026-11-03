@@ -38,6 +38,12 @@ services:
       TOKEN_REFRESH_ACTIVITIES: '10'
       TOKEN_REFRESH_MIN_SECONDS: '60'
       TOKEN_REFRESH_MAX_SECONDS: '300'
+      # Join methods any app may use (A: group + door code, B: code + leader
+      # approval, C: alphanumeric code, D: QR ticket). Each app picks its own
+      # subset with `joinMethods` in the apps config.
+      JOIN_METHODS_ALLOWED: A,B,C,D
+      QR_TICKET_SECONDS_CEILING: '3600'
+      APPROVAL_TIMEOUT_SECONDS_CEILING: '600'
     healthcheck:
       test:
         - CMD

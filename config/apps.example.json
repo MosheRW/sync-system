@@ -9,12 +9,16 @@
       "maxMessageBytes": 4096,
       "maxConnections": 1000,
       "maxSessionMinutes": 180,
-      "inactivityLimitMinutes": 20
+      "inactivityLimitMinutes": 20,
+      "joinMethods": ["A", "D"],
+      "qrTicketSeconds": 300,
+      "approvalTimeoutSeconds": 120
     },
     {
       "namespace": "another-app",
       "apiKey": "REPLACE-with-a-different-openssl-rand-base64-32",
-      "minAppVersion": "2.3.0"
+      "minAppVersion": "2.3.0",
+      "joinMethods": ["C", "D"]
     }
   ]
 }

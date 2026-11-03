@@ -137,11 +137,14 @@ describe('server message schemas', () => {
         type: 'hello.ok',
         participantId: 'p',
         namespace: 'app-a',
+        joinMethods: ['A', 'D'],
         limits: {
           maxGroupSize: 30,
           maxLeaderUpdatesPerSecond: 5,
           maxMessageBytes: 4096,
           maxSessionMinutes: 180,
+          qrTicketSeconds: 300,
+          approvalTimeoutSeconds: 120,
         },
       },
       { type: 'group.created', groupId: GROUP_ID, participantId: 'p', role: 'leader', token: 't' },
@@ -202,15 +205,44 @@ describe('server message schemas', () => {
       type: 'hello.ok',
       participantId: 'p',
       namespace: 'app-a',
+      joinMethods: ['C'],
       limits: {
         maxGroupSize: 3,
         maxLeaderUpdatesPerSecond: 1,
         maxMessageBytes: 1,
         maxSessionMinutes: 1,
+        qrTicketSeconds: 30,
+        approvalTimeoutSeconds: 15,
       },
     };
     expect(parseServerMessage(helloOk).ok).toBe(true);
     expect(parseServerMessage({ ...helloOk, namespace: 'Bad App' }).ok).toBe(false);
     expect(parseServerMessage({ ...helloOk, namespace: undefined }).ok).toBe(false);
+  });
+
+  it('requires the join methods and join timers in hello.ok (#10 AC4)', () => {
+    const helloOk = {
+      type: 'hello.ok',
+      participantId: 'p',
+      namespace: 'app-a',
+      joinMethods: ['A', 'B', 'C', 'D'],
+      limits: {
+        maxGroupSize: 3,
+        maxLeaderUpdatesPerSecond: 1,
+        maxMessageBytes: 1,
+        maxSessionMinutes: 1,
+        qrTicketSeconds: 300,
+        approvalTimeoutSeconds: 120,
+      },
+    };
+    expect(parseServerMessage(helloOk).ok).toBe(true);
+    for (const joinMethods of [undefined, [], ['E'], ['a'], 'A', ['A', 'B', 'C', 'D', 'A']]) {
+      expect(parseServerMessage({ ...helloOk, joinMethods }).ok).toBe(false);
+    }
+    for (const key of ['qrTicketSeconds', 'approvalTimeoutSeconds']) {
+      const limits: Record<string, number> = { ...helloOk.limits };
+      delete limits[key];
+      expect(parseServerMessage({ ...helloOk, limits }).ok).toBe(false);
+    }
   });
 });

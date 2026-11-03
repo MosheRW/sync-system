@@ -1,4 +1,5 @@
 import type { ErrorCode } from './errors.js';
+import type { JoinMethod } from './join.js';
 import type { JsonObject, JsonValue } from './json.js';
 
 /** Role of a participant in a group. Later issues add more roles. */
@@ -136,6 +137,10 @@ export interface AppLimits {
   maxMessageBytes: number;
   /** Max session time from group creation; clients prune stored tokens by it (#5 M6). */
   maxSessionMinutes: number;
+  /** Lifetime of a QR ticket (#10 AC3, AC4). */
+  qrTicketSeconds: number;
+  /** How long a method B join request waits for the leader (#10 AC3, AC4). */
+  approvalTimeoutSeconds: number;
 }
 
 export interface HelloOkMessage {
@@ -144,6 +149,8 @@ export interface HelloOkMessage {
   participantId: string;
   /** The app's namespace (not secret); clients key token storage by it (#5 AC33). */
   namespace: string;
+  /** The join methods this app allows, canonical order (#10 AC4). */
+  joinMethods: JoinMethod[];
   limits: AppLimits;
 }
 

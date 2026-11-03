@@ -11,7 +11,12 @@ export const LIMITS: AppLimits = {
   maxLeaderUpdatesPerSecond: 5,
   maxMessageBytes: 4096,
   maxSessionMinutes: 180,
+  qrTicketSeconds: 300,
+  approvalTimeoutSeconds: 120,
 };
+
+/** The app's join methods in the fake `hello.ok`: every method, so every flow can be tested. */
+export const JOIN_METHODS_ALL = ['A', 'B', 'C', 'D'] as const;
 
 export const PARTICIPANT_ID = 'participant-1';
 
@@ -30,7 +35,11 @@ export function makeClient(extra: Partial<SyncClientOptions> = {}): SyncClient {
 /** Plays the server side of a successful handshake on `socket`. */
 export function serverHandshake(
   socket: FakeWebSocket,
-  options: { participantId?: string; limits?: AppLimits } = {},
+  options: {
+    participantId?: string;
+    limits?: AppLimits;
+    joinMethods?: readonly ('A' | 'B' | 'C' | 'D')[];
+  } = {},
 ): void {
   socket.open();
   socket.receive({ type: 'welcome', protocolVersion: 1, minProtocolVersion: 1 });
@@ -40,6 +49,7 @@ export function serverHandshake(
     reqId: hello.reqId,
     participantId: options.participantId ?? PARTICIPANT_ID,
     namespace: 'app-a',
+    joinMethods: options.joinMethods ?? JOIN_METHODS_ALL,
     limits: options.limits ?? LIMITS,
   });
 }

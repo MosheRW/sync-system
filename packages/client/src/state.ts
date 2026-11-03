@@ -1,4 +1,11 @@
-import type { AppLimits, JsonObject, JsonValue, Role, TokenStatus } from '@sync-system/protocol';
+import type {
+  AppLimits,
+  JoinMethod,
+  JsonObject,
+  JsonValue,
+  Role,
+  TokenStatus,
+} from '@sync-system/protocol';
 import type { ClientErrorCode, SyncClientError } from './errors.js';
 
 /** Why the client is closed (AC24). */
@@ -20,6 +27,7 @@ export type ConnectionState =
       readonly status: 'connected';
       readonly participantId: string;
       readonly namespace: string;
+      readonly joinMethods: readonly JoinMethod[];
       readonly limits: Readonly<AppLimits>;
     }
   | {
@@ -108,6 +116,8 @@ export interface ConnectedInfo {
   readonly participantId: string;
   /** The app's namespace from `hello.ok` (#5 AC33). */
   readonly namespace: string;
+  /** The join methods the app allows, from `hello.ok` (#10 AC4). */
+  readonly joinMethods: readonly JoinMethod[];
   readonly limits: Readonly<AppLimits>;
 }
 

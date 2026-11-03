@@ -296,11 +296,15 @@ export class Connection implements HeartbeatTarget {
       participantId: this.connectionId,
       // Not secret: clients key token storage by it (#5 AC33).
       namespace: app.namespace,
+      // The client rejects an unsupported method locally (#10 AC4).
+      joinMethods: [...app.joinMethods],
       limits: {
         maxGroupSize: app.maxGroupSize,
         maxLeaderUpdatesPerSecond: app.maxLeaderUpdatesPerSecond,
         maxMessageBytes: app.maxMessageBytes,
         maxSessionMinutes: app.maxSessionMinutes,
+        qrTicketSeconds: app.qrTicketSeconds,
+        approvalTimeoutSeconds: app.approvalTimeoutSeconds,
       },
     });
   }

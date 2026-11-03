@@ -110,6 +110,7 @@ describe('automatic reconnect (AC26)', () => {
       namespace: 'app-a',
       reqId: 'c1',
       participantId: 'p',
+      joinMethods: ['A'],
       limits: { ...LIMITS, maxMessageBytes: 2 ** 53 },
     });
     expect(reconnecting(client).attempt).toBe(1);

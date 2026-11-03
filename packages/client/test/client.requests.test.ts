@@ -212,6 +212,7 @@ describe('one group request in flight (L5, R2-L4)', () => {
       namespace: 'app-a',
       reqId: socket.lastMessage().reqId,
       participantId: 'p2',
+      joinMethods: ['A', 'B', 'C', 'D'],
       limits: LIMITS,
     });
     await reconnecting;
