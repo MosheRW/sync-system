@@ -5,9 +5,9 @@
 - PR: #11 (ready for review)
 - Plan approved by user: yes (Gate 2, with decisions Q-A to Q-E below)
 - Security-sensitive: yes (door codes, approval, brute-force limits, QR ticket signing, codes blob, removal of join by group ID)
-- Review rounds: 1 (code review); security plan review rounds: 3 (round 1 FAIL, round 2 PASS, round 3 targeted PASS)
-- QA verdict: PASS (round 1, head 30e93df)
-- Last updated by: engineer (fix round, Gate 3 low findings)
+- Review rounds: 2 (code review); security plan review rounds: 3 (round 1 FAIL, round 2 PASS, round 3 targeted PASS)
+- QA verdict: PASS (round 2, head 99d315f)
+- Last updated by: qa (round 2)
 
 ## Notes
 - PRD item 4 of 9. "item N" in spec.md means PRD item N, not GitHub issue N.
@@ -95,6 +95,21 @@ Recorded in architecture.md section 12 (plan revision 2).
   better be `test(server)`); history is not rewritten.
 - Observation: the PR body doesn't mention the breaking removal of
   `group.join` / `joinGroup()`.
+
+## QA validation (round 2, head 99d315f)
+- Verdict: PASS (review comment on PR #11).
+- Checks: install --frozen-lockfile, lint, typecheck, test (protocol 81,
+  server 820, client 537), build and `pnpm audit` all exit 0; CI `check`
+  2/2 pass; no dependency changes.
+- Delta 0175ba4..99d315f verified: A1 (redaction test), A2 (shared
+  `normalizeDisplayName` rejects the listed invisible/blank characters,
+  test literals checked by code point), A3 (architecture wording).
+- Acceptance criteria: 45/45 met. Client and server still share the one
+  display-name rule from `@sync-system/protocol`.
+- Note (non-blocking): the A1 test's `message` subcase is covered by the
+  top-level `message` redact path, not `*.displayName`; the `frame` and
+  `request` subcases cover the wildcard path.
+- Round 1 PR-body observation resolved (BREAKING CHANGE note added).
 
 ## Open questions
 - none (M2 is tracked as issue #12).
