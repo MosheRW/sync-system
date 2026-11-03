@@ -139,6 +139,23 @@ export interface CodesRotateMessage {
   reqId?: string;
 }
 
+/** The leader of a method D group asks for a QR ticket (#10 AC23). Reply: `qr.ticket`. */
+export interface QrIssueMessage {
+  type: 'qr.issue';
+  reqId?: string;
+}
+
+/**
+ * Join with a QR ticket (#10 AC24). In a method B group the joiner still
+ * needs the leader's approval (Q3.2), so a display name is allowed here too.
+ */
+export interface GroupJoinByQrMessage {
+  type: 'group.joinByQr';
+  reqId?: string;
+  ticket: string;
+  displayName?: string;
+}
+
 /** The joiner withdraws its pending method B request (#10 AC21). Reply: `join.cancelled`. */
 export interface JoinCancelMessage {
   type: 'join.cancel';
@@ -164,6 +181,8 @@ export type ClientMessage =
   | GroupCreateMessage
   | GroupJoinMessage
   | GroupJoinByCodeMessage
+  | GroupJoinByQrMessage
+  | QrIssueMessage
   | PositionUpdateMessage
   | GroupResumeMessage
   | TokensCheckMessage
@@ -437,6 +456,19 @@ export interface JoinDecidedMessage {
   outcome: JoinDecision;
 }
 
+/**
+ * To the leader: the reply to qr.issue (#10 AC23). The ticket is an opaque,
+ * URL-safe bearer credential of at most 256 characters; it admits any
+ * number of joiners until it expires.
+ */
+export interface QrTicketMessage {
+  type: 'qr.ticket';
+  reqId?: string;
+  ticket: string;
+  /** Lifetime from now: `qrTicketSeconds * 1000` (#10 D6). */
+  expiresInMs: number;
+}
+
 /** To the joiner: the reply to join.cancel (#10 AC21). */
 export interface JoinCancelledMessage {
   type: 'join.cancelled';
@@ -476,6 +508,7 @@ export type ServerMessage =
   | JoinWithdrawnMessage
   | JoinDecidedMessage
   | JoinCancelledMessage
+  | QrTicketMessage
   | ErrorMessage;
 
 export type ServerMessageType = ServerMessage['type'];

@@ -109,6 +109,8 @@ const MESSAGES: Record<ClientErrorCode, string> = {
   APPROVAL_TIMEOUT: 'The join request was not approved in time',
   APPROVAL_QUEUE_FULL: 'Too many pending join requests for this group',
   JOIN_REQUEST_NOT_FOUND: 'Join request not found',
+  QR_INVALID: 'Invalid QR code',
+  QR_EXPIRED: 'QR code expired',
   NOT_CONNECTED: 'Not connected',
   CLOSED: 'The client was closed',
   CONNECTION_LOST: 'The connection was lost',

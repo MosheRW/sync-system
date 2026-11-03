@@ -51,6 +51,13 @@ export const MAX_DISPLAY_NAME_LENGTH = 32;
 /** Longest QR ticket (#10 AC23). */
 export const MAX_QR_TICKET_LENGTH = 256;
 
+/**
+ * Longest raw `ticket` the schema accepts. Longer than any real ticket, so a
+ * ticket over MAX_QR_TICKET_LENGTH gets QR_INVALID, not INVALID_MESSAGE
+ * (#10 AC25).
+ */
+export const MAX_QR_TICKET_INPUT_LENGTH = 512;
+
 /** Longest signed codes blob (#10 AC32). */
 export const MAX_CODES_BLOB_LENGTH = 512;
 

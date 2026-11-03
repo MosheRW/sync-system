@@ -4,6 +4,8 @@ import type {
   JoinApproveMessage,
   JoinCancelMessage,
   JoinDenyMessage,
+  GroupJoinByQrMessage,
+  QrIssueMessage,
   GroupCreateMessage,
   GroupEndMessage,
   GroupJoinMessage,
@@ -92,6 +94,10 @@ export interface GroupActions {
   leave(session: Session, message: GroupLeaveMessage): Promise<ServerMessage>;
   /** Leader replaces every join code of its group (#10 AC30). */
   rotateCodes(session: Session, message: CodesRotateMessage): Promise<ServerMessage>;
+  /** Join with a QR ticket (#10 AC24). */
+  joinByQr(session: Session, message: GroupJoinByQrMessage): Promise<ServerMessage>;
+  /** Leader asks for a QR ticket (#10 AC23). */
+  issueQr(session: Session, message: QrIssueMessage): Promise<ServerMessage>;
   /** Joiner withdraws its pending request (#10 AC21). */
   cancelJoin(session: Session, message: JoinCancelMessage): Promise<ServerMessage>;
   /** Leader admits a pending joiner (#10 AC21). */

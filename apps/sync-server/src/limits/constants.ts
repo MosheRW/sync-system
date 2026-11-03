@@ -126,6 +126,12 @@ export const DOOR_ROTATION_WINDOW_MS = 1_800_000;
 /** How long method A joining pauses (10 minutes, #10 AC29). */
 export const DOOR_PAUSE_MS = 600_000;
 
+/** `qr.issue` requests per connection per window (#10 AC23). */
+export const QR_ISSUE_PER_CONNECTION_PER_MINUTE = 6;
+
+/** Window of the `qr.issue` limiter. */
+export const QR_ISSUE_WINDOW_MS = 60_000;
+
 /** Pending method B join requests per group (#10 AC22). */
 export const MAX_PENDING_APPROVALS_PER_GROUP = 10;
 

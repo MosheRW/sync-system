@@ -346,6 +346,8 @@ fix the configuration.
 | `APPROVAL_TIMEOUT`        | server | The leader did not decide in time.                                           |
 | `APPROVAL_QUEUE_FULL`     | server | The group has 10 pending requests. `details.maxPending`.                     |
 | `JOIN_REQUEST_NOT_FOUND`  | server | Approve, deny or cancel of an unknown or settled request.                    |
+| `QR_INVALID`              | both   | Not a valid QR ticket here (any cause, same answer). Also checked locally.   |
+| `QR_EXPIRED`              | server | The QR ticket expired; ask the leader for a fresh one.                       |
 
 Unknown server message types are ignored, so a newer server can add events
 without breaking older clients. A known type with a bad shape, a binary,

@@ -4,6 +4,8 @@ import {
   type JoinApproveMessage,
   type JoinCancelMessage,
   type JoinDenyMessage,
+  type GroupJoinByQrMessage,
+  type QrIssueMessage,
   ErrorCode,
   type ErrorMessage,
   GROUP_ID_PATTERN,
@@ -398,6 +400,16 @@ export class GroupService implements GroupActions {
   /** codes.rotate (#10 AC30). */
   rotateCodes(session: Session, _message: CodesRotateMessage): Promise<ServerMessage> {
     return this.joins.rotate(session);
+  }
+
+  /** group.joinByQr (#10 AC24). */
+  joinByQr(session: Session, message: GroupJoinByQrMessage): Promise<ServerMessage> {
+    return this.joins.joinByQr(session, message);
+  }
+
+  /** qr.issue (#10 AC23). */
+  issueQr(session: Session, _message: QrIssueMessage): Promise<ServerMessage> {
+    return this.joins.issueQr(session);
   }
 
   /** join.cancel (#10 AC21). */

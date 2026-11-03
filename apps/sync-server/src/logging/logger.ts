@@ -55,6 +55,8 @@ export const REDACT_PATHS = [
   '*.alphaCode',
   'requestId',
   '*.requestId',
+  'ticket',
+  '*.ticket',
 ];
 
 export interface LoggerOptions {

@@ -82,6 +82,14 @@ export const ErrorCode = {
   APPROVAL_QUEUE_FULL: 'APPROVAL_QUEUE_FULL',
   /** Approve, deny or cancel of an unknown or already settled request (#10 AC21). */
   JOIN_REQUEST_NOT_FOUND: 'JOIN_REQUEST_NOT_FOUND',
+  /**
+   * The QR ticket is not valid here: malformed, too long, bad signature,
+   * another app, a group no longer in memory, or a revoked ticket. One
+   * answer for every cause (#10 AC25).
+   */
+  QR_INVALID: 'QR_INVALID',
+  /** A well-formed, correctly signed QR ticket whose time has passed (#10 AC25). */
+  QR_EXPIRED: 'QR_EXPIRED',
 } as const;
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];

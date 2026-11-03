@@ -2,6 +2,7 @@ import {
   ErrorCode,
   type ErrorMessage,
   type GroupJoinByCodeMessage,
+  type GroupJoinByQrMessage,
   type JoinCodeKind,
   type JoinCodesPayload,
   type JoinMethod,
@@ -15,6 +16,8 @@ import type { AppConfig } from '../apps/app-registry.js';
 import type { GroupRecord, GroupStore } from '../groups/group-store.js';
 import type { Membership, Session } from '../groups/session.js';
 import {
+  QR_ISSUE_PER_CONNECTION_PER_MINUTE,
+  QR_ISSUE_WINDOW_MS,
   MAX_PENDING_APPROVALS_PER_GROUP,
   CODE_ROTATIONS_PER_GROUP_PER_MINUTE,
   CODE_ROTATION_WINDOW_MS,
@@ -84,14 +87,21 @@ export interface JoinHost {
 }
 
 /** The leader-only actions of JoinService, each with its own NOT_LEADER text (R12). */
-export type LeaderAction = 'codes.rotate' | 'join.approve' | 'join.deny';
+export type LeaderAction = 'codes.rotate' | 'join.approve' | 'join.deny' | 'qr.issue';
 
 function isError(value: Membership | ErrorMessage): value is ErrorMessage {
   return 'type' in value && value.type === 'error';
 }
 
 /** Why a join attempt was refused, for the debug log (never a code or group ref for not_found). */
-type RejectCause = 'not_found' | 'door_required' | 'door_wrong' | 'door_budget' | 'paused';
+type RejectCause =
+  | 'not_found'
+  | 'door_required'
+  | 'door_wrong'
+  | 'door_budget'
+  | 'paused'
+  | 'qr_invalid'
+  | 'qr_expired';
 
 function groupKey(namespace: string, groupId: string): string {
   return `${namespace}:${groupId}`;
@@ -104,6 +114,9 @@ function groupKey(namespace: string, groupId: string): string {
  */
 const CODE_NOT_FOUND: ErrorMessage = Object.freeze(errorMessage(ErrorCode.CODE_NOT_FOUND));
 const INVALID_MESSAGE: ErrorMessage = Object.freeze(errorMessage(ErrorCode.INVALID_MESSAGE));
+/** One frozen answer for every invalid ticket (#10 AC25, R7); never echoes the ticket. */
+const QR_INVALID: ErrorMessage = Object.freeze(errorMessage(ErrorCode.QR_INVALID));
+const QR_EXPIRED: ErrorMessage = Object.freeze(errorMessage(ErrorCode.QR_EXPIRED));
 const REQUEST_NOT_FOUND: ErrorMessage = Object.freeze(
   errorMessage(ErrorCode.JOIN_REQUEST_NOT_FOUND),
 );
@@ -166,6 +179,8 @@ export class JoinService {
   private readonly rotateLimiter: SlidingWindowRateLimiter;
   /** Pending method B requests (#10 AC19-AC22). */
   readonly approvals: ApprovalQueue;
+  /** qr.issue per connection (#10 AC23). */
+  private readonly qrLimiter: SlidingWindowRateLimiter;
 
   constructor(
     private readonly deps: JoinServiceDeps,
@@ -179,6 +194,92 @@ export class JoinService {
     this.doors = new DoorGuard(deps.scheduler);
     this.rotateLimiter = new SlidingWindowRateLimiter(now, CODE_ROTATION_WINDOW_MS);
     this.approvals = new ApprovalQueue(deps.scheduler);
+    this.qrLimiter = new SlidingWindowRateLimiter(now, QR_ISSUE_WINDOW_MS);
+  }
+
+  /**
+   * qr.issue (#10 AC23, R12, N6): the ownership-checked leader of a method D
+   * group gets a ticket bound to the group's current **ticket** generation,
+   * read under the group lock. Limited to 6 per connection per minute.
+   */
+  async issueQr(session: Session): Promise<ServerMessage> {
+    const membership = this.host.ownedLeader(session, 'qr.issue');
+    if (isError(membership)) return membership;
+    const namespace = session.app.namespace;
+    const { groupId } = membership;
+    return this.host.runLocked(namespace, groupId, async () => {
+      const again = this.host.ownedLeader(session, 'qr.issue');
+      if (isError(again)) return again;
+      if (again.groupId !== groupId) return errorMessage(ErrorCode.NOT_IN_GROUP);
+      const record = await this.deps.store.get(namespace, groupId);
+      if (record === undefined) return errorMessage(ErrorCode.NOT_IN_GROUP);
+      if (!record.joinMethods.includes('D')) {
+        return errorMessage(ErrorCode.JOIN_METHOD_NOT_ALLOWED);
+      }
+      const rate = this.qrLimiter.tryAcquire(
+        session.connectionId,
+        QR_ISSUE_PER_CONNECTION_PER_MINUTE,
+      );
+      if (!rate.ok) {
+        return actionErrorMessage(ErrorCode.RATE_LIMITED, 'qr.issue', {
+          details: { retryAfterMs: rate.retryAfterMs },
+        });
+      }
+      const issued = this.deps.qrTickets.issue(
+        namespace,
+        groupId,
+        record.codes.ticketGeneration,
+        this.now(),
+        session.app.qrTicketSeconds,
+      );
+      this.deps.logger.debug(
+        { event: 'qr_issued', namespace, groupRef: groupRef(groupId) },
+        'qr ticket issued',
+      );
+      return { type: 'qr.ticket', ticket: issued.ticket, expiresInMs: issued.expiresInMs };
+    });
+  }
+
+  /**
+   * group.joinByQr (#10 AC24, AC25, architecture 4.3, 4.7): busy, the join
+   * budgets, the display name, then the ticket (length, shape, signature,
+   * claims, expiry) outside the lock, then under the group lock: the group
+   * must be in memory, use method D, and have the ticket's ticket
+   * generation (a door rotation does not change it, D12). A method B group
+   * still asks the leader (Q3.2). Every invalid ticket gets the same
+   * QR_INVALID; only a well-formed, signed, expired one gets QR_EXPIRED.
+   */
+  async joinByQr(session: Session, message: GroupJoinByQrMessage): Promise<ServerMessage> {
+    if (this.host.busy(session)) return errorMessage(ErrorCode.ALREADY_IN_GROUP);
+    const limited = this.spendJoinAttempt(session, 'group.joinByQr');
+    if (limited !== undefined) return limited;
+    const namespace = session.app.namespace;
+    let displayName: string | undefined;
+    if (message.displayName !== undefined) {
+      displayName = normalizeDisplayName(message.displayName);
+      if (displayName === undefined) return INVALID_MESSAGE;
+    }
+    const verified = this.deps.qrTickets.verify(message.ticket, namespace, this.now());
+    if (!verified.ok) {
+      this.rejected(namespace, verified.expired ? 'qr_expired' : 'qr_invalid');
+      return verified.expired ? QR_EXPIRED : QR_INVALID;
+    }
+    const { groupId, ticketGeneration } = verified;
+    return this.host.runLocked(namespace, groupId, async () => {
+      if (this.host.busy(session)) return errorMessage(ErrorCode.ALREADY_IN_GROUP);
+      const record = await this.deps.store.get(namespace, groupId);
+      if (
+        record === undefined ||
+        !record.joinMethods.includes('D') ||
+        record.codes.ticketGeneration !== ticketGeneration
+      ) {
+        this.rejected(namespace, 'qr_invalid');
+        return QR_INVALID;
+      }
+      if (record.joinMethods.includes('B'))
+        return this.requestApproval(session, record, displayName);
+      return this.host.admit(session, groupId, 'D');
+    });
   }
 
   private settled(request: PendingRequest, outcome: SettleOutcome): void {
@@ -426,7 +527,10 @@ export class JoinService {
    * app. Both run before any normalization or code lookup. Undefined when
    * the attempt may go on.
    */
-  private spendJoinAttempt(session: Session, action: 'group.joinByCode'): ErrorMessage | undefined {
+  private spendJoinAttempt(
+    session: Session,
+    action: 'group.joinByCode' | 'group.joinByQr',
+  ): ErrorMessage | undefined {
     const rate = this.joinLimiter.tryAcquire(
       session.connectionId,
       JOIN_ATTEMPTS_PER_CONNECTION_PER_MINUTE,
@@ -708,6 +812,7 @@ export class JoinService {
    */
   async onDisconnect(session: Session): Promise<void> {
     this.joinLimiter.forget(session.connectionId);
+    this.qrLimiter.forget(session.connectionId);
     const pending = session.pendingJoin;
     if (pending === undefined) return;
     const namespace = session.app.namespace;
@@ -726,6 +831,7 @@ export class JoinService {
     this.appJoinLimiter.clear();
     this.wrongDoorLimiter.clear();
     this.rotateLimiter.clear();
+    this.qrLimiter.clear();
     this.approvals.clearAll();
     this.doors.clearAll();
     this.warnedAt.clear();
@@ -737,7 +843,8 @@ export class JoinService {
       this.joinLimiter.size +
       this.appJoinLimiter.size +
       this.wrongDoorLimiter.size +
-      this.rotateLimiter.size
+      this.rotateLimiter.size +
+      this.qrLimiter.size
     );
   }
 }

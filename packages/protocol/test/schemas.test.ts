@@ -130,6 +130,23 @@ describe('token messages (#5)', () => {
   });
 });
 
+describe('QR messages (#10 AC23, AC24)', () => {
+  it('parses qr.issue, group.joinByQr and qr.ticket', () => {
+    expect(ok({ type: 'qr.issue' }).type).toBe('qr.issue');
+    expect(ok({ type: 'group.joinByQr', ticket: 'x', displayName: 'Dana' }).type).toBe(
+      'group.joinByQr',
+    );
+    expect(ok({ type: 'group.joinByQr', ticket: 'a'.repeat(512) }).type).toBe('group.joinByQr');
+    fails({ type: 'group.joinByQr', ticket: 'a'.repeat(513) });
+    fails({ type: 'group.joinByQr' });
+    fails({ type: 'group.joinByQr', ticket: 'x', displayName: 'x'.repeat(129) });
+    const ticket = { type: 'qr.ticket', reqId: 'r', ticket: 't.x', expiresInMs: 300_000 };
+    expect(parseServerMessage(ticket).ok).toBe(true);
+    expect(parseServerMessage({ ...ticket, ticket: 'a'.repeat(257) }).ok).toBe(false);
+    expect(parseServerMessage({ ...ticket, expiresInMs: 0 }).ok).toBe(false);
+  });
+});
+
 describe('approval messages (#10 AC19-AC22)', () => {
   const RID = 'R'.repeat(22);
 

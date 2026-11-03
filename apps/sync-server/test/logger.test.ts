@@ -46,6 +46,9 @@ describe('createLogger', () => {
         groupCode: 'SENTINEL-11',
         alphaCode: 'SENTINEL-12',
         y: { joinCode: 'S-13', doorCode: 'S-14', groupCode: 'S-15', alphaCode: 'S-16' },
+        requestId: 'SENTINEL-17',
+        ticket: 'SENTINEL-18',
+        z: { requestId: 'S-19', ticket: 'S-10' },
       },
       'codes',
     );

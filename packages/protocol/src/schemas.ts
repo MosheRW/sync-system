@@ -16,6 +16,8 @@ import {
   MAX_CODES_BLOB_LENGTH,
   MAX_DISPLAY_NAME_INPUT_LENGTH,
   MAX_JOIN_CODE_INPUT_LENGTH,
+  MAX_QR_TICKET_INPUT_LENGTH,
+  MAX_QR_TICKET_LENGTH,
   MAX_GROUP_ID_INPUT_LENGTH,
   MAX_REQ_ID_LENGTH,
   MAX_TOKEN_LENGTH,
@@ -96,6 +98,16 @@ const schemas = buildJitless(() => {
     displayName: displayName.optional(),
   });
 
+  // The ticket shape is checked by the server, so a bad ticket gets QR_INVALID (#10 AC25).
+  const groupJoinByQrSchema = z.object({
+    type: z.literal('group.joinByQr'),
+    reqId,
+    ticket: z.string().max(MAX_QR_TICKET_INPUT_LENGTH),
+    displayName: displayName.optional(),
+  });
+
+  const qrIssueSchema = z.object({ type: z.literal('qr.issue'), reqId });
+
   const positionUpdateSchema = z.object({
     type: z.literal('position.update'),
     reqId,
@@ -141,6 +153,8 @@ const schemas = buildJitless(() => {
     groupCreateSchema,
     groupJoinSchema,
     groupJoinByCodeSchema,
+    groupJoinByQrSchema,
+    qrIssueSchema,
     positionUpdateSchema,
     groupResumeSchema,
     tokensCheckSchema,
@@ -284,6 +298,12 @@ const schemas = buildJitless(() => {
       outcome: z.enum(['admitted', 'group_full', 'denied']),
     }),
     z.object({ type: z.literal('join.cancelled'), reqId, requestId: z.string() }),
+    z.object({
+      type: z.literal('qr.ticket'),
+      reqId,
+      ticket: z.string().min(1).max(MAX_QR_TICKET_LENGTH),
+      expiresInMs: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    }),
     z.object({
       type: z.literal('error'),
       reqId,

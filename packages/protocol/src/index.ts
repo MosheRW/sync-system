@@ -20,6 +20,7 @@ export {
   MAX_DISPLAY_NAME_INPUT_LENGTH,
   MAX_DISPLAY_NAME_LENGTH,
   MAX_QR_TICKET_LENGTH,
+  MAX_QR_TICKET_INPUT_LENGTH,
   MAX_CODES_BLOB_LENGTH,
 } from './limits.js';
 export {
@@ -64,6 +65,9 @@ export type {
   GroupEndMessage,
   GroupLeaveMessage,
   CodesRotateMessage,
+  QrIssueMessage,
+  GroupJoinByQrMessage,
+  QrTicketMessage,
   JoinCancelMessage,
   JoinApproveMessage,
   JoinDenyMessage,

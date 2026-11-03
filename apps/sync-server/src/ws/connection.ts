@@ -349,6 +349,12 @@ export class Connection implements HeartbeatTarget {
       case 'codes.rotate':
         response = await groups.rotateCodes(session, message);
         break;
+      case 'group.joinByQr':
+        response = await groups.joinByQr(session, message);
+        break;
+      case 'qr.issue':
+        response = await groups.issueQr(session, message);
+        break;
       case 'join.cancel':
         response = await groups.cancelJoin(session, message);
         break;
@@ -430,6 +436,7 @@ function canCarryReqId(message: ServerMessage): boolean {
     message.type === 'codes.updated' ||
     message.type === 'join.pending' ||
     message.type === 'join.decided' ||
-    message.type === 'join.cancelled'
+    message.type === 'join.cancelled' ||
+    message.type === 'qr.ticket'
   );
 }
