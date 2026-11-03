@@ -3,10 +3,10 @@
 - Phase: architecture
 - Branch: feat/10-join-methods
 - PR: #11 (draft)
-- Plan approved by user: no
+- Plan approved by user: yes (Gate 2, with decisions Q-A to Q-E below)
 - Security-sensitive: yes (door codes, approval, brute-force limits, QR ticket signing, codes blob, removal of join by group ID)
 - Review rounds: 0 (code review); security plan review rounds: 2 (round 1 FAIL, round 2 PASS)
-- Last updated by: security
+- Last updated by: architect
 
 ## Notes
 - PRD item 4 of 9. "item N" in spec.md means PRD item N, not GitHub issue N.
@@ -40,10 +40,28 @@
   New low notes for the engineer: N1 (blob from a direct server reply is always stored;
   highest-generation rule only for merging stored copies, commit 17), N2 (R1b peek/compare/
   record synchronous, before any await such as setCodes), N3 accepted.
-- Next: Gate 2.
+
+## Gate 2 decisions (user; plan approved)
+Recorded in architecture.md section 12 (plan revision 2).
+- Q-A: keep createGroup(metadata, initialPosition?, options?) with options.joinMethods (no breaking change; D10).
+- Q-B (changed from the recommendation): separate QR ticket generation (D12). Bumped only by
+  create, leader codes.rotate and a new full code set on recreation; automatic door-code
+  rotation bumps the code generation only, so QR tickets survive it. ticketGeneration is set
+  to the new code generation (R3 inherited, no revival after restart without a usable blob);
+  invariants ticketGeneration <= generation, both monotonic; blob carries t (t <= n); R2
+  compares the code generation only. Spec AC25/AC29/AC30/AC32/AC33 and decision 6 wording
+  updated by the engineer in commit 21 (exact text in architecture.md 8.6).
+- Q-C: pending joiners get GROUP_ENDED on group end or drop, no groupId, no details (D9, R13).
+- Q-D: QR refresh is app-driven (issueQrTicket() + README recipe, no client timer; D7).
+- Q-E: DOOR_FAILURES_PER_APP_PER_MINUTE = 60 (~0.086 expected break-ins per app per day under
+  a nonstop attack; 8.1, 8.6).
+- Security notes folded in: N1 (direct server blob always stored; highest generation only when
+  merging stored copies; commit 17), N2 (R1b check/compare/record synchronous before any await;
+  commit 9). N3 accepted.
+- Next: security re-check of the Q-B change (D12, 4.7, 4.8, 7.3, 8.6) if the orchestrator
+  runs it, then implementation (engineer, 21 commits).
 
 ## Open questions
-- Gate 2 (architecture.md section 12, with the security view on each): Q-A createGroup signature; Q-B door rotations invalidate QR tickets (spec) vs separate ticket generation; Q-C GROUP_ENDED for pending joiners on end/drop; Q-D app-driven QR refresh; Q-E value of DOOR_FAILURES_PER_APP_PER_MINUTE (recommended 30).
 - Follow-up to open after Gate 2: M2 group-creation rate and per-app live-group cap.
 
 ## Deviations from plan
