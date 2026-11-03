@@ -2,8 +2,9 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import type { JoinMethod, ServerMessage } from '@sync-system/protocol';
 import { afterEach, describe, expect, it } from 'vitest';
-import { REDACT_PATHS } from '../src/logging/logger.js';
+import { createLogger, isSensitiveLogKey } from '../src/logging/logger.js';
 import { codesOf, resumeWith } from './helpers/groups.js';
+import { LogCapture } from './helpers/log-capture.js';
 import { ManualScheduler } from './helpers/manual-scheduler.js';
 import type { TestClient } from './helpers/test-client.js';
 import { KEY_A, type TestServer, startTestServer } from './helpers/test-server.js';
@@ -152,23 +153,73 @@ describe('join secrets never reach logs or other clients (#10 AC10, AC20, AC31, 
   });
 });
 
-describe('redaction and log fields (#10 R10)', () => {
-  it('redacts every join field at the top level and one level down', () => {
-    for (const key of [
-      'joinCode',
-      'doorCode',
-      'groupCode',
-      'alphaCode',
-      'codes',
-      'joinCodes',
-      'blob',
-      'ticket',
-      'requestId',
-      'displayName',
-    ]) {
-      expect(REDACT_PATHS).toContain(key);
-      expect(REDACT_PATHS).toContain(`*.${key}`);
+describe('redaction and log fields (#10 R10, B1)', () => {
+  const JOIN_KEYS = [
+    'joinCode',
+    'doorCode',
+    'groupCode',
+    'alphaCode',
+    'codes',
+    'joinCodes',
+    'blob',
+    'ticket',
+    'requestId',
+    'displayName',
+  ];
+
+  it('treats every join field as sensitive', () => {
+    for (const key of JOIN_KEYS) expect(isSensitiveLogKey(key), key).toBe(true);
+  });
+
+  it('removes every join field at any depth, also inside arrays', () => {
+    const out = new LogCapture();
+    const logger = createLogger({ level: 'trace', destination: out });
+    for (const key of JOIN_KEYS) {
+      const value = `SENTINEL-${key}`;
+      logger.info({ event: 'test', [key]: value }, 'x');
+      logger.info({ event: 'test', a: { b: { c: { [key]: value } } } }, 'x');
+      logger.info({ event: 'test', pending: [{ [key]: value }] }, 'x');
+      logger.info({ event: 'test', a: { requests: [{ entry: { [key]: value } }] } }, 'x');
     }
+    expect(out.lines).toHaveLength(JOIN_KEYS.length * 4);
+    expect(out.text).not.toContain('SENTINEL');
+  });
+
+  /** Every log call in the server source, with its full argument text. */
+  function logCalls(): Array<{ file: string; call: string }> {
+    const root = join(import.meta.dirname, '..', 'src');
+    const calls: Array<{ file: string; call: string }> = [];
+    for (const entry of readdirSync(root, { recursive: true, withFileTypes: true })) {
+      if (!entry.isFile() || !entry.name.endsWith('.ts')) continue;
+      const file = join(entry.parentPath, entry.name);
+      const source = readFileSync(file, 'utf8');
+      for (const match of source.matchAll(
+        /logger\.(?:trace|debug|info|warn|error|fatal)\(([\s\S]*?)\);/g,
+      )) {
+        calls.push({ file, call: match[1] ?? '' });
+      }
+    }
+    return calls;
+  }
+
+  it('finds the log calls the static checks inspect', () => {
+    const calls = logCalls();
+    expect(calls.length).toBeGreaterThan(40);
+    expect(calls.some(({ file }) => file.includes('joins'))).toBe(true);
+  });
+
+  it('never logs a field named reason anywhere in the server (static check)', () => {
+    // A key or shorthand property named reason; a value such as
+    // `endReason: reason` is fine (the key is not redacted).
+    const reasonKey = /[{,]\s*['"]?reason['"]?\s*[:,}]/;
+    for (const { file, call } of logCalls()) expect(call, file).not.toMatch(reasonKey);
+    expect('{ event, reason }').toMatch(reasonKey);
+    expect("{ event: 'x', 'reason': 1 }").toMatch(reasonKey);
+    expect('{ endReason: reason, count }').not.toMatch(reasonKey);
+  });
+
+  it('never builds a log message from a template literal (static check)', () => {
+    for (const { file, call } of logCalls()) expect(call, file).not.toContain('`');
   });
 
   it('never logs a field named reason in the join module (static check)', () => {
