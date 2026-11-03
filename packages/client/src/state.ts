@@ -213,7 +213,71 @@ export interface SyncClientEvents {
   groupEnded: GroupEndedInfo;
   rejoined: ResumedGroup;
   leaderStatus: LeaderStatusEvent;
+  /** Leader: the group's codes changed (#10 AC40). */
+  codesChanged: CodesChangedEvent;
+  /** Leader: someone asks to join (method B, #10 AC19). */
+  joinRequested: JoinRequestedEvent;
+  /** Leader: a request ended without a decision (#10 AC21). */
+  joinWithdrawn: JoinWithdrawnEvent;
+  /** Leader: door-code joining paused after repeated failures (#10 AC29). */
+  joinPaused: JoinPausedEvent;
+  /** Leader: door-code joining works again (#10 AC29, AC30). */
+  joinResumed: JoinResumedEvent;
   error: SyncClientError;
+}
+
+/** Options of `createGroup()` (#10 AC38). */
+export interface CreateGroupOptions {
+  /**
+   * The group's join methods: a non-empty subset of the app's (`hello.ok`),
+   * never both A and B. Omitted: the app's methods minus B when A is allowed.
+   */
+  readonly joinMethods?: readonly JoinMethod[];
+}
+
+/** A QR ticket for the leader to show (#10 AC23, AC40). A bearer credential: never log or persist it. */
+export interface QrTicket {
+  /** Opaque, URL-safe, at most 256 characters. Put it in a URL fragment, not a query string. */
+  readonly ticket: string;
+  /** Local epoch ms when it stops working (local clock + the server's relative lifetime). */
+  readonly expiresAt: number;
+}
+
+/** A pending join request, for the leader's approval prompt (#10 AC19, AC40). */
+export interface JoinRequest {
+  readonly requestId: string;
+  /** Untrusted: render as text only, never as HTML. */
+  readonly displayName?: string;
+  /** Local epoch ms when the request times out. */
+  readonly expiresAt: number;
+}
+
+/** Why the group's codes changed (#10 AC40). */
+export type CodesChangedReason = 'created' | 'resumed' | 'rotated' | 'door_failures';
+
+export interface CodesChangedEvent {
+  readonly groupId: string;
+  readonly codes: JoinCodes;
+  readonly reason: CodesChangedReason;
+}
+
+export interface JoinRequestedEvent extends JoinRequest {
+  readonly groupId: string;
+}
+
+export interface JoinWithdrawnEvent {
+  readonly groupId: string;
+  readonly requestId: string;
+  readonly reason: 'cancelled' | 'disconnected' | 'timeout';
+}
+
+export interface JoinPausedEvent {
+  readonly groupId: string;
+  readonly retryAfterMs: number;
+}
+
+export interface JoinResumedEvent {
+  readonly groupId: string;
 }
 
 /** Options of `joinByCode()` (#10 AC39). */

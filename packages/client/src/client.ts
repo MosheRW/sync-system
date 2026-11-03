@@ -2,6 +2,7 @@ import {
   type ErrorMessage,
   type JoinCodesPayload,
   type JoinMethod,
+  JOIN_REQUEST_ID_PATTERN,
   type JsonObject,
   type JsonValue,
   MAX_GROUP_ID_INPUT_LENGTH,
@@ -51,9 +52,13 @@ import type {
   GroupEndedInfo,
   GroupEndedReason,
   GroupState,
+  CodesChangedReason,
+  CreateGroupOptions,
   JoinByQrOptions,
   JoinCodes,
   JoinOptions,
+  JoinRequest,
+  QrTicket,
   JoinedGroup,
   ResumeOptions,
   ResumedGroup,
@@ -103,6 +108,10 @@ const REPLY_TYPES: Record<RequestKind, readonly ServerMessage['type'][]> = {
   'group.joinByCode': ['group.joined', 'join.pending'],
   'group.joinByQr': ['group.joined', 'join.pending'],
   'join.cancel': ['join.cancelled'],
+  'join.approve': ['join.decided'],
+  'join.deny': ['join.decided'],
+  'qr.issue': ['qr.ticket'],
+  'codes.rotate': ['codes.updated'],
   'position.update': ['position.ack'],
   'group.resume': ['group.resumed', 'group.joined', 'group.waiting'],
   'tokens.check': ['tokens.result'],
@@ -172,6 +181,24 @@ function publicCodes(payload: JoinCodesPayload): JoinCodes {
     ...(payload.doorCode === undefined ? {} : { doorCode: payload.doorCode }),
     ...(payload.alphaCode === undefined ? {} : { alphaCode: payload.alphaCode }),
   });
+}
+
+/** The leader's codes for its current group (#10 AC40). Never logged. */
+interface LeaderCodes {
+  readonly groupId: string;
+  readonly joinMethods: readonly JoinMethod[];
+  readonly codes: JoinCodes;
+}
+
+/** True for a usable group method set within the app's methods (#10 AC5, AC38). */
+function validGroupMethods(raw: unknown, allowed: readonly JoinMethod[]): boolean {
+  if (!Array.isArray(raw) || raw.length === 0) return false;
+  const methods = raw as unknown[];
+  if (new Set(methods).size !== methods.length) return false;
+  if (!methods.every((m) => typeof m === 'string' && allowed.includes(m as JoinMethod))) {
+    return false;
+  }
+  return !(methods.includes('A') && methods.includes('B'));
 }
 
 /** The validated display name, or a local INVALID_DISPLAY_NAME (#10 AC20). */
@@ -245,6 +272,10 @@ export class SyncClient {
   readonly #rejoin: RejoinStrategy = tokenRejoin;
   /** The join waiting for a leader's approval, if any (#10 AC39). */
   #approval: PendingApproval | undefined;
+  /** The leader's codes for its group (#10 AC40). */
+  #leaderCodes: LeaderCodes | undefined;
+  /** Pending join requests the leader was told about, by request ID (#10 AC40). */
+  readonly #joinRequests = new Map<string, JoinRequest>();
 
   /** Validates the options (throws `INVALID_OPTIONS`). Touches no host globals except `URL`. */
   constructor(options: SyncClientOptions) {
@@ -344,12 +375,22 @@ export class SyncClient {
    * NOT_CONNECTED, ALREADY_IN_GROUP, REQUEST_IN_PROGRESS, INVALID_PAYLOAD or
    * MESSAGE_TOO_LARGE before anything is sent.
    */
-  createGroup(metadata: JsonObject, initialPosition?: JsonValue): Promise<CreatedGroup> {
+  createGroup(
+    metadata: JsonObject,
+    initialPosition?: JsonValue,
+    options?: CreateGroupOptions,
+  ): Promise<CreatedGroup> {
     const invalid = localError(() => {
       this.#checkGroupRequest();
       if (!isJsonObject(metadata)) throw new SyncClientError('INVALID_PAYLOAD');
       this.#checkPayload('metadata', metadata);
       if (initialPosition !== undefined) this.#checkPayload('position', initialPosition);
+      if (options?.joinMethods !== undefined) {
+        // Within the app's methods from hello.ok, never A with B (#10 AC38).
+        if (!validGroupMethods(options.joinMethods, this.#info?.joinMethods ?? [])) {
+          throw new SyncClientError('JOIN_METHOD_UNAVAILABLE');
+        }
+      }
     });
     if (invalid) return Promise.reject(invalid);
     const reqId = this.#requests.nextId();
@@ -358,6 +399,7 @@ export class SyncClient {
       reqId,
       metadata,
       ...(initialPosition === undefined ? {} : { position: initialPosition }),
+      ...(options?.joinMethods === undefined ? {} : { joinMethods: [...options.joinMethods] }),
     };
     const result = deferred<CreatedGroup>();
     this.#trackGroupRequest('group.create', reqId, message, {
@@ -378,15 +420,17 @@ export class SyncClient {
           position: initialPosition,
           leaderOnline: true,
         });
+        const codes = this.#setLeaderCodes(reply.groupId, reply.joinMethods, reply.codes);
         result.resolve(
           Object.freeze({
             groupId: reply.groupId,
             role: 'leader',
             participantId: reply.participantId,
-            joinMethods: Object.freeze([...reply.joinMethods]),
-            codes: publicCodes(reply.codes),
+            joinMethods: codes.joinMethods,
+            codes: codes.codes,
           }),
         );
+        this.#emitCodesChanged('created');
       },
       reject: (error) => result.reject(error),
     });
@@ -493,6 +537,85 @@ export class SyncClient {
     });
     this.#send({ type: 'join.cancel', reqId });
     return result.promise;
+  }
+
+  /**
+   * The current codes of the group this client leads (#10 AC40), or `null`
+   * when it does not lead an active group. Codes are not in the snapshot,
+   * because apps often log or serialize it.
+   */
+  getJoinCodes(): JoinCodes | null {
+    const group = this.#snapshot.group;
+    const codes = this.#leaderCodes;
+    if (group?.status !== 'active' || group.role !== 'leader') return null;
+    return codes !== undefined && codes.groupId === group.groupId ? codes.codes : null;
+  }
+
+  /**
+   * Pending join requests of the group this client leads, deduplicated by
+   * request ID (#10 AC40). Requests the server re-sends after a reconnect
+   * appear once.
+   */
+  getJoinRequests(): readonly JoinRequest[] {
+    return Object.freeze([...this.#joinRequests.values()]);
+  }
+
+  /**
+   * Replaces every code of the group this client leads (#10 AC30, AC40):
+   * older QR tickets stop working, door-code failures reset and a pause is
+   * lifted. Resolves with the new codes; `codesChanged` fires with reason
+   * `rotated`. Rejects locally with NOT_CONNECTED, NOT_IN_GROUP or
+   * NOT_LEADER, and with RATE_LIMITED (6 per minute) from the server.
+   */
+  rotateCodes(): Promise<JoinCodes> {
+    const invalid = localError(() => this.#checkLeader('codes.rotate'));
+    if (invalid) return Promise.reject(invalid);
+    return this.#leaderRequest('codes.rotate', {}, (reply) => {
+      if (reply.type !== 'codes.updated') throw invalidServerMessage(['type'], 'codes.rotate');
+      this.#onCodesUpdated(reply);
+      return this.#leaderCodes!.codes;
+    });
+  }
+
+  /**
+   * A QR ticket for the group this client leads (#10 AC23, AC40). The app
+   * shows it (for example in a deep link's URL fragment) and asks for a new
+   * one at about 80 % of its lifetime and after `codesChanged` with reason
+   * `rotated` or `resumed`; the client never refreshes it on its own.
+   * Rejects locally with NOT_CONNECTED, NOT_IN_GROUP, NOT_LEADER or
+   * JOIN_METHOD_UNAVAILABLE (the group has no method D), and with
+   * RATE_LIMITED (6 per minute) from the server.
+   */
+  issueQrTicket(): Promise<QrTicket> {
+    const invalid = localError(() => {
+      const group = this.#checkLeader('qr.issue');
+      const codes = this.#leaderCodes;
+      if (codes?.groupId === group.groupId && !codes.joinMethods.includes('D')) {
+        throw new SyncClientError('JOIN_METHOD_UNAVAILABLE', { request: 'qr.issue' });
+      }
+    });
+    if (invalid) return Promise.reject(invalid);
+    return this.#leaderRequest('qr.issue', {}, (reply) => {
+      if (reply.type !== 'qr.ticket') throw invalidServerMessage(['type'], 'qr.issue');
+      this.#log('debug', 'qr_issued');
+      return Object.freeze({ ticket: reply.ticket, expiresAt: now() + reply.expiresInMs });
+    });
+  }
+
+  /**
+   * Admits a pending joiner (#10 AC21, AC40). Resolves with `admitted`, or
+   * `group_full` when the group filled up meanwhile. Rejects with
+   * JOIN_REQUEST_NOT_FOUND for an unknown or already settled request.
+   */
+  approveJoin(requestId: string): Promise<'admitted' | 'group_full'> {
+    return this.#decide('join.approve', requestId).then((outcome) =>
+      outcome === 'group_full' ? 'group_full' : 'admitted',
+    );
+  }
+
+  /** Refuses a pending joiner (#10 AC21, AC40). Same rejections as `approveJoin`. */
+  denyJoin(requestId: string): Promise<void> {
+    return this.#decide('join.deny', requestId).then(() => undefined);
   }
 
   /**
@@ -814,6 +937,160 @@ export class SyncClient {
     return group;
   }
 
+  /** Local checks for leader calls: connected, in an active group, its leader. */
+  #checkLeader(request: RequestKind): Extract<GroupState, { status: 'active' }> {
+    if (this.#snapshot.connection.status !== 'connected') {
+      throw new SyncClientError('NOT_CONNECTED');
+    }
+    const group = this.#snapshot.group;
+    if (group === null || group.status === 'ended' || group.status === 'awaiting_approval') {
+      throw new SyncClientError('NOT_IN_GROUP');
+    }
+    if (group.status !== 'active' || group.role !== 'leader') {
+      throw new SyncClientError('NOT_LEADER', { request });
+    }
+    return group;
+  }
+
+  /** Sends a leader request and resolves with `map(reply)` (#10 AC40). */
+  #leaderRequest<T>(
+    kind: 'codes.rotate' | 'qr.issue' | 'join.approve' | 'join.deny',
+    fields: Record<string, unknown>,
+    map: (reply: ServerMessage) => T,
+  ): Promise<T> {
+    const reqId = this.#requests.nextId();
+    const result = deferred<T>();
+    this.#requests.add(reqId, {
+      kind,
+      timeoutKind: 'ack',
+      timeoutMs: this.#opts.requestTimeoutMs,
+      resolve: (reply) => {
+        try {
+          result.resolve(map(reply));
+        } catch (error) {
+          result.reject(error);
+        }
+      },
+      reject: (error) => result.reject(error),
+    });
+    this.#send({ type: kind, reqId, ...fields });
+    return result.promise;
+  }
+
+  #decide(
+    kind: 'join.approve' | 'join.deny',
+    requestId: string,
+  ): Promise<'admitted' | 'group_full' | 'denied'> {
+    const invalid = localError(() => {
+      this.#checkLeader(kind);
+      if (typeof requestId !== 'string' || !JOIN_REQUEST_ID_PATTERN.test(requestId)) {
+        throw new SyncClientError('INVALID_PAYLOAD', { request: kind });
+      }
+    });
+    if (invalid) return Promise.reject(invalid);
+    return this.#leaderRequest(kind, { requestId }, (reply) => {
+      if (reply.type !== 'join.decided') throw invalidServerMessage(['type'], kind);
+      this.#joinRequests.delete(requestId);
+      this.#log('info', 'join_decided', { outcome: reply.outcome });
+      return reply.outcome;
+    });
+  }
+
+  /** Keeps the leader's codes (#10 AC40) and returns them. */
+  #setLeaderCodes(
+    groupId: string,
+    joinMethods: readonly JoinMethod[],
+    payload: JoinCodesPayload,
+  ): LeaderCodes {
+    const codes: LeaderCodes = Object.freeze({
+      groupId,
+      joinMethods: Object.freeze([...joinMethods]),
+      codes: publicCodes(payload),
+    });
+    this.#leaderCodes = codes;
+    return codes;
+  }
+
+  #emitCodesChanged(reason: CodesChangedReason): void {
+    const codes = this.#leaderCodes;
+    if (codes === undefined) return;
+    this.#log('info', 'codes_changed', { cause: reason });
+    this.#events.emit(
+      'codesChanged',
+      Object.freeze({ groupId: codes.groupId, codes: codes.codes, reason }),
+    );
+  }
+
+  /** `codes.updated` for the group this client leads (#10 AC29, AC30). */
+  #onCodesUpdated(message: Extract<ServerMessage, { type: 'codes.updated' }>): void {
+    const current = this.#leaderCodes;
+    const group = this.#snapshot.group;
+    const leads =
+      (group?.status === 'active' || group?.status === 'rejoining') &&
+      group.role === 'leader' &&
+      group.groupId === message.groupId;
+    if (!leads) return;
+    this.#setLeaderCodes(message.groupId, current?.joinMethods ?? [], message.codes);
+    this.#emitCodesChanged(message.reason);
+  }
+
+  /** True when `groupId` is the active group this client leads. */
+  #leads(groupId: string): boolean {
+    const group = this.#snapshot.group;
+    return group?.status === 'active' && group.role === 'leader' && group.groupId === groupId;
+  }
+
+  /** Leader-side join events (#10 AC19, AC21, AC29, AC40). */
+  #onLeaderEvent(
+    message: Extract<
+      ServerMessage,
+      { type: 'join.requested' | 'join.withdrawn' | 'join.paused' | 'join.resumed' }
+    >,
+  ): void {
+    if (!this.#leads(message.groupId)) return;
+    switch (message.type) {
+      case 'join.requested': {
+        const request: JoinRequest = Object.freeze({
+          requestId: message.requestId,
+          ...(message.displayName === undefined ? {} : { displayName: message.displayName }),
+          expiresAt: now() + message.expiresInMs,
+        });
+        const known = this.#joinRequests.has(message.requestId);
+        this.#joinRequests.set(message.requestId, request);
+        this.#log('info', 'join_request_received', { count: this.#joinRequests.size });
+        if (!known) {
+          this.#events.emit(
+            'joinRequested',
+            Object.freeze({ groupId: message.groupId, ...request }),
+          );
+        }
+        return;
+      }
+      case 'join.withdrawn':
+        if (!this.#joinRequests.delete(message.requestId)) return;
+        this.#events.emit(
+          'joinWithdrawn',
+          Object.freeze({
+            groupId: message.groupId,
+            requestId: message.requestId,
+            reason: message.reason,
+          }),
+        );
+        return;
+      case 'join.paused':
+        this.#log('info', 'join_paused');
+        this.#events.emit(
+          'joinPaused',
+          Object.freeze({ groupId: message.groupId, retryAfterMs: message.retryAfterMs }),
+        );
+        return;
+      case 'join.resumed':
+        this.#log('info', 'join_resumed');
+        this.#events.emit('joinResumed', Object.freeze({ groupId: message.groupId }));
+        return;
+    }
+  }
+
   /**
    * Sends a code or QR join and tracks it (#10 AC39, 7.2): `group.joined`
    * admits at once; `join.pending` moves to `awaiting_approval` until an
@@ -1083,6 +1360,9 @@ export class SyncClient {
     const group = this.#snapshot.group;
     this.#throttle?.cancel();
     this.#throttle = undefined;
+    // The leader's codes and request list belong to the group (#10 AC40).
+    this.#leaderCodes = undefined;
+    this.#joinRequests.clear();
     if (group === null || group.status === 'ended') return;
     // Never in a group: a pending join request just goes away (#10 7.2).
     if (group.status === 'awaiting_approval') {
@@ -1426,6 +1706,9 @@ export class SyncClient {
         position: reply.hasPosition ? reply.position : undefined,
         leaderOnline: true,
       });
+      // The current codes come back with every leader resume (#10 AC33, AC34).
+      this.#setLeaderCodes(groupId, reply.joinMethods, reply.codes);
+      if (reply.codesChanged) this.#emitCodesChanged('resumed');
       this.#log('info', 'group_resumed', { role: 'leader', recreated: reply.recreated });
       callbacks.resolve(
         Object.freeze({
@@ -1520,7 +1803,23 @@ export class SyncClient {
         return;
       case 'join.pending':
       case 'join.cancelled':
+      case 'join.decided':
+      case 'qr.ticket':
         this.#onReply(message);
+        return;
+      case 'codes.updated':
+        // A reply to codes.rotate, or unsolicited after door-code failures.
+        if (message.reqId !== undefined && this.#requests.get(message.reqId) !== undefined) {
+          this.#onReply(message);
+          return;
+        }
+        this.#onCodesUpdated(message);
+        return;
+      case 'join.requested':
+      case 'join.withdrawn':
+      case 'join.paused':
+      case 'join.resumed':
+        this.#onLeaderEvent(message);
         return;
       case 'group.created':
       case 'group.resumed':
@@ -1759,6 +2058,8 @@ export class SyncClient {
    */
   #groupAfterDrop(group: GroupState | null): void {
     void this.#tokens?.flush();
+    // The server re-sends pending requests when the leader is back (#10 AC34).
+    this.#joinRequests.clear();
     const next = this.#rejoin.onDisconnected(group);
     if (next === group) return;
     if (next?.status === 'ended') {

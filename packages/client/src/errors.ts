@@ -53,6 +53,10 @@ export type RequestKind =
   | 'group.joinByCode'
   | 'group.joinByQr'
   | 'join.cancel'
+  | 'join.approve'
+  | 'join.deny'
+  | 'qr.issue'
+  | 'codes.rotate'
   | 'position.update'
   | 'group.resume'
   | 'tokens.check'
@@ -157,11 +161,17 @@ export const ACTION_MESSAGES: {
     'tokens.check': 'Too many token checks',
     'group.joinByCode': 'Too many join attempts',
     'group.joinByQr': 'Too many join attempts',
+    'qr.issue': 'Too many QR code requests',
+    'codes.rotate': 'Too many code rotations',
   },
   NOT_LEADER: {
     'position.update': 'Only the leader can update the position',
     'group.end': 'Only the leader can end the group',
     'blocklist.set': 'Only the leader can set the block list',
+    'qr.issue': 'Only the leader can issue QR codes',
+    'codes.rotate': 'Only the leader can rotate the codes',
+    'join.approve': 'Only the leader can approve join requests',
+    'join.deny': 'Only the leader can deny join requests',
   },
 };
 
