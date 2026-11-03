@@ -879,7 +879,7 @@ per minute (Q-E)":
 - AC33: "the group gets the same codes and generation." -> "the group gets the
   same codes, code generation and ticket generation." and "issues a full new
   set with a higher generation." -> "issues a full new set with a higher code
-  generation and a new ticket generation, so QR tickets issued before stop
+  generation and a higher ticket generation, so QR tickets issued before stop
   working."
 - AC6 needs no change ("a counter that increases on every rotation" is the
   code generation, which still increases on every rotation).
