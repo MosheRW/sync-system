@@ -1,13 +1,13 @@
 # State: #10 Join methods A-D (door code, approval, alphanumeric, QR)
 - Path: full
-- Phase: validation (fix round 2 pushed, re-review pending)
+- Phase: validation (QA round 3 FAIL, fix round 3 needed)
 - Branch: feat/10-join-methods
 - PR: #11 (ready for review)
 - Plan approved by user: yes (Gate 2, with decisions Q-A to Q-E below)
 - Security-sensitive: yes (door codes, approval, brute-force limits, QR ticket signing, codes blob, removal of join by group ID)
-- Review rounds: 2 (code review); security plan review rounds: 3 (round 1 FAIL, round 2 PASS, round 3 targeted PASS)
-- QA verdict: PASS (round 2, head 99d315f)
-- Last updated by: engineer (fix round 2, Gate 3 B1/B2)
+- Review rounds: 3 (code review); security plan review rounds: 3 (round 1 FAIL, round 2 PASS, round 3 targeted PASS)
+- QA verdict: FAIL (round 3, head 81726e5)
+- Last updated by: qa (round 3)
 
 ## Notes
 - PRD item 4 of 9. "item N" in spec.md means PRD item N, not GitHub issue N.
@@ -110,6 +110,26 @@ Recorded in architecture.md section 12 (plan revision 2).
   top-level `message` redact path, not `*.displayName`; the `frame` and
   `request` subcases cover the wildcard path.
 - Round 1 PR-body observation resolved (BREAKING CHANGE note added).
+
+## QA validation (round 3, head 81726e5)
+- Verdict: FAIL (review comment on PR #11).
+- Checks: install --frozen-lockfile, lint, typecheck, test (protocol 137,
+  server 896, client 538), build and `pnpm audit` all exit 0; CI `check`
+  2/2 pass.
+- Acceptance criteria: 44/45 met; AC20 not met (finding 1).
+- Finding 1 (B2 class): `EMOJI_SEQUENCE_PARTS` in
+  `packages/protocol/src/join.ts` accepts any run of tag characters plus
+  U+E007F after any Extended_Pictographic, so a name can carry invisible
+  ASCII ("Bob" + U+1F3F4 + tags("ignore all") + U+E007F is accepted).
+  Expected: only RGI tag sequences (U+1F3F4 + gbeng/gbsct/gbwls + U+E007F),
+  or at minimum U+1F3F4 + 2 letter tags + 1-3 letter/digit tags + U+E007F.
+- Finding 2 (B1 class): the pino message key `msg` is not redacted
+  (`message` is); `{ msg: x }` is logged, and with a message string it
+  produces a duplicate `msg` key. Expected: treat `msg` like `message`.
+- Advisories for Gate 3: ZWNJ/ZWJ between letters (Persian, Indic) now
+  rejected, a regression from round 2, so the user decides; `code` key
+  and Unicode-data trade-offs accepted; logger walks each record twice
+  (5.2 vs 1.5 us small record), acceptable.
 
 ## Open questions
 - none (M2 is tracked as issue #12).
