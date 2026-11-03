@@ -69,7 +69,7 @@ describe('member token rejoin (#5 AC17)', () => {
     await group.members[0]!.close();
     const late = await ts.connectReady();
     await waitUntil(async () => {
-      late.send({ type: 'group.join', groupId: group.groupId });
+      late.send({ type: 'group.joinByCode', ...group.join });
       return (await late.next()).type === 'group.joined';
     });
     const { reply } = await resumeWith(ts, group.memberTokens[0]);

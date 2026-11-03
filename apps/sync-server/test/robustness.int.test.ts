@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AddParticipantResult, GroupRecord } from '../src/groups/group-store.js';
 import { InMemoryGroupStore } from '../src/groups/in-memory-group-store.js';
 import { FailingStore } from './helpers/failing-store.js';
@@ -62,12 +62,12 @@ describe('join racing a leader disconnect, with a slow store', () => {
   it('replies group.joined before leader.offline and keeps the joiner in the frozen group', async () => {
     const store = new DeferredStore();
     ts = await startTestServer({ store });
-    const { groupId, leader } = await createGroupWithMembers(ts, 0);
+    const { groupId, join, leader } = await createGroupWithMembers(ts, 0);
     const joiner = await ts.connectReady();
 
     // The insert has run; its reply (with the snapshot) is still in flight.
     store.holdNext('addParticipant');
-    joiner.send({ type: 'group.join', groupId });
+    joiner.send({ type: 'group.joinByCode', ...join });
     await waitUntil(() => store.reached);
     leader.terminate();
     await sleep(50);
@@ -84,14 +84,14 @@ describe('join racing a leader disconnect, with a slow store', () => {
   it('never strands a joiner whose insert lands while the frozen group is dropped', async () => {
     const store = new DeferredStore();
     ts = await startTestServer({ store });
-    const { groupId, leader, members } = await createGroupWithMembers(ts, 1);
+    const { groupId, join, leader, members } = await createGroupWithMembers(ts, 1);
     leader.terminate();
     await members[0]!.next('leader.offline');
     const joiner = await ts.connectReady();
 
     // The join's insert has run; the last old member leaves meanwhile.
     store.holdNext('addParticipant');
-    joiner.send({ type: 'group.join', groupId });
+    joiner.send({ type: 'group.joinByCode', ...join });
     await waitUntil(() => store.reached);
     members[0]!.terminate();
     await sleep(50);
@@ -143,20 +143,25 @@ describe('robustness (H4)', () => {
   it('joins without a second store read, so a failing get cannot strand a member', async () => {
     const store = new FailingStore();
     ts = await startTestServer({ store });
-    const { groupId, leader } = await createGroupWithMembers(ts, 0);
+    const { groupId, join, leader } = await createGroupWithMembers(ts, 0);
     const member = await ts.connectReady();
 
-    // Join used to call get after addParticipant had already succeeded.
-    store.failNext('get');
-    member.send({ type: 'group.join', groupId });
+    // Join used to call get after addParticipant had already succeeded. A
+    // code join reads the group once, before the insert, and never after it.
+    const get = vi.spyOn(store, 'get');
+    const add = vi.spyOn(store, 'addParticipant');
+    member.send({ type: 'group.joinByCode', ...join });
     expect(await member.next('group.joined')).toMatchObject({ groupId, role: 'member' });
-    // The injected failure is still armed: join never read the group again.
-    await expect(store.get('app-a', groupId)).rejects.toThrow('injected store failure');
+    expect(add).toHaveBeenCalledTimes(1);
+    const insertedAt = add.mock.invocationCallOrder[0]!;
+    expect(get.mock.invocationCallOrder.every((order) => order < insertedAt)).toBe(true);
+    get.mockRestore();
+    add.mockRestore();
 
     // Session and store agree: the member is in the group and gets updates.
     const stored = await store.inner.get('app-a', groupId);
     expect(stored!.participantIds).toHaveLength(2);
-    member.send({ type: 'group.join', groupId });
+    member.send({ type: 'group.joinByCode', ...join });
     expect(await member.next('error')).toMatchObject({ code: 'ALREADY_IN_GROUP' });
     leader.send({ type: 'position.update', position: 1 });
     await leader.next('position.ack');
@@ -166,16 +171,16 @@ describe('robustness (H4)', () => {
   it('leaves no stray participant when the atomic join fails', async () => {
     const store = new FailingStore();
     ts = await startTestServer({ store });
-    const { groupId } = await createGroupWithMembers(ts, 0);
+    const { groupId, join } = await createGroupWithMembers(ts, 0);
     const member = await ts.connectReady();
 
     store.failNext('addParticipant');
-    member.send({ type: 'group.join', reqId: 'j', groupId });
+    member.send({ type: 'group.joinByCode', reqId: 'j', ...join });
     expect(await member.next('error')).toMatchObject({ reqId: 'j', code: 'INTERNAL_ERROR' });
 
     // Neither in the store nor in the session.
     expect((await store.inner.get('app-a', groupId))!.participantIds).toHaveLength(1);
-    member.send({ type: 'group.join', groupId });
+    member.send({ type: 'group.joinByCode', ...join });
     expect((await member.next('group.joined')).groupId).toBe(groupId);
   });
 
@@ -213,9 +218,9 @@ describe('robustness (H4)', () => {
   it('survives a join racing a leader disconnect', async () => {
     ts = await startTestServer();
     for (let round = 0; round < 10; round++) {
-      const { groupId, leader } = await createGroupWithMembers(ts, 0);
+      const { groupId, join, leader } = await createGroupWithMembers(ts, 0);
       const joiner = await ts.connectReady();
-      joiner.send({ type: 'group.join', groupId });
+      joiner.send({ type: 'group.joinByCode', ...join });
       leader.terminate();
       // Either joined then told the leader is offline, or not found
       // (the empty group was dropped): never a crash.

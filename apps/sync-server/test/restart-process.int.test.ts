@@ -1,3 +1,4 @@
+import { codesOf } from './helpers/groups.js';
 import { type ChildProcess, spawn } from 'node:child_process';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
@@ -100,7 +101,7 @@ describe('recovery across a real process restart (#5 AC23)', () => {
     leader.send({ type: 'group.create', metadata: { book: 'b' }, position: { page: 1 } });
     const created = await leader.next('group.created');
     const member = await connect(url);
-    member.send({ type: 'group.join', groupId: created.groupId });
+    member.send({ type: 'group.joinByCode', ...codesOf(created.codes) });
     const joined = await member.next('group.joined');
     leader.send({ type: 'position.update', position: { page: 2 } });
     await leader.next('position.ack');

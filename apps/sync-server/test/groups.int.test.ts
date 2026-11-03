@@ -1,3 +1,4 @@
+import { codesOf } from './helpers/groups.js';
 import { GROUP_ID_PATTERN, PARTICIPANT_ID_PATTERN } from '@sync-system/protocol';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { InMemoryGroupStore } from '../src/groups/in-memory-group-store.js';
@@ -68,10 +69,10 @@ describe('group join (AC12)', () => {
   it('returns the metadata and current position on join', async () => {
     const leader = await ts.connectReady();
     leader.send({ type: 'group.create', metadata: METADATA, position: { page: 3 } });
-    const { groupId } = await leader.next('group.created');
+    const { groupId, codes } = await leader.next('group.created');
 
     const member = await ts.connectReady();
-    member.send({ type: 'group.join', reqId: 'j1', groupId });
+    member.send({ type: 'group.joinByCode', reqId: 'j1', ...codesOf(codes) });
     expect(await member.next('group.joined')).toEqual({
       type: 'group.joined',
       reqId: 'j1',
@@ -89,10 +90,10 @@ describe('group join (AC12)', () => {
   it('says hasPosition false, with no position field, when there is none yet', async () => {
     const leader = await ts.connectReady();
     leader.send({ type: 'group.create', metadata: METADATA });
-    const { groupId } = await leader.next('group.created');
+    const { codes } = await leader.next('group.created');
 
     const member = await ts.connectReady();
-    member.send({ type: 'group.join', groupId });
+    member.send({ type: 'group.joinByCode', ...codesOf(codes) });
     const joined = await member.next('group.joined');
     expect(joined.hasPosition).toBe(false);
     expect('position' in joined).toBe(false);
@@ -101,9 +102,9 @@ describe('group join (AC12)', () => {
   it('keeps null as a real initial position', async () => {
     const leader = await ts.connectReady();
     leader.send({ type: 'group.create', metadata: {}, position: null });
-    const { groupId } = await leader.next('group.created');
+    const { codes } = await leader.next('group.created');
     const member = await ts.connectReady();
-    member.send({ type: 'group.join', groupId });
+    member.send({ type: 'group.joinByCode', ...codesOf(codes) });
     expect(await member.next('group.joined')).toMatchObject({ hasPosition: true, position: null });
   });
 
@@ -112,7 +113,7 @@ describe('group join (AC12)', () => {
     leader.send({ type: 'group.create', metadata: {} });
     const created = await leader.next('group.created');
     const member = await ts.connectReady();
-    member.send({ type: 'group.join', groupId: created.groupId });
+    member.send({ type: 'group.joinByCode', ...codesOf(created.codes) });
     const joined = await member.next('group.joined');
     expect(joined.participantId).not.toBe(created.participantId);
   });
@@ -130,24 +131,24 @@ describe('group join (AC12)', () => {
     expect(record?.participantIds).toEqual([created.participantId]);
   });
 
-  it('answers an unknown group ID with GROUP_NOT_FOUND', async () => {
+  it('answers an unknown join code with CODE_NOT_FOUND', async () => {
     const member = await ts.connectReady();
-    member.send({ type: 'group.join', groupId: 'Z'.repeat(43), reqId: 'x' });
-    expect(await member.next('error')).toMatchObject({ code: 'GROUP_NOT_FOUND', reqId: 'x' });
+    member.send({ type: 'group.joinByCode', joinCode: 'ZZZZZZZZ', reqId: 'x' });
+    expect(await member.next('error')).toMatchObject({ code: 'CODE_NOT_FOUND', reqId: 'x' });
     expect(member.isClosed).toBe(false);
   });
 
   it('rejects joining while already in a group with ALREADY_IN_GROUP', async () => {
     const leader = await ts.connectReady();
     leader.send({ type: 'group.create', metadata: {} });
-    const { groupId } = await leader.next('group.created');
-    leader.send({ type: 'group.join', groupId });
+    const { codes } = await leader.next('group.created');
+    leader.send({ type: 'group.joinByCode', ...codesOf(codes) });
     expect(await leader.next('error')).toMatchObject({ code: 'ALREADY_IN_GROUP' });
 
     const member = await ts.connectReady();
-    member.send({ type: 'group.join', groupId });
+    member.send({ type: 'group.joinByCode', ...codesOf(codes) });
     await member.next('group.joined');
-    member.send({ type: 'group.join', groupId });
+    member.send({ type: 'group.joinByCode', ...codesOf(codes) });
     expect(await member.next('error')).toMatchObject({ code: 'ALREADY_IN_GROUP' });
   });
 

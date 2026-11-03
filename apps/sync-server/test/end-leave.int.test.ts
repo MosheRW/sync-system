@@ -16,7 +16,7 @@ describe('group.end (#5 AC29)', () => {
   it('ends the group: members get ended_by_leader, the leader gets the reply', async () => {
     const store = new InMemoryGroupStore();
     ts = await startTestServer({ store });
-    const { groupId, leader, members } = await createGroupWithMembers(ts, 2);
+    const { groupId, join, leader, members } = await createGroupWithMembers(ts, 2);
     leader.send({ type: 'group.end', reqId: 'e1' });
     expect(await leader.next('group.ended')).toEqual({
       type: 'group.ended',
@@ -36,8 +36,8 @@ describe('group.end (#5 AC29)', () => {
     // Everyone is groupless; nobody was disconnected.
     leader.send({ type: 'group.create', metadata: {} });
     expect((await leader.next('group.created')).role).toBe('leader');
-    members[0]!.send({ type: 'group.join', groupId });
-    expect(await members[0]!.next('error')).toMatchObject({ code: 'GROUP_NOT_FOUND' });
+    members[0]!.send({ type: 'group.joinByCode', ...join });
+    expect(await members[0]!.next('error')).toMatchObject({ code: 'CODE_NOT_FOUND' });
   });
 
   it('remembers the ended group until its max-session deadline', async () => {
@@ -73,7 +73,7 @@ describe('group.leave (#5 AC30)', () => {
   it('removes the member without affecting the leader', async () => {
     const store = new InMemoryGroupStore();
     ts = await startTestServer({ store });
-    const { groupId, leader, members } = await createGroupWithMembers(ts, 2);
+    const { groupId, join, leader, members } = await createGroupWithMembers(ts, 2);
     members[0]!.send({ type: 'group.leave', reqId: 'l1' });
     expect(await members[0]!.next('group.left')).toEqual({
       type: 'group.left',
@@ -88,7 +88,7 @@ describe('group.leave (#5 AC30)', () => {
     await members[0]!.expectNoMessage(30);
 
     // Leaving does not block: the same client can join again.
-    members[0]!.send({ type: 'group.join', groupId });
+    members[0]!.send({ type: 'group.joinByCode', ...join });
     expect((await members[0]!.next('group.joined')).groupId).toBe(groupId);
   });
 

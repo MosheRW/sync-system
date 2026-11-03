@@ -43,11 +43,13 @@ describe('frozen groups (#5 AC18)', () => {
 
   it('lets new members join a frozen group, told the leader is offline', async () => {
     const { ts } = await start();
-    const { groupId, leader, members } = await createGroupWithMembers(ts, 1, { position: 'p' });
+    const { groupId, join, leader, members } = await createGroupWithMembers(ts, 1, {
+      position: 'p',
+    });
     await leader.close();
     await members[0]!.next('leader.offline');
     const late = await ts.connectReady();
-    late.send({ type: 'group.join', groupId });
+    late.send({ type: 'group.joinByCode', ...join });
     expect(await late.next('group.joined')).toMatchObject({
       groupId,
       leaderOnline: false,
@@ -58,11 +60,11 @@ describe('frozen groups (#5 AC18)', () => {
 
   it('keeps the offline leader’s slot reserved (architecture 3)', async () => {
     const { ts } = await start([{ namespace: 'app-a', apiKey: KEY_A, maxGroupSize: 2 }]);
-    const { groupId, leader, members } = await createGroupWithMembers(ts, 1);
+    const { join, leader, members } = await createGroupWithMembers(ts, 1);
     await leader.close();
     await members[0]!.next('leader.offline');
     const late = await ts.connectReady();
-    late.send({ type: 'group.join', groupId });
+    late.send({ type: 'group.joinByCode', ...join });
     expect(await late.next('error')).toMatchObject({ code: 'GROUP_FULL' });
   });
 });

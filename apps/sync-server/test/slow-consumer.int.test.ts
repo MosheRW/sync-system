@@ -1,3 +1,4 @@
+import { codesOf } from './helpers/groups.js';
 import { afterEach, describe, expect, it } from 'vitest';
 import { RawClient } from './helpers/raw-client.js';
 import { KEY_A, type TestServer, startTestServer } from './helpers/test-server.js';
@@ -33,16 +34,16 @@ describe('slow consumers (H2)', () => {
 
     const leader = await ts.connectReady();
     leader.send({ type: 'group.create', metadata: {} });
-    const { groupId } = await leader.next('group.created');
+    const { codes } = await leader.next('group.created');
 
     const normal = await ts.connectReady();
-    normal.send({ type: 'group.join', groupId });
+    normal.send({ type: 'group.joinByCode', ...codesOf(codes) });
     await normal.next('group.joined');
 
     const slow = await RawClient.connect(ts.port);
     slow.sendJson({ type: 'hello', protocolVersion: 1, appVersion: '1.0.0', apiKey: KEY_A });
     await slow.waitForType('hello.ok');
-    slow.sendJson({ type: 'group.join', groupId });
+    slow.sendJson({ type: 'group.joinByCode', ...codesOf(codes) });
     await slow.waitForType('group.joined');
     slow.pause();
     expect(ts.server.stats().total).toBe(3);

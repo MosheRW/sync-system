@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { InMemoryGroupStore } from '../src/groups/in-memory-group-store.js';
-import { createGroupWithMembers } from './helpers/groups.js';
+import { type JoinFields, codesOf, createGroupWithMembers } from './helpers/groups.js';
 import type { TestClient } from './helpers/test-client.js';
 import { KEY_A, KEY_B, type TestServer, startTestServer } from './helpers/test-server.js';
 
@@ -19,11 +19,11 @@ afterEach(async () => {
 
 async function createGroup(client: TestClient, position: unknown = { page: 1 }) {
   client.send({ type: 'group.create', metadata: { contentId: 'secret-book' }, position });
-  return (await client.next('group.created')).groupId;
+  return codesOf((await client.next('group.created')).codes);
 }
 
-async function joinError(client: TestClient, groupId: string) {
-  client.send({ type: 'group.join', groupId, reqId: 'r' });
+async function joinError(client: TestClient, join: JoinFields) {
+  client.send({ type: 'group.joinByCode', ...join, reqId: 'r' });
   const error = await client.next('error');
   const copy: Partial<typeof error> = { ...error };
   delete copy.reqId;
@@ -31,30 +31,29 @@ async function joinError(client: TestClient, groupId: string) {
 }
 
 describe('app isolation (AC18)', () => {
-  it("answers another app's group ID exactly like a nonexistent one", async () => {
+  it("answers another app's join code exactly like a nonexistent one (#10 AC13)", async () => {
     const leaderA = await ts.connectReady(KEY_A);
-    const groupId = await createGroup(leaderA);
+    const join = await createGroup(leaderA);
 
     const clientB = await ts.connectReady(KEY_B);
-    const crossApp = await joinError(clientB, groupId);
-    const unknown = await joinError(clientB, 'N'.repeat(43));
-    const malformed = await joinError(clientB, 'bad');
+    const crossApp = await joinError(clientB, join);
+    const other = join.joinCode === '000000' ? '000001' : '000000';
+    const unknown = await joinError(clientB, { ...join, joinCode: other });
     expect(crossApp).toEqual({
       type: 'error',
-      code: 'GROUP_NOT_FOUND',
-      message: 'Group not found',
+      code: 'CODE_NOT_FOUND',
+      message: 'Join code not found',
     });
     expect(unknown).toEqual(crossApp);
-    expect(malformed).toEqual(crossApp);
     expect(JSON.stringify(crossApp)).toBe(JSON.stringify(unknown));
   });
 });
 
 describe('no cross-app payloads (AC18)', () => {
-  it("never delivers app A's updates to an app B client that tried its group ID", async () => {
+  it("never delivers app A's updates to an app B client that tried its codes", async () => {
     const groupA = await createGroupWithMembers(ts, 1, { apiKey: KEY_A });
     const clientB = await ts.connectReady(KEY_B);
-    await joinError(clientB, groupA.groupId);
+    await joinError(clientB, groupA.join);
 
     groupA.leader.send({ type: 'position.update', position: { secret: 'page' } });
     await groupA.leader.next('position.ack');
@@ -89,36 +88,36 @@ describe('group isolation (AC19)', () => {
   });
 });
 
-describe('group ID format (L3)', () => {
-  it('answers malformed IDs within the bound like unknown IDs', async () => {
+describe('join code format (L3, #10 AC12)', () => {
+  it('answers malformed codes within the bound with INVALID_MESSAGE', async () => {
     const client = await ts.connectReady();
-    const unknown = await joinError(client, 'U'.repeat(43));
-    for (const groupId of [
-      'A'.repeat(42),
-      'A'.repeat(44),
-      `${'A'.repeat(42)}/`,
-      '',
-      ' '.repeat(43),
-    ]) {
-      expect(await joinError(client, groupId), JSON.stringify(groupId)).toEqual(unknown);
+    for (const joinCode of ['12345', '1234567', 'ABCDEFG0', '', ' '.repeat(32)]) {
+      expect(await joinError(client, { joinCode }), JSON.stringify(joinCode)).toEqual({
+        type: 'error',
+        code: 'INVALID_MESSAGE',
+        message: 'Invalid message',
+      });
     }
   });
 
-  it('rejects a 5,000-char ID by schema without querying the store', async () => {
+  it('rejects a 5,000-char code by schema without querying the store', async () => {
     const add = vi.spyOn(store, 'addParticipant');
     const get = vi.spyOn(store, 'get');
     const client = await ts.connectReady();
-    client.send({ type: 'group.join', groupId: 'A'.repeat(5000) });
+    client.send({ type: 'group.joinByCode', joinCode: 'A'.repeat(5000) });
     expect(await client.next('error')).toMatchObject({ code: 'INVALID_MESSAGE' });
     expect(add).not.toHaveBeenCalled();
     expect(get).not.toHaveBeenCalled();
   });
 
-  it('does not query the store for a malformed ID', async () => {
+  it('does not query the store for a malformed or unknown code', async () => {
     const add = vi.spyOn(store, 'addParticipant');
+    const get = vi.spyOn(store, 'get');
     const client = await ts.connectReady();
-    await joinError(client, 'short');
+    await joinError(client, { joinCode: 'short' });
+    await joinError(client, { joinCode: '999999' });
     expect(add).not.toHaveBeenCalled();
+    expect(get).not.toHaveBeenCalled();
   });
 });
 

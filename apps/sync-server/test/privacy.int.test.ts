@@ -1,3 +1,4 @@
+import { codesOf } from './helpers/groups.js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { hashApiKey } from '../src/apps/app-registry.js';
 import { checkDevKeys } from '../src/config/dev-key.js';
@@ -65,12 +66,12 @@ describe('logs never contain personal or secret data (AC24, L5, L8)', () => {
       position: { at: SENTINEL.payload },
       displayName: SENTINEL.displayName,
     });
-    const { groupId } = await leader.next('group.created');
+    const { groupId, codes } = await leader.next('group.created');
     groupIds.push(groupId);
 
     // Join with a displayName extra field.
     const member = await ts.connectReady(KEY_A);
-    member.send({ type: 'group.join', groupId, displayName: SENTINEL.displayName });
+    member.send({ type: 'group.joinByCode', ...codesOf(codes), displayName: SENTINEL.displayName });
     await member.next('group.joined');
 
     // Update, then rate limited (app limit 2/s).
@@ -105,7 +106,7 @@ describe('logs never contain personal or secret data (AC24, L5, L8)', () => {
 
     // Flood close.
     const flooder = await ts.connectReady(KEY_B);
-    for (let i = 0; i < 40; i++) flooder.send({ type: 'group.join', groupId });
+    for (let i = 0; i < 40; i++) flooder.send({ type: 'group.joinByCode', ...codesOf(codes) });
     expect((await flooder.closed()).code).toBe(4008);
 
     // Raw client: a close frame carrying a sentinel reason (L8).

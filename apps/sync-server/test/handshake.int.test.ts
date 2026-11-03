@@ -22,7 +22,7 @@ afterAll(async () => {
 
 const GROUP_ACTIONS = [
   { type: 'group.create', metadata: { contentId: 'c' } },
-  { type: 'group.join', groupId: 'A'.repeat(43) },
+  { type: 'group.joinByCode', joinCode: '123456' },
   { type: 'position.update', position: { page: 1 } },
 ];
 
