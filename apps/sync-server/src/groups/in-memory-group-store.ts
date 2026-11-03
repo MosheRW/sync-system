@@ -1,4 +1,5 @@
 import type { JsonValue } from '@sync-system/protocol';
+import type { GroupCodes } from '../joins/codes.js';
 import {
   type AddParticipantResult,
   type GroupRecord,
@@ -16,6 +17,8 @@ function copy(record: GroupRecord): GroupRecord {
     ...record,
     participantIds: [...record.participantIds],
     blockList: [...record.blockList],
+    joinMethods: [...record.joinMethods],
+    codes: { ...record.codes },
   };
 }
 
@@ -111,6 +114,13 @@ export class InMemoryGroupStore implements GroupStore {
     const removed = record.participantIds.filter((p) => p !== record.leaderId && blocked.has(p));
     record.participantIds = record.participantIds.filter((p) => !removed.includes(p));
     return Promise.resolve({ removed });
+  }
+
+  setCodes(namespace: string, id: string, codes: GroupCodes): Promise<GroupRecord | undefined> {
+    const record = this.groups.get(keyOf(namespace, id));
+    if (!record) return Promise.resolve(undefined);
+    record.codes = { ...codes };
+    return Promise.resolve(copy(record));
   }
 
   delete(namespace: string, id: string): Promise<void> {

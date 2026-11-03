@@ -1,12 +1,18 @@
 import { z } from 'zod';
 import { ErrorCode } from './errors.js';
 import { buildJitless } from './jitless.js';
-import { JOIN_METHODS } from './join.js';
+import {
+  ALPHA_CODE_PATTERN,
+  CODES_BLOB_PATTERN,
+  GROUP_CODE_PATTERN,
+  JOIN_METHODS,
+} from './join.js';
 import type { JsonObject, JsonValue } from './json.js';
 import {
   MAX_API_KEY_LENGTH,
   MAX_APP_VERSION_INPUT_LENGTH,
   MAX_BLOCK_LIST_SIZE,
+  MAX_CODES_BLOB_LENGTH,
   MAX_GROUP_ID_INPUT_LENGTH,
   MAX_REQ_ID_LENGTH,
   MAX_TOKEN_LENGTH,
@@ -57,11 +63,15 @@ const schemas = buildJitless(() => {
     apiKey: z.string().max(MAX_API_KEY_LENGTH).optional(),
   });
 
+  /** 1 to 4 method letters; duplicates are the server's JOIN_METHOD_NOT_ALLOWED (#10 AC5). */
+  const joinMethodList = z.array(z.enum(JOIN_METHODS)).min(1).max(JOIN_METHODS.length);
+
   const groupCreateSchema = z.object({
     type: z.literal('group.create'),
     reqId,
     metadata: opaqueObject,
     position: opaqueValue.optional(),
+    joinMethods: joinMethodList.optional(),
   });
 
   const groupJoinSchema = z.object({
@@ -123,7 +133,15 @@ const schemas = buildJitless(() => {
     approvalTimeoutSeconds: z.number().int().positive(),
   });
 
-  const joinMethods = z.array(z.enum(JOIN_METHODS)).min(1).max(JOIN_METHODS.length);
+  const joinMethods = joinMethodList;
+
+  const joinCodesPayload = z.object({
+    generation: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    groupCode: z.string().regex(GROUP_CODE_PATTERN).optional(),
+    doorCode: z.string().regex(GROUP_CODE_PATTERN).optional(),
+    alphaCode: z.string().regex(ALPHA_CODE_PATTERN).optional(),
+    blob: z.string().max(MAX_CODES_BLOB_LENGTH).regex(CODES_BLOB_PATTERN),
+  });
 
   const token = z.string().min(1).max(MAX_TOKEN_LENGTH);
 
@@ -170,6 +188,8 @@ const schemas = buildJitless(() => {
       participantId: z.string(),
       role: z.literal('leader'),
       token,
+      joinMethods,
+      codes: joinCodesPayload,
     }),
     z.object({ ...groupJoinedBase, hasPosition: z.literal(true), position: opaqueValue }),
     z.object({ ...groupJoinedBase, hasPosition: z.literal(false) }),

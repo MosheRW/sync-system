@@ -53,6 +53,13 @@ export const ErrorCode = {
   GROUP_ENDED: 'GROUP_ENDED',
   /** The participant is on the leader's block list (#5 AC17, AC26). */
   PARTICIPANT_BLOCKED: 'PARTICIPANT_BLOCKED',
+  /**
+   * A join method set the app does not allow at group.create, or a QR
+   * ticket requested for a group without method D (#10 AC5, AC23).
+   */
+  JOIN_METHOD_NOT_ALLOWED: 'JOIN_METHOD_NOT_ALLOWED',
+  /** No free join code was found; nothing was created (#10 AC9). */
+  CODES_EXHAUSTED: 'CODES_EXHAUSTED',
 } as const;
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];

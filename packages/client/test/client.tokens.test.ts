@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { type TokenStorage, memoryStorage } from '../src/storage.js';
-import { connectedClient } from './helpers/client.js';
+import { CREATED_FIELDS, connectedClient } from './helpers/client.js';
 import { FakeWebSocket } from './helpers/fake-websocket.js';
 import { fakeToken, groupIdOf } from './helpers/tokens.js';
 
@@ -31,6 +31,7 @@ describe('token capture (#5 AC31, AC34)', () => {
     const token = fakeToken({ gid: GID });
     socket.receive({
       type: 'group.created',
+      ...CREATED_FIELDS,
       reqId: socket.lastMessage().reqId,
       groupId: GID,
       participantId: 'p',
@@ -79,6 +80,7 @@ describe('token capture (#5 AC31, AC34)', () => {
     const creating = client.createGroup({});
     socket.receive({
       type: 'group.created',
+      ...CREATED_FIELDS,
       reqId: socket.lastMessage().reqId,
       groupId: GID,
       participantId: 'p',
@@ -105,6 +107,7 @@ describe('token capture (#5 AC31, AC34)', () => {
     const creating = client.createGroup({});
     socket.receive({
       type: 'group.created',
+      ...CREATED_FIELDS,
       reqId: socket.lastMessage().reqId,
       groupId: GID,
       participantId: 'p',
@@ -137,6 +140,7 @@ describe('token capture (#5 AC31, AC34)', () => {
       const creating = client.createGroup({});
       socket.receive({
         type: 'group.created',
+        ...CREATED_FIELDS,
         reqId: socket.lastMessage().reqId,
         groupId: GID,
         participantId: 'p',

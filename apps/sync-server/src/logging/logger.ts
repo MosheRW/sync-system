@@ -37,6 +37,14 @@ export const REDACT_PATHS = [
   '*.participantId',
   'secret',
   '*.secret',
+  // #10: join codes and the signed codes blob (R10). More paths are added
+  // with each field that can carry a code, ticket or request ID.
+  'codes',
+  '*.codes',
+  'joinCodes',
+  '*.joinCodes',
+  'blob',
+  '*.blob',
 ];
 
 export interface LoggerOptions {

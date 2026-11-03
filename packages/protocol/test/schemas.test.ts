@@ -10,6 +10,7 @@ import {
 
 const KEY = 'k'.repeat(40);
 const GROUP_ID = 'A'.repeat(43);
+const BLOB = `eyJ2IjoxfQ.${'B'.repeat(43)}`;
 
 function ok(value: unknown) {
   const result = parseClientMessage(value);
@@ -129,6 +130,53 @@ describe('token messages (#5)', () => {
   });
 });
 
+describe('group.create join methods and group.created codes (#10 AC5, AC6)', () => {
+  it('accepts 1 to 4 method letters on group.create', () => {
+    expect(ok({ type: 'group.create', metadata: {}, joinMethods: ['A', 'D'] }).type).toBe(
+      'group.create',
+    );
+    expect(ok({ type: 'group.create', metadata: {}, joinMethods: ['A', 'A'] }).type).toBe(
+      'group.create',
+    );
+    for (const joinMethods of [[], ['E'], ['a'], 'A', ['A', 'B', 'C', 'D', 'A']]) {
+      fails({ type: 'group.create', metadata: {}, joinMethods });
+    }
+  });
+
+  it('validates the codes payload of group.created', () => {
+    const created = {
+      type: 'group.created',
+      groupId: GROUP_ID,
+      participantId: 'p',
+      role: 'leader',
+      token: 't',
+      joinMethods: ['A', 'C', 'D'],
+      codes: {
+        generation: 1_767_225_600_000,
+        groupCode: '000000',
+        doorCode: '999999',
+        alphaCode: 'ABCDEFGH',
+        blob: BLOB,
+      },
+    };
+    expect(parseServerMessage(created).ok).toBe(true);
+    for (const codes of [
+      { ...created.codes, groupCode: '12345' },
+      { ...created.codes, doorCode: 'ABCDEF' },
+      { ...created.codes, alphaCode: 'ABCDEFG0' },
+      { ...created.codes, generation: -1 },
+      { ...created.codes, blob: 'x' },
+      { ...created.codes, blob: `${'a'.repeat(470)}.${'B'.repeat(43)}` },
+      { generation: 1 },
+    ]) {
+      expect(parseServerMessage({ ...created, codes }).ok).toBe(false);
+    }
+    const noCodes: Record<string, unknown> = { ...created };
+    delete noCodes.codes;
+    expect(parseServerMessage(noCodes).ok).toBe(false);
+  });
+});
+
 describe('server message schemas', () => {
   it('parses every server message type', () => {
     const messages = [
@@ -147,7 +195,15 @@ describe('server message schemas', () => {
           approvalTimeoutSeconds: 120,
         },
       },
-      { type: 'group.created', groupId: GROUP_ID, participantId: 'p', role: 'leader', token: 't' },
+      {
+        type: 'group.created',
+        groupId: GROUP_ID,
+        participantId: 'p',
+        role: 'leader',
+        token: 't',
+        joinMethods: ['A', 'D'],
+        codes: { generation: 1, groupCode: '012345', doorCode: '543210', blob: BLOB },
+      },
       {
         type: 'group.joined',
         groupId: GROUP_ID,
@@ -196,6 +252,8 @@ describe('server message schemas', () => {
       groupId: GROUP_ID,
       participantId: 'p',
       role: 'leader',
+      joinMethods: ['D'],
+      codes: { generation: 1, blob: BLOB },
     };
     expect(parseServerMessage(created).ok).toBe(false);
     expect(parseServerMessage({ ...created, token: '' }).ok).toBe(false);

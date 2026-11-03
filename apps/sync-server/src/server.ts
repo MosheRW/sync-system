@@ -25,9 +25,16 @@ import {
 } from './limits/constants.js';
 import { SlidingWindowRateLimiter } from './limits/rate-limiter.js';
 import { type Scheduler, realScheduler } from './time/scheduler.js';
-import { TokenKeyring } from './tokens/token-keys.js';
+import { CodesBlobService } from './tokens/codes-blob.js';
+import { QrTicketService } from './tokens/qr-tickets.js';
+import {
+  CODES_BLOB_INFO_PREFIX,
+  QR_TICKET_INFO_PREFIX,
+  TokenKeyring,
+} from './tokens/token-keys.js';
 import { TokenService } from './tokens/token-service.js';
 import type { Logger } from './logging/logger.js';
+import type { RandomInt } from './joins/codes.js';
 import { Connection } from './ws/connection.js';
 import { ConnectionCounter, type ConnectionStats } from './ws/connection-counter.js';
 import { Heartbeat } from './ws/heartbeat.js';
@@ -55,6 +62,11 @@ export interface SyncServerOptions {
    * There is no fallback: a missing or malformed value refuses to start.
    */
   tokenSecrets: TokenSecrets;
+  /**
+   * Integer source for join code draws (#10). Defaults to `crypto.randomInt`;
+   * tests inject one to force code collisions.
+   */
+  codeRandom?: RandomInt;
 }
 
 export interface SyncServer {
@@ -146,6 +158,12 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
   const ended = new EndedGroups(now, logger);
   let sweepTimer: NodeJS.Timeout | undefined;
   const tokens = new TokenService(new TokenKeyring(tokenSecrets));
+  // One keyring per purpose, so the keys can never be mixed up (#10 R4).
+  const qrTickets = new QrTicketService(
+    new TokenKeyring(tokenSecrets, QR_TICKET_INFO_PREFIX),
+    env.qrTicketSecondsCeiling,
+  );
+  const codesBlobs = new CodesBlobService(new TokenKeyring(tokenSecrets, CODES_BLOB_INFO_PREFIX));
   const groups = new GroupService({
     store,
     notifier: new LocalNotifier(),
@@ -159,6 +177,9 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
       maxMs: env.tokenRefreshMaxSeconds * 1000,
     },
     ended,
+    qrTickets,
+    codesBlobs,
+    ...(options.codeRandom === undefined ? {} : { codeRandom: options.codeRandom }),
   });
   const counter = new ConnectionCounter();
   const connections = new Set<Connection>();

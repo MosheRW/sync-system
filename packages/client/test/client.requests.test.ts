@@ -1,7 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SyncClient } from '../src/client.js';
 import { type SyncClientError, isSyncClientError } from '../src/errors.js';
-import { LIMITS, PARTICIPANT_ID, connectedClient, makeClient } from './helpers/client.js';
+import {
+  CREATED_FIELDS,
+  LIMITS,
+  PARTICIPANT_ID,
+  connectedClient,
+  makeClient,
+} from './helpers/client.js';
 import { FakeWebSocket } from './helpers/fake-websocket.js';
 
 const GROUP_ID = 'G'.repeat(43);
@@ -39,6 +45,7 @@ async function leader(limits = LIMITS): Promise<{ client: SyncClient; socket: Fa
   const reqId = socket.lastMessage().reqId;
   socket.receive({
     type: 'group.created',
+    ...CREATED_FIELDS,
     token: 'h.p.s',
     reqId,
     groupId: GROUP_ID,

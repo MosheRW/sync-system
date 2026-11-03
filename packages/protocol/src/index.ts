@@ -68,6 +68,7 @@ export type {
   AppLimits,
   HelloOkMessage,
   GroupCreatedMessage,
+  JoinCodesPayload,
   GroupJoinedMessage,
   GroupResumedMessage,
   GroupWaitingMessage,

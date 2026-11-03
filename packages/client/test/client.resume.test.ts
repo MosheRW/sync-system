@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SyncClient } from '../src/client.js';
 import { type TokenStorage, memoryStorage } from '../src/storage.js';
-import { connectedClient } from './helpers/client.js';
+import { CREATED_FIELDS, connectedClient } from './helpers/client.js';
 import { FakeWebSocket } from './helpers/fake-websocket.js';
 import { fakeToken, groupIdOf } from './helpers/tokens.js';
 
@@ -124,6 +124,7 @@ describe('resumeGroup (#5 AC38)', () => {
     void c.createGroup({});
     socket.receive({
       type: 'group.created',
+      ...CREATED_FIELDS,
       reqId: socket.lastMessage().reqId,
       groupId: GID,
       participantId: 'p',
@@ -162,6 +163,7 @@ describe('endGroup and leaveGroup (#5 AC29, AC30, AC31)', () => {
     const creating = c.createGroup({});
     socket.receive({
       type: 'group.created',
+      ...CREATED_FIELDS,
       reqId: socket.lastMessage().reqId,
       groupId: GID,
       participantId: 'p',

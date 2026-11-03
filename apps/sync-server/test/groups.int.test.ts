@@ -30,6 +30,8 @@ describe('group create (AC11)', () => {
       participantId: expect.any(String) as string,
       role: 'leader',
       token: expect.any(String) as string,
+      joinMethods: ['A', 'D'],
+      codes: expect.any(Object) as object,
     });
     expect(store.size).toBe(1);
   });

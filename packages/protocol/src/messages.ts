@@ -46,6 +46,11 @@ export interface GroupCreateMessage {
   metadata: JsonObject;
   /** Optional opaque initial position. */
   position?: JsonValue;
+  /**
+   * The group's join methods (#10 AC5): a non-empty subset of the app's,
+   * never both A and B. Omitted: the app's methods minus B when A is there.
+   */
+  joinMethods?: JoinMethod[];
 }
 
 export interface GroupJoinMessage {
@@ -154,6 +159,22 @@ export interface HelloOkMessage {
   limits: AppLimits;
 }
 
+/**
+ * A group's join codes, sent only to its leader (#10 AC6, AC10). Codes are
+ * present only for the group's methods: a group code for A or B, a door
+ * code for A, an alphanumeric code for C. The ticket generation is not on
+ * the wire; it travels inside the signed blob only.
+ */
+export interface JoinCodesPayload {
+  /** Code generation: increases on every code change (#10 AC6). */
+  generation: number;
+  groupCode?: string;
+  doorCode?: string;
+  alphaCode?: string;
+  /** Server-signed copy of the codes for recovery after a restart (#10 AC32). */
+  blob: string;
+}
+
 export interface GroupCreatedMessage {
   type: 'group.created';
   reqId?: string;
@@ -162,6 +183,10 @@ export interface GroupCreatedMessage {
   role: 'leader';
   /** The leader's participant token for this group (#5 AC5). */
   token: string;
+  /** The group's join methods, canonical order (#10 AC5). */
+  joinMethods: JoinMethod[];
+  /** The group's join codes (#10 AC6). */
+  codes: JoinCodesPayload;
 }
 
 interface GroupJoinedBase {

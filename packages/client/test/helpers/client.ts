@@ -20,6 +20,17 @@ export const JOIN_METHODS_ALL = ['A', 'B', 'C', 'D'] as const;
 
 export const PARTICIPANT_ID = 'participant-1';
 
+/** A codes payload as the server sends it to a leader (#10 AC6). Never real codes. */
+export const TEST_CODES = {
+  generation: 1_767_225_600_000,
+  groupCode: '123456',
+  doorCode: '654321',
+  blob: `eyJ2IjoxfQ.${'A'.repeat(43)}`,
+};
+
+/** The #10 fields of a `group.created` frame. */
+export const CREATED_FIELDS = { joinMethods: ['A', 'D'], codes: TEST_CODES };
+
 /** A client on a FakeWebSocket. `random` defaults to 1, so delays equal their caps. */
 export function makeClient(extra: Partial<SyncClientOptions> = {}): SyncClient {
   return new SyncClient({

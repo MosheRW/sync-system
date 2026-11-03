@@ -26,6 +26,10 @@ import { SlidingWindowRateLimiter } from '../limits/rate-limiter.js';
 import { type Logger, groupRef, participantRef, safeErr } from '../logging/logger.js';
 import type { Scheduler } from '../time/scheduler.js';
 import type { TokenService } from '../tokens/token-service.js';
+import type { CodesBlobService } from '../tokens/codes-blob.js';
+import type { QrTicketService } from '../tokens/qr-tickets.js';
+import type { RandomInt } from '../joins/codes.js';
+import { JoinService } from '../joins/join-service.js';
 import { actionErrorMessage, errorMessage } from '../ws/error-messages.js';
 import { type GroupRecord, type GroupStore, connectedCount } from './group-store.js';
 import type { EndedGroups } from './ended-groups.js';
@@ -52,6 +56,12 @@ export interface GroupServiceDeps {
   refresh: RefreshPolicy;
   /** Groups that ended in this process (Q8). */
   ended: EndedGroups;
+  /** Signs and verifies QR tickets (#10). */
+  qrTickets: QrTicketService;
+  /** Signs and verifies codes blobs (#10). */
+  codesBlobs: CodesBlobService;
+  /** Join code draws; injected by tests (#10 AC9). */
+  codeRandom?: RandomInt;
 }
 
 /**
@@ -95,8 +105,18 @@ export class GroupService implements GroupActions {
   private readonly appCheckLimiter: SlidingWindowRateLimiter;
   /** When the app-budget warning was last logged, per namespace (#7 L-2). */
   private readonly appBudgetWarnedAt = new Map<string, number>();
+  /** Join codes and every join flow (#10). */
+  private readonly joins: JoinService;
 
   constructor(private readonly deps: GroupServiceDeps) {
+    this.joins = new JoinService({
+      store: deps.store,
+      logger: deps.logger,
+      scheduler: deps.scheduler,
+      qrTickets: deps.qrTickets,
+      codesBlobs: deps.codesBlobs,
+      ...(deps.codeRandom === undefined ? {} : { random: deps.codeRandom }),
+    });
     this.checkLimiter = new SlidingWindowRateLimiter(() => this.now(), TOKENS_CHECK_WINDOW_MS);
     this.appCheckLimiter = new SlidingWindowRateLimiter(() => this.now(), TOKENS_CHECK_WINDOW_MS);
     this.timers = new GroupTimers(deps.scheduler);
@@ -112,6 +132,12 @@ export class GroupService implements GroupActions {
     this.checkLimiter.clear();
     this.appCheckLimiter.clear();
     this.appBudgetWarnedAt.clear();
+    this.joins.close();
+  }
+
+  /** Number of indexed join codes in every app. For tests only. */
+  get codeCount(): number {
+    return this.joins.index.size;
   }
 
   /**
@@ -249,10 +275,16 @@ export class GroupService implements GroupActions {
         : sizeError('position', message.position, app.maxMessageBytes));
     if (tooLarge) return tooLarge;
 
+    // Methods and codes before anything is stored: a bad method set or no
+    // free code leaves no group (#10 AC5, AC9).
+    const groupId = newGroupId();
+    const initial = this.joins.initialCodes(app, groupId, message.joinMethods);
+    if (!initial.ok) return initial.error;
+
     const participantId = newParticipantId();
     const now = this.now();
     const record: GroupRecord = {
-      id: newGroupId(),
+      id: groupId,
       appNamespace: app.namespace,
       metadata: message.metadata,
       position:
@@ -263,8 +295,15 @@ export class GroupService implements GroupActions {
       lastActivityAt: now,
       leaderOnline: true,
       blockList: [],
+      joinMethods: initial.methods,
+      codes: initial.codes,
     };
-    await this.deps.store.create(record);
+    try {
+      await this.deps.store.create(record);
+    } catch (err) {
+      this.joins.releaseCodes(app.namespace, groupId, initial.codes);
+      throw err;
+    }
     this.armMaxSession(app, record);
     this.startRefresh(app.namespace, record.id, now);
     this.attach(session, { groupId: record.id, participantId, role: 'leader' });
@@ -273,7 +312,16 @@ export class GroupService implements GroupActions {
       'group created',
     );
     const token = this.issueToken(app.namespace, record, participantId, 'leader', now);
-    return { type: 'group.created', groupId: record.id, participantId, role: 'leader', token };
+    // Codes go to the leader's connection only (#10 AC10, R13).
+    return {
+      type: 'group.created',
+      groupId: record.id,
+      participantId,
+      role: 'leader',
+      token,
+      joinMethods: [...record.joinMethods],
+      codes: this.joins.payload(record),
+    };
   }
 
   async join(session: Session, message: GroupJoinMessage): Promise<ServerMessage> {
@@ -725,6 +773,10 @@ export class GroupService implements GroupActions {
     const { app } = session;
     const namespace = app.namespace;
     const now = this.now();
+    // Until codes survive restarts, a recreated group gets a full new set
+    // with the app's default group methods.
+    const initial = this.joins.initialCodes(app, claims.gid);
+    if (!initial.ok) return initial.error;
     const record: GroupRecord = {
       id: claims.gid,
       appNamespace: namespace,
@@ -738,8 +790,11 @@ export class GroupService implements GroupActions {
       leaderOnline: true,
       // Deduplicated; the leader's own ID is ignored.
       blockList: [...new Set(message.blockList ?? [])].filter((id) => id !== claims.pid),
+      joinMethods: initial.methods,
+      codes: initial.codes,
     };
     if ((await this.deps.store.createIfAbsent(record)) === 'exists') {
+      this.joins.releaseCodes(namespace, claims.gid, initial.codes);
       // Impossible under the in-process lock; with a shared store, the group
       // someone else just recreated is resumed instead.
       const existing = await this.deps.store.get(namespace, claims.gid);
@@ -995,19 +1050,22 @@ export class GroupService implements GroupActions {
    * an end: its tokens stay usable until their own limits pass.
    */
   private async dropGroup(namespace: string, groupId: string): Promise<void> {
+    const record = await this.deps.store.get(namespace, groupId);
     await this.deps.store.delete(namespace, groupId);
-    this.forgetGroup(namespace, groupId);
+    this.forgetGroup(namespace, groupId, record);
     this.deps.logger.info(
       { event: 'group_dropped', namespace, groupRef: groupRef(groupId) },
       'group dropped',
     );
   }
 
-  private forgetGroup(namespace: string, groupId: string): void {
+  /** Clears every per-group structure; frees the group's join codes (#10 AC11). */
+  private forgetGroup(namespace: string, groupId: string, record: GroupRecord | undefined): void {
     const key = groupKey(namespace, groupId);
     this.deps.rateLimiter.forget(key);
     this.timers.clear(key);
     this.refresher.clear(key);
+    this.joins.onGroupGone(namespace, groupId, record);
   }
 
   /**
@@ -1028,7 +1086,7 @@ export class GroupService implements GroupActions {
     const namespace = app.namespace;
     const record = await this.deps.store.get(namespace, groupId);
     await this.deps.store.delete(namespace, groupId);
-    this.forgetGroup(namespace, groupId);
+    this.forgetGroup(namespace, groupId, record);
     // Remembered until its max-session deadline, as a hashed ref only (Q8).
     if (record) this.deps.ended.remember(namespace, groupId, this.maxSessionEndAt(app, record));
     const keys = (record?.participantIds ?? []).map((id) => membershipKey(namespace, groupId, id));

@@ -3,7 +3,7 @@ import type { SyncClient } from '../src/client.js';
 import { DEFAULT_REQUEST_TIMEOUT_MS } from '../src/options.js';
 import { type TokenStorage, memoryStorage } from '../src/storage.js';
 import type { GroupEndedInfo, LeaderStatusEvent, ResumedGroup } from '../src/state.js';
-import { connectedClient, serverHandshake } from './helpers/client.js';
+import { CREATED_FIELDS, connectedClient, serverHandshake } from './helpers/client.js';
 import { FakeWebSocket } from './helpers/fake-websocket.js';
 import { fakeToken, groupIdOf } from './helpers/tokens.js';
 
@@ -66,6 +66,7 @@ async function leader(storage: TokenStorage = memoryStorage()): Promise<Setup> {
   const token = fakeToken({ gid: GROUP_ID });
   socket.receive({
     type: 'group.created',
+    ...CREATED_FIELDS,
     reqId: socket.lastMessage().reqId,
     groupId: GROUP_ID,
     participantId: 'leader-pid',

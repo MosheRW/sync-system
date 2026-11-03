@@ -54,6 +54,8 @@ export const ERROR_TEXT: Record<GenericErrorCode, string> = {
   TOKEN_EXPIRED: 'Token expired',
   GROUP_ENDED: 'Group has ended',
   PARTICIPANT_BLOCKED: 'Participant is blocked',
+  JOIN_METHOD_NOT_ALLOWED: 'Join method not allowed',
+  CODES_EXHAUSTED: 'No free join code; try again',
 };
 
 interface ErrorOptions {

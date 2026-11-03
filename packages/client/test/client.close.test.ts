@@ -1,7 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SyncClient } from '../src/client.js';
 import { isSyncClientError } from '../src/errors.js';
-import { PARTICIPANT_ID, connectedClient, makeClient, serverHandshake } from './helpers/client.js';
+import {
+  CREATED_FIELDS,
+  PARTICIPANT_ID,
+  connectedClient,
+  makeClient,
+  serverHandshake,
+} from './helpers/client.js';
 import { FakeWebSocket } from './helpers/fake-websocket.js';
 
 const GROUP_ID = 'G'.repeat(43);
@@ -56,6 +62,7 @@ describe('close() (AC28)', () => {
     const creating = client.createGroup({});
     socket.receive({
       type: 'group.created',
+      ...CREATED_FIELDS,
       token: 'h.p.s',
       reqId: socket.lastMessage().reqId,
       groupId: GROUP_ID,
@@ -98,6 +105,7 @@ describe('close() from a listener inside an internal flow (AC28)', () => {
     const creating = client.createGroup({});
     socket.receive({
       type: 'group.created',
+      ...CREATED_FIELDS,
       token: 'h.p.s',
       reqId: socket.lastMessage().reqId,
       groupId: GROUP_ID,

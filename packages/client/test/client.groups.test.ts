@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { isSyncClientError } from '../src/errors.js';
 import type { GroupEndedInfo, PositionUpdatedEvent } from '../src/state.js';
-import { PARTICIPANT_ID, connectedClient } from './helpers/client.js';
+import { CREATED_FIELDS, PARTICIPANT_ID, connectedClient } from './helpers/client.js';
 import { FakeWebSocket } from './helpers/fake-websocket.js';
 
 const GROUP_ID = 'G'.repeat(43);
@@ -33,6 +33,7 @@ describe('createGroup (AC15)', () => {
     expect(sent).toEqual({ type: 'group.create', reqId: 'c2', metadata, position: { page: 1 } });
     socket.receive({
       type: 'group.created',
+      ...CREATED_FIELDS,
       token: 'h.p.s',
       reqId: 'c2',
       groupId: GROUP_ID,

@@ -99,6 +99,8 @@ const MESSAGES: Record<ClientErrorCode, string> = {
   TOKEN_EXPIRED: 'The stored token has expired',
   GROUP_ENDED: 'The group has ended',
   PARTICIPANT_BLOCKED: 'The leader blocked this participant',
+  JOIN_METHOD_NOT_ALLOWED: 'The join method is not allowed',
+  CODES_EXHAUSTED: 'No free join code; try again',
   NOT_CONNECTED: 'Not connected',
   CLOSED: 'The client was closed',
   CONNECTION_LOST: 'The connection was lost',

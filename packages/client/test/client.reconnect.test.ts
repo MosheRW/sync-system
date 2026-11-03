@@ -6,6 +6,7 @@ import { DEFAULT_REQUEST_TIMEOUT_MS, DEFAULT_STABLE_AFTER_MS } from '../src/opti
 import { type TokenStorage, memoryStorage } from '../src/storage.js';
 import type { ConnectionState, GroupEndedInfo } from '../src/state.js';
 import {
+  CREATED_FIELDS,
   LIMITS,
   PARTICIPANT_ID,
   connectedClient,
@@ -316,6 +317,7 @@ describe('leader drop (#5 AC35, replaces #3 AC29)', () => {
     const creating = client.createGroup({});
     socket.receive({
       type: 'group.created',
+      ...CREATED_FIELDS,
       token: 'h.p.s',
       reqId: socket.lastMessage().reqId,
       groupId: GROUP_ID,

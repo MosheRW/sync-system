@@ -30,6 +30,23 @@ describe('createLogger', () => {
     expect(record).toMatchObject({ event: 'test', msg: 'human readable', nested: {} });
   });
 
+  it('removes join codes and codes blobs (#10 R10)', () => {
+    const capture = new LogCapture();
+    const logger = createLogger({ level: 'trace', destination: capture });
+    logger.info(
+      {
+        event: 'test',
+        codes: { groupCode: 'SENTINEL-1', blob: 'SENTINEL-2' },
+        joinCodes: 'SENTINEL-3',
+        blob: 'SENTINEL-4',
+        nested: { codes: 'SENTINEL-5', joinCodes: 'SENTINEL-6', blob: 'SENTINEL-7' },
+        x: { blob: 'SENTINEL-8' },
+      },
+      'codes',
+    );
+    expect(capture.text).not.toContain('SENTINEL');
+  });
+
   it('respects the level', () => {
     const capture = new LogCapture();
     const logger = createLogger({ level: 'warn', destination: capture });
