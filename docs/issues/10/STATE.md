@@ -1,13 +1,13 @@
 # State: #10 Join methods A-D (door code, approval, alphanumeric, QR)
 - Path: full
-- Phase: validation
+- Phase: validation (fix round 2 pushed, re-review pending)
 - Branch: feat/10-join-methods
 - PR: #11 (ready for review)
 - Plan approved by user: yes (Gate 2, with decisions Q-A to Q-E below)
 - Security-sensitive: yes (door codes, approval, brute-force limits, QR ticket signing, codes blob, removal of join by group ID)
 - Review rounds: 2 (code review); security plan review rounds: 3 (round 1 FAIL, round 2 PASS, round 3 targeted PASS)
 - QA verdict: PASS (round 2, head 99d315f)
-- Last updated by: qa (round 2)
+- Last updated by: engineer (fix round 2, Gate 3 B1/B2)
 
 ## Notes
 - PRD item 4 of 9. "item N" in spec.md means PRD item N, not GitHub issue N.
@@ -153,3 +153,82 @@ Recorded in architecture.md section 12 (plan revision 2).
     generation, matching spec AC33.
   - Checks: lint, typecheck, test (protocol 81, server 820, client 537),
     build and `pnpm audit --audit-level=high` all exit 0.
+- Fix round 2 (Gate 3 B1/B2): the user asked to fix the two low findings
+  from security code review round 2 completely, by problem class rather
+  than by listed instance.
+  - B1 (a11333e, `fix(server)`): pino path redaction is gone. The logger
+    walks every logged object (log fields via a `logMethod` hook, mixins
+    via `formatters.log`, child and grandchild bindings via a wrapped
+    `child`) and removes sensitive keys at any depth, including arrays,
+    arrays of objects, class instances and `toJSON` results; cycles become
+    `[Circular]`, depth is capped at 32. Keys are matched after
+    normalization (lowercase, a-z0-9 only) against an exact set
+    (`position`, `metadata`, `payload`, `body`, `ip`, `remoteAddress`,
+    `address`, `x-forwarded-for`, `headers`, `req`, `url`, `query`,
+    `reason`, `message`, `codes`, `reqId`, `appVersion`, ...) and
+    fragments (`apikey`, `token`, `secret`, `password`, `credential`,
+    `signature`, `authorization`, `cookie`, `groupid`, `participantid`,
+    `blocklist`, `displayname`, `joincode`, `doorcode`, `groupcode`,
+    `alphacode`, `blob`, `ticket`, `requestid`), so plurals and prefixed
+    forms are covered. `REDACT_PATHS` is replaced by `SENSITIVE_LOG_KEYS`,
+    `SENSITIVE_LOG_KEY_PARTS` and `isSensitiveLogKey`. Errors anywhere
+    become `safeErr` (pino would otherwise copy `err.message` into `msg`),
+    and arguments after the message are dropped (no `%s` interpolation).
+    Tests (apps/sync-server/test/logger-redaction.test.ts): 31 keys x 10
+    shapes (top level, 1/3/6 levels deep, array of objects,
+    `{pending:[...]}`, `{requests:[{entry}]}`, nested arrays, mixed arrays)
+    plus object/array values, spellings, credential fragments, allowed
+    fields kept, cycles, class instances, toJSON, errors, interpolation,
+    child bindings, no mutation. 70 of the 72 failed with the old config.
+    join-privacy.int.test.ts: join keys at any depth; the static `reason`
+    check now covers every log call in `src` (keys and shorthand only) and
+    a new static check forbids template-literal log messages.
+  - B2 (0f79ad0, `fix(protocol)`): the shared `normalizeDisplayName`
+    rejects by property: `Cc`, `Cf`, `Cs`, `Co`, `Cn`, `Zl`, `Zp`,
+    `Default_Ignorable_Code_Point`, `Bidi_Control`, plus the blank-looking
+    U+2800, U+115F, U+1160, U+3164, U+FFA0, U+1D159. ZWJ, U+FE0E/U+FE0F and
+    tags U+E0020-U+E007F are allowed only inside emoji sequences (tags after
+    a pictographic emoji and ending with U+E007F; selectors after an emoji;
+    ZWJ between emoji). Every name needs a visible `L`/`N`/`S`/`P`
+    character. Trim and length rules unchanged. `FORBIDDEN_NAME_CHARACTERS`
+    and `LONE_SURROGATE` removed (superseded by the property class, `Cs`).
+    Tests (packages/protocol/test/display-name.test.ts): every code point
+    U+0000-U+10FFFF (lone surrogates included) checked alone, embedded and
+    doubled against an independent property oracle; every allowed code
+    point accepted between letters; every code point alone accepted exactly
+    when visible and allowed; 20,000 seeded random names from the
+    non-visible pool rejected; the B2 list; emoji-part misuse; positive
+    names in Latin, accented, Hebrew (with niqqud), Arabic, CJK, Japanese,
+    Korean, Devanagari, Cyrillic, Greek, Thai and emoji (ZWJ family, flag,
+    skin tone, keycaps, England/Scotland tag flags, rainbow/transgender
+    flags). Runtime about 3 s.
+  - Same class, also fixed:
+    - Leader client (bd5c0af, `fix(client)`): the `join.requested` name was
+      handed to the app unchecked. It now passes the same rule and is
+      dropped if it fails (other Unicode data on the client, misbehaving
+      server); the request stays. README updated (ff1c075 keeps the
+      drift-guard sentence on one line).
+    - Server end to end (4599fd0, `test(server)`): the B2 characters are
+      rejected with INVALID_MESSAGE on `group.joinByCode`.
+    - Logs: error messages, `%s` interpolation, child bindings and
+      template-literal messages (above), and keys not covered before:
+      `groupId`, `reqId`, `appVersion`, `payload`, `url`, `query`,
+      `address`, credential fragments; `reason`/`message`/`headers`/`req`
+      now at any depth.
+  - Checked, no change needed: display name is the only free text in #10
+    that reaches the leader (codes and request IDs are pattern-checked;
+    error texts are fixed); the client logger only accepts flat primitive
+    fields and logs fixed events; server log call sites pass only
+    allowlisted scalars.
+  - Residual (documented, not fixed): a join code logged under the key
+    `code` cannot be redacted by name (`code` is the error-code field, D5);
+    `\p{Cn}` and emoji properties follow the engine's Unicode data, so a
+    client with older data may reject a new emoji the server accepts (the
+    leader client then drops the name); ZWNJ (U+200C) is rejected, so
+    Persian names must use a space instead.
+  - Checks: lint, typecheck, test (protocol 137, server 896, client 538),
+    build and `pnpm audit --audit-level=high` all exit 0. No dependency
+    changes.
+- Deviation (fix round 2): ZWJ is allowed only between emoji, not between
+  letters, so Indic conjuncts written with an explicit ZWJ are rejected
+  (the user's rule: emoji sequences only).
