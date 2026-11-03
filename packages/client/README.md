@@ -114,7 +114,12 @@ Every `*Ms` value must be a finite number up to 2^31-1 ms.
 | ---------------------------------------------------------------------------------------------- | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `connect()`                                                                                    | `Promise<ConnectedInfo>`       | Resolves on `hello.ok` with `{ participantId, limits }`. Returns the current attempt if one is running. Rejects on a fatal error, `close()` or giving up: always `catch` it. |
 | `close()`                                                                                      | `void`                         | Idempotent. Closes the socket (1000), rejects pending requests and `connect()` with `CLOSED`, stops every timer. Never reconnects by itself.                                 |
-| `createGroup(metadata, initialPosition?)`                                                      | `Promise<CreatedGroup>`        | `{ groupId, role: 'leader', participantId }`.                                                                                                                                |
+| `createGroup(metadata, initialPosition?, options?)`                                            | `Promise<CreatedGroup>`        | `{ groupId, role: 'leader', participantId, joinMethods, codes }`. `options.joinMethods`: see "Joining a group".                                                              |
+| `joinByCode(code, { doorCode?, displayName? })`                                                | `Promise<JoinedGroup>`         | Join with a 6-digit or 8-character code. See "Joining a group".                                                                                                              |
+| `joinByQr(ticket, { displayName? })`                                                           | `Promise<JoinedGroup>`         | Join with a QR ticket. See "QR tickets and deep links".                                                                                                                      |
+| `cancelJoin()`                                                                                 | `Promise<void>`                | Withdraw a request that waits for approval.                                                                                                                                  |
+| `getJoinCodes()` / `rotateCodes()` / `issueQrTicket()`                                         | codes / `Promise`              | Leader only. See "Leader API".                                                                                                                                               |
+| `getJoinRequests()` / `approveJoin(requestId)` / `denyJoin(requestId)`                         | requests / `Promise`           | Leader only. See "Leader API".                                                                                                                                               |
 | `updatePosition(position)`                                                                     | `void`                         | Leader only. Throws local errors synchronously; server rejections arrive as `error` events.                                                                                  |
 | `getState()`                                                                                   | `ConnectionState`              | Same as `getSnapshot().connection`.                                                                                                                                          |
 | `getSnapshot()`                                                                                | `SyncClientSnapshot`           | `{ connection, group }`, frozen, same object until something changes.                                                                                                        |
@@ -137,14 +142,19 @@ fields, and passes the received objects through as they are.
 
 ### Events
 
-| Event             | Payload                      | When                                                                                                                                               |
-| ----------------- | ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `state`           | `ConnectionState`            | Every connection-state change.                                                                                                                     |
-| `positionUpdated` | `{ groupId, position }`      | A member receives the leader's position.                                                                                                           |
-| `groupEnded`      | `{ groupId, reason, code? }` | `ended_by_leader`, `leader_timeout`, `max_session`, `removed`, `replaced`, `left`, `rejoin_failed` or `closed` (see "Stored groups and recovery"). |
-| `rejoined`        | `ResumedGroup`               | Leader or member got back into its group after a reconnect, or a waiting member was admitted.                                                      |
-| `leaderStatus`    | `{ groupId, online }`        | A member's leader went offline (group frozen) or came back.                                                                                        |
-| `error`           | `SyncClientError`            | Errors not tied to a promise: each failed connection attempt, server rejections of position updates, invalid server frames.                        |
+| Event             | Payload                                           | When                                                                                                                                               |
+| ----------------- | ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `state`           | `ConnectionState`                                 | Every connection-state change.                                                                                                                     |
+| `positionUpdated` | `{ groupId, position }`                           | A member receives the leader's position.                                                                                                           |
+| `groupEnded`      | `{ groupId, reason, code? }`                      | `ended_by_leader`, `leader_timeout`, `max_session`, `removed`, `replaced`, `left`, `rejoin_failed` or `closed` (see "Stored groups and recovery"). |
+| `rejoined`        | `ResumedGroup`                                    | Leader or member got back into its group after a reconnect, or a waiting member was admitted.                                                      |
+| `leaderStatus`    | `{ groupId, online }`                             | A member's leader went offline (group frozen) or came back.                                                                                        |
+| `codesChanged`    | `{ groupId, codes, reason }`                      | Leader: codes `created`, `resumed` (only when they changed), `rotated` or `door_failures`.                                                         |
+| `joinRequested`   | `{ groupId, requestId, displayName?, expiresAt }` | Leader: someone asks to join (method B).                                                                                                           |
+| `joinWithdrawn`   | `{ groupId, requestId, reason }`                  | Leader: a request ended without a decision (`cancelled`, `disconnected`, `timeout`).                                                               |
+| `joinPaused`      | `{ groupId, retryAfterMs }`                       | Leader: door-code joining paused after repeated wrong door codes.                                                                                  |
+| `joinResumed`     | `{ groupId }`                                     | Leader: door-code joining works again.                                                                                                             |
+| `error`           | `SyncClientError`                                 | Errors not tied to a promise: each failed connection attempt, server rejections of position updates, invalid server frames.                        |
 
 A listener that throws does not affect other listeners or the client. A
 listener removed during an emit is not called.
@@ -169,37 +179,122 @@ not only from `error` events.
 
 `ConnectionState` is a union on `status`:
 
-| `status`       | Fields                                        | Meaning                                                                             |
-| -------------- | --------------------------------------------- | ----------------------------------------------------------------------------------- |
-| `idle`         |                                               | Created; `connect()` not called yet.                                                |
-| `connecting`   |                                               | First attempt after `connect()`: socket opening and handshake.                      |
-| `connected`    | `participantId`, `namespace`, `limits`        | `hello.ok` received; group calls are allowed.                                       |
-| `reconnecting` | `attempt`, `delayMs`, `retryAt`, `attempting` | Waiting for the backoff timer (`attempting: false`) or retrying (`true`).           |
-| `closed`       | `reason`, `error?`                            | `reason` is `client` (`close()`), `fatal` or `gave_up`. Terminal until `connect()`. |
+| `status`       | Fields                                                | Meaning                                                                             |
+| -------------- | ----------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `idle`         |                                                       | Created; `connect()` not called yet.                                                |
+| `connecting`   |                                                       | First attempt after `connect()`: socket opening and handshake.                      |
+| `connected`    | `participantId`, `namespace`, `joinMethods`, `limits` | `hello.ok` received; group calls are allowed.                                       |
+| `reconnecting` | `attempt`, `delayMs`, `retryAt`, `attempting`         | Waiting for the backoff timer (`attempting: false`) or retrying (`true`).           |
+| `closed`       | `reason`, `error?`                                    | `reason` is `client` (`close()`), `fatal` or `gave_up`. Terminal until `connect()`. |
 
 `GroupState` (in `snapshot.group`) is `active` (with `role`, `metadata`,
 `hasPosition`, `position`, `leaderOnline`), `rejoining` (leader or member,
 resuming after a drop), `waiting` (a member parked until its leader recreates
-the group), or `ended` (with `reason` and `code?`). It is `null` before any
-group, and again after `connect()` on a closed client.
+the group), `awaiting_approval` (a join request waits for the leader, with
+`requestId` and `expiresAt`, and no group ID), or `ended` (with `reason` and
+`code?`). It is `null` before any group, and again after `connect()` on a
+closed client.
 
 ### Indicator mapping
 
 `indicatorOf(snapshot)` gives the PRD's sync indicator:
 
-| Snapshot                                                                         | Indicator        |
-| -------------------------------------------------------------------------------- | ---------------- |
-| no group, or group `ended` (any reason)                                          | `none`           |
-| connection `connecting`/`reconnecting`, group `active`, `rejoining` or `waiting` | `reconnecting`   |
-| connection `connected`, group `rejoining`                                        | `reconnecting`   |
-| connection `connected`, group `waiting`                                          | `leader_offline` |
-| connection `connected`, group `active`, role `member`, `leaderOnline: false`     | `leader_offline` |
-| connection `connected`, group `active`, role `member`, `leaderOnline: true`      | `following`      |
-| connection `connected`, group `active`, role `leader`                            | `leading`        |
-| anything else (idle, closed)                                                     | `none`           |
+| Snapshot                                                                         | Indicator           |
+| -------------------------------------------------------------------------------- | ------------------- |
+| no group, or group `ended` (any reason)                                          | `none`              |
+| connection `connecting`/`reconnecting`, group `active`, `rejoining` or `waiting` | `reconnecting`      |
+| connection `connected`, group `rejoining`                                        | `reconnecting`      |
+| connection `connected`, group `waiting`                                          | `leader_offline`    |
+| connection `connected`, group `active`, role `member`, `leaderOnline: false`     | `leader_offline`    |
+| connection `connected`, group `active`, role `member`, `leaderOnline: true`      | `following`         |
+| connection `connected`, group `active`, role `leader`                            | `leading`           |
+| connection `connected`, group `awaiting_approval`                                | `awaiting_approval` |
+| anything else (idle, closed)                                                     | `none`              |
 
 A leader disconnect freezes the group (`leader_offline` for members); an
 `ended` group is really over.
+
+## Joining a group
+
+The server's `hello.ok` says which join methods the app allows
+(`getState().joinMethods`). The leader picks the group's methods at creation:
+
+```ts
+const created = await leader.createGroup({ book: 'b1' }, undefined, { joinMethods: ['A', 'D'] });
+created.codes; // { generation, groupCode: '048213', doorCode: '771045' }
+```
+
+`joinMethods` must be a non-empty subset of the app's methods, without both A
+and B (else `JOIN_METHOD_UNAVAILABLE`, nothing sent). Omitted: the app's
+methods minus B when A is allowed.
+
+| Method | Joiner calls                             | Notes                                                                                  |
+| ------ | ---------------------------------------- | -------------------------------------------------------------------------------------- |
+| A      | `joinByCode(groupCode, { doorCode })`    | Without `doorCode` the server answers `DOOR_CODE_REQUIRED`: ask for it and call again. |
+| B      | `joinByCode(groupCode, { displayName })` | Waits in `awaiting_approval` until the leader decides.                                 |
+| C      | `joinByCode(alphaCode)`                  | 8 characters, no 0/O/1/I/L.                                                            |
+| D      | `joinByQr(ticket)`                       | Through approval when the group also uses B.                                           |
+
+Codes are normalized before they are checked or sent: spaces and hyphens are
+removed and letters uppercased (`' 048-213 '`, `'abcd-efgh'`). A code that is
+neither 6 digits nor 8 alphabet characters fails locally with
+`INVALID_JOIN_CODE` (`details.field`: `code` or `doorCode`); a code type the
+app does not allow with `JOIN_METHOD_UNAVAILABLE`. A display name is 1 to 32
+characters after trimming, without control, bidi or invisible characters
+(`INVALID_DISPLAY_NAME`); it is shown only to the leader.
+
+The join promise resolves when the joiner is admitted, method B included.
+While it waits, `snapshot.group` is `awaiting_approval` and `indicatorOf`
+gives `awaiting_approval`. It rejects with `JOIN_DENIED`, `APPROVAL_TIMEOUT`,
+`GROUP_FULL` or `GROUP_ENDED`, with `JOIN_CANCELLED` after `cancelJoin()`,
+and with `CONNECTION_LOST` or `CLOSED` when the connection goes: a pending
+request is never sent again on its own. If the leader approves at the same
+moment as `cancelJoin()`, the join resolves and `cancelJoin()` rejects with
+`JOIN_REQUEST_NOT_FOUND`. Other rejections: `CODE_NOT_FOUND`,
+`DOOR_CODE_WRONG`, `JOIN_PAUSED` (`details.retryAfterMs`),
+`APPROVAL_QUEUE_FULL`, `QR_INVALID`, `QR_EXPIRED`, `RATE_LIMITED` (10 join
+attempts per connection per minute).
+
+### Leader API
+
+- `getJoinCodes()`: the current codes of the group this client leads, or
+  `null`. Codes are not in the snapshot (apps often log or serialize it):
+  read them here or from `codesChanged`. Show them to the people who should
+  join; never log them.
+- `rotateCodes()`: replaces every code. Older QR tickets stop working,
+  door-code failures reset and a pause is lifted. 6 per minute.
+- `issueQrTicket()`: `{ ticket, expiresAt }` (6 per minute). The client never
+  refreshes tickets on its own. Re-issue at about 80 % of the lifetime while
+  the QR code is on screen, and after `codesChanged` with reason `rotated` or
+  `resumed`. A `door_failures` change does not revoke tickets (re-issuing
+  anyway is harmless).
+- `getJoinRequests()`, `approveJoin(requestId)` (`admitted` or `group_full`),
+  `denyJoin(requestId)`, and the `joinRequested` / `joinWithdrawn` events
+  drive the approval prompt. Requests the server re-sends after a reconnect
+  appear once. **Render display names as text only, never as HTML.**
+- `joinPaused` / `joinResumed`: after repeated wrong door codes the server
+  pauses door-code joining for 10 minutes; `rotateCodes()` lifts it.
+
+The client keeps the server-signed codes blob with the leader's recovery data
+and sends it when it recreates the group after a server restart, so the
+group keeps its codes when they are still free. The newest blob wins across
+tabs; it is deleted with the group's token.
+
+### QR tickets and deep links
+
+A QR ticket is a **bearer credential**: anyone who has it can join until it
+expires or the leader rotates the codes. When the QR code encodes a link,
+put the ticket in the URL **fragment**, never the query string, so it stays
+out of web server and proxy logs:
+
+```
+https://reading.example/join#t=<ticket>
+```
+
+On the joining side, read it from `location.hash`, remove it at once with
+`history.replaceState(null, '', location.pathname + location.search)`, then
+call `joinByQr(ticket)`. Never log, store or send the ticket anywhere else.
+Keep `qrTicketSeconds` short (the default is 300 s).
 
 ## Reconnect and groups
 
@@ -457,8 +552,9 @@ leader group's stored list (participant IDs, at most 256: `BLOCK_LIST_FULL`).
 While the group is active and led by this client the full list is sent to
 the server, which removes blocked members (`groupEnded` reason `removed`);
 otherwise it is sent with the next resume. `getBlockList(groupId)` reads it.
-Until join codes (item 4), a blocked person can still join again by group ID
-with a new identity.
+A blocked participant cannot come back with its old identity. Someone who
+still knows the current codes (or holds a valid QR ticket) can join again as
+a new person; call `rotateCodes()` after blocking to close that.
 
 ## Logging
 
@@ -476,7 +572,8 @@ const client = new SyncClient({
 event name and fields with primitive values only (state names, attempt
 numbers, delays, error and close codes, message types). The API key, the URL,
 group and participant IDs, tokens, block lists, storage keys, metadata,
-positions and server message text are never passed.
+positions, server message text, join codes, door codes, QR tickets, the codes
+blob, join request IDs and display names are never passed.
 
 ## Security notes
 
@@ -490,11 +587,12 @@ positions and server message text are never passed.
   fatal error waits for the backoff anyway.
 - **`serverMessage` is untrusted text** from the server: never render it as
   HTML.
-- **Treat `groupId` like a password:** in this version it is the only thing
-  needed to join a group. Do not log it, do not send it to error reporters or
-  analytics, and do not put it in URLs (item 4 defines share flows).
-  `SyncClientError` objects carry no group ID, payload or key, so they are
-  safe to report.
+- **Join codes and QR tickets admit people:** do not log them or send them
+  to error reporters or analytics. The group ID no longer admits anyone, but
+  keep it out of URLs and logs anyway. `SyncClientError` objects carry no
+  group ID, code, ticket, payload or key, so they are safe to report.
+- **Display names are untrusted text** from other users: render them as text
+  only.
 - **Always `catch` `connect()`:** it rejects on failure, and Node 22+ exits on
   unhandled rejections.
 - **SSR:** see "Server-side rendering". In Node, inject `ws` with a small

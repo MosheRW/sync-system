@@ -17,6 +17,21 @@ describe('README drift guard (AC31)', () => {
     expect(readme).not.toMatch(/`group\.join`/);
   });
 
+  it('documents the join flows, the leader API and QR deep links (#10 AC43)', () => {
+    for (const text of [
+      '## Joining a group',
+      '### Leader API',
+      '### QR tickets and deep links',
+      'URL **fragment**',
+      'history.replaceState',
+      'bearer credential',
+      'Render display names as text only',
+      '`awaiting_approval`',
+    ]) {
+      expect(readme, text).toContain(text);
+    }
+  });
+
   it('mentions every connection state and indicator value', () => {
     for (const name of [
       'idle',
