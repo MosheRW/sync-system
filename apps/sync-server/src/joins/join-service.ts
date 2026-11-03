@@ -13,8 +13,10 @@ import {
 } from '@sync-system/protocol';
 import type { AppConfig } from '../apps/app-registry.js';
 import type { GroupRecord, GroupStore } from '../groups/group-store.js';
-import type { Session } from '../groups/session.js';
+import type { Membership, Session } from '../groups/session.js';
 import {
+  CODE_ROTATIONS_PER_GROUP_PER_MINUTE,
+  CODE_ROTATION_WINDOW_MS,
   DOOR_FAILURES_APP_WINDOW_MS,
   DOOR_FAILURES_PER_APP_PER_MINUTE,
   JOIN_ATTEMPTS_PER_APP_PER_MINUTE,
@@ -72,6 +74,15 @@ export interface JoinHost {
   leaderOf(record: GroupRecord): Session | undefined;
   /** Sends `message` to `session` after the replies it is already owed. */
   deliverLater(session: Session, message: ServerMessage): void;
+  /**
+   * The session's leader membership, ownership-checked (M4, R12), or the
+   * error to reply (NOT_LEADER with the action's text, NOT_IN_GROUP).
+   */
+  ownedLeader(session: Session, action: 'codes.rotate'): Membership | ErrorMessage;
+}
+
+function isError(value: Membership | ErrorMessage): value is ErrorMessage {
+  return 'type' in value && value.type === 'error';
 }
 
 /** Why a join attempt was refused, for the debug log (never a code or group ref for not_found). */
@@ -139,6 +150,8 @@ export class JoinService {
   private readonly wrongDoorLimiter: SlidingWindowRateLimiter;
   /** Door-code failures, rotations and pauses per method A group (#10 AC29, R1a). */
   readonly doors: DoorGuard;
+  /** Leader code rotations per group (#10 AC30). */
+  private readonly rotateLimiter: SlidingWindowRateLimiter;
 
   constructor(
     private readonly deps: JoinServiceDeps,
@@ -150,6 +163,73 @@ export class JoinService {
     this.appJoinLimiter = new SlidingWindowRateLimiter(now, JOIN_WINDOW_MS);
     this.wrongDoorLimiter = new SlidingWindowRateLimiter(now, DOOR_FAILURES_APP_WINDOW_MS);
     this.doors = new DoorGuard(deps.scheduler);
+    this.rotateLimiter = new SlidingWindowRateLimiter(now, CODE_ROTATION_WINDOW_MS);
+  }
+
+  /**
+   * codes.rotate (#10 AC30, R12): the ownership-checked leader replaces
+   * every code of its group. A full new set, so the code generation and the
+   * ticket generation move to the same new value and older QR tickets stop
+   * working (D12). Door-code failures, rotation history and any pause are
+   * cleared; a lifted pause is announced with `join.resumed` after the
+   * reply. Limited to 6 per group per minute.
+   */
+  async rotate(session: Session): Promise<ServerMessage> {
+    const membership = this.host.ownedLeader(session, 'codes.rotate');
+    if (isError(membership)) return membership;
+    const namespace = session.app.namespace;
+    const { groupId } = membership;
+    return this.host.runLocked(namespace, groupId, async () => {
+      // Replaced while waiting for the lock (M4).
+      const again = this.host.ownedLeader(session, 'codes.rotate');
+      if (isError(again)) return again;
+      if (again.groupId !== groupId) return errorMessage(ErrorCode.NOT_IN_GROUP);
+      const record = await this.deps.store.get(namespace, groupId);
+      if (record === undefined) return errorMessage(ErrorCode.NOT_IN_GROUP);
+      const key = groupKey(namespace, groupId);
+      const rate = this.rotateLimiter.tryAcquire(key, CODE_ROTATIONS_PER_GROUP_PER_MINUTE);
+      if (!rate.ok) {
+        return actionErrorMessage(ErrorCode.RATE_LIMITED, 'codes.rotate', {
+          details: { retryAfterMs: rate.retryAfterMs },
+        });
+      }
+      const now = this.now();
+      const next = issueCodeSet(
+        this.index,
+        namespace,
+        groupId,
+        record.joinMethods,
+        record.codes.generation,
+        now,
+        this.random,
+      );
+      if (next === 'exhausted') return errorMessage(ErrorCode.CODES_EXHAUSTED);
+      const updated = await this.deps.store.setCodes(namespace, groupId, next);
+      if (updated === undefined) {
+        this.index.release(namespace, groupId, next);
+        return errorMessage(ErrorCode.NOT_IN_GROUP);
+      }
+      // The new codes differ from the old ones, which are freed now.
+      this.index.release(namespace, groupId, record.codes);
+      const lifted = this.doors.reset(key, now);
+      this.deps.logger.info(
+        { event: 'codes_rotated', namespace, groupRef: groupRef(groupId), cause: 'leader' },
+        'codes rotated',
+      );
+      if (lifted) {
+        this.deps.logger.info(
+          { event: 'join_resumed', namespace, groupRef: groupRef(groupId) },
+          'door code joining resumed',
+        );
+        this.host.deliverLater(session, { type: 'join.resumed', groupId });
+      }
+      return {
+        type: 'codes.updated',
+        groupId,
+        reason: 'rotated',
+        codes: this.payload(updated),
+      };
+    });
   }
 
   /**
@@ -435,6 +515,7 @@ export class JoinService {
   onGroupGone(namespace: string, groupId: string, record: GroupRecord | undefined): void {
     if (record !== undefined) this.index.release(namespace, groupId, record.codes);
     this.doors.clear(groupKey(namespace, groupId));
+    this.rotateLimiter.forget(groupKey(namespace, groupId));
   }
 
   /** A connection closed: its per-connection budgets are forgotten (#10 6). */
@@ -448,12 +529,18 @@ export class JoinService {
     this.joinLimiter.clear();
     this.appJoinLimiter.clear();
     this.wrongDoorLimiter.clear();
+    this.rotateLimiter.clear();
     this.doors.clearAll();
     this.warnedAt.clear();
   }
 
   /** Number of tracked limiter keys. For tests only. */
   get limiterSize(): number {
-    return this.joinLimiter.size + this.appJoinLimiter.size + this.wrongDoorLimiter.size;
+    return (
+      this.joinLimiter.size +
+      this.appJoinLimiter.size +
+      this.wrongDoorLimiter.size +
+      this.rotateLimiter.size
+    );
   }
 }

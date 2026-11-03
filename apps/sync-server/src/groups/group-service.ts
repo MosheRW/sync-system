@@ -1,6 +1,8 @@
 import {
   type BlockListSetMessage,
+  type CodesRotateMessage,
   ErrorCode,
+  type ErrorMessage,
   GROUP_ID_PATTERN,
   type GroupCreateMessage,
   type GroupEndMessage,
@@ -127,6 +129,7 @@ export class GroupService implements GroupActions {
         leaderOf: (record) =>
           this.deps.notifier.get(membershipKey(record.appNamespace, record.id, record.leaderId)),
         deliverLater: (session, message) => this.deliverLater(session, message),
+        ownedLeader: (session, action) => this.ownedLeader(session, action),
       },
     );
     this.checkLimiter = new SlidingWindowRateLimiter(() => this.now(), TOKENS_CHECK_WINDOW_MS);
@@ -369,6 +372,25 @@ export class GroupService implements GroupActions {
       // the session stays groupless.
       return this.commitJoin(session, participantId, added.group);
     });
+  }
+
+  /**
+   * The session's leader membership, authorized by ownership in the
+   * notifier, not by the cached role (M4, #10 R12). A parked or member
+   * session gets NOT_LEADER with the action's text; a groupless one
+   * NOT_IN_GROUP.
+   */
+  private ownedLeader(session: Session, action: 'codes.rotate'): Membership | ErrorMessage {
+    if (session.parked !== undefined) return actionErrorMessage(ErrorCode.NOT_LEADER, action);
+    const membership = this.owned(session);
+    if (membership === undefined) return errorMessage(ErrorCode.NOT_IN_GROUP);
+    if (membership.role !== 'leader') return actionErrorMessage(ErrorCode.NOT_LEADER, action);
+    return membership;
+  }
+
+  /** codes.rotate (#10 AC30). */
+  rotateCodes(session: Session, _message: CodesRotateMessage): Promise<ServerMessage> {
+    return this.joins.rotate(session);
   }
 
   /** group.joinByCode (#10): the join rules live in JoinService. */

@@ -345,6 +345,9 @@ export class Connection implements HeartbeatTarget {
       case 'group.leave':
         response = await groups.leave(session, message);
         break;
+      case 'codes.rotate':
+        response = await groups.rotateCodes(session, message);
+        break;
     }
     this.reply(withReqId(response, message.reqId));
   }
@@ -413,6 +416,7 @@ function canCarryReqId(message: ServerMessage): boolean {
     message.type === 'tokens.result' ||
     message.type === 'group.ended' ||
     message.type === 'group.left' ||
-    message.type === 'blocklist.ack'
+    message.type === 'blocklist.ack' ||
+    message.type === 'codes.updated'
   );
 }

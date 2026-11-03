@@ -127,6 +127,8 @@ const schemas = buildJitless(() => {
 
   const groupLeaveSchema = z.object({ type: z.literal('group.leave'), reqId });
 
+  const codesRotateSchema = z.object({ type: z.literal('codes.rotate'), reqId });
+
   const clientMessageSchema = z.discriminatedUnion('type', [
     helloSchema,
     groupCreateSchema,
@@ -138,6 +140,7 @@ const schemas = buildJitless(() => {
     blockListSetSchema,
     groupEndSchema,
     groupLeaveSchema,
+    codesRotateSchema,
   ]);
 
   const appLimitsSchema = z.object({

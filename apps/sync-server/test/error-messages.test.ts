@@ -14,6 +14,7 @@ const NAMES: Record<string, RegExp> = {
   'group.end': /end the group/i,
   'blocklist.set': /block list/i,
   'group.joinByCode': /join attempts/i,
+  'codes.rotate': /rotat/i,
 };
 
 describe('per-action error texts (#7 A1)', () => {
@@ -33,11 +34,13 @@ describe('per-action error texts (#7 A1)', () => {
         'position.update': 'Too many position updates',
         'tokens.check': 'Too many token checks',
         'group.joinByCode': 'Too many join attempts',
+        'codes.rotate': 'Too many code rotations',
       },
       NOT_LEADER: {
         'position.update': 'Only the leader can update the position',
         'group.end': 'Only the leader can end the group',
         'blocklist.set': 'Only the leader can set the block list',
+        'codes.rotate': 'Only the leader can rotate the codes',
       },
     });
   });

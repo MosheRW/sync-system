@@ -295,6 +295,93 @@ describe('door-code rotation and pause (#10 AC29, R1a)', () => {
   });
 });
 
+describe('leader rotation (#10 AC30)', () => {
+  it('replaces every code and moves both generations to one new value', async () => {
+    const { server } = await startManual();
+    const { leader, created, join } = await createGroup(server, ['A', 'C', 'D']);
+    leader.send({ type: 'codes.rotate', reqId: 'rot' });
+    const rotated = await leader.next('codes.updated');
+    expect(rotated).toMatchObject({ reqId: 'rot', groupId: created.groupId, reason: 'rotated' });
+    expect(rotated.codes.groupCode).not.toBe(created.codes.groupCode);
+    expect(rotated.codes.doorCode).not.toBe(created.codes.doorCode);
+    expect(rotated.codes.alphaCode).not.toBe(created.codes.alphaCode);
+    expect(rotated.codes.generation).toBeGreaterThan(created.codes.generation);
+    const verified = blobs.verify(rotated.codes.blob, 'app-a', created.groupId);
+    expect(verified?.codes.ticketGeneration).toBe(rotated.codes.generation);
+
+    // The old codes are freed; the new ones admit.
+    const client = await server.connectReady();
+    expect(await attempt(client, join)).toMatchObject({ code: 'CODE_NOT_FOUND' });
+    expect(await attempt(client, { joinCode: created.codes.alphaCode })).toMatchObject({
+      code: 'CODE_NOT_FOUND',
+    });
+    expect((await attempt(client, codesOf(rotated.codes))).type).toBe('group.joined');
+  });
+
+  it('resets door-code failures and lifts a pause (join.resumed after the reply)', async () => {
+    const { server } = await startManual();
+    const { leader, created } = await createGroup(server, ['A']);
+    let door = created.codes.doorCode!;
+    const groupCode = created.codes.groupCode!;
+    for (let rotation = 0; rotation < 3; rotation++) {
+      await wrongAttempts(server, { joinCode: groupCode, doorCode: door }, 5);
+      door = (await leader.next('codes.updated')).codes.doorCode!;
+    }
+    await leader.next('join.paused');
+    leader.send({ type: 'codes.rotate' });
+    const rotated = await leader.next('codes.updated');
+    expect(await leader.next('join.resumed')).toEqual({
+      type: 'join.resumed',
+      groupId: created.groupId,
+    });
+    const join = codesOf(rotated.codes);
+    // Counter reset: 4 wrong codes do not rotate.
+    await wrongAttempts(server, join, 4);
+    await leader.expectNoMessage(30);
+    const client = await server.connectReady();
+    expect((await attempt(client, join)).type).toBe('group.joined');
+  });
+
+  it('allows 6 rotations per group per minute', async () => {
+    const { server, scheduler } = await startManual();
+    const { leader } = await createGroup(server, ['C']);
+    for (let i = 0; i < 6; i++) {
+      leader.send({ type: 'codes.rotate' });
+      await leader.next('codes.updated');
+    }
+    leader.send({ type: 'codes.rotate', reqId: 'x' });
+    expect(await leader.next('error')).toEqual({
+      type: 'error',
+      reqId: 'x',
+      code: 'RATE_LIMITED',
+      message: 'Too many code rotations',
+      details: { retryAfterMs: MINUTE },
+    });
+    scheduler.advance(MINUTE);
+    leader.send({ type: 'codes.rotate' });
+    let message = await leader.next();
+    while (message.type === 'token.refreshed') message = await leader.next();
+    expect(message.type).toBe('codes.updated');
+  });
+
+  it('refuses members and groupless sessions (R12)', async () => {
+    const { server } = await startManual();
+    const { join } = await createGroup(server, ['C']);
+    const member = await server.connectReady();
+    await attempt(member, join);
+    member.send({ type: 'codes.rotate', reqId: 'm' });
+    expect(await member.next('error')).toEqual({
+      type: 'error',
+      reqId: 'm',
+      code: 'NOT_LEADER',
+      message: 'Only the leader can rotate the codes',
+    });
+    const outsider = await server.connectReady();
+    outsider.send({ type: 'codes.rotate' });
+    expect(await outsider.next('error')).toMatchObject({ code: 'NOT_IN_GROUP' });
+  });
+});
+
 describe('wrong door codes per app (#10 R1b, N2)', () => {
   it('refuses the 61st wrong door code in a minute across groups, without comparing', async () => {
     const { server, scheduler } = await startManual();

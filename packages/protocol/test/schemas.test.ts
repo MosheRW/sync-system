@@ -130,6 +130,40 @@ describe('token messages (#5)', () => {
   });
 });
 
+describe('codes.rotate and code events (#10 AC29, AC30)', () => {
+  it('parses codes.rotate and the leader events', () => {
+    expect(ok({ type: 'codes.rotate', reqId: 'r' }).type).toBe('codes.rotate');
+    for (const message of [
+      {
+        type: 'codes.updated',
+        reqId: 'r',
+        groupId: GROUP_ID,
+        reason: 'rotated',
+        codes: { generation: 2, alphaCode: 'ABCDEFGH', blob: BLOB },
+      },
+      {
+        type: 'codes.updated',
+        groupId: GROUP_ID,
+        reason: 'door_failures',
+        codes: { generation: 3, groupCode: '123456', doorCode: '654321', blob: BLOB },
+      },
+      { type: 'join.paused', groupId: GROUP_ID, retryAfterMs: 600_000 },
+      { type: 'join.resumed', groupId: GROUP_ID },
+    ]) {
+      expect(parseServerMessage(message).ok, message.type).toBe(true);
+    }
+    expect(
+      parseServerMessage({
+        type: 'codes.updated',
+        groupId: GROUP_ID,
+        reason: 'other',
+        codes: { generation: 1, blob: BLOB },
+      }).ok,
+    ).toBe(false);
+    expect(parseServerMessage({ type: 'join.paused', groupId: GROUP_ID }).ok).toBe(false);
+  });
+});
+
 describe('group.joinByCode (#10 AC12)', () => {
   it('accepts a code with an optional door code and display name, length-capped only', () => {
     expect(ok({ type: 'group.joinByCode', joinCode: '123456' }).type).toBe('group.joinByCode');

@@ -1,5 +1,6 @@
 import type {
   BlockListSetMessage,
+  CodesRotateMessage,
   GroupCreateMessage,
   GroupEndMessage,
   GroupJoinMessage,
@@ -77,6 +78,8 @@ export interface GroupActions {
   end(session: Session, message: GroupEndMessage): Promise<ServerMessage>;
   /** Member leaves the group (#5 AC30). */
   leave(session: Session, message: GroupLeaveMessage): Promise<ServerMessage>;
+  /** Leader replaces every join code of its group (#10 AC30). */
+  rotateCodes(session: Session, message: CodesRotateMessage): Promise<ServerMessage>;
   /** Runs the disconnect rules (member removal, group end). */
   disconnect(session: Session): Promise<void>;
 }

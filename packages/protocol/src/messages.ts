@@ -128,6 +128,17 @@ export interface GroupLeaveMessage {
   reqId?: string;
 }
 
+/**
+ * The leader replaces every code of its group (#10 AC30): new group code,
+ * door code and alphanumeric code as applicable. Older QR tickets stop
+ * working, door-code failures reset and a pause is lifted. Reply:
+ * `codes.updated` with reason `rotated`.
+ */
+export interface CodesRotateMessage {
+  type: 'codes.rotate';
+  reqId?: string;
+}
+
 export type ClientMessage =
   | HelloMessage
   | GroupCreateMessage
@@ -138,7 +149,8 @@ export type ClientMessage =
   | TokensCheckMessage
   | BlockListSetMessage
   | GroupEndMessage
-  | GroupLeaveMessage;
+  | GroupLeaveMessage
+  | CodesRotateMessage;
 
 export type ClientMessageType = ClientMessage['type'];
 

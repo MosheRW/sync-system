@@ -18,11 +18,13 @@ export const ACTION_ERROR_TEXT = {
     'position.update': 'Too many position updates',
     'tokens.check': 'Too many token checks',
     'group.joinByCode': 'Too many join attempts',
+    'codes.rotate': 'Too many code rotations',
   },
   NOT_LEADER: {
     'position.update': 'Only the leader can update the position',
     'group.end': 'Only the leader can end the group',
     'blocklist.set': 'Only the leader can set the block list',
+    'codes.rotate': 'Only the leader can rotate the codes',
   },
 } as const satisfies Record<ActionErrorCode, Record<string, string>>;
 

@@ -126,6 +126,12 @@ export const DOOR_ROTATION_WINDOW_MS = 1_800_000;
 /** How long method A joining pauses (10 minutes, #10 AC29). */
 export const DOOR_PAUSE_MS = 600_000;
 
+/** Leader `codes.rotate` requests per group per window (#10 AC30). */
+export const CODE_ROTATIONS_PER_GROUP_PER_MINUTE = 6;
+
+/** Window of the `codes.rotate` limiter. */
+export const CODE_ROTATION_WINDOW_MS = 60_000;
+
 /**
  * Most draws of one join code before giving up with CODES_EXHAUSTED (#10
  * AC9). Each draw is checked against the app's live codes.
