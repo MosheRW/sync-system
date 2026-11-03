@@ -132,6 +132,31 @@ describe('normalizeDisplayName (AC20, R9)', () => {
     }
   });
 
+  it.each([
+    ['U+00AD soft hyphen', '­'],
+    ['U+115F Hangul choseong filler', 'ᅟ'],
+    ['U+180E Mongolian vowel separator', '᠎'],
+    ['U+2060 word joiner', '⁠'],
+    ['U+2061 function application', '⁡'],
+    ['U+2062 invisible times', '⁢'],
+    ['U+2063 invisible separator', '⁣'],
+    ['U+2064 invisible plus', '⁤'],
+    ['U+3164 Hangul filler', 'ㅤ'],
+    ['U+FFA0 halfwidth Hangul filler', 'ﾠ'],
+  ])('rejects the invisible or blank character %s (R9)', (_label, char) => {
+    expect(normalizeDisplayName(`a${char}b`)).toBeUndefined();
+    expect(normalizeDisplayName(`${char}Dana`)).toBeUndefined();
+    expect(normalizeDisplayName(char)).toBeUndefined();
+    expect(normalizeDisplayName(char.repeat(3))).toBeUndefined();
+    expect(normalizeDisplayName(` ${char} `)).toBeUndefined();
+  });
+
+  it('rejects names that are only whitespace or invisible characters', () => {
+    for (const blank of [' ', '　', '  ', 'ㅤㅤ', '⁠ ⁠', 'ᅟ　']) {
+      expect(normalizeDisplayName(blank)).toBeUndefined();
+    }
+  });
+
   it('accepts emoji sequences: ZWJ family, flags and tag sequences', () => {
     const family = '\uD83D\uDC68\u200D\uD83D\uDC69\u200D\uD83D\uDC67';
     const flag = '\uD83C\uDDEE\uD83C\uDDF1';

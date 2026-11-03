@@ -99,11 +99,16 @@ const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[
  * Characters a display name may not contain (AC20, architecture 4.5, R9):
  * control characters, line and paragraph separators, bidi overrides and
  * isolates, and invisible format characters that could hide or reorder text
- * in the leader's prompt. ZWJ (U+200D), variation selectors and emoji tag
- * characters stay allowed, so emoji sequences work.
+ * in the leader's prompt. That includes characters that render blank or
+ * invisible and that trim() keeps: the soft hyphen (U+00AD), the Hangul
+ * fillers (U+115F, U+3164, U+FFA0), the Mongolian vowel separator
+ * (U+180E), the word joiner and invisible operators (U+2060-U+2064). A name
+ * made only of whitespace and such characters is therefore rejected too.
+ * ZWJ (U+200D), variation selectors and emoji tag characters stay allowed,
+ * so emoji sequences work.
  */
 const FORBIDDEN_NAME_CHARACTERS =
-  /[\p{Cc}\u2028\u2029\u202A-\u202E\u2066-\u2069\u061C\u200B\u200E\u200F\uFEFF]/u;
+  /[\p{Cc}\u2028\u2029\u202A-\u202E\u2066-\u2069\u061C\u200B\u200E\u200F\uFEFF\u00AD\u115F\u180E\u2060-\u2064\u3164\uFFA0]/u;
 
 /**
  * Validates and trims an optional display name (AC20). Returns the trimmed
