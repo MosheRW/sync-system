@@ -103,13 +103,31 @@ export function isCodesBlobShape(value: unknown): value is string {
  * - `Zl` / `Zp` line and paragraph separators;
  * - `Default_Ignorable_Code_Point` (variation selectors, Hangul fillers,
  *   combining grapheme joiner, tags, and so on) and `Bidi_Control`;
- * - the few characters in visible categories that still render blank:
+ * - the characters in visible categories that still render blank:
  *   U+2800 braille blank, the Hangul fillers U+115F, U+1160, U+3164,
- *   U+FFA0 (also default-ignorable) and U+1D159 musical null notehead.
+ *   U+FFA0 (also default-ignorable), U+1D159 musical null notehead, the
+ *   Egyptian hieroglyph blanks U+13441 (full) and U+13442 (half), U+FFFC
+ *   object replacement character and U+303F ideographic half fill space.
  * Exception: the parts of emoji sequences, see EMOJI_SEQUENCE_PARTS.
+ * ZWNJ U+200C and ZWJ U+200D between letters are rejected on purpose (user
+ * decision, #10 review round 3): Persian and Indic names must be written
+ * without them.
  */
 const FORBIDDEN_NAME_CHARACTER =
-  /[\p{Cc}\p{Cf}\p{Cs}\p{Co}\p{Cn}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}\p{Bidi_Control}\u2800\u115F\u1160\u3164\uFFA0\u{1D159}]/u;
+  /[\p{Cc}\p{Cf}\p{Cs}\p{Co}\p{Cn}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}\p{Bidi_Control}\u2800\u115F\u1160\u3164\uFFA0\u{1D159}\u{13441}\u{13442}\uFFFC\u303F]/u;
+
+/**
+ * More than this many combining marks in a row ("Zalgo" text) can draw over
+ * the lines around the name in a prompt. Real names stay within it (for
+ * example Vietnamese, Hebrew with niqqud, Arabic with harakat, Thai,
+ * Devanagari, Burmese and Tibetan stacks).
+ */
+const MAX_COMBINING_MARKS_IN_A_ROW = 4;
+
+const TOO_MANY_COMBINING_MARKS = new RegExp(
+  String.raw`\p{M}{${MAX_COMBINING_MARKS_IN_A_ROW + 1},}`,
+  'u',
+);
 
 /**
  * The only forbidden code points a name may contain, and only where they
@@ -146,8 +164,8 @@ const VISIBLE_CHARACTER = /[\p{L}\p{N}\p{S}\p{P}]/u;
  * Validates and trims an optional display name (AC20). Returns the trimmed
  * name, or undefined when it is not acceptable: over the raw input cap,
  * empty after trimming, longer than 32 code points, containing a forbidden
- * code point outside an emoji sequence (including a lone surrogate), or
- * without any visible character. Server and client run this same function,
+ * code point outside an emoji sequence (including a lone surrogate), with
+ * more than 4 combining marks in a row, or without any visible character. Server and client run this same function,
  * so both accept exactly the same names (given the same Unicode data; the
  * server is authoritative).
  */
@@ -157,6 +175,7 @@ export function normalizeDisplayName(raw: string): string | undefined {
   const length = [...trimmed].length;
   if (length < 1 || length > MAX_DISPLAY_NAME_LENGTH) return undefined;
   if (FORBIDDEN_NAME_CHARACTER.test(trimmed.replace(EMOJI_SEQUENCE_PARTS, ''))) return undefined;
+  if (TOO_MANY_COMBINING_MARKS.test(trimmed)) return undefined;
   if (!VISIBLE_CHARACTER.test(trimmed)) return undefined;
   return trimmed;
 }

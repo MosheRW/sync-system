@@ -12,7 +12,11 @@ const FORBIDDEN_PROPERTY =
   /^[\p{Cc}\p{Cf}\p{Cs}\p{Co}\p{Cn}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}\p{Bidi_Control}]$/u;
 
 /** Characters in visible categories that still render blank. */
-const BLANK_LOOKING = new Set([0x2800, 0x115f, 0x1160, 0x3164, 0xffa0, 0x1d159]);
+const BLANK_LOOKING = new Set([
+  0x2800, 0x115f, 0x1160, 0x3164, 0xffa0, 0x1d159,
+  // Security review C5: blank by design or rendered as nothing.
+  0x13441, 0x13442, 0xfffc, 0x303f,
+]);
 
 /** Visible: a letter, number, symbol or punctuation. */
 const VISIBLE = /^[\p{L}\p{N}\p{S}\p{P}]$/u;
@@ -145,6 +149,10 @@ describe('normalizeDisplayName by Unicode property (#10 B2)', () => {
     ['U+FFFB interlinear annotation terminator', '￻'],
     ['U+2800 braille pattern blank', '⠀'],
     ['U+1D159 musical symbol null notehead', '\u{1D159}'],
+    ['U+13441 Egyptian hieroglyph full blank (C5)', '\u{13441}'],
+    ['U+13442 Egyptian hieroglyph half blank (C5)', '\u{13442}'],
+    ['U+FFFC object replacement character (C5)', '￼'],
+    ['U+303F ideographic half fill space (C5)', '〿'],
   ])('rejects %s (security review B2)', (_label, char) => {
     expect(normalizeDisplayName(char)).toBeUndefined();
     expect(normalizeDisplayName(`a${char}b`)).toBeUndefined();
@@ -219,6 +227,74 @@ describe('normalizeDisplayName by Unicode property (#10 B2)', () => {
       }
       expect(accepted).toEqual([]);
     });
+  });
+
+  describe('combining mark stacks (security C5)', () => {
+    const ACUTE = '́';
+    const MARKS = ['́', '̀', '̈', '̧', '҉', 'ִ', 'ّ', '้'];
+
+    it('accepts up to 4 combining marks in a row', () => {
+      for (let count = 1; count <= 4; count++) {
+        const name = `Da${ACUTE.repeat(count)}na`;
+        expect(normalizeDisplayName(name), String(count)).toBe(name);
+      }
+      const four = `a${MARKS.slice(0, 4).join('')}`;
+      expect(normalizeDisplayName(four)).toBe(four);
+    });
+
+    it.each([
+      ['5 marks on one letter', `Da${ACUTE.repeat(5)}na`],
+      ['Zalgo: a letter with 30 marks', `a${ACUTE.repeat(30)}`],
+      ['5 different marks', `Dana${MARKS.slice(0, 5).join('')}`],
+      ['5 enclosing marks', `a${'҉'.repeat(5)}`],
+      ['Zalgo with one run too long', `Z${MARKS.join('')}a${ACUTE}l${ACUTE}g${ACUTE}o`],
+      ['5 spacing marks', `क${'ा'.repeat(5)}`],
+      ['5 marks at the start', `${ACUTE.repeat(5)}Dana`],
+    ])('rejects %s', (_label, name) => {
+      expect(normalizeDisplayName(name)).toBeUndefined();
+    });
+
+    it('rejects every combining mark stacked 5 times', () => {
+      const accepted: string[] = [];
+      for (const [cp, char] of everyCodePoint()) {
+        if (!/^\p{M}$/u.test(char)) continue;
+        if (normalizeDisplayName(`a${char.repeat(5)}`) !== undefined) accepted.push(hex(cp));
+      }
+      expect(accepted).toEqual([]);
+    });
+  });
+
+  it('rejects ZWNJ and ZWJ between letters (user decision, review round 3)', () => {
+    for (const name of [
+      'علی‌زاده', // Persian with ZWNJ
+      'क्‍ष', // Devanagari with an explicit ZWJ
+      'ශ්‍රී', // Sinhala with ZWJ
+      'a‌b',
+      'a‍b',
+    ]) {
+      expect(normalizeDisplayName(name), JSON.stringify(name)).toBeUndefined();
+    }
+    const withSpace = 'علی زاده';
+    expect(normalizeDisplayName(withSpace)).toBe(withSpace);
+  });
+
+  it.each([
+    ['Hebrew with dagesh, shin dot and vowel', 'שִּׁמְשׁוֹן'],
+    ['Hebrew with cantillation', 'יִשְׂרָאֵ֑ל'],
+    ['Arabic with harakat', 'مُحَمَّد'],
+    ['Arabic with shadda and tanwin', 'عَلِيٌّ'],
+    ['Vietnamese', 'Nguyễn Thị Hướng'],
+    ['Vietnamese, decomposed (NFD)', 'Nguyễn Thị Hướng'.normalize('NFD')],
+    ['Burmese', 'အောင်ဆန်းစုကြည်'],
+    ['Burmese with 4 stacked signs', 'ချွှဲ'],
+    ['Tibetan', 'བསྟན་འཛིན་རྒྱ་མཚོ'],
+    ['Tibetan stack', 'བསྒྲུབས'],
+    ['Bengali', 'রবীন্দ্রনাথ'],
+    ['Tamil', 'ஸ்ரீநிவாசன்'],
+    ['Khmer', 'ស្រីមុំ'],
+    ['Thai with tone marks', 'กุ้ง น้ำ'],
+  ])('accepts a %s name within the combining mark limit (C5)', (_label, name) => {
+    expect(normalizeDisplayName(name)).toBe(name);
   });
 
   it.each([
