@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SyncClient } from '../src/client.js';
 import { type TokenStorage, memoryStorage } from '../src/storage.js';
-import { CREATED_FIELDS, connectedClient } from './helpers/client.js';
+import { RESUMED_FIELDS, CREATED_FIELDS, connectedClient } from './helpers/client.js';
 import { FakeWebSocket } from './helpers/fake-websocket.js';
 import { fakeToken, groupIdOf } from './helpers/tokens.js';
 
@@ -72,6 +72,7 @@ describe('resumeGroup (#5 AC38)', () => {
       position: 9,
       token: fakeToken({ gid: GID }),
       recreated: true,
+      ...RESUMED_FIELDS,
     });
     await expect(resuming).resolves.toEqual({
       groupId: GID,

@@ -790,7 +790,7 @@ export class GroupService implements GroupActions {
           return errorMessage(ErrorCode.PARTICIPANT_BLOCKED);
         case 'live':
           return claims.role === 'leader'
-            ? this.leaderReturn(session, record!, claims, message.blockList)
+            ? this.leaderReturn(session, record!, claims, message.blockList, message.joinCodes)
             : this.memberResume(session, record!, claims);
         case 'recoverable':
           return this.recreate(session, claims, message);
@@ -838,6 +838,7 @@ export class GroupService implements GroupActions {
     record: GroupRecord,
     claims: TokenClaims,
     blockList?: readonly string[],
+    joinCodes?: string,
   ): Promise<ServerMessage> {
     const { app } = session;
     const namespace = app.namespace;
@@ -856,13 +857,16 @@ export class GroupService implements GroupActions {
       });
     }
     this.attach(session, { groupId: record.id, participantId: claims.pid, role: 'leader' });
-    // Pending approval requests are re-sent after the reply (#10 AC21, AC34).
+    // Pending approval requests and a running pause are re-sent after the
+    // reply (#10 AC21, AC29, AC34).
     this.joins.onLeaderReturn(session, updated);
     this.deps.logger.info(
       { event: 'group_resumed', namespace, groupRef: groupRef(record.id), recreated: false },
       'leader resumed',
     );
-    return this.resumedMessage(updated, claims.pid, false, now);
+    // The blob is ignored for state: the current codes win (#10 AC34).
+    const codesChanged = this.joins.codesChangedFor(updated, joinCodes);
+    return this.resumedMessage(updated, claims.pid, false, now, codesChanged);
   }
 
   /**
@@ -880,9 +884,9 @@ export class GroupService implements GroupActions {
     const { app } = session;
     const namespace = app.namespace;
     const now = this.now();
-    // Until codes survive restarts, a recreated group gets a full new set
-    // with the app's default group methods.
-    const initial = this.joins.initialCodes(app, claims.gid);
+    // The same codes if the leader's blob is valid and every code is free,
+    // else a full new set; CODES_EXHAUSTED recreates nothing (#10 AC33).
+    const initial = this.joins.restoreCodes(app, claims.gid, message.joinCodes);
     if (!initial.ok) return initial.error;
     const record: GroupRecord = {
       id: claims.gid,
@@ -906,7 +910,7 @@ export class GroupService implements GroupActions {
       // someone else just recreated is resumed instead.
       const existing = await this.deps.store.get(namespace, claims.gid);
       if (!existing) return errorMessage(ErrorCode.GROUP_NOT_FOUND);
-      return this.leaderReturn(session, existing, claims, message.blockList);
+      return this.leaderReturn(session, existing, claims, message.blockList, message.joinCodes);
     }
     this.armMaxSession(app, record);
     this.startRefresh(namespace, record.id, now);
@@ -922,7 +926,7 @@ export class GroupService implements GroupActions {
       },
       'group recreated',
     );
-    return this.resumedMessage(record, claims.pid, true, now);
+    return this.resumedMessage(record, claims.pid, true, now, initial.changed);
   }
 
   /**
@@ -1022,6 +1026,7 @@ export class GroupService implements GroupActions {
     participantId: string,
     recreated: boolean,
     now: number,
+    codesChanged: boolean,
   ): ServerMessage {
     const base = {
       type: 'group.resumed' as const,
@@ -1031,6 +1036,10 @@ export class GroupService implements GroupActions {
       metadata: record.metadata,
       token: this.issueToken(record.appNamespace, record, participantId, 'leader', now),
       recreated,
+      // Codes go to the leader's connection only (#10 AC10, R13).
+      joinMethods: [...record.joinMethods],
+      codes: this.joins.payload(record),
+      codesChanged,
     };
     return record.position.has
       ? { ...base, hasPosition: true, position: record.position.payload }

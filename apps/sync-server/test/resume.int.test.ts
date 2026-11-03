@@ -110,6 +110,9 @@ describe('leader return (#5 AC19)', () => {
       position: 'server',
       token: expect.any(String) as string,
       recreated: false,
+      joinMethods: ['A', 'D'],
+      codes: { ...group.codes, blob: expect.any(String) as string },
+      codesChanged: true,
     });
     expect(await group.members[0]!.next('leader.online')).toEqual({
       type: 'leader.online',

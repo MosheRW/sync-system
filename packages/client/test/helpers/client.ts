@@ -31,6 +31,9 @@ export const TEST_CODES = {
 /** The #10 fields of a `group.created` frame. */
 export const CREATED_FIELDS = { joinMethods: ['A', 'D'], codes: TEST_CODES };
 
+/** The #10 fields of a `group.resumed` frame. */
+export const RESUMED_FIELDS = { ...CREATED_FIELDS, codesChanged: false };
+
 /** A client on a FakeWebSocket. `random` defaults to 1, so delays equal their caps. */
 export function makeClient(extra: Partial<SyncClientOptions> = {}): SyncClient {
   return new SyncClient({

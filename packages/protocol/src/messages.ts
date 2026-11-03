@@ -84,8 +84,8 @@ export interface PositionUpdateMessage {
 /**
  * Rejoin or recover a group with a participant token (#5 AC17, AC19, AC23).
  * A leader recreating a group that is not in memory must send its metadata,
- * and may send its latest position and block list. Item 4 adds the latest
- * join codes here (`joinCodes`); nothing reads them yet.
+ * and may send its latest position and block list, and the latest signed
+ * codes blob it received (`joinCodes`, #10 AC32).
  */
 export interface GroupResumeMessage {
   type: 'group.resume';
@@ -97,6 +97,12 @@ export interface GroupResumeMessage {
   position?: JsonValue;
   /** Leader only: blocked participant IDs. Omitted keeps the server's list (L5). */
   blockList?: string[];
+  /**
+   * Leader only: the latest signed codes blob (#10 AC32, AC33). Used to keep
+   * the same codes when the group is recreated; the server accepts only
+   * codes it signed for this group.
+   */
+  joinCodes?: string;
 }
 
 /**
@@ -289,6 +295,15 @@ interface GroupResumedBase {
   token: string;
   /** True when the group was rebuilt from the token (not in memory before). */
   recreated: boolean;
+  /** The group's join methods (#10). */
+  joinMethods: JoinMethod[];
+  /** The group's current codes and a fresh blob (#10 AC33, AC34). */
+  codes: JoinCodesPayload;
+  /**
+   * False only when the presented blob is the group's current one (same code
+   * generation): the codes the leader already has still hold (#10 AC33).
+   */
+  codesChanged: boolean;
 }
 
 export type GroupResumedMessage =

@@ -126,6 +126,8 @@ const schemas = buildJitless(() => {
     metadata: opaqueObject.optional(),
     position: opaqueValue.optional(),
     blockList: blockList.optional(),
+    // The blob is checked by the server; a bad one only means new codes (#10 AC33).
+    joinCodes: z.string().max(MAX_CODES_BLOB_LENGTH).optional(),
   });
 
   const tokensCheckSchema = z.object({
@@ -208,6 +210,9 @@ const schemas = buildJitless(() => {
     metadata: opaqueObject,
     token,
     recreated: z.boolean(),
+    joinMethods: joinMethodList,
+    codes: joinCodesPayload,
+    codesChanged: z.boolean(),
   };
 
   const serverMessageSchema = z.union([

@@ -54,6 +54,10 @@ describe('recreation after a restart (#5 AC23)', () => {
       position: { page: 7 },
       token: expect.any(String) as string,
       recreated: true,
+      // No blob was sent: a full new set of codes (#10 AC33).
+      joinMethods: ['A', 'D'],
+      codes: expect.any(Object) as object,
+      codesChanged: true,
     });
     if (reply.type !== 'group.resumed') throw new Error('expected resumed');
     const fresh = claimsOf(reply.token);

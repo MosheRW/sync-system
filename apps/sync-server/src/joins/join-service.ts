@@ -44,7 +44,7 @@ import {
 } from './codes.js';
 import { ApprovalQueue, type PendingRequest, type TakenRequest } from './approval-queue.js';
 import { DoorGuard } from './door-guard.js';
-import { resolveGroupMethods } from './join-methods.js';
+import { isValidGroupMethodSet, resolveGroupMethods } from './join-methods.js';
 
 export interface JoinServiceDeps {
   store: GroupStore;
@@ -153,6 +153,10 @@ function parseCodeJoin(message: GroupJoinByCodeMessage): ParsedCodeJoin | undefi
 
 export type InitialCodesResult =
   { ok: true; methods: JoinMethod[]; codes: GroupCodes } | { ok: false; error: ServerMessage };
+
+export type RestoredCodesResult =
+  | { ok: true; methods: JoinMethod[]; codes: GroupCodes; changed: boolean }
+  | { ok: false; error: ServerMessage };
 
 /**
  * Every join and join-code flow (#10 architecture 1). `GroupService` stays
@@ -435,8 +439,19 @@ export class JoinService {
     });
   }
 
-  /** The leader is back (#10 AC21, AC34): every pending request is re-sent after the reply. */
+  /**
+   * The leader is back (#10 AC21, AC29, AC34): every pending request is
+   * re-sent after the reply, and `join.paused` if method A is still paused.
+   */
   onLeaderReturn(leader: Session, record: GroupRecord): void {
+    const paused = this.pausedFor(record.appNamespace, record.id);
+    if (paused > 0) {
+      this.host.deliverLater(leader, {
+        type: 'join.paused',
+        groupId: record.id,
+        retryAfterMs: paused,
+      });
+    }
     for (const request of this.approvals.list(groupKey(record.appNamespace, record.id))) {
       this.host.deliverLater(leader, this.requestedMessage(request));
     }
@@ -767,6 +782,75 @@ export class JoinService {
     );
     if (codes === 'exhausted') return { ok: false, error: errorMessage(ErrorCode.CODES_EXHAUSTED) };
     return { ok: true, methods: resolved.methods, codes };
+  }
+
+  /**
+   * Codes for a group recreated from the leader's token (#10 AC33, R5, D12):
+   * the blob must verify (current or previous codes key) for this app and
+   * group ID, and its methods must still be allowed for the app. Then, if
+   * every code is free, the group keeps the same codes, code generation and
+   * ticket generation (QR tickets from before the restart keep working).
+   * Otherwise (missing, invalid, foreign or tampered blob, methods no longer
+   * allowed, a code taken) a full new set is issued with a higher code
+   * generation and the ticket generation set to it, so older tickets stop
+   * working. The server never accepts codes it did not sign for the group.
+   */
+  restoreCodes(app: AppConfig, groupId: string, blob: string | undefined): RestoredCodesResult {
+    const namespace = app.namespace;
+    const verified =
+      blob === undefined ? undefined : this.deps.codesBlobs.verify(blob, namespace, groupId);
+    if (verified !== undefined && verified.methods.every((m) => app.joinMethods.includes(m))) {
+      if (this.index.claim(namespace, groupId, verified.codes)) {
+        this.deps.logger.info(
+          { event: 'codes_restored', namespace, groupRef: groupRef(groupId), changed: false },
+          'join codes restored',
+        );
+        return {
+          ok: true,
+          methods: [...verified.methods],
+          codes: { ...verified.codes },
+          changed: false,
+        };
+      }
+    }
+    let methods: JoinMethod[] | undefined;
+    if (verified !== undefined) {
+      const kept = verified.methods.filter((method) => app.joinMethods.includes(method));
+      if (isValidGroupMethodSet(kept)) methods = kept;
+    }
+    if (methods === undefined) {
+      const resolved = resolveGroupMethods(app.joinMethods);
+      if (!resolved.ok) {
+        return { ok: false, error: errorMessage(ErrorCode.JOIN_METHOD_NOT_ALLOWED) };
+      }
+      methods = resolved.methods;
+    }
+    const codes = issueCodeSet(
+      this.index,
+      namespace,
+      groupId,
+      methods,
+      verified?.codes.generation ?? 0,
+      this.now(),
+      this.random,
+    );
+    if (codes === 'exhausted') return { ok: false, error: errorMessage(ErrorCode.CODES_EXHAUSTED) };
+    this.deps.logger.info(
+      { event: 'codes_restored', namespace, groupRef: groupRef(groupId), changed: true },
+      'join codes restored',
+    );
+    return { ok: true, methods, codes, changed: true };
+  }
+
+  /**
+   * On leader return (#10 AC34): false only when the presented blob verifies
+   * for this group and carries the current code generation. A door rotation
+   * while the leader was away shows up as changed.
+   */
+  codesChangedFor(record: GroupRecord, blob: string | undefined): boolean {
+    if (blob === undefined) return true;
+    const verified = this.deps.codesBlobs.verify(blob, record.appNamespace, record.id);
+    return verified?.codes.generation !== record.codes.generation;
   }
 
   /** The leader-only codes payload with a freshly signed blob (#10 AC6, AC32). */

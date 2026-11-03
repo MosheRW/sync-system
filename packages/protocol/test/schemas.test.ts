@@ -130,6 +130,37 @@ describe('token messages (#5)', () => {
   });
 });
 
+describe('codes across recovery (#10 AC32-AC34)', () => {
+  it('accepts a bounded joinCodes blob on group.resume', () => {
+    expect(ok({ type: 'group.resume', token: 't', joinCodes: BLOB }).type).toBe('group.resume');
+    expect(ok({ type: 'group.resume', token: 't', joinCodes: 'x' }).type).toBe('group.resume');
+    fails({ type: 'group.resume', token: 't', joinCodes: 'x'.repeat(513) });
+    fails({ type: 'group.resume', token: 't', joinCodes: 1 });
+  });
+
+  it('requires codes and codesChanged on group.resumed', () => {
+    const resumed = {
+      type: 'group.resumed',
+      groupId: GROUP_ID,
+      participantId: 'p',
+      role: 'leader',
+      metadata: {},
+      token: 't',
+      recreated: true,
+      hasPosition: false,
+      joinMethods: ['C'],
+      codes: { generation: 1, alphaCode: 'ABCDEFGH', blob: BLOB },
+      codesChanged: true,
+    };
+    expect(parseServerMessage(resumed).ok).toBe(true);
+    for (const key of ['joinMethods', 'codes', 'codesChanged']) {
+      const missing: Record<string, unknown> = { ...resumed };
+      delete missing[key];
+      expect(parseServerMessage(missing).ok, key).toBe(false);
+    }
+  });
+});
+
 describe('QR messages (#10 AC23, AC24)', () => {
   it('parses qr.issue, group.joinByQr and qr.ticket', () => {
     expect(ok({ type: 'qr.issue' }).type).toBe('qr.issue');
