@@ -130,6 +130,29 @@ describe('token messages (#5)', () => {
   });
 });
 
+describe('group.joinByCode (#10 AC12)', () => {
+  it('accepts a code with an optional door code and display name, length-capped only', () => {
+    expect(ok({ type: 'group.joinByCode', joinCode: '123456' }).type).toBe('group.joinByCode');
+    expect(
+      ok({
+        type: 'group.joinByCode',
+        reqId: 'r',
+        joinCode: 'not a code yet',
+        doorCode: 'x',
+        displayName: ' ',
+      }).type,
+    ).toBe('group.joinByCode');
+    fails({ type: 'group.joinByCode' });
+    fails({ type: 'group.joinByCode', joinCode: 1 });
+    fails({ type: 'group.joinByCode', joinCode: '1'.repeat(33) });
+    fails({ type: 'group.joinByCode', joinCode: '123456', doorCode: '1'.repeat(33) });
+    fails({ type: 'group.joinByCode', joinCode: '123456', displayName: 'x'.repeat(129) });
+    expect(ok({ type: 'group.joinByCode', joinCode: '1'.repeat(32) }).type).toBe(
+      'group.joinByCode',
+    );
+  });
+});
+
 describe('group.create join methods and group.created codes (#10 AC5, AC6)', () => {
   it('accepts 1 to 4 method letters on group.create', () => {
     expect(ok({ type: 'group.create', metadata: {}, joinMethods: ['A', 'D'] }).type).toBe(

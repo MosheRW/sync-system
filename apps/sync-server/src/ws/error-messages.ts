@@ -56,6 +56,9 @@ export const ERROR_TEXT: Record<GenericErrorCode, string> = {
   PARTICIPANT_BLOCKED: 'Participant is blocked',
   JOIN_METHOD_NOT_ALLOWED: 'Join method not allowed',
   CODES_EXHAUSTED: 'No free join code; try again',
+  CODE_NOT_FOUND: 'Join code not found',
+  DOOR_CODE_REQUIRED: 'Door code required',
+  DOOR_CODE_WRONG: 'Wrong door code',
 };
 
 interface ErrorOptions {

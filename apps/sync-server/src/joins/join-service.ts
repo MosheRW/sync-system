@@ -1,18 +1,32 @@
 import {
   ErrorCode,
+  type ErrorMessage,
+  type GroupJoinByCodeMessage,
+  type JoinCodeKind,
   type JoinCodesPayload,
   type JoinMethod,
   type ServerMessage,
+  classifyJoinCode,
+  isDoorCode,
+  normalizeDisplayName,
+  normalizeJoinCode,
 } from '@sync-system/protocol';
 import type { AppConfig } from '../apps/app-registry.js';
 import type { GroupRecord, GroupStore } from '../groups/group-store.js';
-import type { Logger } from '../logging/logger.js';
+import type { Session } from '../groups/session.js';
+import { type Logger, groupRef } from '../logging/logger.js';
 import type { Scheduler } from '../time/scheduler.js';
 import type { CodesBlobService } from '../tokens/codes-blob.js';
 import type { QrTicketService } from '../tokens/qr-tickets.js';
 import { errorMessage } from '../ws/error-messages.js';
 import { CodeIndex } from './code-index.js';
-import { type GroupCodes, type RandomInt, cryptoRandomInt, issueCodeSet } from './codes.js';
+import {
+  type GroupCodes,
+  type RandomInt,
+  cryptoRandomInt,
+  doorCodeMatches,
+  issueCodeSet,
+} from './codes.js';
 import { resolveGroupMethods } from './join-methods.js';
 
 export interface JoinServiceDeps {
@@ -25,6 +39,59 @@ export interface JoinServiceDeps {
   codesBlobs: CodesBlobService;
   /** CSPRNG integer source; injected by tests to force code collisions. */
   random?: RandomInt;
+}
+
+/**
+ * What JoinService needs from GroupService (the facade). Every method that
+ * touches a group runs under that group's lock.
+ */
+export interface JoinHost {
+  /** In a group, parked, or waiting for approval (ALREADY_IN_GROUP). */
+  busy(session: Session): boolean;
+  /** Runs `task` under the per-group lock (`namespace:groupId`). */
+  runLocked<T>(namespace: string, groupId: string, task: () => Promise<T>): Promise<T>;
+  /**
+   * Adds `session` as a new member with a fresh participant ID and returns
+   * group.joined with a token, or GROUP_FULL (#10 AC14). Under the lock.
+   */
+  admit(session: Session, groupId: string, method: JoinMethod): Promise<ServerMessage>;
+}
+
+/** Why a join attempt was refused, for the debug log (never a code or group ref for not_found). */
+type RejectCause = 'not_found' | 'door_required' | 'door_wrong';
+
+/**
+ * One frozen error per "not found" answer (#10 AC13, R7): fixed text, no
+ * details, never the input. Unknown code, another app's code and a code type
+ * the group does not use all get these same bytes.
+ */
+const CODE_NOT_FOUND: ErrorMessage = Object.freeze(errorMessage(ErrorCode.CODE_NOT_FOUND));
+const INVALID_MESSAGE: ErrorMessage = Object.freeze(errorMessage(ErrorCode.INVALID_MESSAGE));
+
+/** A normalized and validated join-by-code request. */
+interface ParsedCodeJoin {
+  kind: JoinCodeKind;
+  joinCode: string;
+  doorCode: string | undefined;
+  displayName: string | undefined;
+}
+
+/** Normalizes and validates the code fields (#10 AC12, AC20); undefined when invalid. */
+function parseCodeJoin(message: GroupJoinByCodeMessage): ParsedCodeJoin | undefined {
+  const joinCode = normalizeJoinCode(message.joinCode);
+  const kind = classifyJoinCode(joinCode);
+  if (kind === undefined) return undefined;
+  let doorCode: string | undefined;
+  if (message.doorCode !== undefined) {
+    doorCode = normalizeJoinCode(message.doorCode);
+    if (!isDoorCode(doorCode)) return undefined;
+  }
+  let displayName: string | undefined;
+  if (message.displayName !== undefined) {
+    displayName = normalizeDisplayName(message.displayName);
+    if (displayName === undefined) return undefined;
+  }
+  return { kind, joinCode, doorCode, displayName };
 }
 
 export type InitialCodesResult =
@@ -42,8 +109,85 @@ export class JoinService {
   readonly index = new CodeIndex();
   private readonly random: RandomInt;
 
-  constructor(private readonly deps: JoinServiceDeps) {
+  constructor(
+    private readonly deps: JoinServiceDeps,
+    private readonly host: JoinHost,
+  ) {
     this.random = deps.random ?? cryptoRandomInt;
+  }
+
+  /** Debug log of a refused attempt: namespace and a fixed cause only (#10 6.1). */
+  private rejected(namespace: string, cause: RejectCause, groupId?: string): void {
+    this.deps.logger.debug(
+      {
+        event: 'join_rejected',
+        namespace,
+        cause,
+        ...(groupId === undefined ? {} : { groupRef: groupRef(groupId) }),
+      },
+      'join rejected',
+    );
+  }
+
+  /**
+   * group.joinByCode (#10 AC12-AC18, architecture 4.3): busy, then
+   * normalization, then the code lookup outside the lock, then the method
+   * rules under the group lock, after re-checking that the code still maps
+   * to the same group (it may have rotated or been freed meanwhile, R8).
+   */
+  async joinByCode(session: Session, message: GroupJoinByCodeMessage): Promise<ServerMessage> {
+    if (this.host.busy(session)) return errorMessage(ErrorCode.ALREADY_IN_GROUP);
+    const namespace = session.app.namespace;
+    const parsed = parseCodeJoin(message);
+    if (parsed === undefined) return INVALID_MESSAGE;
+
+    const groupId = this.index.lookup(namespace, parsed.kind, parsed.joinCode);
+    if (groupId === undefined) {
+      this.rejected(namespace, 'not_found');
+      return CODE_NOT_FOUND;
+    }
+    return this.host.runLocked(namespace, groupId, async () => {
+      if (this.host.busy(session)) return errorMessage(ErrorCode.ALREADY_IN_GROUP);
+      const record = await this.deps.store.get(namespace, groupId);
+      if (
+        record === undefined ||
+        this.index.lookup(namespace, parsed.kind, parsed.joinCode) !== groupId
+      ) {
+        this.rejected(namespace, 'not_found');
+        return CODE_NOT_FOUND;
+      }
+      if (parsed.kind === 'alpha') {
+        if (!record.joinMethods.includes('C')) return CODE_NOT_FOUND;
+        return this.host.admit(session, groupId, 'C');
+      }
+      if (record.joinMethods.includes('A')) return this.doorJoin(session, record, parsed);
+      // Method B (approval) is not served yet.
+      this.rejected(namespace, 'not_found');
+      return CODE_NOT_FOUND;
+    });
+  }
+
+  /**
+   * Method A under the group lock (#10 AC14, AC15): no door code is
+   * DOOR_CODE_REQUIRED (not a failure); the door code is compared in
+   * constant time, after both sides were validated as 6 digits (R6).
+   */
+  private async doorJoin(
+    session: Session,
+    record: GroupRecord,
+    parsed: ParsedCodeJoin,
+  ): Promise<ServerMessage> {
+    const namespace = record.appNamespace;
+    if (parsed.doorCode === undefined) {
+      this.rejected(namespace, 'door_required', record.id);
+      return errorMessage(ErrorCode.DOOR_CODE_REQUIRED);
+    }
+    const expected = record.codes.doorCode;
+    if (expected === undefined || !doorCodeMatches(parsed.doorCode, expected)) {
+      this.rejected(namespace, 'door_wrong', record.id);
+      return errorMessage(ErrorCode.DOOR_CODE_WRONG);
+    }
+    return this.host.admit(session, record.id, 'A');
   }
 
   private now(): number {

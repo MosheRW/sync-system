@@ -324,6 +324,9 @@ export class Connection implements HeartbeatTarget {
       case 'group.join':
         response = await groups.join(session, message);
         break;
+      case 'group.joinByCode':
+        response = await groups.joinByCode(session, message);
+        break;
       case 'position.update':
         response = await groups.update(session, message);
         break;

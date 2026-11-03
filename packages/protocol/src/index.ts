@@ -56,6 +56,7 @@ export type {
   HelloMessage,
   GroupCreateMessage,
   GroupJoinMessage,
+  GroupJoinByCodeMessage,
   PositionUpdateMessage,
   GroupResumeMessage,
   TokensCheckMessage,

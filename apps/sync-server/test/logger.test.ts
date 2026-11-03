@@ -41,10 +41,16 @@ describe('createLogger', () => {
         blob: 'SENTINEL-4',
         nested: { codes: 'SENTINEL-5', joinCodes: 'SENTINEL-6', blob: 'SENTINEL-7' },
         x: { blob: 'SENTINEL-8' },
+        joinCode: 'SENTINEL-9',
+        doorCode: 'SENTINEL-10',
+        groupCode: 'SENTINEL-11',
+        alphaCode: 'SENTINEL-12',
+        y: { joinCode: 'S-13', doorCode: 'S-14', groupCode: 'S-15', alphaCode: 'S-16' },
       },
       'codes',
     );
     expect(capture.text).not.toContain('SENTINEL');
+    expect(capture.text).not.toContain('S-1');
   });
 
   it('respects the level', () => {

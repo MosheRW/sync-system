@@ -338,6 +338,9 @@ fix the configuration.
 | `PARTICIPANT_BLOCKED`     | server | The leader blocked this participant. Deleted.                               |
 | `JOIN_METHOD_NOT_ALLOWED` | server | `createGroup()` with join methods the app does not allow.                   |
 | `CODES_EXHAUSTED`         | server | No free join code; try again. Nothing was created.                          |
+| `CODE_NOT_FOUND`          | server | No live group of this app has that code (one answer for every cause).       |
+| `DOOR_CODE_REQUIRED`      | server | A method A group code without the door code. Ask for it and send both.      |
+| `DOOR_CODE_WRONG`         | server | Wrong door code. Five wrong codes rotate it.                                |
 
 Unknown server message types are ignored, so a newer server can add events
 without breaking older clients. A known type with a bad shape, a binary,

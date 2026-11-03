@@ -13,6 +13,8 @@ import {
   MAX_APP_VERSION_INPUT_LENGTH,
   MAX_BLOCK_LIST_SIZE,
   MAX_CODES_BLOB_LENGTH,
+  MAX_DISPLAY_NAME_INPUT_LENGTH,
+  MAX_JOIN_CODE_INPUT_LENGTH,
   MAX_GROUP_ID_INPUT_LENGTH,
   MAX_REQ_ID_LENGTH,
   MAX_TOKEN_LENGTH,
@@ -80,6 +82,19 @@ const schemas = buildJitless(() => {
     groupId: z.string().max(MAX_GROUP_ID_INPUT_LENGTH),
   });
 
+  const joinCode = z.string().max(MAX_JOIN_CODE_INPUT_LENGTH);
+  const displayName = z.string().max(MAX_DISPLAY_NAME_INPUT_LENGTH);
+
+  // Lengths only: normalization and the code formats are checked by the
+  // server after the join budgets (#10 architecture 4.3).
+  const groupJoinByCodeSchema = z.object({
+    type: z.literal('group.joinByCode'),
+    reqId,
+    joinCode,
+    doorCode: joinCode.optional(),
+    displayName: displayName.optional(),
+  });
+
   const positionUpdateSchema = z.object({
     type: z.literal('position.update'),
     reqId,
@@ -116,6 +131,7 @@ const schemas = buildJitless(() => {
     helloSchema,
     groupCreateSchema,
     groupJoinSchema,
+    groupJoinByCodeSchema,
     positionUpdateSchema,
     groupResumeSchema,
     tokensCheckSchema,

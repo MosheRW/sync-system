@@ -59,6 +59,21 @@ export interface GroupJoinMessage {
   groupId: string;
 }
 
+/**
+ * Join by code (#10 AC12): a 6-digit group code (methods A, B) or an
+ * 8-character alphanumeric code (method C), told apart by format after
+ * normalization. Method A also needs the door code; without it the server
+ * answers DOOR_CODE_REQUIRED. The display name is only relayed to the leader
+ * of a method B group.
+ */
+export interface GroupJoinByCodeMessage {
+  type: 'group.joinByCode';
+  reqId?: string;
+  joinCode: string;
+  doorCode?: string;
+  displayName?: string;
+}
+
 export interface PositionUpdateMessage {
   type: 'position.update';
   reqId?: string;
@@ -117,6 +132,7 @@ export type ClientMessage =
   | HelloMessage
   | GroupCreateMessage
   | GroupJoinMessage
+  | GroupJoinByCodeMessage
   | PositionUpdateMessage
   | GroupResumeMessage
   | TokensCheckMessage

@@ -1,5 +1,10 @@
-import { randomInt } from 'node:crypto';
-import { ALPHA_CODE_ALPHABET, ALPHA_CODE_LENGTH, type JoinMethod } from '@sync-system/protocol';
+import { randomInt, timingSafeEqual } from 'node:crypto';
+import {
+  ALPHA_CODE_ALPHABET,
+  ALPHA_CODE_LENGTH,
+  GROUP_CODE_PATTERN,
+  type JoinMethod,
+} from '@sync-system/protocol';
 import { MAX_CODE_DRAWS } from '../limits/constants.js';
 import type { CodeIndex } from './code-index.js';
 import { usesGroupCode } from './join-methods.js';
@@ -60,6 +65,17 @@ export function drawDoorCode(
     if (code !== groupCode && code !== previous) return code;
   }
   return undefined;
+}
+
+/**
+ * Compares a presented door code with the group's (#10 AC15, R6): both are
+ * validated as exactly 6 ASCII digits first, then compared with
+ * `timingSafeEqual` on two 6-byte buffers, so the time does not depend on
+ * how many digits match.
+ */
+export function doorCodeMatches(presented: string, expected: string): boolean {
+  if (!GROUP_CODE_PATTERN.test(presented) || !GROUP_CODE_PATTERN.test(expected)) return false;
+  return timingSafeEqual(Buffer.from(presented, 'ascii'), Buffer.from(expected, 'ascii'));
 }
 
 /**

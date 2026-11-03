@@ -60,6 +60,15 @@ export const ErrorCode = {
   JOIN_METHOD_NOT_ALLOWED: 'JOIN_METHOD_NOT_ALLOWED',
   /** No free join code was found; nothing was created (#10 AC9). */
   CODES_EXHAUSTED: 'CODES_EXHAUSTED',
+  /**
+   * The code matches no live group of this app, or a group that does not
+   * use that code type. One answer for every cause (#10 AC13).
+   */
+  CODE_NOT_FOUND: 'CODE_NOT_FOUND',
+  /** A method A group code without a door code; not counted as a failure (#10 AC15). */
+  DOOR_CODE_REQUIRED: 'DOOR_CODE_REQUIRED',
+  /** A wrong door code; counted as a door-code failure (#10 AC15). */
+  DOOR_CODE_WRONG: 'DOOR_CODE_WRONG',
 } as const;
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];

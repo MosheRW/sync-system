@@ -45,6 +45,14 @@ export const REDACT_PATHS = [
   '*.joinCodes',
   'blob',
   '*.blob',
+  'joinCode',
+  '*.joinCode',
+  'doorCode',
+  '*.doorCode',
+  'groupCode',
+  '*.groupCode',
+  'alphaCode',
+  '*.alphaCode',
 ];
 
 export interface LoggerOptions {

@@ -3,6 +3,7 @@ import type {
   GroupCreateMessage,
   GroupEndMessage,
   GroupJoinMessage,
+  GroupJoinByCodeMessage,
   GroupLeaveMessage,
   GroupResumeMessage,
   PositionUpdateMessage,
@@ -63,6 +64,8 @@ export function membershipKey(namespace: string, groupId: string, participantId:
 export interface GroupActions {
   create(session: Session, message: GroupCreateMessage): Promise<ServerMessage>;
   join(session: Session, message: GroupJoinMessage): Promise<ServerMessage>;
+  /** Join by group code (+ door code) or alphanumeric code (#10 AC12-AC18). */
+  joinByCode(session: Session, message: GroupJoinByCodeMessage): Promise<ServerMessage>;
   update(session: Session, message: PositionUpdateMessage): Promise<ServerMessage>;
   /** Rejoin or recover a group with a participant token (#5 AC17-AC28). */
   resume(session: Session, message: GroupResumeMessage): Promise<ServerMessage>;

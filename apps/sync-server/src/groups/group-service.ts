@@ -6,6 +6,8 @@ import {
   type GroupEndMessage,
   type GroupEndedReason,
   type GroupJoinMessage,
+  type GroupJoinByCodeMessage,
+  type JoinMethod,
   type GroupLeaveMessage,
   type GroupResumeMessage,
   type PositionUpdateMessage,
@@ -109,14 +111,21 @@ export class GroupService implements GroupActions {
   private readonly joins: JoinService;
 
   constructor(private readonly deps: GroupServiceDeps) {
-    this.joins = new JoinService({
-      store: deps.store,
-      logger: deps.logger,
-      scheduler: deps.scheduler,
-      qrTickets: deps.qrTickets,
-      codesBlobs: deps.codesBlobs,
-      ...(deps.codeRandom === undefined ? {} : { random: deps.codeRandom }),
-    });
+    this.joins = new JoinService(
+      {
+        store: deps.store,
+        logger: deps.logger,
+        scheduler: deps.scheduler,
+        qrTickets: deps.qrTickets,
+        codesBlobs: deps.codesBlobs,
+        ...(deps.codeRandom === undefined ? {} : { random: deps.codeRandom }),
+      },
+      {
+        busy: (session) => this.busy(session),
+        runLocked: (namespace, groupId, task) => this.locks.run(groupKey(namespace, groupId), task),
+        admit: (session, groupId, method) => this.admitMember(session, groupId, method),
+      },
+    );
     this.checkLimiter = new SlidingWindowRateLimiter(() => this.now(), TOKENS_CHECK_WINDOW_MS);
     this.appCheckLimiter = new SlidingWindowRateLimiter(() => this.now(), TOKENS_CHECK_WINDOW_MS);
     this.timers = new GroupTimers(deps.scheduler);
@@ -359,7 +368,43 @@ export class GroupService implements GroupActions {
     });
   }
 
-  private commitJoin(session: Session, participantId: string, record: GroupRecord): ServerMessage {
+  /** group.joinByCode (#10): the join rules live in JoinService. */
+  joinByCode(session: Session, message: GroupJoinByCodeMessage): Promise<ServerMessage> {
+    return this.joins.joinByCode(session, message);
+  }
+
+  /**
+   * Admits a new member found by code or ticket (#10 AC14): a fresh
+   * group-scoped participant ID, the size limit, then group.joined with a
+   * member token, exactly as a join by ID did. Runs under the group lock.
+   */
+  private async admitMember(
+    session: Session,
+    groupId: string,
+    method: JoinMethod,
+  ): Promise<ServerMessage> {
+    const { app } = session;
+    const participantId = newParticipantId();
+    const added = await this.deps.store.addParticipant(
+      app.namespace,
+      groupId,
+      participantId,
+      app.maxGroupSize,
+    );
+    if (added.status === 'not_found') return errorMessage(ErrorCode.CODE_NOT_FOUND);
+    if (added.status === 'blocked') return errorMessage(ErrorCode.PARTICIPANT_BLOCKED);
+    if (added.status === 'full') {
+      return errorMessage(ErrorCode.GROUP_FULL, { details: { maxGroupSize: app.maxGroupSize } });
+    }
+    return this.commitJoin(session, participantId, added.group, method);
+  }
+
+  private commitJoin(
+    session: Session,
+    participantId: string,
+    record: GroupRecord,
+    method?: JoinMethod,
+  ): ServerMessage {
     const { app } = session;
     this.attach(session, { groupId: record.id, participantId, role: 'member' });
     this.deps.logger.info(
@@ -369,6 +414,7 @@ export class GroupService implements GroupActions {
         groupRef: groupRef(record.id),
         // The connection-scoped ref only: never the group-scoped ID (L7).
         participantRef: participantRef(session.connectionId),
+        ...(method === undefined ? {} : { method }),
       },
       'group joined',
     );
