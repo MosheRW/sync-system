@@ -33,7 +33,7 @@ import {
   TokenKeyring,
 } from './tokens/token-keys.js';
 import { TokenService } from './tokens/token-service.js';
-import type { Logger } from './logging/logger.js';
+import { type Logger, safeErr } from './logging/logger.js';
 import type { RandomInt } from './joins/codes.js';
 import { Connection } from './ws/connection.js';
 import { ConnectionCounter, type ConnectionStats } from './ws/connection-counter.js';
@@ -132,7 +132,7 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
     socket.destroy();
   });
   httpServer.on('error', (err: NodeJS.ErrnoException) => {
-    logger.error({ event: 'http_error', code: err.code, name: err.name }, 'http server error');
+    logger.error({ event: 'http_error', err: safeErr(err) }, 'http server error');
   });
 
   // closeTimeout is a ws option that @types/ws does not declare yet.
@@ -151,7 +151,7 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
   };
   const wss = new WebSocketServer(wssOptions);
   wss.on('error', (err: NodeJS.ErrnoException) => {
-    logger.error({ event: 'wss_error', code: err.code, name: err.name }, 'websocket server error');
+    logger.error({ event: 'wss_error', err: safeErr(err) }, 'websocket server error');
   });
 
   const store = options.store ?? new InMemoryGroupStore();

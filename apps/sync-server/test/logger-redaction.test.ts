@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createLogger } from '../src/logging/logger.js';
+import { createLogger, safeErr } from '../src/logging/logger.js';
 import { LogCapture } from './helpers/log-capture.js';
 
 /**
@@ -53,6 +53,9 @@ const SENSITIVE_KEYS = [
   'message',
   // pino's message key (QA round 3 finding 2, security C1).
   'msg',
+  // Ambiguous keys: a join code or a display name could hide under them.
+  'code',
+  'name',
 ] as const;
 
 /** The shapes each key is logged in: top level, deep, arrays, mixed. */
@@ -141,7 +144,8 @@ describe('log redaction at any depth (#10 B1)', () => {
         namespace: 'app-a',
         groupRef: 'abc123',
         participantRef: 'def456',
-        code: 'CODE_NOT_FOUND',
+        errorCode: 'CODE_NOT_FOUND',
+        closeCode: 4008,
         count: 3,
         outcome: 'admitted',
         nested: { list: [{ count: 1, cause: 'leader' }], flag: true, none: null },
@@ -153,7 +157,8 @@ describe('log redaction at any depth (#10 B1)', () => {
       namespace: 'app-a',
       groupRef: 'abc123',
       participantRef: 'def456',
-      code: 'CODE_NOT_FOUND',
+      errorCode: 'CODE_NOT_FOUND',
+      closeCode: 4008,
       count: 3,
       outcome: 'admitted',
       nested: { list: [{ count: 1, cause: 'leader' }], flag: true, none: null },
@@ -284,6 +289,54 @@ describe('log redaction at any depth (#10 B1)', () => {
     expect(out.events()).toEqual(['child', 'gc']);
     expect(out.records()[0]).toMatchObject({ side: 'c', msg: 'kept' });
     expect(out.records()[1]).toMatchObject({ side: 'c', side2: 'g', msg: 'kept' });
+  });
+
+  it('keeps the name and code of a logged error (safeErr)', () => {
+    const { out, logger } = capture();
+    const err = Object.assign(new TypeError('SENTINEL-1'), { code: 'EADDRINUSE' });
+    logger.error({ event: 'test', err: safeErr(err) }, 'explicit');
+    logger.error({ event: 'test', err }, 'walked');
+    logger.error({ event: 'test', list: [{ err }] }, 'nested');
+    logger.child({ side: 'c' }).error({ event: 'test', err: safeErr(err) }, 'child');
+    expect(out.text).not.toContain('SENTINEL');
+    const [explicit, walked, nested, child] = out.records();
+    const expected = { name: 'TypeError', code: 'EADDRINUSE' };
+    expect(explicit).toMatchObject({ err: expected });
+    expect(walked).toMatchObject({ err: expected });
+    expect(nested).toMatchObject({ list: [{ err: expected }] });
+    expect(child).toMatchObject({ err: expected });
+  });
+
+  it('never logs a join code, ticket or blob under any key', () => {
+    const { out, logger } = capture();
+    const ticket = `eyJ0IjoxfQ.${'A'.repeat(43)}`;
+    logger.info(
+      {
+        event: 'test',
+        value: '123456',
+        input: 'ABCDEFGH',
+        list: ['654321', { other: ticket }],
+        deep: { a: { b: [{ c: '2A3B4C5D' }] } },
+      },
+      'x',
+    );
+    logger.child({ x: '000000' }).info({ event: 'child' }, 'child');
+    for (const secret of ['123456', 'ABCDEFGH', '654321', ticket, '2A3B4C5D', '000000']) {
+      expect(out.text).not.toContain(secret);
+    }
+    expect(out.records()[0]).toMatchObject({
+      value: '[Redacted]',
+      input: '[Redacted]',
+      list: ['[Redacted]', { other: '[Redacted]' }],
+    });
+    // Other strings and numbers are kept.
+    logger.info({ event: 'kept', a: '12345', b: 'abcdefgh', c: 123456, d: 'ABCDEFGHJ' }, 'x');
+    expect(out.records()[2]).toMatchObject({
+      a: '12345',
+      b: 'abcdefgh',
+      c: 123456,
+      d: 'ABCDEFGHJ',
+    });
   });
 
   it('does not mutate the logged object', () => {

@@ -3,7 +3,7 @@ import type { Duplex } from 'node:stream';
 import type { WebSocket, WebSocketServer } from 'ws';
 import type { ServerEnv } from '../config/env.js';
 import { pathOf } from '../http/health.js';
-import type { Logger } from '../logging/logger.js';
+import { type Logger, safeErr } from '../logging/logger.js';
 import type { ConnectionCounter } from './connection-counter.js';
 
 export const WS_PATH = '/ws';
@@ -50,7 +50,7 @@ export function createUpgradeHandler(deps: UpgradeDeps) {
   return (req: IncomingMessage, socket: Duplex, head: Buffer): void => {
     // Until ws takes over the socket, a socket error must not crash (H4).
     const onSocketError = (err: NodeJS.ErrnoException) => {
-      logger.debug({ event: 'upgrade_socket_error', code: err.code }, 'upgrade socket error');
+      logger.debug({ event: 'upgrade_socket_error', err: safeErr(err) }, 'upgrade socket error');
       socket.destroy();
     };
     socket.on('error', onSocketError);

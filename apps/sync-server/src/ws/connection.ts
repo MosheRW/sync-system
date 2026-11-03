@@ -97,7 +97,7 @@ export class Connection implements HeartbeatTarget {
     // Without an 'error' listener, a protocol violation from the peer would
     // throw from the EventEmitter and crash the process (H4).
     ws.on('error', (err: NodeJS.ErrnoException) => {
-      deps.logger.debug({ event: 'ws_error', code: err.code, name: err.name }, 'websocket error');
+      deps.logger.debug({ event: 'ws_error', err: safeErr(err) }, 'websocket error');
     });
     // The client's close reason is never logged (L8).
     ws.on('close', (code: number) => this.onClose(code));
@@ -254,7 +254,7 @@ export class Connection implements HeartbeatTarget {
     const result = checkHello(message, this.deps.registry, this.deps.counter);
     if (!result.ok) {
       this.deps.logger.info(
-        { event: 'handshake_rejected', code: result.code },
+        { event: 'handshake_rejected', errorCode: result.code },
         'handshake rejected',
       );
       this.rejectHandshake(
@@ -401,7 +401,7 @@ export class Connection implements HeartbeatTarget {
     this.closed = true;
     clearTimeout(this.handshakeTimer);
     this.deps.counter.closed(this.session?.app.namespace);
-    this.deps.logger.debug({ event: 'ws_closed', code }, 'websocket closed');
+    this.deps.logger.debug({ event: 'ws_closed', closeCode: code }, 'websocket closed');
     const session = this.session;
     const groups = this.deps.groups;
     if (session) {

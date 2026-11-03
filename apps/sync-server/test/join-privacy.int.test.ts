@@ -218,6 +218,19 @@ describe('redaction and log fields (#10 R10, B1)', () => {
     expect('{ endReason: reason, count }').not.toMatch(reasonKey);
   });
 
+  it('never logs a field named code, name or msg anywhere in the server (static check)', () => {
+    // These keys are removed by the logger, so a call site that used one
+    // would lose the field: error codes go under errorCode, close codes
+    // under closeCode, errors under err: safeErr(err).
+    const ambiguousKey = /[{,]\s*['"]?(?:code|name|msg)['"]?\s*[:,}]/;
+    for (const { file, call } of logCalls()) expect(call, file).not.toMatch(ambiguousKey);
+    expect('{ event, code }').toMatch(ambiguousKey);
+    expect("{ event: 'x', name: err.name }").toMatch(ambiguousKey);
+    expect('{ errorCode: result.code, closeCode: code }').not.toMatch(ambiguousKey);
+    expect(isSensitiveLogKey('code') && isSensitiveLogKey('name')).toBe(true);
+    expect(isSensitiveLogKey('errorCode') || isSensitiveLogKey('closeCode')).toBe(false);
+  });
+
   it('never builds a log message from a template literal (static check)', () => {
     for (const { file, call } of logCalls()) expect(call, file).not.toContain('`');
   });

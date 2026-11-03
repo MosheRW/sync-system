@@ -1,6 +1,12 @@
 import { createHash } from 'node:crypto';
 import { types } from 'node:util';
 import { type DestinationStream, type Logger, pino } from 'pino';
+import {
+  ALPHA_CODE_PATTERN,
+  CODES_BLOB_PATTERN,
+  GROUP_CODE_PATTERN,
+  QR_TICKET_PATTERN,
+} from '@sync-system/protocol';
 import type { LogLevel } from '../config/env.js';
 
 export type { Logger };
@@ -10,7 +16,7 @@ export type { Logger };
  * logger, at ANY depth, including inside arrays, nested objects, class
  * instances, toJSON results and child logger bindings (#10 B1). The first
  * line is that call sites only log allowed fields (event, namespace,
- * groupRef, participantRef, codes such as error codes, counts, port). The
+ * groupRef, participantRef, errorCode, closeCode, safeErr, counts, port). The
  * participantRef is always of the connection ID, never of a group-scoped
  * participant ID (L7).
  *
@@ -48,6 +54,11 @@ export const SENSITIVE_LOG_KEYS: ReadonlySet<string> = new Set([
   // second message. The real message (the string argument) is added by pino
   // after the fields are redacted, so it is kept.
   'msg',
+  // Ambiguous: a `code` could be a join code and a `name` a display name.
+  // Call sites log `errorCode`, `closeCode` or `err: safeErr(err)` instead;
+  // safeErr's own `name` and `code` are kept (see redactWalk).
+  'code',
+  'name',
   // #10: the codes payload (R10).
   'codes',
   // Client-chosen free text the server echoes.
@@ -108,8 +119,10 @@ export function redactLogValue(value: unknown): unknown {
 }
 
 function redactWalk(value: unknown, ancestors: Set<object>, depth: number): unknown {
+  if (typeof value === 'string') return looksLikeJoinSecret(value) ? REDACTED : value;
   if (value === null || typeof value !== 'object') return value;
   if (isError(value)) return safeErr(value);
+  if (SAFE_ERRORS.has(value)) return value;
   if (ancestors.has(value)) return '[Circular]';
   if (depth >= MAX_LOG_DEPTH) return '[Truncated]';
   ancestors.add(value);
@@ -137,6 +150,27 @@ function redactWalk(value: unknown, ancestors: Set<object>, depth: number): unkn
     ancestors.delete(value);
   }
 }
+
+/** Replaces a string value that has the shape of a join secret. */
+const REDACTED = '[Redacted]';
+
+/**
+ * Value-shape backstop: a group code, an alpha code, a QR ticket or a codes
+ * blob is removed under ANY key, so a join code logged under an innocuous
+ * name never reaches a log line. Request IDs are covered by key only: their
+ * shape (22 base64url characters) could also be a legitimate namespace.
+ */
+function looksLikeJoinSecret(value: string): boolean {
+  return (
+    GROUP_CODE_PATTERN.test(value) ||
+    ALPHA_CODE_PATTERN.test(value) ||
+    (value.length <= MAX_SECRET_SHAPE_LENGTH &&
+      (QR_TICKET_PATTERN.test(value) || CODES_BLOB_PATTERN.test(value)))
+  );
+}
+
+/** Longer strings are not tested against the ticket and blob shapes. */
+const MAX_SECRET_SHAPE_LENGTH = 4096;
 
 function redactFields(value: object): Record<string, unknown> {
   if (isError(value)) return { err: safeErr(value) };
@@ -236,7 +270,7 @@ export interface SafeError {
  */
 export function safeErr(err: unknown): SafeError {
   if (!isError(err)) {
-    return { name: typeof err, frames: [] };
+    return remember({ name: typeof err, frames: [] });
   }
   const result: SafeError = {
     name: err.name,
@@ -244,6 +278,19 @@ export function safeErr(err: unknown): SafeError {
   };
   const code = (err as { code?: unknown }).code;
   if (typeof code === 'string') result.code = code;
+  return remember(result);
+}
+
+/**
+ * safeErr results, which the walker passes through whole: their `name` and
+ * `code` are an error's, not input, although both keys are removed
+ * everywhere else. They are frozen so nothing can be added to them later.
+ */
+const SAFE_ERRORS = new WeakSet<object>();
+
+function remember(result: SafeError): SafeError {
+  Object.freeze(result.frames);
+  SAFE_ERRORS.add(Object.freeze(result));
   return result;
 }
 
