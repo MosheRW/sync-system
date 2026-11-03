@@ -39,5 +39,20 @@ export const MAX_BLOCK_LIST_SIZE = 256;
 export const PARTICIPANT_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
+/** Longest raw `joinCode` / `doorCode` accepted before normalization (#10 AC12). */
+export const MAX_JOIN_CODE_INPUT_LENGTH = 32;
+
+/** Longest raw `displayName` accepted before trimming (#10 AC20). */
+export const MAX_DISPLAY_NAME_INPUT_LENGTH = 128;
+
+/** Longest display name after trimming, in code points (#10 AC20). */
+export const MAX_DISPLAY_NAME_LENGTH = 32;
+
+/** Longest QR ticket (#10 AC23). */
+export const MAX_QR_TICKET_LENGTH = 256;
+
+/** Longest signed codes blob (#10 AC32). */
+export const MAX_CODES_BLOB_LENGTH = 512;
+
 /** An app namespace (also the token audience and part of the client storage key). */
 export const NAMESPACE_PATTERN = /^[a-z0-9][a-z0-9_-]{0,62}$/;

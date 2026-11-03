@@ -16,7 +16,30 @@ export {
   MAX_BLOCK_LIST_SIZE,
   PARTICIPANT_ID_PATTERN,
   NAMESPACE_PATTERN,
+  MAX_JOIN_CODE_INPUT_LENGTH,
+  MAX_DISPLAY_NAME_INPUT_LENGTH,
+  MAX_DISPLAY_NAME_LENGTH,
+  MAX_QR_TICKET_LENGTH,
+  MAX_CODES_BLOB_LENGTH,
 } from './limits.js';
+export {
+  JOIN_METHODS,
+  ALPHA_CODE_ALPHABET,
+  GROUP_CODE_LENGTH,
+  ALPHA_CODE_LENGTH,
+  GROUP_CODE_PATTERN,
+  ALPHA_CODE_PATTERN,
+  QR_TICKET_PATTERN,
+  CODES_BLOB_PATTERN,
+  JOIN_REQUEST_ID_PATTERN,
+  normalizeJoinCode,
+  classifyJoinCode,
+  isDoorCode,
+  isQrTicketShape,
+  isCodesBlobShape,
+  normalizeDisplayName,
+} from './join.js';
+export type { JoinMethod, JoinCodeKind } from './join.js';
 export {
   TOKEN_FORMAT_VERSION,
   TOKEN_SEGMENT_PATTERN,
