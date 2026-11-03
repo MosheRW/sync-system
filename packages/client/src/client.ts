@@ -410,6 +410,9 @@ export class SyncClient {
           hasPosition: initialPosition !== undefined,
           ...(initialPosition === undefined ? {} : { position: initialPosition }),
           blockList: [],
+          // From the server's reply: always stored (#10 AC32, N1).
+          joinCodes: reply.codes.blob,
+          joinCodesGeneration: reply.codes.generation,
         });
         this.#startGroup({
           status: 'active',
@@ -1031,6 +1034,9 @@ export class SyncClient {
       group.groupId === message.groupId;
     if (!leads) return;
     this.#setLeaderCodes(message.groupId, current?.joinMethods ?? [], message.codes);
+    void this.#tokens?.setJoinCodes(message.groupId, message.codes.blob, message.codes.generation, {
+      fromServer: true,
+    });
     this.#emitCodesChanged(message.reason);
   }
 
@@ -1673,6 +1679,8 @@ export class SyncClient {
         ...(leader && metadata !== undefined ? { metadata } : {}),
         ...(leader && hasPosition ? { position } : {}),
         ...(leader && recovery !== undefined ? { blockList: [...recovery.blockList] } : {}),
+        // The newest codes blob this client has, to keep the codes (#10 AC32, AC33).
+        ...(leader && recovery?.joinCodes !== undefined ? { joinCodes: recovery.joinCodes } : {}),
       };
       this.#trackGroupRequest('group.resume', reqId, message, {
         resolve: (reply) => this.#onResumed(entry, reply, callbacks),
@@ -1696,6 +1704,9 @@ export class SyncClient {
         hasPosition: reply.hasPosition,
         ...(reply.hasPosition ? { position: reply.position } : {}),
         blockList: entry.recovery?.blockList ?? [],
+        // The server's current codes: always stored, even with a lower generation (#10 N1).
+        joinCodes: reply.codes.blob,
+        joinCodesGeneration: reply.codes.generation,
       });
       this.#startGroup({
         status: 'active',

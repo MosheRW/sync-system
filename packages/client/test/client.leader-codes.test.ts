@@ -3,6 +3,8 @@ import { isSyncClientError } from '../src/errors.js';
 import type { CodesChangedEvent, JoinRequestedEvent } from '../src/state.js';
 import { CREATED_FIELDS, TEST_CODES, connectedClient, joinTestGroup } from './helpers/client.js';
 import { FakeWebSocket } from './helpers/fake-websocket.js';
+import { fakeToken } from './helpers/tokens.js';
+import { memoryStorage } from '../src/storage.js';
 
 const GROUP_ID = 'G'.repeat(43);
 const REQUEST_ID = 'R'.repeat(22);
@@ -249,6 +251,40 @@ describe('leader API (#10 AC40)', () => {
     await ending;
     expect(client.getJoinCodes()).toBeNull();
     expect(client.getJoinRequests()).toEqual([]);
+    client.close();
+  });
+});
+
+describe('the codes blob in storage (#10 AC32, N1)', () => {
+  it('stores the blob of every codes.updated', async () => {
+    const storage = memoryStorage();
+    const { client, socket } = await connectedClient({ storage });
+    const creating = client.createGroup({});
+    socket.receive({
+      type: 'group.created',
+      ...CREATED_FIELDS,
+      reqId: socket.lastMessage().reqId,
+      groupId: GROUP_ID,
+      participantId: 'p',
+      role: 'leader',
+      token: fakeToken({ gid: GROUP_ID }),
+    });
+    await creating;
+    socket.receive({
+      type: 'codes.updated',
+      groupId: GROUP_ID,
+      reason: 'door_failures',
+      codes: { generation: 1, groupCode: '123456', doorCode: '999999', blob: BLOB },
+    });
+    await vi.waitFor(async () => {
+      const text = (await storage.getItem('sync-system:v1:app-a@127.0.0.1:1')) as string;
+      expect(
+        (JSON.parse(text) as { entries: Array<{ recovery: unknown }> }).entries[0]!.recovery,
+      ).toMatchObject({
+        joinCodes: BLOB,
+        joinCodesGeneration: 1,
+      });
+    });
     client.close();
   });
 });

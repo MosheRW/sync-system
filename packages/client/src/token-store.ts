@@ -8,6 +8,7 @@ import {
   type TokenClaims,
   checkJson,
   decodeTokenClaims,
+  isCodesBlobShape,
 } from '@sync-system/protocol';
 import { type TimerHandle, clearTimer, now, setClampedTimeout } from './host.js';
 import { type StorageLog, type TokenStorage, storageErrorName } from './storage.js';
@@ -38,6 +39,42 @@ export interface Recovery {
   readonly hasPosition: boolean;
   readonly position?: JsonValue;
   readonly blockList: readonly string[];
+  /**
+   * The latest server-signed codes blob, sent back when recreating the group
+   * (#10 AC32). Opaque to the client; never logged.
+   */
+  readonly joinCodes?: string;
+  /** The blob's code generation, kept next to it to order copies (#10 R2). */
+  readonly joinCodesGeneration?: number;
+}
+
+/**
+ * Which codes blob to keep when two stored copies of a group's recovery data
+ * meet (#10 R2): the higher code generation; a tie keeps `incoming`. A blob
+ * that comes straight from the server is not merged this way: it is always
+ * stored (N1, `setJoinCodes` with `fromServer`).
+ */
+export function newerJoinCodes(
+  incoming: Recovery | undefined,
+  stored: Recovery | undefined,
+): Pick<Recovery, 'joinCodes' | 'joinCodesGeneration'> {
+  const keep = (r: Recovery | undefined) =>
+    r?.joinCodes === undefined || r.joinCodesGeneration === undefined
+      ? {}
+      : { joinCodes: r.joinCodes, joinCodesGeneration: r.joinCodesGeneration };
+  const a = incoming?.joinCodesGeneration;
+  const b = stored?.joinCodesGeneration;
+  if (a === undefined) return keep(stored);
+  if (b === undefined || a >= b) return keep(incoming);
+  return keep(stored);
+}
+
+/** `recovery` with the codes blob chosen by `newerJoinCodes`. */
+function withNewerJoinCodes(recovery: Recovery, stored: Recovery | undefined): Recovery {
+  const { joinCodes: _joinCodes, joinCodesGeneration: _generation, ...rest } = recovery;
+  void _joinCodes;
+  void _generation;
+  return { ...rest, ...newerJoinCodes(recovery, stored) };
 }
 
 /** One stored token. `claims` are decoded from the token on load, never stored. */
@@ -103,9 +140,24 @@ function readRecovery(value: unknown): Recovery | undefined {
     return undefined;
   }
   if (hasPosition && !Object.hasOwn(value, 'position')) return undefined;
+  // A blob is kept only with a valid generation; otherwise both are dropped (#10 R2).
+  const { joinCodes, joinCodesGeneration } = value;
+  const codes =
+    isCodesBlobShape(joinCodes) &&
+    typeof joinCodesGeneration === 'number' &&
+    Number.isSafeInteger(joinCodesGeneration) &&
+    joinCodesGeneration >= 0
+      ? { joinCodes, joinCodesGeneration }
+      : {};
   return hasPosition
-    ? { metadata: metadata as JsonObject, hasPosition, position: position as JsonValue, blockList }
-    : { metadata: metadata as JsonObject, hasPosition, blockList };
+    ? {
+        metadata: metadata as JsonObject,
+        hasPosition,
+        position: position as JsonValue,
+        blockList,
+        ...codes,
+      }
+    : { metadata: metadata as JsonObject, hasPosition, blockList, ...codes };
 }
 
 function serialize(entries: readonly StoredEntry[]): string {
@@ -121,6 +173,13 @@ function serialize(entries: readonly StoredEntry[]): string {
               hasPosition: entry.recovery.hasPosition,
               ...(entry.recovery.hasPosition ? { position: entry.recovery.position } : {}),
               blockList: entry.recovery.blockList,
+              ...(entry.recovery.joinCodes === undefined ||
+              entry.recovery.joinCodesGeneration === undefined
+                ? {}
+                : {
+                    joinCodes: entry.recovery.joinCodes,
+                    joinCodesGeneration: entry.recovery.joinCodesGeneration,
+                  }),
             },
           },
     ),
@@ -249,6 +308,38 @@ export class TokenStore {
           : { token, claims };
       return [...entries.filter((e) => e.claims.gid !== claims.gid), entry];
     }, 'token_stored');
+  }
+
+  /**
+   * Stores a leader group's codes blob and its code generation (#10 AC32,
+   * R2, N1). With `fromServer: true` (a `group.created`, `group.resumed` or
+   * `codes.updated` frame on this connection) the blob always replaces the
+   * stored one, whatever its generation. Otherwise it is merged: the stored
+   * blob is kept if its generation is higher.
+   */
+  setJoinCodes(
+    groupId: string,
+    joinCodes: string,
+    generation: number,
+    options: { fromServer: boolean },
+  ): Promise<void> {
+    if (!isCodesBlobShape(joinCodes) || !Number.isSafeInteger(generation) || generation < 0) {
+      return Promise.resolve();
+    }
+    return this.#mutate((entries) =>
+      entries.map((entry) => {
+        if (entry.claims.gid !== groupId || entry.recovery === undefined) return entry;
+        const incoming: Recovery = {
+          ...entry.recovery,
+          joinCodes,
+          joinCodesGeneration: generation,
+        };
+        return {
+          ...entry,
+          recovery: options.fromServer ? incoming : withNewerJoinCodes(incoming, entry.recovery),
+        };
+      }),
+    );
   }
 
   /** Changes a leader's stored recovery data (metadata, position, block list). */
@@ -509,7 +600,13 @@ export class TokenStore {
         this.#dirty.delete(gid);
         if (stored !== undefined && kept(stored)) merged.push(stored);
       } else if (mine !== undefined) {
-        merged.push(mine);
+        // The blob has its own rule: the higher generation wins, whichever
+        // copy wins for the token (#10 R2).
+        merged.push(
+          mine.recovery === undefined || stored?.recovery === undefined
+            ? mine
+            : { ...mine, recovery: withNewerJoinCodes(mine.recovery, stored.recovery) },
+        );
       }
     }
     return { raw, merged };

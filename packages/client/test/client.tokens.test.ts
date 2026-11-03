@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { type TokenStorage, memoryStorage } from '../src/storage.js';
-import { CREATED_FIELDS, connectedClient, joinTestGroup } from './helpers/client.js';
+import { TEST_CODES, CREATED_FIELDS, connectedClient, joinTestGroup } from './helpers/client.js';
 import { FakeWebSocket } from './helpers/fake-websocket.js';
 import { fakeToken, groupIdOf } from './helpers/tokens.js';
 
@@ -47,6 +47,8 @@ describe('token capture (#5 AC31, AC34)', () => {
         hasPosition: true,
         position: { page: 1 },
         blockList: [],
+        joinCodes: TEST_CODES.blob,
+        joinCodesGeneration: TEST_CODES.generation,
       },
     });
     client.close();
@@ -95,7 +97,14 @@ describe('token capture (#5 AC31, AC34)', () => {
     expect(stored(storage)).toEqual([
       {
         token: refreshed,
-        recovery: { metadata: {}, hasPosition: true, position: { page: 5 }, blockList: [] },
+        recovery: {
+          metadata: {},
+          hasPosition: true,
+          position: { page: 5 },
+          blockList: [],
+          joinCodes: TEST_CODES.blob,
+          joinCodesGeneration: TEST_CODES.generation,
+        },
       },
     ]);
     client.close();

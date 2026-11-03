@@ -637,3 +637,108 @@ describe('TokenStore: failed forgetAllGroups (#7 AC17, R5)', () => {
     expect(area.stored().has(C)).toBe(true);
   });
 });
+
+describe('codes blob in recovery data (#10 AC32, R2, N1)', () => {
+  const GID = groupIdOf('A');
+  const blob = (n: number) => `eyJuIjo${n}fQ.${'B'.repeat(43)}`;
+
+  it('stores the blob with its generation and drops a blob without a valid one on load', async () => {
+    const storage = memoryStorage();
+    const tokens = store(storage);
+    const token = fakeToken({ gid: GID });
+    await tokens.saveToken(token, { ...RECOVERY, joinCodes: blob(1), joinCodesGeneration: 10 });
+    expect(doc(storage).entries[0]).toEqual({
+      token,
+      recovery: { ...RECOVERY, joinCodes: blob(1), joinCodesGeneration: 10 },
+    });
+    for (const bad of [
+      { joinCodes: blob(1) },
+      { joinCodes: blob(1), joinCodesGeneration: -1 },
+      { joinCodes: blob(1), joinCodesGeneration: 1.5 },
+      { joinCodes: 'not a blob', joinCodesGeneration: 1 },
+      { joinCodes: 'x'.repeat(600), joinCodesGeneration: 1 },
+    ]) {
+      await storage.setItem(
+        KEY,
+        JSON.stringify({ v: 1, entries: [{ token, recovery: { ...RECOVERY, ...bad } }] }),
+      );
+      const loaded = await store(storage).findFresh(GID);
+      expect(loaded?.recovery).toEqual(RECOVERY);
+    }
+  });
+
+  it('keeps the higher generation when merging copies, in either order (R2)', async () => {
+    const storage = memoryStorage();
+    const tab1 = store(storage);
+    const tab2 = store(storage);
+    await tab1.saveToken(fakeToken({ gid: GID }), {
+      ...RECOVERY,
+      joinCodes: blob(1),
+      joinCodesGeneration: 1,
+    });
+    await tab2.load();
+    // Tab 1 hears of a rotation; tab 2 then writes its older copy.
+    await tab1.setJoinCodes(GID, blob(2), 2, { fromServer: true });
+    await tab2.setJoinCodes(GID, blob(1), 1, { fromServer: false });
+    expect((await tab2.findFresh(GID))?.recovery?.joinCodes).toBe(blob(2));
+    expect((await store(storage).findFresh(GID))?.recovery?.joinCodesGeneration).toBe(2);
+    // The other order: a newer copy merged in replaces an older one.
+    await tab2.setJoinCodes(GID, blob(3), 3, { fromServer: false });
+    expect((await tab1.findFresh(GID))?.recovery?.joinCodesGeneration).toBe(3);
+  });
+
+  it('keeps the higher generation when a dirty in-memory copy meets storage (R2)', async () => {
+    const backing = memoryStorage();
+    let failWrites = false;
+    const flaky: TokenStorage = {
+      getItem: (key) => backing.getItem(key),
+      setItem: (key, value) =>
+        failWrites ? Promise.reject(new Error('quota')) : backing.setItem(key, value),
+      removeItem: (key) => backing.removeItem(key),
+    };
+    const tab1 = store(flaky);
+    const tab2 = store(backing);
+    const token = fakeToken({ gid: GID });
+    await tab1.saveToken(token, { ...RECOVERY, joinCodes: blob(1), joinCodesGeneration: 1 });
+    failWrites = true;
+    await tab1.updateRecovery(GID, { hasPosition: true, position: 9 });
+    await tab2.setJoinCodes(GID, blob(5), 5, { fromServer: true });
+    failWrites = false;
+    const merged = await tab1.findFresh(GID);
+    expect(merged?.recovery).toMatchObject({ position: 9, joinCodesGeneration: 5 });
+  });
+
+  it('always stores a blob from a direct server reply, even with a lower generation (N1)', async () => {
+    const storage = memoryStorage();
+    const tokens = store(storage);
+    await tokens.saveToken(fakeToken({ gid: GID }), {
+      ...RECOVERY,
+      joinCodes: blob(9),
+      joinCodesGeneration: 9,
+    });
+    await tokens.setJoinCodes(GID, blob(4), 4, { fromServer: true });
+    expect((await store(storage).findFresh(GID))?.recovery).toMatchObject({
+      joinCodes: blob(4),
+      joinCodesGeneration: 4,
+    });
+    // A full recovery from a server reply (group.resumed) also replaces it.
+    await tokens.saveToken(fakeToken({ gid: GID }), {
+      ...RECOVERY,
+      joinCodes: blob(2),
+      joinCodesGeneration: 2,
+    });
+    expect((await store(storage).findFresh(GID))?.recovery?.joinCodesGeneration).toBe(2);
+  });
+
+  it('deletes the blob with the recovery data (AC40)', async () => {
+    const storage = memoryStorage();
+    const tokens = store(storage);
+    await tokens.saveToken(fakeToken({ gid: GID }), {
+      ...RECOVERY,
+      joinCodes: blob(1),
+      joinCodesGeneration: 1,
+    });
+    await tokens.remove([GID]);
+    expect(storage.getItem(KEY)).not.toContain('joinCodes');
+  });
+});

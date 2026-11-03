@@ -4,6 +4,7 @@ import { DEFAULT_REQUEST_TIMEOUT_MS } from '../src/options.js';
 import { type TokenStorage, memoryStorage } from '../src/storage.js';
 import type { GroupEndedInfo, LeaderStatusEvent, ResumedGroup } from '../src/state.js';
 import {
+  TEST_CODES,
   RESUMED_FIELDS,
   CREATED_FIELDS,
   connectedClient,
@@ -183,6 +184,8 @@ describe('token rejoin after an unexpected drop (#5 AC35, AC36)', () => {
       metadata: METADATA,
       position: { page: 7 },
       blockList: [],
+      // The codes blob from group.created goes back with the resume (#10 AC32).
+      joinCodes: TEST_CODES.blob,
     });
     next.receive({
       type: 'group.resumed',
