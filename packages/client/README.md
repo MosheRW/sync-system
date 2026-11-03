@@ -275,8 +275,8 @@ attempts per connection per minute).
   `denyJoin(requestId)`, and the `joinRequested` / `joinWithdrawn` events
   drive the approval prompt. Requests the server re-sends after a reconnect
   appear once. A received name that fails the display-name rule is dropped
-  (the request stays, without `displayName`). **Render display names as text
-  only, never as HTML.**
+  (the request stays, without `displayName`).
+  **Render display names as text only, never as HTML.**
 - `joinPaused` / `joinResumed`: after repeated wrong door codes the server
   pauses door-code joining for 10 minutes; `rotateCodes()` lifts it.
 
