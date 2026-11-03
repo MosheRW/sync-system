@@ -9,6 +9,7 @@ import {
   NAMESPACE_PATTERN,
 } from '@sync-system/protocol';
 import { type AppConfig, hashApiKey } from '../apps/app-registry.js';
+import { defaultAppMethods } from '../joins/join-methods.js';
 import { ConfigError } from './config-error.js';
 import type { ServerEnv } from './env.js';
 
@@ -27,9 +28,6 @@ export const APP_DEFAULTS = {
   qrTicketSeconds: 300,
   approvalTimeoutSeconds: 120,
 } as const;
-
-/** Methods an app gets when it omits `joinMethods`, before the env intersection (#10 Q1.1). */
-export const DEFAULT_APP_JOIN_METHODS: readonly JoinMethod[] = ['A', 'D'];
 
 type Ceilings = Pick<
   ServerEnv,
@@ -297,7 +295,7 @@ function resolveAppJoinMethods(
   allowed: readonly JoinMethod[],
 ): JoinMethodsResult {
   if (listed === undefined) {
-    const methods = DEFAULT_APP_JOIN_METHODS.filter((method) => allowed.includes(method));
+    const methods = defaultAppMethods(allowed);
     if (methods.length === 0) {
       return {
         ok: false,

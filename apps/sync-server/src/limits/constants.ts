@@ -85,3 +85,9 @@ export const TOKENS_CHECK_WINDOW_MS = 60_000;
  * configurable; there is no global budget.
  */
 export const TOKENS_CHECK_PER_APP_PER_MINUTE = 600;
+
+/**
+ * Most draws of one join code before giving up with CODES_EXHAUSTED (#10
+ * AC9). Each draw is checked against the app's live codes.
+ */
+export const MAX_CODE_DRAWS = 20;
