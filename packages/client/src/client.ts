@@ -1056,9 +1056,17 @@ export class SyncClient {
     if (!this.#leads(message.groupId)) return;
     switch (message.type) {
       case 'join.requested': {
+        // The leader app renders the name, so it passes the same rule the
+        // server applied; a name that fails it (other Unicode data, a
+        // misbehaving server) is dropped, the request itself is kept.
+        const displayName =
+          message.displayName !== undefined &&
+          normalizeDisplayName(message.displayName) === message.displayName
+            ? message.displayName
+            : undefined;
         const request: JoinRequest = Object.freeze({
           requestId: message.requestId,
-          ...(message.displayName === undefined ? {} : { displayName: message.displayName }),
+          ...(displayName === undefined ? {} : { displayName }),
           expiresAt: now() + message.expiresInMs,
         });
         const known = this.#joinRequests.has(message.requestId);

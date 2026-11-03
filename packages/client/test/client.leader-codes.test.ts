@@ -157,6 +157,37 @@ describe('leader API (#10 AC40)', () => {
     client.close();
   });
 
+  it('drops a received display name that fails the shared name rule (#10 B2)', async () => {
+    const { client, socket } = await leader(['B', 'D']);
+    const requested: JoinRequestedEvent[] = [];
+    client.on('joinRequested', (e) => requested.push(e));
+    const bad = ['⠀', 'ㅤ', '️', 'Dana‮', 'a​b', '\u{E0067}\u{E007F}', '  Dana  ', 'x'.repeat(33)];
+    bad.forEach((displayName, index) => {
+      socket.receive({
+        type: 'join.requested',
+        groupId: GROUP_ID,
+        requestId: String(index).padStart(22, 'R'),
+        expiresInMs: 60_000,
+        displayName,
+      });
+    });
+    expect(requested).toHaveLength(bad.length);
+    for (const event of requested) expect(event).not.toHaveProperty('displayName');
+    for (const request of client.getJoinRequests()) {
+      expect(request).not.toHaveProperty('displayName');
+    }
+    const flag = '\u{1F3F4}\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}';
+    socket.receive({
+      type: 'join.requested',
+      groupId: GROUP_ID,
+      requestId: REQUEST_ID,
+      expiresInMs: 60_000,
+      displayName: `Dana ${flag}`,
+    });
+    expect(requested.at(-1)).toMatchObject({ displayName: `Dana ${flag}` });
+    client.close();
+  });
+
   it('tracks join requests, deduplicated, and approves or denies them', async () => {
     const { client, socket } = await leader(['B', 'D']);
     const requested: JoinRequestedEvent[] = [];
