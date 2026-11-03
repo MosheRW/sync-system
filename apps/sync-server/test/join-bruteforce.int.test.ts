@@ -46,7 +46,7 @@ async function createGroup(server: TestServer, joinMethods: JoinMethod[], apiKey
 }
 
 /** Sends one join attempt and returns the reply. */
-async function attempt(client: TestClient, fields: Record<string, unknown>) {
+async function attempt(client: TestClient, fields: object) {
   client.send({ type: 'group.joinByCode', reqId: 'a', ...fields });
   return client.next();
 }
