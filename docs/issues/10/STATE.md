@@ -1,12 +1,12 @@
 # State: #10 Join methods A-D (door code, approval, alphanumeric, QR)
 - Path: full
-- Phase: architecture
+- Phase: implementation
 - Branch: feat/10-join-methods
 - PR: #11 (draft)
 - Plan approved by user: yes (Gate 2, with decisions Q-A to Q-E below)
 - Security-sensitive: yes (door codes, approval, brute-force limits, QR ticket signing, codes blob, removal of join by group ID)
 - Review rounds: 0 (code review); security plan review rounds: 3 (round 1 FAIL, round 2 PASS, round 3 targeted PASS)
-- Last updated by: security
+- Last updated by: engineer
 
 ## Notes
 - PRD item 4 of 9. "item N" in spec.md means PRD item N, not GitHub issue N.
@@ -68,8 +68,43 @@ Recorded in architecture.md section 12 (plan revision 2).
 - No new required control. Low notes: N4 (AC33 "higher" ticket generation), N5 (section 10
   table rows R2+N1 / Q-B misaligned), N6 (code-mode checks on generation assignment).
 
+## Implementation (engineer)
+- All 21 planned commits are on the branch, in order, plus two small hygiene
+  commits (see deviations). PR #11 marked ready for review.
+- Checks: pnpm lint, typecheck, test (protocol 70, server 819, client 537),
+  build and `pnpm audit --audit-level=high` all exit 0. No dependency changes.
+- Required controls R1a-R16 implemented with tests; N1, N2 folded in; N4 (AC33
+  "higher" ticket generation) and N5 (section 10 table rows) applied in
+  commit 21. N6: only `issueCodeSet` and `rotateDoorCode` build a new
+  generation (recreation with a verified blob copies the blob's values);
+  every payload re-signs the blob from the record's current codes (current
+  `t`); `qr.issue` reads `ticketGeneration` under the group lock.
+- Advisories M3, L4, L6 documented in the README; M2 documented with a
+  pointer to issue #12 (not implemented).
+
 ## Open questions
-- Follow-up to open after Gate 2: M2 group-creation rate and per-app live-group cap.
+- none (M2 is tracked as issue #12).
 
 ## Deviations from plan
-- none
+- Extra commits: `style(server): use a type import for the mocked crypto
+  module` (1c50739) and `fix(server): type the join attempt helper in the
+  brute-force tests` (c4475fc) fix lint/typecheck slips in commits 3 and 8
+  (pushed commits are never amended).
+- `JoinService` was created in commit 5 (with the create/release hooks)
+  instead of commit 6, so codes had one owner from the start.
+- `defaultAppMethods` lives in `joins/join-methods.ts` and is used by
+  `config/apps-config.ts` (planned in both places).
+- QR tickets: the schema caps raw `ticket` input at 512 characters
+  (`MAX_QR_TICKET_INPUT_LENGTH`), so a malformed or over-256 ticket gets
+  `QR_INVALID` as AC25 and the section 10 test row require, instead of
+  `INVALID_MESSAGE` (architecture 4.3 step 5 wording).
+- `CreatedGroup.joinMethods` / `codes` landed in commit 14 (not 16), so the
+  client tests could join by code when `joinGroup` was retired; the leader
+  API and `createGroup` options landed in 16 as planned.
+- Server test helpers: `createGroupWithMembers` returns `codes` and `join`
+  fields; new `codesOf`, `joinByCode` helpers and a `ScriptedRandom` code
+  source (`codeRandom` server option) for collision tests.
+- Client local guard for a pending approval: when the server's deadline plus
+  `requestTimeoutMs` passes, the join rejects with REQUEST_TIMEOUT and the
+  connection is dropped (as other request timeouts do), so the server
+  withdraws the request.
