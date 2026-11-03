@@ -56,6 +56,34 @@ describe('createLogger', () => {
     expect(capture.text).not.toContain('S-1');
   });
 
+  it('removes display names from logged join messages (#10 A1)', () => {
+    const capture = new LogCapture();
+    const logger = createLogger({ level: 'trace', destination: capture });
+    const joinByCode = {
+      type: 'group.joinByCode',
+      joinCode: '123456',
+      displayName: 'SENTINEL-NAME-1',
+    };
+    const joinRequested = {
+      type: 'join.requested',
+      groupId: 'g',
+      requestId: 'r',
+      expiresInMs: 1,
+      displayName: 'SENTINEL-NAME-2',
+    };
+    logger.info({ event: 'test', ...joinByCode }, 'spread');
+    logger.info({ event: 'test', message: joinByCode, frame: joinRequested }, 'nested');
+    logger.info({ event: 'test', request: { displayName: 'SENTINEL-NAME-3' } }, 'entry');
+    expect(capture.text).not.toContain('SENTINEL');
+    const [spread, nested, entry] = capture.records();
+    expect(spread).toMatchObject({ event: 'test', type: 'group.joinByCode' });
+    expect(spread).not.toHaveProperty('displayName');
+    expect(nested).toMatchObject({ frame: { type: 'join.requested', expiresInMs: 1 } });
+    expect(nested).not.toHaveProperty('frame.displayName');
+    expect(entry).toMatchObject({ request: {} });
+    expect(entry).not.toHaveProperty('request.displayName');
+  });
+
   it('respects the level', () => {
     const capture = new LogCapture();
     const logger = createLogger({ level: 'warn', destination: capture });
