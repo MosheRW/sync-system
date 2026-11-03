@@ -124,6 +124,9 @@ export class GroupService implements GroupActions {
         busy: (session) => this.busy(session),
         runLocked: (namespace, groupId, task) => this.locks.run(groupKey(namespace, groupId), task),
         admit: (session, groupId, method) => this.admitMember(session, groupId, method),
+        leaderOf: (record) =>
+          this.deps.notifier.get(membershipKey(record.appNamespace, record.id, record.leaderId)),
+        deliverLater: (session, message) => this.deliverLater(session, message),
       },
     );
     this.checkLimiter = new SlidingWindowRateLimiter(() => this.now(), TOKENS_CHECK_WINDOW_MS);

@@ -60,6 +60,7 @@ export const ERROR_TEXT: Record<GenericErrorCode, string> = {
   CODE_NOT_FOUND: 'Join code not found',
   DOOR_CODE_REQUIRED: 'Door code required',
   DOOR_CODE_WRONG: 'Wrong door code',
+  JOIN_PAUSED: 'Joining with the door code is paused; try again later',
 };
 
 interface ErrorOptions {

@@ -233,6 +233,19 @@ const schemas = buildJitless(() => {
     z.object({ type: z.literal('leader.offline'), groupId: z.string() }),
     z.object({ type: z.literal('leader.online'), groupId: z.string() }),
     z.object({
+      type: z.literal('codes.updated'),
+      reqId,
+      groupId: z.string(),
+      reason: z.enum(['rotated', 'door_failures']),
+      codes: joinCodesPayload,
+    }),
+    z.object({
+      type: z.literal('join.paused'),
+      groupId: z.string(),
+      retryAfterMs: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    }),
+    z.object({ type: z.literal('join.resumed'), groupId: z.string() }),
+    z.object({
       type: z.literal('error'),
       reqId,
       code: z.enum(ErrorCode),

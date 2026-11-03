@@ -328,6 +328,35 @@ export interface LeaderOnlineMessage {
   groupId: string;
 }
 
+/**
+ * To the leader only: the group's codes changed (#10 AC29, AC30). The reply
+ * to `codes.rotate` (reason `rotated`, with its reqId), or unsolicited after
+ * repeated wrong door codes (reason `door_failures`).
+ */
+export interface CodesUpdatedMessage {
+  type: 'codes.updated';
+  reqId?: string;
+  groupId: string;
+  reason: CodesUpdatedReason;
+  codes: JoinCodesPayload;
+}
+
+/** Why the codes changed: the leader rotated them, or the door code rotated after failures. */
+export type CodesUpdatedReason = 'rotated' | 'door_failures';
+
+/** To the leader: door-code joining paused after repeated failures (#10 AC29). */
+export interface JoinPausedMessage {
+  type: 'join.paused';
+  groupId: string;
+  retryAfterMs: number;
+}
+
+/** To the leader: door-code joining works again (#10 AC29, AC30). */
+export interface JoinResumedMessage {
+  type: 'join.resumed';
+  groupId: string;
+}
+
 export interface ErrorMessage {
   type: 'error';
   reqId?: string;
@@ -352,6 +381,9 @@ export type ServerMessage =
   | TokenRefreshedMessage
   | LeaderOfflineMessage
   | LeaderOnlineMessage
+  | CodesUpdatedMessage
+  | JoinPausedMessage
+  | JoinResumedMessage
   | ErrorMessage;
 
 export type ServerMessageType = ServerMessage['type'];

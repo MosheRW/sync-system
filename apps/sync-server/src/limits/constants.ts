@@ -112,6 +112,21 @@ export const DOOR_FAILURES_PER_APP_PER_MINUTE = 60;
 export const DOOR_FAILURES_APP_WINDOW_MS = 60_000;
 
 /**
+ * Wrong door codes against one door code before it rotates (#10 AC29, R1a).
+ * Counted since the last door-code change, with no time window.
+ */
+export const DOOR_FAILURES_BEFORE_ROTATION = 5;
+
+/** Door rotations inside DOOR_ROTATION_WINDOW_MS that pause method A (#10 AC29). */
+export const DOOR_ROTATIONS_BEFORE_PAUSE = 3;
+
+/** Window of the door rotation count (30 minutes). */
+export const DOOR_ROTATION_WINDOW_MS = 1_800_000;
+
+/** How long method A joining pauses (10 minutes, #10 AC29). */
+export const DOOR_PAUSE_MS = 600_000;
+
+/**
  * Most draws of one join code before giving up with CODES_EXHAUSTED (#10
  * AC9). Each draw is checked against the app's live codes.
  */

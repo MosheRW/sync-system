@@ -69,6 +69,11 @@ export const ErrorCode = {
   DOOR_CODE_REQUIRED: 'DOOR_CODE_REQUIRED',
   /** A wrong door code; counted as a door-code failure (#10 AC15). */
   DOOR_CODE_WRONG: 'DOOR_CODE_WRONG',
+  /**
+   * Door-code joining for this group is paused after repeated door-code
+   * failures; `details.retryAfterMs` (#10 AC29).
+   */
+  JOIN_PAUSED: 'JOIN_PAUSED',
 } as const;
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];
