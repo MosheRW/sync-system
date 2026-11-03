@@ -1,6 +1,9 @@
 import {
   type BlockListSetMessage,
   type CodesRotateMessage,
+  type JoinApproveMessage,
+  type JoinCancelMessage,
+  type JoinDenyMessage,
   ErrorCode,
   type ErrorMessage,
   GROUP_ID_PATTERN,
@@ -33,7 +36,7 @@ import type { TokenService } from '../tokens/token-service.js';
 import type { CodesBlobService } from '../tokens/codes-blob.js';
 import type { QrTicketService } from '../tokens/qr-tickets.js';
 import type { RandomInt } from '../joins/codes.js';
-import { JoinService } from '../joins/join-service.js';
+import { JoinService, type LeaderAction } from '../joins/join-service.js';
 import { actionErrorMessage, errorMessage } from '../ws/error-messages.js';
 import { type GroupRecord, type GroupStore, connectedCount } from './group-store.js';
 import type { EndedGroups } from './ended-groups.js';
@@ -191,7 +194,11 @@ export class GroupService implements GroupActions {
 
   /** In a group or waiting for one (ALREADY_IN_GROUP). */
   private busy(session: Session): boolean {
-    return session.membership !== undefined || session.parked !== undefined;
+    return (
+      session.membership !== undefined ||
+      session.parked !== undefined ||
+      session.pendingJoin !== undefined
+    );
   }
 
   /** Number of groups with a pending timer. For tests only. */
@@ -380,7 +387,7 @@ export class GroupService implements GroupActions {
    * session gets NOT_LEADER with the action's text; a groupless one
    * NOT_IN_GROUP.
    */
-  private ownedLeader(session: Session, action: 'codes.rotate'): Membership | ErrorMessage {
+  private ownedLeader(session: Session, action: LeaderAction): Membership | ErrorMessage {
     if (session.parked !== undefined) return actionErrorMessage(ErrorCode.NOT_LEADER, action);
     const membership = this.owned(session);
     if (membership === undefined) return errorMessage(ErrorCode.NOT_IN_GROUP);
@@ -391,6 +398,21 @@ export class GroupService implements GroupActions {
   /** codes.rotate (#10 AC30). */
   rotateCodes(session: Session, _message: CodesRotateMessage): Promise<ServerMessage> {
     return this.joins.rotate(session);
+  }
+
+  /** join.cancel (#10 AC21). */
+  cancelJoin(session: Session, _message: JoinCancelMessage): Promise<ServerMessage> {
+    return this.joins.cancel(session);
+  }
+
+  /** join.approve (#10 AC21). */
+  approveJoin(session: Session, message: JoinApproveMessage): Promise<ServerMessage> {
+    return this.joins.decide(session, message.requestId, 'approve');
+  }
+
+  /** join.deny (#10 AC21). */
+  denyJoin(session: Session, message: JoinDenyMessage): Promise<ServerMessage> {
+    return this.joins.decide(session, message.requestId, 'deny');
   }
 
   /** group.joinByCode (#10): the join rules live in JoinService. */
@@ -822,6 +844,8 @@ export class GroupService implements GroupActions {
       });
     }
     this.attach(session, { groupId: record.id, participantId: claims.pid, role: 'leader' });
+    // Pending approval requests are re-sent after the reply (#10 AC21, AC34).
+    this.joins.onLeaderReturn(session, updated);
     this.deps.logger.info(
       { event: 'group_resumed', namespace, groupRef: groupRef(record.id), recreated: false },
       'leader resumed',
@@ -1040,7 +1064,7 @@ export class GroupService implements GroupActions {
 
   async disconnect(session: Session): Promise<void> {
     this.checkLimiter.forget(session.connectionId);
-    this.joins.onDisconnect(session);
+    await this.joins.onDisconnect(session);
     // A parked session just stops waiting.
     this.parking.unpark(session);
     const membership = session.membership;

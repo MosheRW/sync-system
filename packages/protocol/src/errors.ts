@@ -74,6 +74,14 @@ export const ErrorCode = {
    * failures; `details.retryAfterMs` (#10 AC29).
    */
   JOIN_PAUSED: 'JOIN_PAUSED',
+  /** The leader denied the method B join request (#10 AC21). */
+  JOIN_DENIED: 'JOIN_DENIED',
+  /** The leader did not decide within approvalTimeoutSeconds (#10 AC21). */
+  APPROVAL_TIMEOUT: 'APPROVAL_TIMEOUT',
+  /** The group already has 10 pending join requests; `details.maxPending` (#10 AC22). */
+  APPROVAL_QUEUE_FULL: 'APPROVAL_QUEUE_FULL',
+  /** Approve, deny or cancel of an unknown or already settled request (#10 AC21). */
+  JOIN_REQUEST_NOT_FOUND: 'JOIN_REQUEST_NOT_FOUND',
 } as const;
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];

@@ -126,6 +126,9 @@ export const DOOR_ROTATION_WINDOW_MS = 1_800_000;
 /** How long method A joining pauses (10 minutes, #10 AC29). */
 export const DOOR_PAUSE_MS = 600_000;
 
+/** Pending method B join requests per group (#10 AC22). */
+export const MAX_PENDING_APPROVALS_PER_GROUP = 10;
+
 /** Leader `codes.rotate` requests per group per window (#10 AC30). */
 export const CODE_ROTATIONS_PER_GROUP_PER_MINUTE = 6;
 

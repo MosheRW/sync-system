@@ -139,6 +139,26 @@ export interface CodesRotateMessage {
   reqId?: string;
 }
 
+/** The joiner withdraws its pending method B request (#10 AC21). Reply: `join.cancelled`. */
+export interface JoinCancelMessage {
+  type: 'join.cancel';
+  reqId?: string;
+}
+
+/** The leader admits a pending joiner (#10 AC21). Reply: `join.decided`. */
+export interface JoinApproveMessage {
+  type: 'join.approve';
+  reqId?: string;
+  requestId: string;
+}
+
+/** The leader refuses a pending joiner (#10 AC21). Reply: `join.decided`. */
+export interface JoinDenyMessage {
+  type: 'join.deny';
+  reqId?: string;
+  requestId: string;
+}
+
 export type ClientMessage =
   | HelloMessage
   | GroupCreateMessage
@@ -150,7 +170,10 @@ export type ClientMessage =
   | BlockListSetMessage
   | GroupEndMessage
   | GroupLeaveMessage
-  | CodesRotateMessage;
+  | CodesRotateMessage
+  | JoinCancelMessage
+  | JoinApproveMessage
+  | JoinDenyMessage;
 
 export type ClientMessageType = ClientMessage['type'];
 
@@ -369,6 +392,58 @@ export interface JoinResumedMessage {
   groupId: string;
 }
 
+/**
+ * To the joiner: the method B request waits for the leader (#10 AC19). No
+ * group ID: the server does not reveal it before admission.
+ */
+export interface JoinPendingMessage {
+  type: 'join.pending';
+  reqId?: string;
+  requestId: string;
+  /** How long the request waits, from now (#10 D6). */
+  timeoutMs: number;
+}
+
+/** To the leader: someone asks to join (#10 AC19); re-sent on leader return (AC34). */
+export interface JoinRequestedMessage {
+  type: 'join.requested';
+  groupId: string;
+  requestId: string;
+  /** Remaining time before the request times out. */
+  expiresInMs: number;
+  /** The joiner's optional display name; render as text only. */
+  displayName?: string;
+}
+
+/** Why a request left the leader's list without a decision. */
+export type JoinWithdrawnReason = 'cancelled' | 'disconnected' | 'timeout';
+
+/** To the leader: a request ended without a decision (#10 AC21). */
+export interface JoinWithdrawnMessage {
+  type: 'join.withdrawn';
+  groupId: string;
+  requestId: string;
+  reason: JoinWithdrawnReason;
+}
+
+/** What happened to an approved or denied request. */
+export type JoinDecision = 'admitted' | 'group_full' | 'denied';
+
+/** To the leader: the reply to join.approve or join.deny (#10 AC21). */
+export interface JoinDecidedMessage {
+  type: 'join.decided';
+  reqId?: string;
+  requestId: string;
+  outcome: JoinDecision;
+}
+
+/** To the joiner: the reply to join.cancel (#10 AC21). */
+export interface JoinCancelledMessage {
+  type: 'join.cancelled';
+  reqId?: string;
+  requestId: string;
+}
+
 export interface ErrorMessage {
   type: 'error';
   reqId?: string;
@@ -396,6 +471,11 @@ export type ServerMessage =
   | CodesUpdatedMessage
   | JoinPausedMessage
   | JoinResumedMessage
+  | JoinPendingMessage
+  | JoinRequestedMessage
+  | JoinWithdrawnMessage
+  | JoinDecidedMessage
+  | JoinCancelledMessage
   | ErrorMessage;
 
 export type ServerMessageType = ServerMessage['type'];

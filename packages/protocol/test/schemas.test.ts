@@ -130,6 +130,50 @@ describe('token messages (#5)', () => {
   });
 });
 
+describe('approval messages (#10 AC19-AC22)', () => {
+  const RID = 'R'.repeat(22);
+
+  it('parses join.cancel, join.approve and join.deny with a request ID', () => {
+    expect(ok({ type: 'join.cancel' }).type).toBe('join.cancel');
+    expect(ok({ type: 'join.approve', requestId: RID }).type).toBe('join.approve');
+    expect(ok({ type: 'join.deny', reqId: 'r', requestId: RID }).type).toBe('join.deny');
+    for (const requestId of [undefined, '', 'R'.repeat(21), 'R'.repeat(23), `${'R'.repeat(21)}=`]) {
+      fails({ type: 'join.approve', requestId });
+      fails({ type: 'join.deny', requestId });
+    }
+  });
+
+  it('parses the approval events', () => {
+    for (const message of [
+      { type: 'join.pending', reqId: 'r', requestId: RID, timeoutMs: 120_000 },
+      { type: 'join.requested', groupId: GROUP_ID, requestId: RID, expiresInMs: 5 },
+      {
+        type: 'join.requested',
+        groupId: GROUP_ID,
+        requestId: RID,
+        expiresInMs: 5,
+        displayName: 'Dana',
+      },
+      { type: 'join.withdrawn', groupId: GROUP_ID, requestId: RID, reason: 'cancelled' },
+      { type: 'join.withdrawn', groupId: GROUP_ID, requestId: RID, reason: 'disconnected' },
+      { type: 'join.withdrawn', groupId: GROUP_ID, requestId: RID, reason: 'timeout' },
+      { type: 'join.decided', reqId: 'r', requestId: RID, outcome: 'admitted' },
+      { type: 'join.decided', requestId: RID, outcome: 'group_full' },
+      { type: 'join.decided', requestId: RID, outcome: 'denied' },
+      { type: 'join.cancelled', requestId: RID },
+    ]) {
+      expect(parseServerMessage(message).ok, message.type).toBe(true);
+    }
+    expect(
+      parseServerMessage({ type: 'join.withdrawn', groupId: GROUP_ID, requestId: RID, reason: 'x' })
+        .ok,
+    ).toBe(false);
+    expect(parseServerMessage({ type: 'join.pending', requestId: RID, timeoutMs: -1 }).ok).toBe(
+      false,
+    );
+  });
+});
+
 describe('codes.rotate and code events (#10 AC29, AC30)', () => {
   it('parses codes.rotate and the leader events', () => {
     expect(ok({ type: 'codes.rotate', reqId: 'r' }).type).toBe('codes.rotate');

@@ -6,6 +6,7 @@ import {
   CODES_BLOB_PATTERN,
   GROUP_CODE_PATTERN,
   JOIN_METHODS,
+  JOIN_REQUEST_ID_PATTERN,
 } from './join.js';
 import type { JsonObject, JsonValue } from './json.js';
 import {
@@ -129,6 +130,12 @@ const schemas = buildJitless(() => {
 
   const codesRotateSchema = z.object({ type: z.literal('codes.rotate'), reqId });
 
+  const requestId = z.string().regex(JOIN_REQUEST_ID_PATTERN);
+
+  const joinCancelSchema = z.object({ type: z.literal('join.cancel'), reqId });
+  const joinApproveSchema = z.object({ type: z.literal('join.approve'), reqId, requestId });
+  const joinDenySchema = z.object({ type: z.literal('join.deny'), reqId, requestId });
+
   const clientMessageSchema = z.discriminatedUnion('type', [
     helloSchema,
     groupCreateSchema,
@@ -141,6 +148,9 @@ const schemas = buildJitless(() => {
     groupEndSchema,
     groupLeaveSchema,
     codesRotateSchema,
+    joinCancelSchema,
+    joinApproveSchema,
+    joinDenySchema,
   ]);
 
   const appLimitsSchema = z.object({
@@ -248,6 +258,32 @@ const schemas = buildJitless(() => {
       retryAfterMs: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
     }),
     z.object({ type: z.literal('join.resumed'), groupId: z.string() }),
+    z.object({
+      type: z.literal('join.pending'),
+      reqId,
+      requestId: z.string(),
+      timeoutMs: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    }),
+    z.object({
+      type: z.literal('join.requested'),
+      groupId: z.string(),
+      requestId: z.string(),
+      expiresInMs: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+      displayName: z.string().max(MAX_DISPLAY_NAME_INPUT_LENGTH).optional(),
+    }),
+    z.object({
+      type: z.literal('join.withdrawn'),
+      groupId: z.string(),
+      requestId: z.string(),
+      reason: z.enum(['cancelled', 'disconnected', 'timeout']),
+    }),
+    z.object({
+      type: z.literal('join.decided'),
+      reqId,
+      requestId: z.string(),
+      outcome: z.enum(['admitted', 'group_full', 'denied']),
+    }),
+    z.object({ type: z.literal('join.cancelled'), reqId, requestId: z.string() }),
     z.object({
       type: z.literal('error'),
       reqId,

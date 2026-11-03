@@ -1,6 +1,9 @@
 import type {
   BlockListSetMessage,
   CodesRotateMessage,
+  JoinApproveMessage,
+  JoinCancelMessage,
+  JoinDenyMessage,
   GroupCreateMessage,
   GroupEndMessage,
   GroupJoinMessage,
@@ -43,6 +46,15 @@ export interface Session {
   parked?:
     | { readonly groupKey: string; readonly groupId: string; readonly participantId: string }
     | undefined;
+  /**
+   * Set while this session waits for a leader to approve its method B join
+   * request (#10 AC19). Managed by the ApprovalQueue only. Counts as "in a
+   * group" for ALREADY_IN_GROUP; at most one per session (AC22).
+   */
+  pendingJoin?:
+    { readonly groupKey: string; readonly groupId: string; readonly requestId: string } | undefined;
+  /** False once the socket has closed (#10 R11: approve re-checks it). */
+  isOpen(): boolean;
   /** Sends an already serialized frame to this participant. */
   deliver(text: string): void;
   /**
@@ -80,6 +92,12 @@ export interface GroupActions {
   leave(session: Session, message: GroupLeaveMessage): Promise<ServerMessage>;
   /** Leader replaces every join code of its group (#10 AC30). */
   rotateCodes(session: Session, message: CodesRotateMessage): Promise<ServerMessage>;
+  /** Joiner withdraws its pending request (#10 AC21). */
+  cancelJoin(session: Session, message: JoinCancelMessage): Promise<ServerMessage>;
+  /** Leader admits a pending joiner (#10 AC21). */
+  approveJoin(session: Session, message: JoinApproveMessage): Promise<ServerMessage>;
+  /** Leader refuses a pending joiner (#10 AC21). */
+  denyJoin(session: Session, message: JoinDenyMessage): Promise<ServerMessage>;
   /** Runs the disconnect rules (member removal, group end). */
   disconnect(session: Session): Promise<void>;
 }

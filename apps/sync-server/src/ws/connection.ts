@@ -272,6 +272,7 @@ export class Connection implements HeartbeatTarget {
       connectionId: this.connectionId,
       app,
       membership: undefined,
+      isOpen: () => !this.closed,
       deliver: (text) => {
         this.transmit(text);
       },
@@ -348,6 +349,15 @@ export class Connection implements HeartbeatTarget {
       case 'codes.rotate':
         response = await groups.rotateCodes(session, message);
         break;
+      case 'join.cancel':
+        response = await groups.cancelJoin(session, message);
+        break;
+      case 'join.approve':
+        response = await groups.approveJoin(session, message);
+        break;
+      case 'join.deny':
+        response = await groups.denyJoin(session, message);
+        break;
     }
     this.reply(withReqId(response, message.reqId));
   }
@@ -417,6 +427,9 @@ function canCarryReqId(message: ServerMessage): boolean {
     message.type === 'group.ended' ||
     message.type === 'group.left' ||
     message.type === 'blocklist.ack' ||
-    message.type === 'codes.updated'
+    message.type === 'codes.updated' ||
+    message.type === 'join.pending' ||
+    message.type === 'join.decided' ||
+    message.type === 'join.cancelled'
   );
 }

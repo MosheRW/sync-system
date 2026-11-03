@@ -342,6 +342,10 @@ fix the configuration.
 | `DOOR_CODE_REQUIRED`      | server | A method A group code without the door code. Ask for it and send both.       |
 | `DOOR_CODE_WRONG`         | server | Wrong door code. Five wrong codes rotate it.                                 |
 | `JOIN_PAUSED`             | server | Door-code joining is paused after repeated failures. `details.retryAfterMs`. |
+| `JOIN_DENIED`             | server | The leader denied the join request.                                          |
+| `APPROVAL_TIMEOUT`        | server | The leader did not decide in time.                                           |
+| `APPROVAL_QUEUE_FULL`     | server | The group has 10 pending requests. `details.maxPending`.                     |
+| `JOIN_REQUEST_NOT_FOUND`  | server | Approve, deny or cancel of an unknown or settled request.                    |
 
 Unknown server message types are ignored, so a newer server can add events
 without breaking older clients. A known type with a bad shape, a binary,

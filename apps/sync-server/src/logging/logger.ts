@@ -53,6 +53,8 @@ export const REDACT_PATHS = [
   '*.groupCode',
   'alphaCode',
   '*.alphaCode',
+  'requestId',
+  '*.requestId',
 ];
 
 export interface LoggerOptions {

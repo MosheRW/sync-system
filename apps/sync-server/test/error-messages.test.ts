@@ -15,6 +15,8 @@ const NAMES: Record<string, RegExp> = {
   'blocklist.set': /block list/i,
   'group.joinByCode': /join attempts/i,
   'codes.rotate': /rotat/i,
+  'join.approve': /approve join/i,
+  'join.deny': /deny join/i,
 };
 
 describe('per-action error texts (#7 A1)', () => {
@@ -41,6 +43,8 @@ describe('per-action error texts (#7 A1)', () => {
         'group.end': 'Only the leader can end the group',
         'blocklist.set': 'Only the leader can set the block list',
         'codes.rotate': 'Only the leader can rotate the codes',
+        'join.approve': 'Only the leader can approve join requests',
+        'join.deny': 'Only the leader can deny join requests',
       },
     });
   });

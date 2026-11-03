@@ -15,6 +15,7 @@ import type { AppConfig } from '../apps/app-registry.js';
 import type { GroupRecord, GroupStore } from '../groups/group-store.js';
 import type { Membership, Session } from '../groups/session.js';
 import {
+  MAX_PENDING_APPROVALS_PER_GROUP,
   CODE_ROTATIONS_PER_GROUP_PER_MINUTE,
   CODE_ROTATION_WINDOW_MS,
   DOOR_FAILURES_APP_WINDOW_MS,
@@ -38,6 +39,7 @@ import {
   issueCodeSet,
   rotateDoorCode,
 } from './codes.js';
+import { ApprovalQueue, type PendingRequest, type TakenRequest } from './approval-queue.js';
 import { DoorGuard } from './door-guard.js';
 import { resolveGroupMethods } from './join-methods.js';
 
@@ -78,8 +80,11 @@ export interface JoinHost {
    * The session's leader membership, ownership-checked (M4, R12), or the
    * error to reply (NOT_LEADER with the action's text, NOT_IN_GROUP).
    */
-  ownedLeader(session: Session, action: 'codes.rotate'): Membership | ErrorMessage;
+  ownedLeader(session: Session, action: LeaderAction): Membership | ErrorMessage;
 }
+
+/** The leader-only actions of JoinService, each with its own NOT_LEADER text (R12). */
+export type LeaderAction = 'codes.rotate' | 'join.approve' | 'join.deny';
 
 function isError(value: Membership | ErrorMessage): value is ErrorMessage {
   return 'type' in value && value.type === 'error';
@@ -99,6 +104,13 @@ function groupKey(namespace: string, groupId: string): string {
  */
 const CODE_NOT_FOUND: ErrorMessage = Object.freeze(errorMessage(ErrorCode.CODE_NOT_FOUND));
 const INVALID_MESSAGE: ErrorMessage = Object.freeze(errorMessage(ErrorCode.INVALID_MESSAGE));
+const REQUEST_NOT_FOUND: ErrorMessage = Object.freeze(
+  errorMessage(ErrorCode.JOIN_REQUEST_NOT_FOUND),
+);
+
+/** How a pending request was settled, for the log (never a request ID or name). */
+type SettleOutcome =
+  'admitted' | 'group_full' | 'denied' | 'timeout' | 'cancelled' | 'disconnected' | 'group_gone';
 
 /** A normalized and validated join-by-code request. */
 interface ParsedCodeJoin {
@@ -152,6 +164,8 @@ export class JoinService {
   readonly doors: DoorGuard;
   /** Leader code rotations per group (#10 AC30). */
   private readonly rotateLimiter: SlidingWindowRateLimiter;
+  /** Pending method B requests (#10 AC19-AC22). */
+  readonly approvals: ApprovalQueue;
 
   constructor(
     private readonly deps: JoinServiceDeps,
@@ -164,6 +178,167 @@ export class JoinService {
     this.wrongDoorLimiter = new SlidingWindowRateLimiter(now, DOOR_FAILURES_APP_WINDOW_MS);
     this.doors = new DoorGuard(deps.scheduler);
     this.rotateLimiter = new SlidingWindowRateLimiter(now, CODE_ROTATION_WINDOW_MS);
+    this.approvals = new ApprovalQueue(deps.scheduler);
+  }
+
+  private settled(request: PendingRequest, outcome: SettleOutcome): void {
+    const namespace = request.session.app.namespace;
+    this.deps.logger.info(
+      { event: 'join_settled', namespace, groupRef: groupRef(request.groupId), outcome },
+      'join request settled',
+    );
+  }
+
+  /** `join.requested` for the leader, with the remaining time (#10 AC19, AC34). */
+  private requestedMessage(request: PendingRequest): ServerMessage {
+    const message: ServerMessage = {
+      type: 'join.requested',
+      groupId: request.groupId,
+      requestId: request.requestId,
+      expiresInMs: Math.max(0, request.deadline - this.now()),
+    };
+    if (request.displayName !== undefined) message.displayName = request.displayName;
+    return message;
+  }
+
+  /**
+   * A valid method B code (or a QR ticket of a B group) under the group lock
+   * (#10 AC19, AC22, architecture 4.6): the request is queued with its
+   * deadline; the joiner gets `join.pending`, and the attached leader gets
+   * `join.requested` after its pending replies. A frozen group's request
+   * waits for the leader (Q6.2).
+   */
+  private requestApproval(
+    session: Session,
+    record: GroupRecord,
+    displayName: string | undefined,
+  ): ServerMessage {
+    const namespace = record.appNamespace;
+    const timeoutMs = session.app.approvalTimeoutSeconds * 1000;
+    const added = this.approvals.add(
+      {
+        groupKey: groupKey(namespace, record.id),
+        groupId: record.id,
+        session,
+        displayName,
+        deadline: this.now() + timeoutMs,
+      },
+      (requestId) => this.onApprovalTimeout(namespace, record.id, requestId),
+    );
+    if (added === 'full') {
+      return errorMessage(ErrorCode.APPROVAL_QUEUE_FULL, {
+        details: { maxPending: MAX_PENDING_APPROVALS_PER_GROUP },
+      });
+    }
+    this.deps.logger.info(
+      { event: 'join_requested', namespace, groupRef: groupRef(record.id) },
+      'join requested',
+    );
+    const leader = this.host.leaderOf(record);
+    if (leader !== undefined) this.host.deliverLater(leader, this.requestedMessage(added));
+    return { type: 'join.pending', requestId: added.requestId, timeoutMs };
+  }
+
+  /** The deadline timer: under the group lock, unless the request already settled. */
+  private onApprovalTimeout(namespace: string, groupId: string, requestId: string): void {
+    this.host
+      .runLocked(namespace, groupId, async () => {
+        const taken = this.approvals.take(groupKey(namespace, groupId), requestId);
+        if (taken === undefined) return;
+        this.settled(taken, 'timeout');
+        this.host.deliverLater(taken.session, errorMessage(ErrorCode.APPROVAL_TIMEOUT));
+        await this.withdrawn(namespace, taken, 'timeout');
+      })
+      .catch((err: unknown) => {
+        this.deps.logger.error(
+          { event: 'timer_error', err: safeErr(err) },
+          'approval timer failed',
+        );
+      });
+  }
+
+  /** Tells the attached leader a request left without a decision. Under the lock. */
+  private async withdrawn(
+    namespace: string,
+    request: PendingRequest,
+    reason: 'cancelled' | 'disconnected' | 'timeout',
+  ): Promise<void> {
+    const record = await this.deps.store.get(namespace, request.groupId);
+    const leader = record === undefined ? undefined : this.host.leaderOf(record);
+    if (leader === undefined) return;
+    this.host.deliverLater(leader, {
+      type: 'join.withdrawn',
+      groupId: request.groupId,
+      requestId: request.requestId,
+      reason,
+    });
+  }
+
+  /**
+   * join.approve / join.deny (#10 AC21, R11, R12): the ownership-checked
+   * leader decides a request of its own group only. The request is removed
+   * first, so it settles exactly once. Approve re-checks that the joiner's
+   * socket is still open and still waits for this request; if not, nobody
+   * is added and the leader gets JOIN_REQUEST_NOT_FOUND.
+   */
+  async decide(
+    session: Session,
+    requestId: string,
+    decision: 'approve' | 'deny',
+  ): Promise<ServerMessage> {
+    const action = decision === 'approve' ? 'join.approve' : 'join.deny';
+    const membership = this.host.ownedLeader(session, action);
+    if (isError(membership)) return membership;
+    const namespace = session.app.namespace;
+    const { groupId } = membership;
+    return this.host.runLocked(namespace, groupId, async () => {
+      const again = this.host.ownedLeader(session, action);
+      if (isError(again)) return again;
+      if (again.groupId !== groupId) return errorMessage(ErrorCode.NOT_IN_GROUP);
+      const taken = this.approvals.take(groupKey(namespace, groupId), requestId);
+      if (taken === undefined) return REQUEST_NOT_FOUND;
+      if (decision === 'deny') {
+        this.settled(taken, 'denied');
+        this.host.deliverLater(taken.session, errorMessage(ErrorCode.JOIN_DENIED));
+        return { type: 'join.decided', requestId, outcome: 'denied' };
+      }
+      if (!taken.current || !taken.session.isOpen() || this.host.busy(taken.session)) {
+        this.settled(taken, 'disconnected');
+        return REQUEST_NOT_FOUND;
+      }
+      return this.admitApproved(taken);
+    });
+  }
+
+  /** Adds an approved joiner (#10 AC21): group.joined to it, or GROUP_FULL. Under the lock. */
+  private async admitApproved(taken: TakenRequest): Promise<ServerMessage> {
+    const admitted = await this.host.admit(taken.session, taken.groupId, 'B');
+    // The joiner gets the outcome unsolicited (no reqId): its own request was join.pending.
+    this.host.deliverLater(taken.session, admitted);
+    const outcome = admitted.type === 'group.joined' ? 'admitted' : 'group_full';
+    this.settled(taken, outcome);
+    return { type: 'join.decided', requestId: taken.requestId, outcome };
+  }
+
+  /** join.cancel (#10 AC21): the joiner withdraws; the leader gets `join.withdrawn cancelled`. */
+  async cancel(session: Session): Promise<ServerMessage> {
+    const pending = session.pendingJoin;
+    if (pending === undefined) return REQUEST_NOT_FOUND;
+    const namespace = session.app.namespace;
+    return this.host.runLocked(namespace, pending.groupId, async () => {
+      const taken = this.approvals.takeBySession(session);
+      if (taken === undefined) return REQUEST_NOT_FOUND;
+      this.settled(taken, 'cancelled');
+      await this.withdrawn(namespace, taken, 'cancelled');
+      return { type: 'join.cancelled', requestId: taken.requestId };
+    });
+  }
+
+  /** The leader is back (#10 AC21, AC34): every pending request is re-sent after the reply. */
+  onLeaderReturn(leader: Session, record: GroupRecord): void {
+    for (const request of this.approvals.list(groupKey(record.appNamespace, record.id))) {
+      this.host.deliverLater(leader, this.requestedMessage(request));
+    }
   }
 
   /**
@@ -325,7 +500,9 @@ export class JoinService {
         return this.host.admit(session, groupId, 'C');
       }
       if (record.joinMethods.includes('A')) return this.doorJoin(session, record, parsed);
-      // Method B (approval) is not served yet.
+      if (record.joinMethods.includes('B')) {
+        return this.requestApproval(session, record, parsed.displayName);
+      }
       this.rejected(namespace, 'not_found');
       return CODE_NOT_FOUND;
     });
@@ -509,18 +686,37 @@ export class JoinService {
   }
 
   /**
-   * The group ended or left memory (#10 AC11, R14): its codes are freed at
-   * once and can resolve to a new group later. Runs under the group lock.
+   * The group ended or left memory (#10 AC11, AC22, R14): its codes are
+   * freed at once and can resolve to a new group later, and every pending
+   * joiner gets GROUP_ENDED without a group ID or details (D9, R13). Runs
+   * under the group lock.
    */
   onGroupGone(namespace: string, groupId: string, record: GroupRecord | undefined): void {
+    for (const taken of this.approvals.drain(groupKey(namespace, groupId))) {
+      this.settled(taken, 'group_gone');
+      this.host.deliverLater(taken.session, errorMessage(ErrorCode.GROUP_ENDED));
+    }
     if (record !== undefined) this.index.release(namespace, groupId, record.codes);
     this.doors.clear(groupKey(namespace, groupId));
     this.rotateLimiter.forget(groupKey(namespace, groupId));
   }
 
-  /** A connection closed: its per-connection budgets are forgotten (#10 6). */
-  onDisconnect(session: Session): void {
+  /**
+   * A connection closed (#10 6): its per-connection budgets are forgotten,
+   * and a pending request is withdrawn under the group lock (the leader
+   * gets `join.withdrawn disconnected`).
+   */
+  async onDisconnect(session: Session): Promise<void> {
     this.joinLimiter.forget(session.connectionId);
+    const pending = session.pendingJoin;
+    if (pending === undefined) return;
+    const namespace = session.app.namespace;
+    await this.host.runLocked(namespace, pending.groupId, async () => {
+      const taken = this.approvals.takeBySession(session);
+      if (taken === undefined) return;
+      this.settled(taken, 'disconnected');
+      await this.withdrawn(namespace, taken, 'disconnected');
+    });
   }
 
   /** Server shutdown: forgets every code and budget (AC31). */
@@ -530,6 +726,7 @@ export class JoinService {
     this.appJoinLimiter.clear();
     this.wrongDoorLimiter.clear();
     this.rotateLimiter.clear();
+    this.approvals.clearAll();
     this.doors.clearAll();
     this.warnedAt.clear();
   }

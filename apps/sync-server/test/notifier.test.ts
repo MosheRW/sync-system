@@ -12,6 +12,7 @@ function session(id: string): Session & { received: string[] } {
     received,
     deliver: (text) => received.push(text),
     afterPending: (task) => task(),
+    isOpen: () => true,
   };
 }
 

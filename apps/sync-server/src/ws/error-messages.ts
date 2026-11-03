@@ -25,6 +25,8 @@ export const ACTION_ERROR_TEXT = {
     'group.end': 'Only the leader can end the group',
     'blocklist.set': 'Only the leader can set the block list',
     'codes.rotate': 'Only the leader can rotate the codes',
+    'join.approve': 'Only the leader can approve join requests',
+    'join.deny': 'Only the leader can deny join requests',
   },
 } as const satisfies Record<ActionErrorCode, Record<string, string>>;
 
@@ -63,6 +65,10 @@ export const ERROR_TEXT: Record<GenericErrorCode, string> = {
   DOOR_CODE_REQUIRED: 'Door code required',
   DOOR_CODE_WRONG: 'Wrong door code',
   JOIN_PAUSED: 'Joining with the door code is paused; try again later',
+  JOIN_DENIED: 'The leader denied the join request',
+  APPROVAL_TIMEOUT: 'The join request was not approved in time',
+  APPROVAL_QUEUE_FULL: 'Too many pending join requests for this group',
+  JOIN_REQUEST_NOT_FOUND: 'Join request not found',
 };
 
 interface ErrorOptions {

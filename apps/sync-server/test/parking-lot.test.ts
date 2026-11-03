@@ -11,6 +11,7 @@ function session(): Session {
     membership: undefined,
     deliver: () => undefined,
     afterPending: (task) => task(),
+    isOpen: () => true,
   };
 }
 
