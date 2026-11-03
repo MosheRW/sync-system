@@ -252,6 +252,40 @@ describe('log redaction at any depth (#10 B1)', () => {
     }
   });
 
+  it('removes sensitive keys from setBindings, on the root and on children (C2)', () => {
+    const { out, logger } = capture();
+    logger.setBindings({ displayName: 'SENTINEL-1', a: [{ joinCode: 'SENTINEL-2' }], side: 'r' });
+    logger.info({ event: 'root' }, 'root');
+    const child = logger.child({ side: 'c' });
+    child.setBindings({ ticket: 'SENTINEL-3', msg: 'SENTINEL-4', side2: 'c2' });
+    child.info({ event: 'child' }, 'child');
+    const grandchild = child.child({ side3: 'g' });
+    grandchild.setBindings({ list: [{ doorCode: 'SENTINEL-5' }], side4: 'g2' });
+    grandchild.info({ event: 'grandchild' }, 'grandchild');
+    expect(out.text).not.toContain('SENTINEL');
+    expect(out.records()[0]).toMatchObject({ event: 'root', side: 'r', msg: 'root' });
+    expect(out.records()[1]).toMatchObject({ event: 'child', side2: 'c2', msg: 'child' });
+    expect(out.records()[2]).toMatchObject({ event: 'grandchild', side4: 'g2' });
+  });
+
+  it('forwards only the level from child options (C2)', () => {
+    const { out, logger } = capture();
+    const child = logger.child({ side: 'c' }, {
+      level: 'warn',
+      msgPrefix: 'SENTINEL-1 ',
+      serializers: { displayName: (value: unknown) => value },
+      formatters: { log: (fields: Record<string, unknown>) => fields },
+      redact: { paths: [] },
+    } as unknown as Parameters<typeof logger.child>[1]);
+    child.info({ event: 'below-level' }, 'dropped');
+    child.warn({ event: 'child', displayName: 'SENTINEL-2' }, 'kept');
+    child.child({ side2: 'g' }, { msgPrefix: 'SENTINEL-3 ' }).warn({ event: 'gc' }, 'kept');
+    expect(out.text).not.toContain('SENTINEL');
+    expect(out.events()).toEqual(['child', 'gc']);
+    expect(out.records()[0]).toMatchObject({ side: 'c', msg: 'kept' });
+    expect(out.records()[1]).toMatchObject({ side: 'c', side2: 'g', msg: 'kept' });
+  });
+
   it('does not mutate the logged object', () => {
     const { logger } = capture();
     const fields = { event: 'test', a: { displayName: 'n', list: [{ ticket: 't' }] } };

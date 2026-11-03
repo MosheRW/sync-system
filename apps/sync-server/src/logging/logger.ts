@@ -180,16 +180,34 @@ export function createLogger(options: LoggerOptions): Logger {
     options.destination ?? pino.destination({ dest: 1, sync: false }),
   );
   // Pino resets the bindings formatter for children, so child bindings are
-  // redacted here. Children inherit this property through the prototype
-  // chain, so grandchildren are covered too.
-  // Read unbound on purpose: each child must call it with itself as `this`.
+  // redacted here, and so are bindings set later with setBindings (C2).
+  // Children inherit both properties through the prototype chain, so
+  // grandchildren are covered too.
+  // Read unbound on purpose: each child must call them with itself as `this`.
   type ChildFn = (this: unknown, bindings: object, childOptions?: unknown) => unknown;
+  type SetBindingsFn = (this: unknown, bindings: object) => void;
   const pinoChild = Reflect.get(logger, 'child') as ChildFn;
+  const pinoSetBindings: SetBindingsFn = Reflect.get(logger, 'setBindings');
   const safeChild: ChildFn = function child(this: unknown, bindings, childOptions) {
-    return pinoChild.call(this, redactFields(bindings), childOptions);
+    return pinoChild.call(this, redactFields(bindings), safeChildOptions(childOptions));
+  };
+  const safeSetBindings: SetBindingsFn = function setBindings(this: unknown, bindings) {
+    pinoSetBindings.call(this, redactFields(bindings));
   };
   Reflect.set(logger, 'child', safeChild);
+  Reflect.set(logger, 'setBindings', safeSetBindings);
   return logger;
+}
+
+/**
+ * Only the level is forwarded from child options. The others could write
+ * unredacted text (`msgPrefix`) or replace the redaction (`serializers`,
+ * `formatters`, `redact`), so they are dropped (C2).
+ */
+function safeChildOptions(childOptions: unknown): { level: string } | undefined {
+  if (childOptions === null || typeof childOptions !== 'object') return undefined;
+  const level = (childOptions as { level?: unknown }).level;
+  return typeof level === 'string' ? { level } : undefined;
 }
 
 function ref(value: string): string {
