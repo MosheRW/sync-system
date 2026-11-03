@@ -242,9 +242,13 @@ neither 6 digits nor 8 alphabet characters fails locally with
 app does not allow with `JOIN_METHOD_UNAVAILABLE`. A display name is 1 to 32
 characters after trimming, with at least one visible character (letter,
 number, symbol or punctuation) and no control, format, bidi, invisible,
-private-use or unassigned characters; zero-width joiners, variation selectors
-and tag characters are allowed only inside emoji sequences
-(`INVALID_DISPLAY_NAME`). It is shown only to the leader.
+private-use or unassigned characters, no blank-looking characters (such as
+U+2800, U+3164, U+FFFC or U+13441) and no more than 4 combining marks in a
+row. Zero-width joiners and variation selectors are allowed only inside
+emoji sequences, and tag characters only in the England, Scotland and Wales
+flags. The zero-width non-joiner (U+200C) and a zero-width joiner between
+letters are always rejected, so Persian and Indic names must be entered
+without them (`INVALID_DISPLAY_NAME`). It is shown only to the leader.
 
 The join promise resolves when the joiner is admitted, method B included.
 While it waits, `snapshot.group` is `awaiting_approval` and `indicatorOf`
@@ -598,6 +602,9 @@ blob, join request IDs and display names are never passed.
   group ID, code, ticket, payload or key, so they are safe to report.
 - **Display names are untrusted text** from other users: render them as text
   only.
+- **Isolate the display name** in its own element (`<bdi>` or `dir="auto"`, or
+  FSI ... PDI in plain text), so a right-to-left name cannot reorder the text
+  around it.
 - **Always `catch` `connect()`:** it rejects on failure, and Node 22+ exits on
   unhandled rejections.
 - **SSR:** see "Server-side rendering". In Node, inject `ws` with a small
