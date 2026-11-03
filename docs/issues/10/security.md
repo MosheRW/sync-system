@@ -366,3 +366,101 @@ M2 (follow-up issue: group-create rate and per-app live-group cap), M3 (pause
 griefing, README), L4 (per-connection budgets reset on reconnect, README), L5
 (readable ticket payload, accepted), L6 (long QR ticket ceilings, README),
 N1-N3 above.
+
+---
+
+## Round 3 (targeted: plan revision 2, head d5fb2e2)
+
+Scope: only the delta `4becd58..d5fb2e2` of `architecture.md` (Gate 2
+decisions: Q-B separate ticket generation D12, Q-E = 60), plus the Q-E odds and
+the reworded ACs in 8.6.
+
+**Verdict: PASS.** No critical or high finding. No new required control.
+The user's Q-B choice is sound as designed, and its security cost is smaller
+than the complexity cost I raised in round 2, because the ticket generation is
+derived from the code generation instead of having its own counter.
+
+### Questions checked
+
+**1. R3 and no ticket revival after a restart: kept.**
+- A ticket-revoking change (create, `codes.rotate`, new set on recreation)
+  sets `ticketGeneration = generation = max(prev + 1, nowMs)`. Ticket
+  generations are therefore a subsequence of code generations: strictly
+  increasing and unique per group, so equality matching (`n === ticketGeneration`)
+  can never match a ticket from a different revocation era of the same group.
+  `g` binds the group, and the per-app key binds the app.
+- Recreation without a usable blob: new `ticketGeneration >= nowMs`. Every
+  earlier ticket generation was a code generation set at an earlier time. The
+  code generation can only run ahead of the clock by bumps within the same
+  millisecond (leader rotations at 6/min, door rotations bounded by R1a, the
+  pause and R1b), so a few units at most, never across a real restart. An old
+  ticket stays `QR_INVALID`. The clock-step-back case is unchanged (NTP
+  assumption, equality-only match, bounded by ticket expiry).
+- Recreation with a valid blob whose codes are taken: the new generation is
+  `nextGeneration(blob n, now) > n >= t`, so it revokes. Recreation with a
+  valid, usable blob keeps `t`, as intended (tickets survive a restart).
+- The test rows "Q-B (D12)" and R3 cover these cases, including 50 rotations
+  within one millisecond.
+
+**2. Key and purpose separation: unchanged.** The ticket format and key are
+the same as before (`n` now carries the ticket generation). The blob gains
+`t`, signed under the same codes-blob key, with `t` a safe non-negative
+integer and `t <= n`, checked on verify (a malformed `t` makes the blob
+invalid, i.e. treated as missing, which only ever issues fresh codes). R4 and
+R5 are unaffected. `ticketGeneration` is not on the wire outside the signed
+blob, and the client never parses it.
+
+**3. M1/R2 residual: still acceptable.** R2 compares the code generation only.
+By the invariants (`t <= n`, both monotonic, `t` moves only with `n`), the
+blob with the highest `n` also has the highest `t`, so one comparison is
+enough. N1 (a direct server reply always wins) is folded into 7.3, with an
+explicit `fromServer` write path and a lower-generation test. The residual
+(leader token holder plus a copied old blob revives that era's codes and its
+unexpired tickets) is unchanged in kind and needs the leader token. Accepted.
+
+**4. Security effect of Q-B itself.** Door rotations are a response to door
+guessing, and a QR ticket is a separate 256-bit bearer credential, so not
+revoking tickets on a door rotation loses no protection. The attacker who knows
+the group code can no longer cancel the leader's QR tickets, which removes a
+small griefing lever. The leader's revocation tool for a leaked ticket stays
+`codes.rotate` (also used by item 5's remove-member). Construction-only
+creation of `GroupCodes` (`issueCodeSet` and `rotateDoorCode`) plus invariant
+tests addresses the "forgotten path" risk I raised in round 2.
+
+**5. Q-E = 60 and odds: consistent.** 60 x 1440 x 10^-6 = 0.086 expected
+break-ins per app per day under a nonstop untargeted attack (about 1 in 12
+days). Combined with C on the remaining 540/min of the join budget
+(540 x 1440 x 1000 / 8.5 x 10^11 = about 9 x 10^-4): about 0.087 per day, as in
+8.1. M3 at 60/min: keeping one group paused costs 0.5 wrong codes per minute,
+so about 120 groups, as in 8.5. The R1b test now uses the 61st attempt. The
+spec "Defaults" row and paragraph in 8.6 use 60. Every 5 wrong guesses still
+rotate a door code visibly (R1a). The higher value doubles the residual odds
+compared with my recommendation, and the user accepted that at Gate 2. It
+stays within the "same room" positioning of method A documented by R1c.
+
+**6. Reworded ACs: consistent.** I checked the 8.6 replacements against D12:
+- Design decision 6, AC25, AC29, AC30 and AC32 match the design exactly.
+- AC25 now names both revoking events and excludes door rotation.
+- AC6 ("increases on every rotation" = code generation), AC23, AC24, AC26 and
+  AC40 need no change.
+
+### Low notes (no plan change needed; I'll check them in code mode)
+
+- **N4. AC33 wording:** "a new ticket generation" should read "a higher
+  ticket generation", to match D12 and the R3 proof. The engineer can apply
+  this in commit 21.
+- **N5. Table formatting in section 10:** the "R2 + N1" row lacks its "Where"
+  column, and the "Q-B (D12)" row has an extra column holding the R2 test
+  files. Fix it in the next touch of `architecture.md` so QA can trace the
+  tests.
+- **N6. Code-mode checks:**
+  - no code outside `issueCodeSet` and `rotateDoorCode` assigns `generation`
+    or `ticketGeneration`;
+  - leader return re-signs the blob with the current `t`;
+  - `qr.issue` reads `ticketGeneration`, not `generation`, under the group
+    lock.
+
+### Open advisories (unchanged)
+
+M2 (follow-up issue), M3 (now about 120 groups per app at 60/min), L4, L5, L6,
+N3, plus N4-N6 above.

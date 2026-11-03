@@ -5,8 +5,8 @@
 - PR: #11 (draft)
 - Plan approved by user: yes (Gate 2, with decisions Q-A to Q-E below)
 - Security-sensitive: yes (door codes, approval, brute-force limits, QR ticket signing, codes blob, removal of join by group ID)
-- Review rounds: 0 (code review); security plan review rounds: 2 (round 1 FAIL, round 2 PASS)
-- Last updated by: architect
+- Review rounds: 0 (code review); security plan review rounds: 3 (round 1 FAIL, round 2 PASS, round 3 targeted PASS)
+- Last updated by: security
 
 ## Notes
 - PRD item 4 of 9. "item N" in spec.md means PRD item N, not GitHub issue N.
@@ -60,6 +60,13 @@ Recorded in architecture.md section 12 (plan revision 2).
   commit 9). N3 accepted.
 - Next: security re-check of the Q-B change (D12, 4.7, 4.8, 7.3, 8.6) if the orchestrator
   runs it, then implementation (engineer, 21 commits).
+
+## Security plan review round 3 (targeted, head d5fb2e2)
+- PASS (security.md "Round 3"). D12 separate ticket generation keeps R3 (no ticket
+  revival after restart), key/purpose separation, and the M1/R2 residual; Q-E = 60 odds
+  (~0.086/day per app, ~0.087 with C) and the reworded ACs in architecture 8.6 are consistent.
+- No new required control. Low notes: N4 (AC33 "higher" ticket generation), N5 (section 10
+  table rows R2+N1 / Q-B misaligned), N6 (code-mode checks on generation assignment).
 
 ## Open questions
 - Follow-up to open after Gate 2: M2 group-creation rate and per-app live-group cap.
