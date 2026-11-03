@@ -1,5 +1,6 @@
 import type { AppLimits } from '@sync-system/protocol';
 import { SyncClient } from '../../src/client.js';
+import type { JoinedGroup } from '../../src/state.js';
 import type { SyncClientOptions } from '../../src/options.js';
 import { FakeWebSocket } from './fake-websocket.js';
 
@@ -30,6 +31,20 @@ export const TEST_CODES = {
 
 /** The #10 fields of a `group.created` frame. */
 export const CREATED_FIELDS = { joinMethods: ['A', 'D'], codes: TEST_CODES };
+
+/** Codes that join the fake group (method A). */
+export const JOIN_CODE = '123456';
+export const DOOR_CODE = '654321';
+
+/** Joins the fake group by code, as `joinGroup(groupId)` did before #10. */
+export function joinTestGroup(client: SyncClient): Promise<JoinedGroup> {
+  return client.joinByCode(JOIN_CODE, { doorCode: DOOR_CODE });
+}
+
+/** The `group.joinByCode` frame `joinTestGroup` sends. */
+export function joinFrame(reqId: string): Record<string, unknown> {
+  return { type: 'group.joinByCode', reqId, joinCode: JOIN_CODE, doorCode: DOOR_CODE };
+}
 
 /** The #10 fields of a `group.resumed` frame. */
 export const RESUMED_FIELDS = { ...CREATED_FIELDS, codesChanged: false };

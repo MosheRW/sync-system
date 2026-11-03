@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { isSyncClientError } from '../../src/errors.js';
 import { closeClients, newClient, nextEvent } from '../helpers/int.js';
 import { KEY_A, type RealServer, startRealServer } from '../helpers/real-server.js';
+import { joinCreated } from '../helpers/join.js';
 
 let server: RealServer;
 
@@ -25,8 +26,8 @@ describe('size pre-check against the real server (AC22)', () => {
     const { client: member } = newClient(server.url);
     await leader.connect();
     await member.connect();
-    const { groupId } = await leader.createGroup({});
-    await member.joinGroup(groupId);
+    const created = await leader.createGroup({});
+    await joinCreated(member, created);
 
     const atLimit = 'x'.repeat(254); // 256 bytes with the quotes
     const received = nextEvent(member, 'positionUpdated');

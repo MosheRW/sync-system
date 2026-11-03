@@ -8,6 +8,7 @@ import {
   CREATED_FIELDS,
   connectedClient,
   serverHandshake,
+  joinTestGroup,
 } from './helpers/client.js';
 import { FakeWebSocket } from './helpers/fake-websocket.js';
 import { fakeToken, groupIdOf } from './helpers/tokens.js';
@@ -46,7 +47,7 @@ interface Setup {
 
 async function member(storage: TokenStorage = memoryStorage()): Promise<Setup> {
   const { client, socket } = await connectedClient({ storage });
-  const joining = client.joinGroup(GROUP_ID);
+  const joining = joinTestGroup(client);
   const token = fakeToken({ gid: GROUP_ID, role: 'member' });
   socket.receive({
     type: 'group.joined',

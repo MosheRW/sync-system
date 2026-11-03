@@ -100,6 +100,16 @@ export type GroupState =
       readonly groupId: string;
       readonly reason: GroupEndedReason;
       readonly code?: ClientErrorCode;
+    }
+  | {
+      /**
+       * A method B join request waits for the leader (#10 AC39). No group ID:
+       * the server does not reveal it before admission.
+       */
+      readonly status: 'awaiting_approval';
+      readonly requestId: string;
+      /** Local epoch ms when the server times the request out. */
+      readonly expiresAt: number;
     };
 
 /**
@@ -121,10 +131,30 @@ export interface ConnectedInfo {
   readonly limits: Readonly<AppLimits>;
 }
 
+/**
+ * A group's join codes, for its leader only (#10 AC6, AC40). Show them to
+ * the people who should join; never log them. The signed recovery copy is
+ * kept by the client and is not exposed.
+ */
+export interface JoinCodes {
+  /** Increases on every code change. */
+  readonly generation: number;
+  /** 6 digits; methods A and B. */
+  readonly groupCode?: string;
+  /** 6 digits; method A. */
+  readonly doorCode?: string;
+  /** 8 characters; method C. */
+  readonly alphaCode?: string;
+}
+
 export interface CreatedGroup {
   readonly groupId: string;
   readonly role: 'leader';
   readonly participantId: string;
+  /** The group's join methods (#10 AC38). */
+  readonly joinMethods: readonly JoinMethod[];
+  /** The group's join codes (#10 AC38). */
+  readonly codes: JoinCodes;
 }
 
 export interface JoinedGroup {
@@ -186,8 +216,23 @@ export interface SyncClientEvents {
   error: SyncClientError;
 }
 
+/** Options of `joinByCode()` (#10 AC39). */
+export interface JoinOptions {
+  /** Method A: the 6-digit door code. */
+  readonly doorCode?: string;
+  /** Method B: shown to the leader in the approval prompt (1-32 characters). */
+  readonly displayName?: string;
+}
+
+/** Options of `joinByQr()` (#10 AC39). */
+export interface JoinByQrOptions {
+  /** Shown to the leader if the group needs approval (method B). */
+  readonly displayName?: string;
+}
+
 /** What an app shows for the PRD's sync indicator (AC25). */
-export type SyncIndicator = 'none' | 'following' | 'leading' | 'reconnecting' | 'leader_offline';
+export type SyncIndicator =
+  'none' | 'following' | 'leading' | 'reconnecting' | 'leader_offline' | 'awaiting_approval';
 
 /**
  * Maps a snapshot to the indicator (#5 AC36, Q-E; documented in the README):
@@ -199,11 +244,16 @@ export type SyncIndicator = 'none' | 'following' | 'leading' | 'reconnecting' | 
  * - connected, active member, leader offline: `leader_offline`;
  * - connected, active member, leader online: `following`;
  * - connected, active leader: `leading`;
+ * - connected and waiting for a leader's approval: `awaiting_approval`
+ *   (the request is dropped with the connection, so otherwise `none`, #10);
  * - anything else: `none`.
  */
 export function indicatorOf(snapshot: SyncClientSnapshot): SyncIndicator {
   const { connection, group } = snapshot;
   if (group === null || group.status === 'ended') return 'none';
+  if (group.status === 'awaiting_approval') {
+    return connection.status === 'connected' ? 'awaiting_approval' : 'none';
+  }
   if (connection.status === 'connecting' || connection.status === 'reconnecting') {
     return 'reconnecting';
   }

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { type TokenStorage, memoryStorage } from '../src/storage.js';
-import { CREATED_FIELDS, connectedClient } from './helpers/client.js';
+import { CREATED_FIELDS, connectedClient, joinTestGroup } from './helpers/client.js';
 import { FakeWebSocket } from './helpers/fake-websocket.js';
 import { fakeToken, groupIdOf } from './helpers/tokens.js';
 
@@ -55,7 +55,7 @@ describe('token capture (#5 AC31, AC34)', () => {
   it('stores a member token on join, without recovery data', async () => {
     const storage = memoryStorage();
     const { client, socket } = await connectedClient({ storage });
-    const joining = client.joinGroup(GID);
+    const joining = joinTestGroup(client);
     const token = fakeToken({ gid: GID, role: 'member' });
     socket.receive({
       type: 'group.joined',

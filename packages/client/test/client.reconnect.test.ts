@@ -12,6 +12,7 @@ import {
   connectedClient,
   makeClient,
   serverHandshake,
+  joinTestGroup,
 } from './helpers/client.js';
 import { FakeWebSocket } from './helpers/fake-websocket.js';
 import { fakeToken } from './helpers/tokens.js';
@@ -182,7 +183,7 @@ describe('automatic reconnect (AC26)', () => {
   it('closes the old socket once when send() throws, then reconnects', async () => {
     const { client, socket } = await connectedClient();
     socket.throwOnSend = true;
-    const joining = client.joinGroup(GROUP_ID).catch((error: unknown) => error);
+    const joining = joinTestGroup(client).catch((error: unknown) => error);
     expect(socket.closeCalls).toEqual([{ code: 1000, reason: undefined }]);
     expect(isSyncClientError(await joining, 'CONNECTION_LOST')).toBe(true);
     expect(reconnecting(client).attempt).toBe(1);
@@ -258,13 +259,13 @@ describe('stability window (H1, AC27, Q-D)', () => {
   it('a timeout-caused drop grows the streak (M4)', async () => {
     // Stable only after 30 s, so the 10 s request timeouts are short-lived connections.
     const { client, socket } = await connectedClient({ reconnect: { stableAfterMs: 30_000 } });
-    void client.joinGroup(GROUP_ID).catch(() => {});
+    void joinTestGroup(client).catch(() => {});
     vi.advanceTimersByTime(10_000);
     expect(socket.closeCalls).toHaveLength(1);
     expect(reconnecting(client)).toMatchObject({ attempt: 1, delayMs: 500 });
     const next = nextSocket(client);
     serverHandshake(next);
-    void client.joinGroup(GROUP_ID).catch(() => {});
+    void joinTestGroup(client).catch(() => {});
     vi.advanceTimersByTime(10_000);
     expect(reconnecting(client)).toMatchObject({ attempt: 2, delayMs: 1000 });
     client.close();
@@ -302,11 +303,11 @@ describe('stability window (H1, AC27, Q-D)', () => {
 
   it('clears the group request flag after a timeout drop and a reconnect (R2-L4)', async () => {
     const { client } = await connectedClient();
-    void client.joinGroup(GROUP_ID).catch(() => {});
+    void joinTestGroup(client).catch(() => {});
     vi.advanceTimersByTime(10_000);
     serverHandshake(nextSocket(client));
-    void client.joinGroup(GROUP_ID).catch(() => {});
-    expect(FakeWebSocket.last.lastMessage().type).toBe('group.join');
+    void joinTestGroup(client).catch(() => {});
+    expect(FakeWebSocket.last.lastMessage().type).toBe('group.joinByCode');
     client.close();
   });
 });
@@ -365,7 +366,7 @@ describe('resume timeouts are not stable connections (#7 L4)', () => {
   async function droppedMember(extra: Partial<SyncClientOptions>) {
     const storage = memoryStorage();
     const { client, socket } = await connectedClient({ storage, ...extra });
-    const joining = client.joinGroup(GROUP_ID);
+    const joining = joinTestGroup(client);
     const token = fakeToken({ gid: GROUP_ID, role: 'member' });
     socket.receive({
       type: 'group.joined',

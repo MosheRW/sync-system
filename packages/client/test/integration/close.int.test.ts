@@ -19,7 +19,7 @@ describe('close() against the real server (AC28, AC30)', () => {
     const { client, sockets } = newClient(server.url);
     await client.connect();
     await waitUntil(() => server.server.stats().total === 1, 2000, 'server sees the socket');
-    const joining = client.joinGroup('x'.repeat(43));
+    const joining = client.joinByCode('123456', { doorCode: '654321' });
     client.close();
     const error = await joining.catch((err: unknown) => err);
     expect(isSyncClientError(error, 'CLOSED')).toBe(true);

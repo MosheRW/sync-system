@@ -4,6 +4,7 @@ import { closeClients, newClient, nextEvent } from '../helpers/int.js';
 import { type RealServer, startRealServer } from '../helpers/real-server.js';
 import { type TcpProxy, startTcpProxy } from '../helpers/tcp-proxy.js';
 import { waitUntil } from '../helpers/wait.js';
+import { joinCreated } from '../helpers/join.js';
 
 let server: RealServer | undefined;
 let proxy: TcpProxy | undefined;
@@ -38,8 +39,9 @@ describe('reconnect against the real server (AC26, AC27, AC29, AC30)', () => {
     const { client: member } = newClient(proxy.url);
     await leader.connect();
     await member.connect();
-    const { groupId } = await leader.createGroup({ book: 'b' }, { page: 1 });
-    await member.joinGroup(groupId);
+    const created = await leader.createGroup({ book: 'b' }, { page: 1 });
+    const { groupId } = created;
+    await joinCreated(member, created);
 
     const rejoined = nextEvent(member, 'rejoined');
     proxy.cutAll();
@@ -71,8 +73,9 @@ describe('reconnect against the real server (AC26, AC27, AC29, AC30)', () => {
     });
     await leader.connect();
     await member.connect();
-    const { groupId } = await leader.createGroup({});
-    await member.joinGroup(groupId);
+    const created = await leader.createGroup({});
+    const { groupId } = created;
+    await joinCreated(member, created);
 
     proxy.cutAll();
     leader.close();

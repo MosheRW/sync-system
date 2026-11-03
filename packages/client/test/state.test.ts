@@ -51,6 +51,7 @@ const rejoining: GroupState = {
 };
 const rejoiningLeader: GroupState = { ...rejoining, role: 'leader' };
 const waiting: GroupState = { status: 'waiting', groupId: 'g', role: 'member' };
+const awaiting: GroupState = { status: 'awaiting_approval', requestId: 'r', expiresAt: 0 };
 const endedReasons = [
   'ended_by_leader',
   'leader_timeout',
@@ -88,6 +89,11 @@ describe('indicatorOf (#5 AC36, Q-E)', () => {
     ['connected', memberLeaderOffline, 'leader_offline'],
     ['connected', member, 'following'],
     ['connected', leader, 'leading'],
+    // waiting for a leader's approval (#10 AC39)
+    ['connected', awaiting, 'awaiting_approval'],
+    ['reconnecting', awaiting, 'none'],
+    ['connecting', awaiting, 'none'],
+    ['closed', awaiting, 'none'],
     // anything else
     ['idle', null, 'none'],
     ['connected', null, 'none'],

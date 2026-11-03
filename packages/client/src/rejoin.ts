@@ -35,6 +35,8 @@ export interface RejoinStrategy {
  */
 export const tokenRejoin: RejoinStrategy = {
   onDisconnected(group) {
+    // A pending join request is lost with the connection; no re-request (#10 Q6.3).
+    if (group?.status === 'awaiting_approval') return null;
     if (group?.status === 'active') {
       return {
         status: 'rejoining',

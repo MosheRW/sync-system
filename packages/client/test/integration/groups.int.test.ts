@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import { isSyncClientError } from '../../src/errors.js';
 import { closeClients, newClient, nextEvent } from '../helpers/int.js';
 import { KEY_A, type RealServer, startRealServer } from '../helpers/real-server.js';
+import { joinCreated } from '../helpers/join.js';
 
 let server: RealServer;
 
@@ -33,7 +34,7 @@ describe('groups against the real server (AC15-AC19, AC30)', () => {
     expect(created.role).toBe('leader');
     expect(created.groupId).toMatch(/^[A-Za-z0-9_-]{43}$/);
 
-    const joined = await member.joinGroup(created.groupId);
+    const joined = await joinCreated(member, created);
     expect(joined).toMatchObject({
       role: 'member',
       metadata: { book: 'b1' },
@@ -52,21 +53,23 @@ describe('groups against the real server (AC15-AC19, AC30)', () => {
   it('join without a position reports hasPosition false', async () => {
     const leader = await connected();
     const member = await connected();
-    const { groupId } = await leader.createGroup({});
-    const joined = await member.joinGroup(groupId);
+    const created = await leader.createGroup({});
+    const joined = await joinCreated(member, created);
     expect(joined.hasPosition).toBe(false);
   });
 
-  it('rejects GROUP_NOT_FOUND and GROUP_FULL', async () => {
+  it('rejects CODE_NOT_FOUND and GROUP_FULL', async () => {
     const leader = await connected();
     const member = await connected();
     const third = await connected();
-    let error: unknown = await member.joinGroup('x'.repeat(43)).catch((err: unknown) => err);
-    expect(isSyncClientError(error, 'GROUP_NOT_FOUND')).toBe(true);
+    let error: unknown = await member.joinByCode('ZZZZZZZZ').catch((err: unknown) => err);
+    expect(isSyncClientError(error, 'JOIN_METHOD_UNAVAILABLE')).toBe(true);
+    error = await member.joinByCode('000000', { doorCode: '000001' }).catch((err: unknown) => err);
+    expect(isSyncClientError(error, 'CODE_NOT_FOUND')).toBe(true);
 
-    const { groupId } = await leader.createGroup({});
-    await member.joinGroup(groupId);
-    error = await third.joinGroup(groupId).catch((err: unknown) => err);
+    const created = await leader.createGroup({});
+    await joinCreated(member, created);
+    error = await joinCreated(third, created).catch((err: unknown) => err);
     expect(isSyncClientError(error, 'GROUP_FULL')).toBe(true);
     if (isSyncClientError(error, 'GROUP_FULL')) expect(error.details).toEqual({ maxGroupSize: 2 });
   });
@@ -77,8 +80,8 @@ describe('groups against the real server (AC15-AC19, AC30)', () => {
     expect(() => member.updatePosition(1)).toThrow(
       expect.objectContaining({ code: 'NOT_IN_GROUP' }),
     );
-    const { groupId } = await leader.createGroup({});
-    await member.joinGroup(groupId);
+    const created = await leader.createGroup({});
+    await joinCreated(member, created);
     expect(() => member.updatePosition(1)).toThrow(expect.objectContaining({ code: 'NOT_LEADER' }));
   });
 
@@ -86,8 +89,9 @@ describe('groups against the real server (AC15-AC19, AC30)', () => {
   it('the member stays in the group when the leader disconnects', async () => {
     const leader = await connected();
     const member = await connected();
-    const { groupId } = await leader.createGroup({});
-    await member.joinGroup(groupId);
+    const created = await leader.createGroup({});
+    const { groupId } = created;
+    await joinCreated(member, created);
     const ended = vi.fn();
     member.on('groupEnded', ended);
     leader.close();

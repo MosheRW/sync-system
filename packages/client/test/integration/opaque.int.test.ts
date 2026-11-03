@@ -2,6 +2,7 @@ import type { JsonObject, JsonValue } from '@sync-system/protocol';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { closeClients, newClient, nextEvent } from '../helpers/int.js';
 import { type RealServer, startRealServer } from '../helpers/real-server.js';
+import { joinCreated } from '../helpers/join.js';
 
 let server: RealServer;
 
@@ -33,8 +34,8 @@ describe('opaque passthrough (AC20)', () => {
     const { client: member } = newClient(server.url);
     await leader.connect();
     await member.connect();
-    const { groupId } = await leader.createGroup(metadata, initial);
-    const joined = await member.joinGroup(groupId);
+    const created = await leader.createGroup(metadata, initial);
+    const joined = await joinCreated(member, created);
     expect(joined.metadata).toStrictEqual(metadata);
     expect(joined.position).toStrictEqual(initial);
     expect(Object.hasOwn(joined.metadata, '__proto__')).toBe(true);

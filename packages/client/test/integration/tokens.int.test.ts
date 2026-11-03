@@ -6,6 +6,7 @@ import { type TokenStorage, memoryStorage } from '../../src/storage.js';
 import { closeClients, newClient, nextEvent } from '../helpers/int.js';
 import { type RealServer, startRealServer } from '../helpers/real-server.js';
 import { waitUntil } from '../helpers/wait.js';
+import { joinCreated } from '../helpers/join.js';
 
 let server: RealServer | undefined;
 
@@ -83,8 +84,9 @@ describe('stored tokens against the real server (#5 AC31, AC37, AC38)', () => {
     const { client: member } = newClient(server.url, { storage: memberStorage });
     await leader.connect();
     await member.connect();
-    const { groupId } = await leader.createGroup({}, { page: 1 });
-    await member.joinGroup(groupId);
+    const created = await leader.createGroup({}, { page: 1 });
+    const { groupId } = created;
+    await joinCreated(member, created);
     leader.close();
     member.close();
     await new Promise((resolve) => setTimeout(resolve, 100));
@@ -111,8 +113,9 @@ describe('stored tokens against the real server (#5 AC31, AC37, AC38)', () => {
     const { client: member } = newClient(server.url, { storage: memberStorage });
     await leader.connect();
     await member.connect();
-    const { groupId } = await leader.createGroup({});
-    const joined = await member.joinGroup(groupId);
+    const created = await leader.createGroup({});
+    const { groupId } = created;
+    const joined = await joinCreated(member, created);
     const ended = nextEvent(member, 'groupEnded');
     await leader.addToBlockList(groupId, [joined.participantId]);
     expect(await ended).toEqual({ groupId, reason: 'removed' });
@@ -138,7 +141,7 @@ describe('the client never logs or reports tokens, IDs or payloads (#5 AC39)', (
     await member.connect();
     const metadata = { title: 'SENTINEL-CLIENT-METADATA' };
     const created = await leader.createGroup(metadata, 'SENTINEL-CLIENT-POSITION');
-    const joined = await member.joinGroup(created.groupId);
+    const joined = await joinCreated(member, created);
     await leader.addToBlockList(created.groupId, [randomUUID()]);
     await leader.checkTokens();
     errors.push(

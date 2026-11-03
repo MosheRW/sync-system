@@ -34,6 +34,14 @@ export const ClientErrorCode = {
   TOKEN_NOT_FOUND: 'TOKEN_NOT_FOUND',
   /** The block list would hold more than 256 participant IDs (#5 AC34). */
   BLOCK_LIST_FULL: 'BLOCK_LIST_FULL',
+  /** A join code or door code is not in a valid format; `details.field` (#10 AC12). */
+  INVALID_JOIN_CODE: 'INVALID_JOIN_CODE',
+  /** The display name is empty, too long or has forbidden characters (#10 AC20). */
+  INVALID_DISPLAY_NAME: 'INVALID_DISPLAY_NAME',
+  /** The app (or the group) does not allow that join method (#10 AC38, AC39). */
+  JOIN_METHOD_UNAVAILABLE: 'JOIN_METHOD_UNAVAILABLE',
+  /** `cancelJoin()` withdrew the pending join request (#10 AC39). */
+  JOIN_CANCELLED: 'JOIN_CANCELLED',
 } as const;
 
 export type ClientErrorCode = (typeof ClientErrorCode)[keyof typeof ClientErrorCode];
@@ -43,6 +51,9 @@ export type RequestKind =
   | 'hello'
   | 'group.create'
   | 'group.join'
+  | 'group.joinByCode'
+  | 'group.joinByQr'
+  | 'join.cancel'
   | 'position.update'
   | 'group.resume'
   | 'tokens.check'
@@ -67,6 +78,9 @@ interface KnownDetails {
   INVALID_SERVER_MESSAGE: { issues: string[] };
   INVALID_OPTIONS: { field: string };
   BLOCK_LIST_FULL: { limit: number };
+  INVALID_JOIN_CODE: { field: 'code' | 'doorCode' };
+  JOIN_PAUSED: { retryAfterMs?: number };
+  APPROVAL_QUEUE_FULL: { maxPending?: number };
 }
 
 /** Typed `details` per code; `undefined` for codes without details. */
@@ -125,6 +139,10 @@ const MESSAGES: Record<ClientErrorCode, string> = {
   REQUEST_IN_PROGRESS: 'A group request is already in progress',
   TOKEN_NOT_FOUND: 'No stored token for this group',
   BLOCK_LIST_FULL: 'The block list is full',
+  INVALID_JOIN_CODE: 'The join code is not valid',
+  INVALID_DISPLAY_NAME: 'The display name is not valid',
+  JOIN_METHOD_UNAVAILABLE: 'This join method is not available',
+  JOIN_CANCELLED: 'The join request was cancelled',
 };
 
 /**
@@ -138,6 +156,8 @@ export const ACTION_MESSAGES: {
   RATE_LIMITED: {
     'position.update': 'Too many position updates',
     'tokens.check': 'Too many token checks',
+    'group.joinByCode': 'Too many join attempts',
+    'group.joinByQr': 'Too many join attempts',
   },
   NOT_LEADER: {
     'position.update': 'Only the leader can update the position',
@@ -271,6 +291,18 @@ function serverDetails(code: ErrorCode, raw: Details): unknown {
       const out: KnownDetails['GROUP_FULL'] = {};
       const maxGroupSize = readDetailNumber(raw, 'maxGroupSize');
       if (maxGroupSize !== undefined) out.maxGroupSize = maxGroupSize;
+      return out;
+    }
+    case 'JOIN_PAUSED': {
+      const out: KnownDetails['JOIN_PAUSED'] = {};
+      const retryAfterMs = readDetailNumber(raw, 'retryAfterMs');
+      if (retryAfterMs !== undefined) out.retryAfterMs = retryAfterMs;
+      return out;
+    }
+    case 'APPROVAL_QUEUE_FULL': {
+      const out: KnownDetails['APPROVAL_QUEUE_FULL'] = {};
+      const maxPending = readDetailNumber(raw, 'maxPending');
+      if (maxPending !== undefined) out.maxPending = maxPending;
       return out;
     }
     default:

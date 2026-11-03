@@ -313,6 +313,10 @@ fix the configuration.
 | `REQUEST_IN_PROGRESS`     | client | A create/join is already in flight.                                          |
 | `TOKEN_NOT_FOUND`         | client | No stored token for that group (`resumeGroup`, block-list methods, rejoin).  |
 | `BLOCK_LIST_FULL`         | client | The block list would hold more than 256 IDs (`details.limit`).               |
+| `INVALID_JOIN_CODE`       | client | Not a 6-digit or 8-character code (`details.field`: `code` or `doorCode`).   |
+| `INVALID_DISPLAY_NAME`    | client | Empty, over 32 characters, or with control or invisible characters.          |
+| `JOIN_METHOD_UNAVAILABLE` | client | The app or the group does not allow that join method.                        |
+| `JOIN_CANCELLED`          | client | `cancelJoin()` withdrew the pending request.                                 |
 | `INVALID_API_KEY`         | server | Unknown or missing key. Fatal.                                               |
 | `INVALID_APP_VERSION`     | server | `appVersion` is not semver. Fatal.                                           |
 | `PROTOCOL_TOO_OLD`        | server | This client's protocol is too old. Fatal.                                    |
