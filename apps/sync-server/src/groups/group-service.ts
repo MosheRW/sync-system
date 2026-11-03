@@ -1015,6 +1015,7 @@ export class GroupService implements GroupActions {
 
   async disconnect(session: Session): Promise<void> {
     this.checkLimiter.forget(session.connectionId);
+    this.joins.onDisconnect(session);
     // A parked session just stops waiting.
     this.parking.unpark(session);
     const membership = session.membership;

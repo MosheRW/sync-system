@@ -14,11 +14,17 @@ import {
 import type { AppConfig } from '../apps/app-registry.js';
 import type { GroupRecord, GroupStore } from '../groups/group-store.js';
 import type { Session } from '../groups/session.js';
+import {
+  JOIN_ATTEMPTS_PER_APP_PER_MINUTE,
+  JOIN_ATTEMPTS_PER_CONNECTION_PER_MINUTE,
+  JOIN_WINDOW_MS,
+} from '../limits/constants.js';
+import { SlidingWindowRateLimiter } from '../limits/rate-limiter.js';
 import { type Logger, groupRef } from '../logging/logger.js';
 import type { Scheduler } from '../time/scheduler.js';
 import type { CodesBlobService } from '../tokens/codes-blob.js';
 import type { QrTicketService } from '../tokens/qr-tickets.js';
-import { errorMessage } from '../ws/error-messages.js';
+import { actionErrorMessage, errorMessage } from '../ws/error-messages.js';
 import { CodeIndex } from './code-index.js';
 import {
   type GroupCodes,
@@ -108,12 +114,66 @@ export class JoinService {
   /** Code -> group lookup per app. */
   readonly index = new CodeIndex();
   private readonly random: RandomInt;
+  /** Join attempts per connection (#10 AC27). */
+  private readonly joinLimiter: SlidingWindowRateLimiter;
+  /** Join attempts per app, shared by its connections (#10 AC28). */
+  private readonly appJoinLimiter: SlidingWindowRateLimiter;
+  /** When a per-app budget warning was last logged, per `event:namespace`. */
+  private readonly warnedAt = new Map<string, number>();
 
   constructor(
     private readonly deps: JoinServiceDeps,
     private readonly host: JoinHost,
   ) {
     this.random = deps.random ?? cryptoRandomInt;
+    const now = (): number => this.now();
+    this.joinLimiter = new SlidingWindowRateLimiter(now, JOIN_WINDOW_MS);
+    this.appJoinLimiter = new SlidingWindowRateLimiter(now, JOIN_WINDOW_MS);
+  }
+
+  /**
+   * One warning per window per app when one of its shared budgets is used
+   * up (#10 6.1, as #7 L-2). Namespace only.
+   */
+  private warnOnce(event: string, namespace: string, windowMs: number, text: string): void {
+    const key = `${event}:${namespace}`;
+    const now = this.now();
+    const last = this.warnedAt.get(key);
+    if (last !== undefined && now - last < windowMs) return;
+    this.warnedAt.set(key, now);
+    this.deps.logger.warn({ event, namespace }, text);
+  }
+
+  /**
+   * The join attempt budgets (#10 AC27, AC28, R8): per connection first, so
+   * one socket over its own limit cannot drain the app's budget, then per
+   * app. Both run before any normalization or code lookup. Undefined when
+   * the attempt may go on.
+   */
+  private spendJoinAttempt(session: Session, action: 'group.joinByCode'): ErrorMessage | undefined {
+    const rate = this.joinLimiter.tryAcquire(
+      session.connectionId,
+      JOIN_ATTEMPTS_PER_CONNECTION_PER_MINUTE,
+    );
+    if (!rate.ok) {
+      return actionErrorMessage(ErrorCode.RATE_LIMITED, action, {
+        details: { retryAfterMs: rate.retryAfterMs },
+      });
+    }
+    const namespace = session.app.namespace;
+    const appRate = this.appJoinLimiter.tryAcquire(namespace, JOIN_ATTEMPTS_PER_APP_PER_MINUTE);
+    if (!appRate.ok) {
+      this.warnOnce(
+        'join_app_budget_exhausted',
+        namespace,
+        JOIN_WINDOW_MS,
+        'join attempt budget for the app is used up',
+      );
+      return actionErrorMessage(ErrorCode.RATE_LIMITED, action, {
+        details: { retryAfterMs: appRate.retryAfterMs },
+      });
+    }
+    return undefined;
   }
 
   /** Debug log of a refused attempt: namespace and a fixed cause only (#10 6.1). */
@@ -136,7 +196,10 @@ export class JoinService {
    * to the same group (it may have rotated or been freed meanwhile, R8).
    */
   async joinByCode(session: Session, message: GroupJoinByCodeMessage): Promise<ServerMessage> {
+    // A busy session spends no budget (AC18).
     if (this.host.busy(session)) return errorMessage(ErrorCode.ALREADY_IN_GROUP);
+    const limited = this.spendJoinAttempt(session, 'group.joinByCode');
+    if (limited !== undefined) return limited;
     const namespace = session.app.namespace;
     const parsed = parseCodeJoin(message);
     if (parsed === undefined) return INVALID_MESSAGE;
@@ -243,8 +306,21 @@ export class JoinService {
     if (record !== undefined) this.index.release(namespace, groupId, record.codes);
   }
 
-  /** Server shutdown: forgets every code (AC31). */
+  /** A connection closed: its per-connection budgets are forgotten (#10 6). */
+  onDisconnect(session: Session): void {
+    this.joinLimiter.forget(session.connectionId);
+  }
+
+  /** Server shutdown: forgets every code and budget (AC31). */
   close(): void {
     this.index.clear();
+    this.joinLimiter.clear();
+    this.appJoinLimiter.clear();
+    this.warnedAt.clear();
+  }
+
+  /** Number of tracked limiter keys. For tests only. */
+  get limiterSize(): number {
+    return this.joinLimiter.size + this.appJoinLimiter.size;
   }
 }

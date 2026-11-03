@@ -17,6 +17,7 @@ export const ACTION_ERROR_TEXT = {
   RATE_LIMITED: {
     'position.update': 'Too many position updates',
     'tokens.check': 'Too many token checks',
+    'group.joinByCode': 'Too many join attempts',
   },
   NOT_LEADER: {
     'position.update': 'Only the leader can update the position',

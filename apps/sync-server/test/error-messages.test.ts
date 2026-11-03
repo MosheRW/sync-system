@@ -13,6 +13,7 @@ const NAMES: Record<string, RegExp> = {
   'tokens.check': /token check/i,
   'group.end': /end the group/i,
   'blocklist.set': /block list/i,
+  'group.joinByCode': /join attempts/i,
 };
 
 describe('per-action error texts (#7 A1)', () => {
@@ -31,6 +32,7 @@ describe('per-action error texts (#7 A1)', () => {
       RATE_LIMITED: {
         'position.update': 'Too many position updates',
         'tokens.check': 'Too many token checks',
+        'group.joinByCode': 'Too many join attempts',
       },
       NOT_LEADER: {
         'position.update': 'Only the leader can update the position',

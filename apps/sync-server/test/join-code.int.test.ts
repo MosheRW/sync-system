@@ -308,7 +308,8 @@ describe('normalization and validation (#10 AC12, AC20)', () => {
 
   it('rejects malformed codes, door codes and names with INVALID_MESSAGE', async () => {
     const server = await start();
-    const client = await server.connectReady();
+    let client = await server.connectReady();
+    let sent = 0;
     const bell = String.fromCharCode(7);
     const override = String.fromCharCode(0x202e);
     for (const fields of [
@@ -330,6 +331,8 @@ describe('normalization and validation (#10 AC12, AC20)', () => {
       { joinCode: '123456', displayName: `a${override}b` },
       { joinCode: '123456', displayName: 'x'.repeat(129) },
     ]) {
+      // A fresh connection every 10 attempts stays within its join budget.
+      if (sent++ % 10 === 9) client = await server.connectReady();
       client.send({ type: 'group.joinByCode', reqId: 'bad', ...fields });
       expect(await client.next('error'), JSON.stringify(fields)).toEqual({
         type: 'error',

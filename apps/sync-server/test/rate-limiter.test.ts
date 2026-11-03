@@ -12,6 +12,30 @@ describe('SlidingWindowRateLimiter (AC22)', () => {
     expect(limiter.tryAcquire('g', 5)).toEqual({ ok: false, retryAfterMs: 700 });
   });
 
+  it('checks without recording and records without checking (#10 R1b)', () => {
+    const clock = new TestClock();
+    const limiter = new SlidingWindowRateLimiter(clock.now, 60_000);
+    for (let i = 0; i < 5; i++) expect(limiter.check('app', 3)).toEqual({ ok: true });
+    expect(limiter.size).toBe(0);
+    limiter.record('app');
+    clock.advance(10_000);
+    limiter.record('app');
+    limiter.record('app');
+    expect(limiter.check('app', 3)).toEqual({ ok: false, retryAfterMs: 50_000 });
+    expect(limiter.check('app', 4)).toEqual({ ok: true });
+    // record ignores the limit.
+    limiter.record('app');
+    expect(limiter.check('app', 3)).toEqual({ ok: false, retryAfterMs: 50_000 });
+    clock.advance(50_000);
+    // The first event left the window; three remain.
+    expect(limiter.check('app', 3)).toEqual({ ok: false, retryAfterMs: 10_000 });
+    expect(limiter.check('app', 4)).toEqual({ ok: true });
+    clock.advance(10_000);
+    expect(limiter.check('app', 1)).toEqual({ ok: true });
+    expect(limiter.size).toBe(0);
+    expect(limiter.check('other', 0)).toEqual({ ok: true });
+  });
+
   it('accepts again once the oldest event leaves the window', () => {
     const clock = new TestClock();
     const limiter = new SlidingWindowRateLimiter(clock.now);

@@ -87,6 +87,31 @@ export const TOKENS_CHECK_WINDOW_MS = 60_000;
 export const TOKENS_CHECK_PER_APP_PER_MINUTE = 600;
 
 /**
+ * Join attempts (`group.joinByCode` and `group.joinByQr`, any outcome) per
+ * connection per window (#10 AC27, Q5.2). Fixed, not an app setting.
+ */
+export const JOIN_ATTEMPTS_PER_CONNECTION_PER_MINUTE = 10;
+
+/**
+ * Join attempts per app per window, shared by all of the app's connections
+ * (#10 AC28, Q5.2). Fixed, not an app setting.
+ */
+export const JOIN_ATTEMPTS_PER_APP_PER_MINUTE = 600;
+
+/** Window of the join attempt limiters. */
+export const JOIN_WINDOW_MS = 60_000;
+
+/**
+ * Wrong door codes per app per window, over all of the app's groups (#10
+ * R1b, Gate 2 Q-E). Checked before the door code is compared and charged
+ * only when it is wrong. Fixed, not an app setting.
+ */
+export const DOOR_FAILURES_PER_APP_PER_MINUTE = 60;
+
+/** Window of the per-app wrong door code limiter. */
+export const DOOR_FAILURES_APP_WINDOW_MS = 60_000;
+
+/**
  * Most draws of one join code before giving up with CODES_EXHAUSTED (#10
  * AC9). Each draw is checked against the app's live codes.
  */
