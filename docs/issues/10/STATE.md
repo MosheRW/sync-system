@@ -1,13 +1,13 @@
 # State: #10 Join methods A-D (door code, approval, alphanumeric, QR)
 - Path: full
-- Phase: validation (QA round 3 FAIL, fix round 3 needed)
+- Phase: validation (fix round 3 done, awaiting review round 4)
 - Branch: feat/10-join-methods
 - PR: #11 (ready for review)
 - Plan approved by user: yes (Gate 2, with decisions Q-A to Q-E below)
 - Security-sensitive: yes (door codes, approval, brute-force limits, QR ticket signing, codes blob, removal of join by group ID)
 - Review rounds: 3 (code review); security plan review rounds: 3 (round 1 FAIL, round 2 PASS, round 3 targeted PASS)
 - QA verdict: FAIL (round 3, head 81726e5)
-- Last updated by: qa (round 3)
+- Last updated by: engineer (fix round 3)
 
 ## Notes
 - PRD item 4 of 9. "item N" in spec.md means PRD item N, not GitHub issue N.
@@ -130,6 +130,62 @@ Recorded in architecture.md section 12 (plan revision 2).
   rejected, a regression from round 2, so the user decides; `code` key
   and Unicode-data trade-offs accepted; logger walks each record twice
   (5.2 vs 1.5 us small record), acceptable.
+
+## Gate 3 decision (user, after review round 3)
+- KEEP REJECTING ZWNJ (U+200C) and ZWJ (U+200D) between letters, as in fix
+  round 2. Persian and Indic names must be entered without them (a space,
+  or the form the font picks). Not to be re-allowed; the security
+  suggestion to allow them between letters of certain scripts is declined.
+  Stated in `packages/client/README.md` and in the `join.ts` rule comment.
+
+## Fix round 3 (review round 3)
+- The user asked to close both classes for good: every QA finding and
+  every security low C1-C5, not only the blocking ones.
+- QA-1 / C4 (4e7caa8, `fix(protocol)`): tag characters are accepted only
+  as U+1F3F4 + the tags of gbeng, gbsct or gbwls + U+E007F. Any other tag
+  run (hidden text after the black flag or any other emoji, non-RGI or
+  upper-case subdivisions, extra tags, unterminated runs, FE0F before the
+  tags) is rejected. Tests include a scan of every Extended_Pictographic
+  code point followed by a tag run.
+- QA-2 / C1 (bd2e9a4, `fix(server)`): `msg` is in the exact sensitive set.
+  `logger.info({ msg: X })` writes no `msg`; `logger.info({ msg: X },
+  'real')` writes exactly one `msg`, `real`. Child bindings too.
+- C2 (b7ee301, `fix(server)`): `setBindings` is wrapped with the same
+  redaction as `child`, on the root and inherited by children and
+  grandchildren. Child options forward only `level`; `msgPrefix`,
+  `serializers`, `formatters` and `redact` are dropped.
+- C3 (21ac67d, `fix(server)`): `safeErr` skips the stack header up to the
+  end of the message before keeping `at` lines, so a message containing
+  a newline plus `    at <input>` never lands in `frames` (Node
+  `[ERR_X]` headers handled). If the message is no longer found in the stack (changed after
+  the stack was written, or a replaced stack), no frame is kept. Errors
+  from other realms are recognized (`util.types.isNativeError`).
+- `code`/`name` keys (e7597c7, `fix(server)`): `http_error`, `wss_error`,
+  `ws_error` and `upgrade_socket_error` log `err: safeErr(err)`;
+  `handshake_rejected` logs `errorCode`; `ws_closed` logs `closeCode`.
+  `code` and `name` are now in the exact sensitive set; safeErr results
+  are frozen and passed through whole, so their `name`/`code` stay. A new
+  static test forbids `code`/`name`/`msg` keys at log call sites. Join
+  codes under any key: string values shaped like a group code, alpha code,
+  QR ticket or codes blob are replaced with `[Redacted]` at any depth
+  (request IDs stay key-only: their shape could be a namespace).
+- C5 (1800de6, `fix(protocol)`): U+13441, U+13442, U+FFFC and U+303F are
+  in the blank-looking set (exhaustive one-character oracle updated). More
+  than 4 combining marks in a row (`\p{M}{5,}`) are rejected anywhere;
+  every mark stacked 5 times is rejected (scan). Real names checked to
+  stay within 4: Hebrew with niqqud and cantillation (max 3), Arabic with
+  shadda and harakat (2), Vietnamese NFC and NFD (2), Thai (2), Burmese
+  (up to 4), Tibetan stacks (3), Devanagari, Bengali, Tamil, Khmer.
+- Docs (e61f90e, `docs(client)`): the README display-name rule names the
+  blank characters, the mark limit, the three tag flags and the ZWNJ/ZWJ
+  rejection; a new note recommends isolating the name (`<bdi>`,
+  `dir="auto"`, FSI...PDI).
+- Accepted as inherent per security (no code): confusables/homoglyphs, RTL
+  reordering (README note only), missing-font boxes, Unicode version
+  differences.
+- Checks: lint, typecheck, test (protocol 186, server 912, client 538),
+  build and `pnpm audit --audit-level=high` all exit 0. No dependency
+  changes.
 
 ## Open questions
 - none (M2 is tracked as issue #12).
