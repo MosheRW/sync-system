@@ -1,12 +1,13 @@
 # State: #10 Join methods A-D (door code, approval, alphanumeric, QR)
 - Path: full
-- Phase: implementation
+- Phase: validation
 - Branch: feat/10-join-methods
-- PR: #11 (draft)
+- PR: #11 (ready for review)
 - Plan approved by user: yes (Gate 2, with decisions Q-A to Q-E below)
 - Security-sensitive: yes (door codes, approval, brute-force limits, QR ticket signing, codes blob, removal of join by group ID)
-- Review rounds: 0 (code review); security plan review rounds: 3 (round 1 FAIL, round 2 PASS, round 3 targeted PASS)
-- Last updated by: engineer
+- Review rounds: 1 (code review); security plan review rounds: 3 (round 1 FAIL, round 2 PASS, round 3 targeted PASS)
+- QA verdict: PASS (round 1, head 30e93df)
+- Last updated by: qa
 
 ## Notes
 - PRD item 4 of 9. "item N" in spec.md means PRD item N, not GitHub issue N.
@@ -81,6 +82,19 @@ Recorded in architecture.md section 12 (plan revision 2).
   `t`); `qr.issue` reads `ticketGeneration` under the group lock.
 - Advisories M3, L4, L6 documented in the README; M2 documented with a
   pointer to issue #12 (not implemented).
+
+## QA validation (round 1, head 30e93df)
+- Verdict: PASS (review comment on PR #11).
+- Checks: install --frozen-lockfile, lint, typecheck, test (protocol 70,
+  server 819, client 537), build and `pnpm audit --audit-level=high` all
+  exit 0; CI `check` 2/2 pass; no dependency changes.
+- Acceptance criteria: 45/45 met. Join by group ID is gone from protocol,
+  server, client and both READMEs (BREAKING CHANGE footer on d9c5e28).
+- Deviations: all accepted. Notes: commits 9926c9c and da0ba5d were not
+  lint/typecheck-green alone (fixed by 1c50739, c4475fc; c4475fc would
+  better be `test(server)`); history is not rewritten.
+- Observation: the PR body doesn't mention the breaking removal of
+  `group.join` / `joinGroup()`.
 
 ## Open questions
 - none (M2 is tracked as issue #12).
