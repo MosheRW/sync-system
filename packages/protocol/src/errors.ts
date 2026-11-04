@@ -90,6 +90,18 @@ export const ErrorCode = {
   QR_INVALID: 'QR_INVALID',
   /** A well-formed, correctly signed QR ticket whose time has passed (#10 AC25). */
   QR_EXPIRED: 'QR_EXPIRED',
+  /**
+   * The participant may not be the target of this action: the leader
+   * itself, an offline participant for vice.set, or a take-back by anyone
+   * but the displaced leader (#13 5.3).
+   */
+  NOT_ALLOWED: 'NOT_ALLOWED',
+  /**
+   * The participant ID is not on this group's roster: unknown, of another
+   * group or app, pending, parked or already removed. One answer for every
+   * cause (#13 AC10, AC44).
+   */
+  PARTICIPANT_NOT_FOUND: 'PARTICIPANT_NOT_FOUND',
 } as const;
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];

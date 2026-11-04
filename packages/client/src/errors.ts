@@ -128,6 +128,8 @@ const MESSAGES: Record<ClientErrorCode, string> = {
   JOIN_REQUEST_NOT_FOUND: 'Join request not found',
   QR_INVALID: 'Invalid QR code',
   QR_EXPIRED: 'QR code expired',
+  NOT_ALLOWED: 'Not allowed for this participant',
+  PARTICIPANT_NOT_FOUND: 'Participant not found',
   NOT_CONNECTED: 'Not connected',
   CLOSED: 'The client was closed',
   CONNECTION_LOST: 'The connection was lost',

@@ -108,6 +108,11 @@ export interface GroupResumeMessage {
   /** Leader recovery state (#13 D13): the group's handoff mode, used for a recreation. */
   handoff?: HandoffMode;
   /**
+   * Leader recovery state (#13 D13, AC13): the vice-leader, used for a
+   * recreation; ignored unless that participant rejoins and is not blocked.
+   */
+  viceId?: string;
+  /**
    * The participant's display name, sent again on every resume (#13 AC37,
    * Q5.4). Used when the participant gets a new roster entry (after a
    * restart or an eviction); missing or blank: a generated one. An existing
@@ -193,6 +198,19 @@ export interface JoinDenyMessage {
   requestId: string;
 }
 
+/** The leader designates a present member as vice-leader (#13 AC10). Reply: `vice.updated`. */
+export interface ViceSetMessage {
+  type: 'vice.set';
+  reqId?: string;
+  participantId: string;
+}
+
+/** The leader clears the vice-leader (#13 AC10). Reply: `vice.updated`. */
+export interface ViceClearMessage {
+  type: 'vice.clear';
+  reqId?: string;
+}
+
 export type ClientMessage =
   | HelloMessage
   | GroupCreateMessage
@@ -208,7 +226,9 @@ export type ClientMessage =
   | CodesRotateMessage
   | JoinCancelMessage
   | JoinApproveMessage
-  | JoinDenyMessage;
+  | JoinDenyMessage
+  | ViceSetMessage
+  | ViceClearMessage;
 
 export type ClientMessageType = ClientMessage['type'];
 
@@ -554,6 +574,25 @@ export interface RosterUpdatedMessage {
   participant: RosterEntryWire;
 }
 
+/** To the leader: the reply to vice.set / vice.clear (#13 AC10). */
+export interface ViceUpdatedMessage {
+  type: 'vice.updated';
+  reqId?: string;
+  groupId: string;
+  /** The vice-leader now, or null. */
+  viceId: string | null;
+}
+
+/**
+ * To a participant: it became, or is no longer, the vice-leader (#13 AC11).
+ * Re-sent when the vice rejoins. Nobody else is told (Q3.3).
+ */
+export interface ViceChangedMessage {
+  type: 'vice.changed';
+  groupId: string;
+  isVice: boolean;
+}
+
 /** To the leader: an entry left the roster (leave, removal, eviction; #13 AC31). */
 export interface RosterRemovedMessage {
   type: 'roster.removed';
@@ -597,6 +636,8 @@ export type ServerMessage =
   | RosterSnapshotMessage
   | RosterUpdatedMessage
   | RosterRemovedMessage
+  | ViceUpdatedMessage
+  | ViceChangedMessage
   | ErrorMessage;
 
 export type ServerMessageType = ServerMessage['type'];

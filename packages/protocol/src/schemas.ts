@@ -132,6 +132,7 @@ const schemas = buildJitless(() => {
     joinCodes: z.string().max(MAX_CODES_BLOB_LENGTH).optional(),
     // Leader recovery state (#13 D13); used only for a recreation.
     handoff: z.enum(HANDOFF_MODES).optional(),
+    viceId: z.string().regex(PARTICIPANT_ID_PATTERN).optional(),
     displayName: displayName.optional(),
   });
 
@@ -155,6 +156,10 @@ const schemas = buildJitless(() => {
   const joinApproveSchema = z.object({ type: z.literal('join.approve'), reqId, requestId });
   const joinDenySchema = z.object({ type: z.literal('join.deny'), reqId, requestId });
 
+  const participantId = z.string().regex(PARTICIPANT_ID_PATTERN);
+  const viceSetSchema = z.object({ type: z.literal('vice.set'), reqId, participantId });
+  const viceClearSchema = z.object({ type: z.literal('vice.clear'), reqId });
+
   const clientMessageSchema = z.discriminatedUnion('type', [
     helloSchema,
     groupCreateSchema,
@@ -171,6 +176,8 @@ const schemas = buildJitless(() => {
     joinCancelSchema,
     joinApproveSchema,
     joinDenySchema,
+    viceSetSchema,
+    viceClearSchema,
   ]);
 
   const appLimitsSchema = z.object({
@@ -352,6 +359,13 @@ const schemas = buildJitless(() => {
       groupId: z.string(),
       participantId: z.string().regex(PARTICIPANT_ID_PATTERN),
     }),
+    z.object({
+      type: z.literal('vice.updated'),
+      reqId,
+      groupId: z.string(),
+      viceId: z.string().regex(PARTICIPANT_ID_PATTERN).nullable(),
+    }),
+    z.object({ type: z.literal('vice.changed'), groupId: z.string(), isVice: z.boolean() }),
     z.object({
       type: z.literal('error'),
       reqId,

@@ -4,7 +4,7 @@ import type { ErrorCode, ErrorMessage, JsonValue } from '@sync-system/protocol';
  * Codes that more than one action can return. Each action has its own text
  * (#7 A1, D4), so these codes are only sent through actionErrorMessage().
  */
-export type ActionErrorCode = 'RATE_LIMITED' | 'NOT_LEADER';
+export type ActionErrorCode = 'RATE_LIMITED' | 'NOT_LEADER' | 'NOT_ALLOWED';
 
 /** Codes with one fixed text, sent through errorMessage(). */
 export type GenericErrorCode = Exclude<ErrorCode, ActionErrorCode>;
@@ -22,6 +22,8 @@ export const ACTION_ERROR_TEXT = {
     'group.joinByQr': 'Too many join attempts',
     'qr.issue': 'Too many QR code requests',
     'group.resume': 'Too many group recoveries',
+    'vice.set': 'Too many vice-leader changes',
+    'vice.clear': 'Too many vice-leader clears',
   },
   NOT_LEADER: {
     'position.update': 'Only the leader can update the position',
@@ -31,6 +33,11 @@ export const ACTION_ERROR_TEXT = {
     'join.approve': 'Only the leader can approve join requests',
     'join.deny': 'Only the leader can deny join requests',
     'qr.issue': 'Only the leader can issue QR codes',
+    'vice.set': 'Only the leader can choose the vice-leader',
+    'vice.clear': 'Only the leader can clear the vice-leader',
+  },
+  NOT_ALLOWED: {
+    'vice.set': 'This participant cannot be the vice-leader now',
   },
 } as const satisfies Record<ActionErrorCode, Record<string, string>>;
 
@@ -75,6 +82,7 @@ export const ERROR_TEXT: Record<GenericErrorCode, string> = {
   JOIN_REQUEST_NOT_FOUND: 'Join request not found',
   QR_INVALID: 'Invalid QR code',
   QR_EXPIRED: 'QR code expired',
+  PARTICIPANT_NOT_FOUND: 'Participant not found',
 };
 
 interface ErrorOptions {

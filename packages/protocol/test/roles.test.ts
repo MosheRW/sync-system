@@ -113,3 +113,22 @@ describe('roster frames (#13 AC31)', () => {
     }
   });
 });
+
+describe('vice-leader messages (#13 AC10, AC11)', () => {
+  it('parses vice.set with a participant ID and vice.clear', () => {
+    expect(parseClientMessage({ type: 'vice.set', participantId: PID }).ok).toBe(true);
+    expect(parseClientMessage({ type: 'vice.clear' }).ok).toBe(true);
+    for (const participantId of [undefined, 'p1', PID.toUpperCase(), `${PID}x`]) {
+      expect(parseClientMessage({ type: 'vice.set', participantId }).ok).toBe(false);
+    }
+    expect(parseClientMessage({ type: 'group.resume', token: 't', viceId: 'p1' }).ok).toBe(false);
+  });
+
+  it('parses vice.updated with an ID or null, and vice.changed', () => {
+    expect(parseServerMessage({ type: 'vice.updated', groupId: GID, viceId: PID }).ok).toBe(true);
+    expect(parseServerMessage({ type: 'vice.updated', groupId: GID, viceId: null }).ok).toBe(true);
+    expect(parseServerMessage({ type: 'vice.updated', groupId: GID }).ok).toBe(false);
+    expect(parseServerMessage({ type: 'vice.changed', groupId: GID, isVice: true }).ok).toBe(true);
+    expect(parseServerMessage({ type: 'vice.changed', groupId: GID }).ok).toBe(false);
+  });
+});

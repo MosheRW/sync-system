@@ -17,6 +17,7 @@ function record(overrides: Partial<GroupRecord> = {}): GroupRecord {
     term: 1,
     recoveredAt: undefined,
     handoff: 'auto',
+    viceId: undefined,
     roster: [],
     nextAdmissionSeq: 0,
     nextGuestNumber: 1,

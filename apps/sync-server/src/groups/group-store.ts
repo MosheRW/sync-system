@@ -37,6 +37,12 @@ export interface GroupRecord {
    * process (#13 6.9).
    */
   recoveredAt: number | undefined;
+  /**
+   * The vice-leader (#13 AC10-AC13): a roster pid that is not the leader and
+   * not blocked, or undefined. Kept over a disconnect; cleared when it
+   * leaves, is removed or becomes leader.
+   */
+  viceId: string | undefined;
   /** `auto` hands off after the grace period; `frozen` never does (#13 AC3). */
   handoff: HandoffMode;
   /** False while the leader is offline: the group is frozen (#5 AC18). */

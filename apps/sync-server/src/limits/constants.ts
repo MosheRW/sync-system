@@ -99,6 +99,12 @@ export function rosterSnapshotMaxBytes(maxGroupSizeCeiling: number): number {
 /** Room next to a roster snapshot in an empty outbound buffer (#13 5.5). */
 export const ROSTER_SNAPSHOT_HEADROOM_BYTES = 32_768;
 
+/** Window of the per-group leader control limiters (#13 8.2). */
+export const LEADER_CONTROL_WINDOW_MS = 60_000;
+
+/** vice.set and vice.clear per group per window (#13 8.2, Q-E). */
+export const VICE_CHANGES_PER_GROUP_PER_MINUTE = 10;
+
 /** How often expired ended-group refs are swept. */
 export const ENDED_SWEEP_MS = 60_000;
 

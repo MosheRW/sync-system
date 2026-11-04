@@ -20,6 +20,9 @@ import {
   type TokenRole,
   type TokensCheckMessage,
   type TokensResultMessage,
+  type ViceClearMessage,
+  type ViceSetMessage,
+  PARTICIPANT_ID_PATTERN,
   resolveDisplayName,
 } from '@sync-system/protocol';
 import type { AppConfig } from '../apps/app-registry.js';
@@ -57,6 +60,7 @@ import {
   setConnected,
   toWire,
 } from '../lifecycle/roster.js';
+import { LeaderControls } from '../lifecycle/leader-controls.js';
 import { type GroupRecord, type GroupStore, connectedCount } from './group-store.js';
 import type { EndedGroups } from './ended-groups.js';
 import { GroupTimers } from './group-timers.js';
@@ -158,6 +162,8 @@ export class GroupService implements GroupActions {
   private readonly appBudgetWarnedAt = new Map<string, number>();
   /** Join codes and every join flow (#10). */
   private readonly joins: JoinService;
+  /** Vice, lock, removal and the other leader controls (#13 3.1). */
+  private readonly controls: LeaderControls;
   /** Group recreations per connection (#13 RC20). */
   private readonly recreateLimiter: SlidingWindowRateLimiter;
   /** When this process started (#13 6.9 layer 2). */
@@ -186,6 +192,18 @@ export class GroupService implements GroupActions {
     this.checkLimiter = new SlidingWindowRateLimiter(() => this.now(), TOKENS_CHECK_WINDOW_MS);
     this.appCheckLimiter = new SlidingWindowRateLimiter(() => this.now(), TOKENS_CHECK_WINDOW_MS);
     this.recreateLimiter = new SlidingWindowRateLimiter(() => this.now(), RECREATION_WINDOW_MS);
+    this.controls = new LeaderControls(
+      {
+        asLeader: (session, action, task) => this.asLeader(session, action, task),
+        patch: async (record, patch) =>
+          (await this.deps.store.patch(record.appNamespace, record.id, patch)) ?? record,
+        sessionOf: (record, pid) => this.sessionOf(record, pid),
+        deliverLater: (session, message) => this.deliverLater(session, message),
+        rosterUpdated: (record, pid) => this.rosterUpdated(record, pid),
+        now: () => this.now(),
+      },
+      deps.logger,
+    );
     this.processStartedAt = deps.processStartedAt ?? deps.scheduler.now();
     this.timers = new GroupTimers(deps.scheduler);
     this.parking = new ParkingLot(deps.scheduler);
@@ -200,6 +218,7 @@ export class GroupService implements GroupActions {
     this.checkLimiter.clear();
     this.appCheckLimiter.clear();
     this.recreateLimiter.clear();
+    this.controls.close();
     this.appBudgetWarnedAt.clear();
     this.joins.close();
   }
@@ -374,6 +393,7 @@ export class GroupService implements GroupActions {
       term: now,
       recoveredAt: undefined,
       handoff: message.handoff ?? app.defaultHandoff,
+      viceId: undefined,
       leaderOnline: true,
       blockList: [],
       joinMethods: initial.methods,
@@ -446,6 +466,26 @@ export class GroupService implements GroupActions {
       if (isGuardError(auth)) return auth;
       return task(record!, auth);
     });
+  }
+
+  /** vice.set (#13 AC10). */
+  setVice(session: Session, message: ViceSetMessage): Promise<ServerMessage> {
+    return this.controls.setVice(session, message);
+  }
+
+  /** vice.clear (#13 AC10). */
+  clearVice(session: Session, message: ViceClearMessage): Promise<ServerMessage> {
+    return this.controls.clearVice(session, message);
+  }
+
+  /** The vice is told again when it rejoins, after its reply (#13 5.2, AC13). */
+  private tellReturningVice(record: GroupRecord, pid: string): void {
+    if (pid === record.viceId) this.controls.tellVice(record, pid, true);
+  }
+
+  /** The session attached as `pid` in the group, if any. */
+  private sessionOf(record: GroupRecord, pid: string): Session | undefined {
+    return this.deps.notifier.get(membershipKey(record.appNamespace, record.id, pid));
   }
 
   /** codes.rotate (#10 AC30). */
@@ -705,12 +745,17 @@ export class GroupService implements GroupActions {
     const blockList = [...new Set(list)].filter((id) => id !== record.leaderId);
     const result = await this.deps.store.setBlockList(namespace, record.id, blockList);
     if (!result) return;
-    // Blocked participants leave the roster, attached or not (#13 AC31).
+    // Blocked participants leave the roster, attached or not (#13 AC31),
+    // and a blocked vice-leader loses the designation (AC12).
     const gone = record.roster.filter((e) => blockList.includes(e.pid)).map((e) => e.pid);
+    if (record.viceId !== undefined && blockList.includes(record.viceId)) {
+      await this.controls.applyVice(record, undefined);
+    }
     if (gone.length > 0) {
-      const updated = await this.putRoster(record, {
-        ...rosterStateOf(record),
-        roster: removeFromRoster(record.roster, gone),
+      const current = (await this.deps.store.get(namespace, record.id)) ?? record;
+      const updated = await this.putRoster(current, {
+        ...rosterStateOf(current),
+        roster: removeFromRoster(current.roster, gone),
       });
       this.rosterRemoved(updated, gone);
     }
@@ -774,9 +819,12 @@ export class GroupService implements GroupActions {
       session.membership = undefined;
       const result = await this.deps.store.removeParticipant(app.namespace, groupId, participantId);
       if (current !== undefined) {
-        const updated = await this.putRoster(current, {
-          ...rosterStateOf(current),
-          roster: removeFromRoster(current.roster, [participantId]),
+        // A vice-leader who leaves loses the designation (#13 AC12).
+        if (current.viceId === participantId) await this.controls.applyVice(current, undefined);
+        const latest = (await this.deps.store.get(app.namespace, groupId)) ?? current;
+        const updated = await this.putRoster(latest, {
+          ...rosterStateOf(latest),
+          roster: removeFromRoster(latest.roster, [participantId]),
         });
         this.rosterRemoved(updated, [participantId]);
       }
@@ -976,6 +1024,15 @@ export class GroupService implements GroupActions {
       recoveredAt: Math.max(now, claims.term + 1),
       // From the leader's recovery state, else the app default (#13 D13).
       handoff: message.handoff ?? app.defaultHandoff,
+      // Kept only if it is not the leader and not blocked; it takes effect
+      // when that participant is admitted again (#13 AC13, 6.7).
+      viceId:
+        message.viceId !== undefined &&
+        message.viceId !== claims.pid &&
+        PARTICIPANT_ID_PATTERN.test(message.viceId) &&
+        !(message.blockList ?? []).includes(message.viceId)
+          ? message.viceId
+          : undefined,
       leaderOnline: true,
       // Deduplicated; the leader's own ID is ignored.
       blockList: [...new Set(message.blockList ?? [])].filter((id) => id !== claims.pid),
@@ -1102,6 +1159,7 @@ export class GroupService implements GroupActions {
       }
       const entered = await this.enterRoster(added.group, participantId, name);
       this.attach(member, { groupId: record.id, participantId });
+      this.tellReturningVice(entered, participantId);
       const token = this.issueToken(namespace, entered, participantId, 'member', this.now());
       this.deliverLater(member, this.joinedMessage(entered, participantId, token));
     }
@@ -1154,7 +1212,7 @@ export class GroupService implements GroupActions {
 
   /** Roster entries that are never evicted (#13 D10, RC10). */
   private protectedPids(record: GroupRecord): Array<string | undefined> {
-    return [record.leaderId];
+    return [record.leaderId, record.viceId];
   }
 
   /** Sends `message` to the group's attached leader, after its pending replies. */
@@ -1255,6 +1313,7 @@ export class GroupService implements GroupActions {
     }
     const entered = await this.enterRoster(added.group, claims.pid, name);
     this.attach(session, { groupId: record.id, participantId: claims.pid });
+    this.tellReturningVice(entered, claims.pid);
     this.deps.logger.info(
       {
         event: 'group_resumed',
@@ -1374,6 +1433,7 @@ export class GroupService implements GroupActions {
   private forgetGroup(namespace: string, groupId: string, record: GroupRecord | undefined): void {
     const key = groupKey(namespace, groupId);
     this.deps.rateLimiter.forget(key);
+    this.controls.forgetGroup(namespace, groupId);
     this.timers.clear(key);
     this.refresher.clear(key);
     this.joins.onGroupGone(namespace, groupId, record);

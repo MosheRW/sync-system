@@ -365,6 +365,12 @@ export class Connection implements HeartbeatTarget {
       case 'join.deny':
         response = await groups.denyJoin(session, message);
         break;
+      case 'vice.set':
+        response = await groups.setVice(session, message);
+        break;
+      case 'vice.clear':
+        response = await groups.clearVice(session, message);
+        break;
     }
     this.reply(withReqId(response, message.reqId));
   }
@@ -438,6 +444,7 @@ function canCarryReqId(message: ServerMessage): boolean {
     message.type === 'join.pending' ||
     message.type === 'join.decided' ||
     message.type === 'join.cancelled' ||
-    message.type === 'qr.ticket'
+    message.type === 'qr.ticket' ||
+    message.type === 'vice.updated'
   );
 }

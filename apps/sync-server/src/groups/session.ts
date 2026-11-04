@@ -14,6 +14,8 @@ import type {
   PositionUpdateMessage,
   TokensCheckMessage,
   ServerMessage,
+  ViceClearMessage,
+  ViceSetMessage,
 } from '@sync-system/protocol';
 import type { AppConfig } from '../apps/app-registry.js';
 
@@ -104,6 +106,10 @@ export interface GroupActions {
   approveJoin(session: Session, message: JoinApproveMessage): Promise<ServerMessage>;
   /** Leader refuses a pending joiner (#10 AC21). */
   denyJoin(session: Session, message: JoinDenyMessage): Promise<ServerMessage>;
+  /** Leader designates the vice-leader (#13 AC10). */
+  setVice(session: Session, message: ViceSetMessage): Promise<ServerMessage>;
+  /** Leader clears the vice-leader (#13 AC10). */
+  clearVice(session: Session, message: ViceClearMessage): Promise<ServerMessage>;
   /** Runs the disconnect rules (member removal, group end). */
   disconnect(session: Session): Promise<void>;
 }
