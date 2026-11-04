@@ -5,7 +5,7 @@
 - PR: #14 (draft)
 - Plan approved by user: no
 - QA loops: 0
-- Last updated by: architect
+- Last updated by: security
 ## Gate 1 decisions
 - User accepted every recommended default Q1.1-Q7 as written in `spec.md`,
   with one change: Q5.5 display names use the existing strict #10 rule
@@ -16,6 +16,9 @@
 - Security plan review (`docs/issues/13/security.md`): round 1 FAIL on H1.
   Plan revision 1 done (see Deviations); needs security plan re-check
   (round 2) before Gate 2.
+- Security round 2: FAIL on H2 (supersede after a drop without restart,
+  and same-`rt` ordering); architect to revise 6.6.1/6.6.2 per
+  `security.md` "Round 2" before Gate 2.
 ## Deviations from plan
 - Board: `.claude/github-project.env` had an empty `GH_PROJECT_NUMBER`; the card was added to project 8 ("sync system") with a temporary config copy. Restored to 8 on this branch in 8880f2d.
 - Plan revision 1 (after security round 1): H1 closed in architecture.md 6.6
@@ -30,3 +33,4 @@
 - architect planning: opus (default for architect; pm NEXT_MODEL opus) → DONE; recommends opus for engineer (Implementer model: opus)
 - security plan review: opus (rule: security always opus) → FAIL (H1); recommends opus for architect revision
 - architect plan revision 1: opus (security NEXT_MODEL opus; revision after a failed review) -> DONE; recommends opus for security re-check and engineer
+- security plan review round 2: opus → FAIL (H2: drop-without-restart and same-rt ordering defeat supersede; fix = recoveredAt + (rt, term) anchor); recommends opus for architect revision

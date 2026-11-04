@@ -282,3 +282,123 @@ apps to render the flag (or the ID) so the leader can tell them apart.
 - Client: leader-only state cleared on demotion; preview never sends a
   position; nothing new in tokens.
 - Scanners: gitleaks, semgrep, `pnpm audit` (no new dependency expected).
+
+## Round 2 (plan revision 1, head b12b372)
+
+Reviewed: `git diff 19b8695..b12b372` of `architecture.md` (6.6.1-6.6.4,
+6.7, 6.8, D3-D6, D10, D14, 8.2, 9.3, 11-14) and `STATE.md`.
+
+**Verdict: FAIL.** The round-1 items are closed (table below), and the `rt`
+claim is a good idea: it correctly carries the "which pre-recovery grant does
+this line descend from" fact across a second restart. But the two guards that
+use `processStartedAt` treat "before this process started" as "before the
+recovery". A recovery also happens **without a restart**: a group that is
+dropped from memory (#5 AC22, the leader disconnects with nobody else
+connected) is recreated by the next leader token that arrives. In that case
+the revised rule never lets the real leader supersede, and it is worse than
+round 0, which would have. That is H2 below. I missed this case in my own
+H1 fix in round 1 (I proposed `processStartedAt`); the corrected rule is
+stated below, and it keeps every row of 6.6.3.
+
+### Round-1 findings: status
+
+| Finding | Status |
+|---|---|
+| H1 restart | Closed for restarts (6.6.3 rows 1-8, 10-13 hold). Re-opened in a different form for drops (H2). |
+| M1 codes after supersede | Closed (6.6.2 step 5, `rotateAll` codes and ticket generation). |
+| M2 redaction keys | Closed (`logger.ts` row; any-depth test with a record-shaped object). |
+| M3 eviction | Closed (D10 protected entries, removal of offline entries). |
+| M4 residual | Accepted and documented; `admittedSinceRecovery` marker taken (6.6.4). Fine. |
+| L1 supersede order | Closed (6.6.2 step 1). |
+| L2 member-token leader return | Adopted in part (bound by that token's `lat`). Fine. |
+| L3 leave clears slot, leave check in lock | Closed (6.6, 6.7). |
+| L4 client drops leader data | Closed (9.3, RC12 test). |
+| L5 first ack uncharged | Adopted (8.2). |
+| L6-L8 | Addressed in tests / README (L6 test, L7/L8 docs). |
+| Gate 2 conditions Q-A to Q-E | Folded into D5, D6, D9, D14 and 6.8 as stated. |
+| RC1-RC14 | Mapped to commits (14.1). |
+
+### High (blocking)
+
+**H2. After a drop (no restart), a stale displaced leader who recreates first keeps the lead for good. Also, within one recovered line, a stale leader beats a later leader of the same line.**
+Location: 6.6.1 guards 2 and 4 (`recoveredTerm < processStartedAt`,
+`claims.rt < processStartedAt`), 6.6.3 row 9 ("never supersedes"), and guard 3
+(`recoveredTerm < claims.rt`, strict on `rt` only).
+
+(a) Drop. Everything happens in one process P1 (`processStartedAt = S1`). A
+creates at T0 >= S1 and is displaced to B at T1. B removes A. Later, B
+disconnects while no one else is connected, so the group is dropped (not
+ended; #5 AC22). A's leader token `(T0, rt T0)` is still inside its `lat`
+window, so A recreates: `recoveredTerm = T0`. B arrives with `(T1, rt T1)`.
+Guard 2 fails (`T0 >= S1`), so B resumes as a plain member. B is not on A's
+stale list, A is the leader, A is not blocked, and A can now remove B. A
+malicious A doesn't even have to guess the moment: `tokens.check` on its
+leader token turns from `live` to `recoverable` when the group is dropped (10
+checks a minute). An honest A whose phone was locked at handoff time gets the
+same result by accident. Preconditions: a drop within about 25 min of A's
+last leader activity. That is common in small groups, and no restart is
+needed. Same impact as H1.
+
+(b) Same `rt`. Inside a recovered line every grant has the same `rt = R`. B
+leads with `(X, rt R)` and hands off to C `(Y, rt R)`, `Y > X`. Then a drop or
+a restart, and B recreates first: `recoveredTerm = R`. C has `rt = R`, which is
+not `> R`, so C can't supersede, and the stale B keeps the lead. Fewer
+preconditions line up here than in (a) (a recovered line, then a handoff,
+then a drop or restart), but it's the same class.
+
+**Fix** (6.6.1 and 6.6.2, `resume.ts`, commit 13). Two changes: replace
+"before this process started" with "granted before *this recreation*", and
+order grants by the pair `(rt, term)`:
+- On every recreation: `record.recoveredAt = now` (the clock at the
+  recreation) and `record.anchor = (claims.rt, claims.term)` of the
+  recreating token. A created group has no anchor.
+- `canSupersede` = anchor defined (guard 1, unchanged)
+  && `claims.role === 'leader'` && `claims.pid !== record.leaderId`
+  && `claims.term < record.recoveredAt` (the grant predates this recreation,
+  so no grant made in the recreated line qualifies, whether it was made
+  before or after a restart)
+  && `(claims.rt, claims.term) > record.anchor`, compared lexicographically
+  (newer pre-recovery line first, then later grant within the same line)
+  && `lat` and max-session checks. `processStartedAt` is no longer needed in
+  the rule. Keep it only if you want it for logs or tests.
+- On supersede: `record.anchor = (claims.rt, claims.term)`, `recoveredAt`
+  unchanged, `term = nextTerm(max(record.term, claims.term), now)` (already
+  planned; this is what keeps a superseded line's later tokens above the
+  stale line's tokens on a later drop), and new tokens carry `rt = claims.rt`.
+  `rt` issuance is unchanged: `recoveredTerm ?? term`, where `recoveredTerm`
+  is `anchor.rt`.
+
+Checked against 6.6.3 (`rA` = `recoveredAt`). Row 1: anchor `(T0,T0)`, B
+`(T1,T1)`, `T1 < rA` and `(T1,T1) > (T0,T0)` -> supersedes. Row 2: M's
+`m >= rA` -> member. Rows 3, 4, 7: A/M have a lower pair -> member/blocked.
+Row 5: M recreates, anchor `(T0, m)`, B `(T1,T1)` is greater and `T1 < rA2`
+-> supersedes. Row 6: both orders hold. Row 8: no anchor -> never. Row 9
+**changes**, correctly: if the recreator is the latest leader, every other
+token has a lower pair. If it is a stale leader, the later leader supersedes
+(this is H2a). Row 10: C's `(T2,T2) > (T1,T1)` -> supersedes. Rows 11-13
+unchanged. H2b: anchor `(R, X)`, C's `(R, Y)` is greater and `Y < rA` ->
+supersedes.
+
+Clock behaviour: `nextTerm` can run slightly ahead of `now` (same-ms grants),
+and the clock can step back. In both cases a genuine token can have
+`term >= recoveredAt`. That fails **closed** (no supersede, the residual M4
+window), the same as the revision's clock-behind note. Document it with that
+note.
+
+Tests to add to `restart-handoff.int` / `resume.test.ts`:
+- H2a without a restart: drop, then the stale A recreates, B supersedes and A
+  is removed by B's list.
+- H2a with A polling `tokens.check` until `recoverable`.
+- H2b in both a drop and a restart variant.
+- Row 9 rewritten (stale in-process recreator, then the later leader
+  supersedes).
+- A `canSupersede` truth table over the pair comparison, including equal
+  `rt` with a lower, equal and higher `term`.
+
+### No new medium or low findings
+
+The rest of the diff is sound: the 6.8 check order, D14, D6 detaching, D10
+protected entries, the L5 carve-out and the client clean-up. 11 still says
+"after a restart" for the residual. It should say "after a restart or a
+drop", because a drop opens the same stale-leader window (bounded by the
+stale token's `lat`).
