@@ -31,12 +31,15 @@ Parked #9 and #12 are out of scope (section 11 notes the overlap).
   generation (D4). Inside one process it orders grants and makes timers
   stale-safe.
 - **Recovery anchor** (`rt` claim, revision 1 after the security plan review,
-  H1): every token also carries the *pre-restart* term its leadership line was
-  recovered from (`rt = term` for a line that was never recovered). After a
-  restart, only a leader token whose anchor is newer than the recreated
-  group's anchor *and* older than this process may supersede the recreator
-  (section 6.6). Grants made inside the new process never gain supersede
-  power, so a stale leader can't launder its old term through a handoff.
+  H1; rule revised in revision 2, H2): every token also carries the term its
+  leadership line was recovered from (`rt = term` for a line that was never
+  recovered). Every recreation (after a restart **or** a drop) stamps the
+  record with `recoveredAt = now` and `anchor = (rt, term)` of the recreating
+  token. Only a leader token granted **before this recreation**
+  (`term < recoveredAt`) whose `(rt, term)` pair is greater than the anchor
+  may supersede the recreator (section 6.6). Grants made after the recreation
+  never gain supersede power, so a stale leader can't launder its old term
+  through a handoff.
 - **Roster** with names, admission order and connected flags lives in the
   record. It is sent only to the leader, as a snapshot plus deltas. Names
   follow the strict #10 rule; blank or missing names get `Guest N`.
@@ -80,7 +83,7 @@ Connection ──> GroupService (facade, GroupActions, per-group KeyedLock)
 | --- | --- | --- |
 | D1 | **Delete `Membership.role`.** A session's membership is `{groupId, participantId}` only. Who leads is `record.leaderId`, read under the group lock. `authorizeLeader()` in `leader-guard.ts` is the one function every leader-only action calls *inside* the lock. Order: parked or pending joiner -> `NOT_LEADER`; no owned membership -> `NOT_IN_GROUP`; record missing -> `NOT_IN_GROUP`; `record.leaderId !== participantId` -> `NOT_LEADER`. | AC6, AC8, spec decision 1. The type checker then finds every call site that used the cached role (`update`, `end`, `setBlockList`, `ownedLeader`, `disconnect`), so none can be missed. |
 | D2 | **`position.update` runs under the group lock** (size check before the lock, rate limit last, as today). | Without the lock an update racing a handoff could be relayed after the handoff (AC8). The lock is in-process and uncontended at <= 10 updates/s per group. |
-| D3 | **Leadership term and recovery anchor.** `term`: integer ms, set at create to `createdAt`, and on every handoff, take-back or supersede to `nextTerm = max(record.term + 1, nowMs)` (supersede: `nextTerm(max(record.term, claims.term), nowMs)`). A recreation keeps the token's term. **`rt`** (recovery anchor): `record.recoveredTerm` is set only by a recreation (`= claims.rt`) or a supersede (`= claims.rt`); every issued token carries `rt = record.recoveredTerm ?? record.term`. Token format version **2** with `term` and `rt` required (`gct <= rt <= term`). v1 tokens are rejected as `TOKEN_INVALID` (an unknown format, same as #5 AC8). | Q2.6. A plain counter breaks after a restart. The clock rule alone also breaks (security H1): a stale recreator hands off inside the new process and the new grant's `term` (`now`) beats every pre-restart term. So `term` only orders grants **inside** a process; across a restart, legitimacy is decided by `rt`, which in-process grants inherit unchanged and can never raise. Nothing is released, so the format bump costs nothing (spec AC39, #5 Q13). |
+| D3 | **Leadership term and recovery anchor.** `term`: integer ms, set at create to `createdAt`, and on every handoff, take-back or supersede to `nextTerm = max(record.term + 1, nowMs)` (supersede: `nextTerm(max(record.term, claims.term), nowMs)`). A recreation keeps the token's term. **`rt`** (recovery anchor): `record.anchor = (rt, term)` is set only by a recreation (`= (claims.rt, claims.term)`, together with `record.recoveredAt = now`) or a supersede (`= (claims.rt, claims.term)`, `recoveredAt` kept); every issued token carries `rt = record.anchor?.rt ?? record.term`. Token format version **2** with `term` and `rt` required (`gct <= rt <= term`). v1 tokens are rejected as `TOKEN_INVALID` (an unknown format, same as #5 AC8). | Q2.6. A plain counter breaks after a restart. The clock rule alone also breaks (security H1): a stale recreator hands off inside the new process and the new grant's `term` (`now`) beats every pre-restart term. So `term` alone never decides legitimacy across a recreation; that is decided by the `(rt, term)` pair against the anchor, for grants made before the recreation only (`term < recoveredAt`). Grants after a recreation inherit `rt` unchanged and can never raise it (H2). Nothing is released, so the format bump costs nothing (spec AC39, #5 Q13). |
 | D4 | **Role on resume comes from the record, not the token** (live group): `pid === record.leaderId` -> leader return (even with a member token; the `lat` bound then applies to that token too, advisory L2). A leader token that passes `canSupersede` (section 6.6) -> **supersede**. Any other token -> **member resume**, including a displaced leader's leader token (AC24) and every in-process leader token. The leader-token `lat` expiry (#5 check 3) applies whenever the token would act as leader (recreate, leader return, supersede). A `lat`-expired leader token never recreates or supersedes: for a group not in memory it gets `TOKEN_EXPIRED` (as #5 today), for a live group it resumes as a member (block list applies). | AC24, AC26, RC8. A displaced leader holds only its old leader token; it must still be able to rejoin as a member after the 25 min `lat` window. |
 | D5 | **Block list is append-only while the group is live** (Q4.5). `blocklist.set` and a leader return with `blockList` **merge** (union) and never remove entries. A union past 256 entries fails with `BLOCK_LIST_FULL` and changes nothing; it never truncates or evicts (truncation would be an unblock; Q-C condition). A recreation takes the client's list as given (the server has none). A **supersede** replaces the stale list with the superseding leader's list, applied before the stale leader is demoted (section 6.6). | Q4.5 "removal is permanent for the session". The #5 test "unblocks when the list no longer holds the ID" changes on purpose. |
 | D6 | **Removal reuses the #5 path**: the target's session is **fully detached** (notifier unregistered, any parked or pending-approval entry of that session dropped, no later broadcast reaches it) and gets `group.ended {reason: 'removed'}` as its **last** group frame, queued after its pending replies. The WebSocket stays open, as for a #5 block, and behaves as a fresh groupless connection under the existing join budgets. Then block-list append (`BLOCK_LIST_FULL`, never eviction), roster removal, vice cleared, take-back slot cleared, and a full rotation of codes **and** the QR ticket generation (`codes.updated` reason `member_removed`). Works on an offline roster member too (no session to detach). | AC32-AC33, RC4. "Connections closed" in AC32 is read as "group membership closed". Closing the socket would only start a reconnect loop that rejoin rules reject anyway. Gate 2 Q-A. |
@@ -100,6 +103,7 @@ Connection ──> GroupService (facade, GroupActions, per-group KeyedLock)
 | Keep `Membership.role` and update it on handoff | One missed update means a stale leader with powers. Deleting the field lets the compiler enforce AC6. |
 | Integer term counter | Wrong order across restarts (D3). |
 | Supersede by `claims.term > record.term` (plan round 0) | Security H1: an in-process handoff by a stale recreator mints `term = now`, above every pre-restart term. Replaced by the `rt` anchor rule (6.6). |
+| "Before this process started" (`processStartedAt`) as the supersede cut-off (plan revision 1) | Security H2: a recovery also happens without a restart (a drop, #5 AC22), so a stale leader who recreates after a drop could never be superseded; and inside one recovered line every grant shares `rt`, so a later leader couldn't supersede a stale one. Replaced by `recoveredAt` (per recreation) and the lexicographic `(rt, term)` anchor (6.6.1). |
 | Process-local "recovered term" map that outlives a dropped group, instead of the `rt` claim | Covers a drop and re-recreation in one process, but not a second restart: a stale line's in-process token would be a "pre-restart" token in the next process and could supersede the real leader there. The claim travels with the token, so it covers both (6.6.3). |
 | Vice in the member's token (Q3.1 alternative) | Rejected at Gate 1. It would also need a re-issue on every designation and go stale on demotion. |
 | Server-side preview position (Q6.1 alternative) | Rejected at Gate 1. It would break "the server never reads the position". |
@@ -153,11 +157,11 @@ No other repo is affected.
 | `packages/protocol/src/limits.ts`, `index.ts` | `HANDOFF_MODES`, `MAX_ROSTER_ENTRIES_FACTOR` (2), exports. |
 | `apps/sync-server/src/groups/session.ts` | `Membership` loses `role` (D1). `GroupActions` gains the 8 new actions. |
 | `apps/sync-server/src/groups/group-store.ts`, `in-memory-group-store.ts` | New `GroupRecord` fields (section 4); `addParticipant` takes the roster entry to admit or reconnect; `removeParticipant` takes `mode: 'disconnect' \| 'leave'`; new atomic `patch(ns, id, patch: GroupPatch)` for leadership, pause, lock, vice and activity fields; `setBlockList` keeps the removed-IDs return. `copy()` deep-copies `roster` and `pause`. |
-| `apps/sync-server/src/groups/group-service.ts` | Reads `processStartedAt` once from the injected clock in the constructor and passes it to `classifyToken` and `LifecycleService` (RC6); uses `authorizeLeader`; `group.leave`'s `LEADER_CANNOT_LEAVE` moves inside the lock against `record.leaderId`, and a leave by `displacedLeaderId` clears the take-back slot (L3); `update` under the lock; `create`/`resume` take names, handoff and recovery state; `leaderOffline` pauses with grace; `disconnect` branches on `record.leaderId`; `classify` and resume follow D4; `applyBlockList` becomes a union (D5); roster deltas on join, leave and disconnect; delegates new actions to `LeaderControls`. |
+| `apps/sync-server/src/groups/group-service.ts` | On every recreation sets `record.recoveredAt` from the injected clock and `record.anchor = (claims.rt, claims.term)` (RC6, H2); uses `authorizeLeader`; `group.leave`'s `LEADER_CANNOT_LEAVE` moves inside the lock against `record.leaderId`, and a leave by `displacedLeaderId` clears the take-back slot (L3); `update` under the lock; `create`/`resume` take names, handoff and recovery state; `leaderOffline` pauses with grace; `disconnect` branches on `record.leaderId`; `classify` and resume follow D4; `applyBlockList` becomes a union (D5); roster deltas on join, leave and disconnect; delegates new actions to `LeaderControls`. |
 | `apps/sync-server/src/groups/group-timers.ts` | Kinds `grace`, `keepAlivePrompt`, `keepAliveDeadline`; `clear(key, kind)`. `clear(key)` and `clearAll()` still cancel everything. |
-| `apps/sync-server/src/groups/resume.ts` | `classifyToken` follows D4 and takes `processStartedAt`: new pure `canSupersede(record, claims, processStartedAt)` (6.6.1); blocked for any role (only a token passing `canSupersede` is exempt); `lat` checked whenever the token would act as leader (recreate, leader return with any token role, supersede); a `lat`-expired leader token is `expired` when the group is not in memory and `live` (member) otherwise; a leader token not matching the live leader and not superseding is `live` (member). |
+| `apps/sync-server/src/groups/resume.ts` | `classifyToken` follows D4: new pure `canSupersede(record, claims, app, now)` (6.6.1; reads `record.anchor` and `record.recoveredAt`, no process-start value) and a pure `pairGreater(a, b)` for the lexicographic `(rt, term)` compare; blocked for any role (only a token passing `canSupersede` is exempt); `lat` checked whenever the token would act as leader (recreate, leader return with any token role, supersede); a `lat`-expired leader token is `expired` when the group is not in memory and `live` (member) otherwise; a leader token not matching the live leader and not superseding is `live` (member). |
 | `apps/sync-server/src/joins/join-service.ts` | Host `ownedLeader` replaced by `authorizeLeader` inside the lock; `GROUP_LOCKED` checks (D14 order) in `joinByCode`, `joinByQr`, `decide('approve')` and again in the shared admit step; `admit` gets the resolved name; internal `rotateAll(record, reason)` (codes and QR ticket generation; no `codes.rotate` budget; reasons `member_removed`, `superseded`); `onLeaderReturn` also used after handoff, take-back and supersede. |
-| `apps/sync-server/src/tokens/token-service.ts` | `IssueInput.term` and `IssueInput.rt` (always `record.recoveredTerm ?? record.term`, from one helper `tokenTermsOf(record)`); both in the payload; plausibility `gct <= rt <= term <= now + skew`. |
+| `apps/sync-server/src/tokens/token-service.ts` | `IssueInput.term` and `IssueInput.rt` (always `record.anchor?.rt ?? record.term`, from one helper `tokenTermsOf(record)`); both in the payload; plausibility `gct <= rt <= term <= now + skew`. |
 | `apps/sync-server/src/config/env.ts`, `apps-config.ts`, `apps/app-registry.ts` | `DISCONNECT_GRACE_SECONDS_CEILING` (default 120, bounds 1-3600), `KEEP_ALIVE_COUNTDOWN_SECONDS_CEILING` (120, 1-3600); app fields `disconnectGraceSeconds` (30), `keepAliveCountdownSeconds` (60), `defaultHandoff` (`auto`); AC2 cross-check. |
 | `apps/sync-server/src/limits/constants.ts` | Rate limits (section 8.2). |
 | `apps/sync-server/src/ws/connection.ts` | Dispatch of the 8 new types; `hello.ok` limits and `defaultHandoff`; `canCarryReqId` for new replies. |
@@ -178,7 +182,8 @@ No other repo is affected.
 
 ```ts
 term: number;                         // D3, orders grants inside this process
-recoveredTerm: number | undefined;    // D3/6.6: anchor of a recreated line; undefined = created in this process
+anchor: { rt: number; term: number } | undefined; // D3/6.6.1: (rt, term) of the recreating or superseding token; undefined = created, never recreated
+recoveredAt: number | undefined;      // 6.6.1: clock at the latest recreation of this record; undefined iff anchor undefined
 recoveryMarking: boolean;             // 6.6.4: true from a recreation until the first supersede
 handoff: 'auto' | 'frozen';           // Q2.1, from create or recovery
 locked: boolean;                      // AC29
@@ -198,8 +203,8 @@ interface RosterEntry {
 }
 ```
 
-Process state (not per group): `processStartedAt: number`, read once from the
-injected clock when `GroupService` is constructed (RC6).
+No process-level state is used for supersede (revision 2, H2: the
+`processStartedAt` value of revision 1 is removed).
 
 Invariants (asserted in unit tests):
 - The leader always has a roster entry. `participantIds` is still "attached
@@ -211,10 +216,11 @@ Invariants (asserted in unit tests):
 - `pause` is set iff the leader is offline or the group is in an inactive
   pause. `pause.cause === 'offline'` iff `!leaderOnline`.
 - `term` only increases, and `term >= createdAt`.
-- `recoveredTerm` is undefined for a group created in this process; it is set
-  only by a recreation or a supersede, and only increases. Every grant made in
-  this process (create, handoff, take-back, supersede) has
-  `term >= processStartedAt`.
+- `anchor` and `recoveredAt` are both undefined for a created group and both
+  set by a recreation. A supersede replaces `anchor` with a strictly greater
+  `(rt, term)` pair and leaves `recoveredAt` unchanged; nothing else writes
+  them. Every grant made after a recreation (handoff, take-back, supersede)
+  has `term >= recoveredAt` (`nextTerm >= now`).
 - After a handoff where the old leader was offline, the old leader's pid
   leaves `participantIds` (it is no longer the reserved leader slot) and its
   roster entry stays `connected: false`.
@@ -293,7 +299,7 @@ keep-alive, Q1.3). Spec wording corrections are listed in 14.2.
 ```
 { v: 2, aud, gid, pid, role: 'leader'|'member', gct, lat, term, rt, iat, exp }
 ```
-Every token carries the group's current `term` and `rt = recoveredTerm ??
+Every token carries the group's current `term` and `rt = anchor?.rt ??
 term`. Both only matter for leader tokens (D3, D4, 6.6). Schema: integers,
 `gct <= rt <= term`; plausibility `term <= now + skew`; both in the fixed-order
 `payloadJson`, so a refresh (`resign`) keeps them unchanged (RC5). There is still no name, vice, lock or code in the token
@@ -373,7 +379,7 @@ frozen bound.
 
 Under the lock: `term = nextTerm`, `leaderId = successor`,
 `displacedLeaderId = old`, `escalated = (cause === 'inactive')` (false for a
-disconnect handoff), `recoveredTerm` **unchanged** (the successor's token
+disconnect handoff), `anchor` and `recoveredAt` **unchanged** (the successor's token
 inherits `rt`, 6.6.1),
 `lastActivityAt = now`, `leaderOnline = true`, `pause = undefined`,
 `keepAlivePending = false`. `viceId` is cleared if the successor was the vice.
@@ -402,46 +408,58 @@ take-back slot always holds the most recent displaced leader. Log
 - **Displaced leader leaves** (`group.leave` by `displacedLeaderId`): the slot
   is cleared, as on removal and end (L3).
 - **Recreation** (group not in memory, leader token with valid `lat` and max
-  session): `term = claims.term`, `recoveredTerm = claims.rt`,
+  session; after a restart **or** a drop): `term = claims.term`,
+  `anchor = (claims.rt, claims.term)`, `recoveredAt = now`,
   `displacedLeaderId = undefined`, `escalated = false`; recovery state as
   given by the client (vice validated as in 6.7).
 
-#### 6.6.1 Supersede: who may (revision 1, closes H1)
+#### 6.6.1 Supersede: who may (revision 2, closes H1 and H2)
 
-Supersede is only for the case "a stale leader recreated the group after a
-restart, then the real leader arrives". Two values decide it:
+Supersede is only for the case "a stale leader recreated the group, then the
+real leader arrives". A recreation happens after a restart **or** after a drop
+(#5 AC22: the leader disconnects with nobody else connected, the group leaves
+memory, and the next valid leader token recreates it), so the rule depends on
+the recreation, not on the process. Two record values decide it:
 
-- `processStartedAt`: `clock.now()` read once when `GroupService` is
-  constructed (injected clock; tests advance it across a simulated restart).
-- `record.recoveredTerm`: set by a **recreation** to `claims.rt` of the
-  recreating token, and by a **supersede** to `claims.rt` of the superseding
-  token. A group created in this process has `recoveredTerm === undefined`.
+- `record.recoveredAt`: the clock (`now`, injected) at **every** recreation of
+  the record. A supersede leaves it unchanged. Undefined for a created group.
+- `record.anchor = (rt, term)`: on every recreation, `(claims.rt,
+  claims.term)` of the recreating token; on a supersede, `(claims.rt,
+  claims.term)` of the superseding token. Undefined for a created group.
 
 ```ts
 // resume.ts, pure; claims already verified (signature, aud, plausibility, exp)
-canSupersede(record, claims, processStartedAt, app, now) =
-     record.recoveredTerm !== undefined          // 1. recreated (not created) in this process
-  && record.recoveredTerm < processStartedAt      // 2. from a pre-restart line
+// pairGreater(a, b) = a.rt > b.rt || (a.rt === b.rt && a.term > b.term)
+canSupersede(record, claims, app, now) =
+     record.anchor !== undefined                  // 1. recreated, not created (unchanged)
   && claims.role === 'leader'
-  && claims.pid !== record.leaderId
-  && record.recoveredTerm < claims.rt             // 3. anchored on a newer pre-restart grant
-  && claims.rt < processStartedAt                 // 4. that grant was made before this process
+  && claims.pid !== record.leaderId               // 2. not the current leader
+  && claims.term < record.recoveredAt             // 3. granted before THIS recreation
+  && pairGreater({ rt: claims.rt, term: claims.term }, record.anchor)
+                                                  // 4. newer line first, then later grant in the same line
   && latValid(claims, app, now) && maxSessionValid(claims, app, now)
 ```
 
-This is security's rule (`recoveredTerm < claims.term < processStartedAt`)
-with `claims.rt` in place of `claims.term`. For a token whose line was never
-recovered `rt === term`, so the two are identical; they differ only for
-tokens issued under a recovered line (6.6.3 rows 5-7), which is exactly where
-`term` would lie.
+`processStartedAt` is not part of the rule (and is removed from the plan).
 
-- Groups created in this process never supersede: explicit guard 1, not an
-  emergent property of term order.
-- In-process grants (handoff, take-back, supersede) carry
-  `rt = record.recoveredTerm`, and a created group's tokens carry
-  `rt = term >= processStartedAt`. So no in-process token can perform a
-  supersede (its `rt` is not `> recoveredTerm`, or not `< processStartedAt`),
-  and none can block one (supersede never compares against `record.term`).
+- **Guard 3** (`term < recoveredAt`): a grant qualifies only if it predates
+  the recreation that put the current line in place, whether that grant was
+  made in an earlier process or earlier in this process before a drop. Every
+  grant made after the recreation (handoff, take-back, supersede) has
+  `term = nextTerm(...) >= now >= recoveredAt`, so none of them can supersede,
+  whether it is presented before or after a later restart.
+- **Guard 4** (lexicographic pair): `rt` orders recovered lines (a newer
+  pre-recovery line wins); `term` orders grants inside one line (a later
+  grant of the same line wins, H2b). A token with the anchor's own pair, or a
+  lower one, never supersedes.
+- Groups created and never recreated have no anchor: explicit guard 1, not an
+  emergent property of term order. Nothing compares against `record.term`, so
+  no grant of the current line can block a supersede.
+- **Clock behaviour.** `nextTerm` can run slightly ahead of `now` (same-ms
+  grants), and the clock can step back (NTP). In both cases a genuine
+  pre-recreation token can have `term >= recoveredAt`; it then fails guard 3
+  and can't supersede. This fails **closed** (no supersede; the residual
+  window of section 11, M4), never open. Same NTP assumption as #10 D4.
 
 #### 6.6.2 Supersede: what happens (under the group lock, one step)
 
@@ -452,7 +470,8 @@ tokens issued under a recovered line (6.6.3 rows 5-7), which is exactly where
    Every attached member on the new list is detached as in D6
    (`group.ended removed`). If the **stale leader** is on the list it gets
    `group.ended {reason: 'removed'}` and no token, and its roster entry goes.
-2. **Leadership**: `record.recoveredTerm = claims.rt`;
+2. **Leadership**: `record.anchor = (claims.rt, claims.term)`
+   (`recoveredAt` unchanged);
    `record.term = nextTerm(max(record.term, claims.term), now)`;
    `leaderId = requester`; `displacedLeaderId = undefined`;
    `escalated = false`; `pause = undefined`; `keepAlivePending = false`;
@@ -461,7 +480,8 @@ tokens issued under a recovered line (6.6.3 rows 5-7), which is exactly where
 3. **Stale leader** (if not removed in step 1): demoted; if attached it gets
    `leader.lost {reason: 'superseded', takeBackAvailable: false}` with a
    member token (new `term`, `rt`). Its old leader token now resumes as a
-   member (`claims.rt <= recoveredTerm`, so not superseding).
+   member (its pair is below the new anchor, or its `term >= recoveredAt`,
+   so not superseding).
 4. **Rest of the recovery**: lock and handoff mode from the requester;
    `viceId` from the requester kept only if it is a roster pid, not the
    leader and not blocked (else cleared; the old vice gets
@@ -472,42 +492,49 @@ tokens issued under a recovered line (6.6.3 rows 5-7), which is exactly where
    are **rotated** (`rotateAll(record, 'superseded')`). Either way no code or
    ticket of the stale line survives.
 6. **Replies**: requester `group.resumed {superseded: true}` with a **new**
-   leader token (`term` from step 2, `rt = claims.rt`), then
+   leader token (`term` from step 2, `rt = claims.rt`, i.e. `anchor.rt`), then
    `roster.snapshot` (6.6.4 marker), `codes.updated {reason: 'superseded'}`
    if rotated, and `joins.onLeaderReturn`; members `leader.changed {reason:
    'superseded'}`. Log `leader_superseded {namespace, groupRef}` (no IDs).
 
 Arrival order "real leader first" is plain: it recreates the group with
-`recoveredTerm = T1`; the stale token (`rt = T0 < T1`) resumes as a member and
+anchor `(T1, T1)`; the stale token (`(T0, T0)`, a lower pair) resumes as a member and
 the real leader's block list applies to it (AC26, both orders tested).
 
-#### 6.6.3 The H1 sequence and the other orderings, end to end
+#### 6.6.3 The H1 and H2 sequences and the other orderings, end to end
 
-Notation: P1 = old process, P2 = after the restart (`processStartedAt = S2`),
-P3 = after a second restart (`S3`). A leads at T0, hands off to B at T1 (both
-in P1, so `T0 < T1 < S2`, `rt = term`). B removes A. A kept its leader token
-`(term T0, rt T0)`.
+Notation: P1 = old process, P2 = after a restart, P3 = after a second
+restart. `rA` = `recoveredAt` of the recreation in question. A leads at T0,
+hands off to B at T1 (both in P1, so `T0 < T1`, `rt = term`). B removes A. A
+kept its leader token `(term T0, rt T0)`. Pairs are written `(rt, term)` in
+the result column.
 
-| # | Sequence | Result with revision 1 |
+| # | Sequence | Result with revision 2 |
 | --- | --- | --- |
-| 1 | **H1.** P2: A recreates (`recoveredTerm = T0`), designates M as vice, leaves; grace -> M leads with `term = m >= S2`, token `(m, rt T0)`. B arrives with `(T1, T1)`. | `canSupersede`: `T0 < S2`, `T0 < T1 < S2` -> **B supersedes**. `recoveredTerm = T1`, `term = nextTerm(max(m, T1), now)`. A is on B's list -> removed (step 1); M demoted; take-back slot empty. |
-| 2 | After 1, M resumes with its offline in-process leader token `(m, rt T0)`. | `T0 < T1` fails -> member resume. M can't push B out (security's "offline post-restart token" case). |
-| 3 | After 1, A retries its old token `(T0, T0)`. | Not superseding; blocked by B's list -> `blocked`. |
-| 4 | P2: B arrives first, recreates (`recoveredTerm = T1`); A arrives. | A: `T0 < T1` fails -> member resume -> blocked. |
-| 5 | **Drop and re-recreate in one process.** Case 1 up to M leading, then everyone disconnects -> group dropped (#5 AC22). M recreates with `(m, rt T0)`: `recoveredTerm = T0`. B arrives. | `T0 < T1 < S2` -> B supersedes. (Without `rt`, `recoveredTerm` would be `m >= S2` and B would be locked out.) |
-| 6 | **Second restart.** Case 1 up to M leading, then P3 before B returns. M recreates with `(m, rt T0)` -> `recoveredTerm = T0 < S3`. B arrives with `(T1, T1)`. | `T0 < T1 < S3` -> B supersedes. Other order: B recreates (`recoveredTerm = T1`), M's `(m, rt T0)` -> member. (Without `rt`, M's `m < S3` would supersede B: the same hole one restart later.) |
-| 7 | After 1 (B leads, token `(X, rt T1)`), P3: B recreates (`recoveredTerm = T1`). M or A arrive. | Both have `rt = T0` -> member / blocked. |
-| 8 | Group created in P2 (`recoveredTerm` undefined); a test-keyring leader token for that gid with another pid, `rt < S2` and a high plausible `term`. | Guard 1 -> never supersedes; member resume. |
-| 9 | Group created in P2, dropped, recreated in P2 from its own in-process token (`rt >= S2`). | `recoveredTerm >= S2` -> guard 2 -> never supersedes. |
-| 10 | Genuine later P1 grant: B hands to C at T2 in P1. P2: B recreates (`recoveredTerm = T1`), C arrives `(T2, T2)`. | `T1 < T2 < S2` -> C supersedes (correct: C was the last real leader). Bounded by C's `lat` window, like any supersede. |
+| 1 | **H1.** P2: A recreates (anchor `(T0, T0)`, `rA`), designates M as vice, leaves; grace -> M leads with `term = m >= rA`, token `(m, rt T0)`. B arrives with `(T1, T1)`. | `T1 < rA` and `(T1, T1) > (T0, T0)` -> **B supersedes**. Anchor `(T1, T1)`, `rA` kept, `term = nextTerm(max(m, T1), now)`. A is on B's list -> removed (step 1); M demoted; take-back slot empty. |
+| 2 | After 1, M resumes with its offline in-process leader token `(m, rt T0)`. | `m >= rA` fails guard 3 (and `(T0, m) < (T1, T1)`) -> member resume. M can't push B out (security's "offline post-restart token" case). |
+| 3 | After 1, A retries its old token `(T0, T0)`. | `(T0, T0) < (T1, T1)` -> not superseding; blocked by B's list -> `blocked`. |
+| 4 | P2: B arrives first, recreates (anchor `(T1, T1)`); A arrives. | A: `(T0, T0) < (T1, T1)` -> member resume -> blocked. |
+| 5 | **Drop and re-recreate in one process.** Case 1 up to M leading, then everyone disconnects -> group dropped (#5 AC22). M recreates with `(m, rt T0)`: anchor `(T0, m)`, new `rA2 > m`. B arrives. | `T1 < rA2` and `(T1, T1) > (T0, m)` -> B supersedes. |
+| 6 | **Second restart.** Case 1 up to M leading, then P3 before B returns. M recreates with `(m, rt T0)` -> anchor `(T0, m)`. B arrives with `(T1, T1)`. | `T1 < rA3` and `(T1, T1) > (T0, m)` -> B supersedes. Other order: B recreates (anchor `(T1, T1)`), M's `(T0, m)` is lower -> member. |
+| 7 | After 1 (B leads, token `(X, rt T1)`, `X >= rA`), P3: B recreates (anchor `(T1, X)`). M or A arrive. | Both have `rt = T0`, a lower pair -> member / blocked. |
+| 8 | Group created in P2 (no anchor); a test-keyring leader token for that gid with another pid, a low `rt` and a high plausible `term`. | Guard 1 -> never supersedes; member resume. |
+| 9 | **Stale in-process recreator (rewritten, H2).** Group created in P2 by A at `c` (token `(c, c)`); A hands off to B at `t > c` in P2 (token `(t, t)`); B removes A. B disconnects alone -> group dropped. A (token still inside `lat`) recreates first: anchor `(c, c)`, `rA > t`. B arrives with `(t, t)`. | `t < rA` and `(t, t) > (c, c)` -> **B supersedes**; A is on B's list -> removed with no token. Other order: B recreates (anchor `(t, t)`), A's `(c, c)` is lower -> member -> blocked. |
+| 10 | Genuine later P1 grant: B hands to C at T2 in P1. P2: B recreates (anchor `(T1, T1)`), C arrives `(T2, T2)`. | `T2 < rA` and `(T2, T2) > (T1, T1)` -> C supersedes (correct: C was the last real leader). Bounded by C's `lat` window, like any supersede. |
 | 11 | `lat`-expired leader token of the real leader B. | Never supersedes or recreates (RC8): member resume in a live group (current list applies), `TOKEN_EXPIRED` for a group not in memory. |
 | 12 | Stale recreator A sends `leader.takeBack` after B supersedes. | `displacedLeaderId` was cleared in step 2 -> `NOT_ALLOWED`. |
 | 13 | Stale recreator A refreshes its token before B arrives (`resign`). | `term` and `rt` are kept by `resign` (RC5); A's line keeps `rt = T0`. |
+| 14 | **H2a, drop without a restart.** All in P1: A creates at T0, hands off to B at T1, B removes A. B disconnects with nobody else connected -> group dropped (not ended). A, still inside its `lat` window, recreates: anchor `(T0, T0)`, `rA` (P1 clock). B arrives with `(T1, T1)`. | `T1 < rA` and `(T1, T1) > (T0, T0)` -> **B supersedes**; A on B's list -> removed. (Revision 1 failed here: `T0 >= processStartedAt`.) |
+| 15 | **H2a, polling variant.** As 14, but A polls `tokens.check` with its leader token until it turns from `live` to `recoverable` and recreates at once. | Same as 14: the timing gives A nothing; B supersedes on arrival. A's later retries: `(T0, T0)` is below the anchor `(T1, T1)` -> blocked. |
+| 16 | **H2b, drop variant.** A recovered line with `rt = R` (any recreation): B leads with `(X, rt R)`, hands off to C `(Y, rt R)`, `Y > X`. Group dropped; B recreates first: anchor `(R, X)`, `rA > Y`. C arrives. | `Y < rA` and `(R, Y) > (R, X)` -> **C supersedes**. (Revision 1 failed here: equal `rt`.) Other order: C recreates (anchor `(R, Y)`), B's `(R, X)` is lower -> member. |
+| 17 | **H2b, restart variant.** As 16, but a restart instead of the drop. | Same result as 16. |
+| 18 | After 1, the group drops again and stale M recreates with `(m, rt T0)` (anchor `(T0, m)`, new `rA4`). B arrives with its post-supersede token `(X, rt T1)`. | `X < rA4` and `(T1, X) > (T0, m)` -> B supersedes again. The superseded line stays above the stale one on every later recreation. |
 
-What remains is the restart residual (section 11, M4): until B arrives, A
-leads the recreated group. That is bounded by A's `lat` window (~25 min) and
-by B arriving; no ordering lets A or its successors **keep** the lead once B
-arrives inside B's own `lat` window.
+What remains is the recreation residual (section 11, M4): until the real
+leader arrives, the stale recreator leads the recreated group. That is bounded
+by the stale token's `lat` window (~25 min) and by the real leader arriving;
+no ordering lets the stale line or its successors **keep** the lead once the
+real leader arrives inside its own `lat` window, after a restart or a drop.
 
 #### 6.6.4 Members admitted since the recovery (M4 optional marker: taken)
 
@@ -685,10 +712,10 @@ Docs impact: the files below, in the docs chunk (last):
 
 ## 11. Risks and edge cases
 
-- **Restart window with a stale leader (residual, accepted by security
-  provided H1 is fixed; README per RC14).** After a restart, a displaced
-  leader whose token is still inside its `lat` window (about 25 min) can
-  recreate the group first. It leads, with its own stale block list and
+- **Restart or drop window with a stale leader (residual, accepted by
+  security provided H1 and H2 are fixed; README per RC14).** After a restart
+  or a drop, a displaced leader whose token is still inside its `lat` window
+  (about 25 min) can recreate the group first. It leads, with its own stale block list and
   codes, until the real leader returns and supersedes it (6.6). During that
   window it can admit people (a removed person under a new identity, through
   the stale codes), remove honest members (their clients delete their
@@ -696,17 +723,19 @@ Docs impact: the files below, in the docs chunk (last):
   `group.end` the group (irreversible: ended-groups, the real leader then gets
   `GROUP_ENDED`). After a supersede the stale codes and tickets are gone (M1)
   and newcomers of the window are flagged `admittedSinceRecovery` (6.6.4).
-  Without server persistence this can't be closed (PRD: nothing stored). H1
-  (revision 1) makes it temporary: no ordering lets the stale line keep the
-  lead once the real leader arrives (6.6.3).
-- **Clock behind after a restart.** If the new process's clock is behind the
-  old one (NTP step back), `processStartedAt` can be `<=` a genuine
-  pre-restart `rt`, and that token can't supersede. This fails closed for the
-  supersede (the stale recreator keeps leading until its own window ends,
-  i.e. the residual above), never open. Same NTP assumption as #10 D4.
-- **Late genuine supersede.** A pre-restart leader token with a newer anchor
-  can supersede for as long as its own `lat` window allows, also after a
-  second restart (6.6.3 row 10). That is the intended "most recent real
+  Without server persistence this can't be closed (PRD: nothing stored). The
+  H1/H2 rule (revision 2) makes it temporary: no ordering lets the stale line
+  keep the lead once the real leader arrives, after a restart or a drop
+  (6.6.3).
+- **Clock behind or same-ms grants at a recreation.** If the clock steps
+  back (NTP), or `nextTerm` ran slightly ahead of `now`, `recoveredAt` can be
+  `<=` a genuine pre-recreation `term`, and that token can't supersede
+  (guard 3, 6.6.1). This fails closed for the supersede (the stale recreator
+  keeps leading until its own window ends, i.e. the residual above), never
+  open. Same NTP assumption as #10 D4.
+- **Late genuine supersede.** A pre-recreation leader token with a greater
+  `(rt, term)` pair can supersede for as long as its own `lat` window allows,
+  also after a second restart or another drop (6.6.3 rows 10, 18). That is the intended "most recent real
   grant wins", bounded by `lat` (~25 min).
 - **Supersede blocked by a forged list:** closed (6.6; the superseding token
   skips the stale block list). Tested.
@@ -765,7 +794,7 @@ the real server on a random port with raw WebSocket clients.
 | AC19 | `timers-cleanup.int`: after end, drop, handoff and take-back, `timerCount` and `scheduler.pending` match expectations; `server.close()` leaves 0 pending. |
 | AC22, AC27 | `escalation.int`: inactivity handoff, then the new leader misses -> `inactivity` end at countdown end (no grace); new leader acts once then idles -> normal handoff (D9); every end reason distinct and recorded in ended-groups. |
 | AC24, AC25 | `take-back.int`: displaced leader resumes with its old leader token -> member + `takeback.offered`; even after the 25 min `lat` window; take-back swaps and sets `escalated = false`; anyone else `NOT_ALLOWED` with no budget spent; slot moves; timers restart; offer gone after end; a leave by the displaced leader clears the slot (L3); `LEADER_CANNOT_LEAVE` decided inside the lock right after a handoff (old leader may leave, new one may not); leader return with an old member token past its `lat` bound is refused (L2). |
-| AC26 (H1, RC6-RC8) | `restart-handoff.int` (simulated restart: new server instance on the same keyring, clock advanced so `processStartedAt` > every P1 term): **every row of the 6.6.3 table** is one test, including the exact H1 sequence (A recreates, vice M, A leaves, grace handoff to M, B arrives -> B supersedes; A removed by B's list with no token; M demoted; take-back slot empty; then M's offline in-process leader token -> member; A's old token -> blocked), drop-and-re-recreate in one process, a second restart, a group created in this process never superseding with a test-keyring token, a `lat`-expired real leader token, take-back by the stale leader after supersede -> `NOT_ALLOWED`, `escalated` false after supersede. Codes: adopted from the requester's blob; requester blob invalid / same generation / taken -> rotated with `codes.updated {reason: 'superseded'}`, stale code -> `CODE_NOT_FOUND`, stale QR ticket -> `QR_INVALID` (M1). Roster after supersede flags code/QR/approval admissions of the window with `admittedSinceRecovery`, not token resumes; no flag for an honest recreator never superseded. Unit (new `resume.test.ts`): `canSupersede` truth table (each guard false on its own). |
+| AC26 (H1, RC6-RC8) | `restart-handoff.int` (simulated restart: new server instance on the same keyring, clock advanced past every P1 term; drop: the last connected session disconnects so the group leaves memory, same instance): **every row of the 6.6.3 table** is one test, including the exact H1 sequence (A recreates, vice M, A leaves, grace handoff to M, B arrives -> B supersedes; A removed by B's list with no token; M demoted; take-back slot empty; then M's offline in-process leader token -> member; A's old token -> blocked), drop-and-re-recreate in one process, a second restart, a group created in this process never superseding with a test-keyring token, a `lat`-expired real leader token, take-back by the stale leader after supersede -> `NOT_ALLOWED`, `escalated` false after supersede. **H2 (round 2):** H2a without a restart (row 14: drop in one instance, stale A recreates, B supersedes, A removed by B's list); H2a with A polling `tokens.check` until `recoverable` and recreating at once (row 15); H2b in a drop variant and a restart variant (rows 16, 17, both arrival orders); row 9 as rewritten (stale in-process recreator after a drop, then the later leader supersedes; other order blocked); row 18 (repeated drop after a supersede). Each asserts `recoveredAt` is reset on the recreation and `anchor` is the expected pair. Codes: adopted from the requester's blob; requester blob invalid / same generation / taken -> rotated with `codes.updated {reason: 'superseded'}`, stale code -> `CODE_NOT_FOUND`, stale QR ticket -> `QR_INVALID` (M1). Roster after supersede flags code/QR/approval admissions of the window with `admittedSinceRecovery`, not token resumes; no flag for an honest recreator never superseded. Unit (new `resume.test.ts`): `canSupersede` truth table (each guard false on its own: no anchor, member role, same pid as the leader, `term === recoveredAt`, `term > recoveredAt`, lower / equal pair, `lat` expired, max session exceeded), and a `pairGreater` table over the pair comparison: lower `rt` with a higher `term` -> false; higher `rt` with a lower `term` -> true; **equal `rt` with a lower, equal and higher `term`** -> false, false, true. |
 | AC28 | `lifecycle-states.int` + client `client.lifecycle.test.ts`: every event mapped to state and indicator. |
 | AC29 | `lock.int`: every method (A, B, C, D, approval) -> byte-identical `GROUP_LOCKED` with no `details`; join budget charged first; an invalid / expired / old-generation QR ticket on a locked group gets `QR_INVALID`, not `GROUP_LOCKED`; a lock set between the check and admission still refuses (admit-step re-check); checked before the door compare (no door failure counted); token resume and parked admission allowed; pending request survives and can be approved after unlock; independent of the door pause; recovery after restart. |
 | AC32-AC34 | `remove-member.int`: events; block list in the reply; codes and QR ticket generation rotated (old code -> `CODE_NOT_FOUND`, old QR -> `QR_INVALID`); the removed session is fully detached (no parked or pending entry, `group.ended removed` is its last group frame, a later broadcast does not reach it, the socket can start a fresh join under the join budgets); removing an **offline** roster member works; bypass attempts on every path (token resume, old codes, old QR ticket, approval with old identity, recreation, after a supersede, after roster churn that would have evicted the displaced leader); leader/self/unknown errors; vice cleared; full list -> `BLOCK_LIST_FULL` without eviction, and a `blocklist.set` / leader-return union past 256 -> `BLOCK_LIST_FULL` with the list unchanged; `blocklist.set` cannot unblock (D5). |
@@ -785,7 +814,7 @@ Security-sensitive: yes
 - **Authorization of every leader action** (D1, D2, section 7, 6.8):
   `lifecycle/leader-guard.ts`, `group-service.ts`, `join-service.ts`.
 - **Handoff, take-back and supersede** (control moves without consent; stale
-  tokens; double leader; restart ordering, H1): `lifecycle-service.ts`,
+  tokens; double leader; restart and drop ordering, H1/H2): `lifecycle-service.ts`,
   `resume.ts` (`canSupersede`), the `group-service.ts` resume path.
 - **Token format change** (`term` and `rt` claims, format 2):
   `protocol/tokens.ts`, `token-service.ts`.
@@ -807,7 +836,7 @@ control RC1-RC14 is part of this plan; the map to commits is in 14.1.
 
 | Finding | Handling in this plan |
 | --- | --- |
-| **H1** (high) | Fixed as security proposed, generalized by one claim. `processStartedAt` from the injected clock; `record.recoveredTerm` set only by recreation and supersede; supersede only for groups recreated in this process (explicit guard) and only when `recoveredTerm < claims.rt < processStartedAt`; on supersede `recoveredTerm = claims.rt`, `term = nextTerm(max(record.term, claims.term), now)` and a **new** leader token. Token claim `rt` (= `recoveredTerm ?? term`) makes in-process grants inherit the anchor, which also closes two holes of the same kind that a process-local `recoveredTerm` leaves open: drop and re-recreation in one process, and a second restart (6.6.3 rows 5-6). For never-recovered tokens `rt === term`, so this is exactly security's condition there. The "offline post-restart leader token pushes out B" case is row 2. Tests: every 6.6.3 row (commit 13). |
+| **H1** (high) | *Revision 1 text, kept for the record; the cut-off rule is replaced in revision 2 (13.2).* Fixed as security proposed, generalized by one claim. `processStartedAt` from the injected clock; `record.recoveredTerm` set only by recreation and supersede; supersede only for groups recreated in this process (explicit guard) and only when `recoveredTerm < claims.rt < processStartedAt`; on supersede `recoveredTerm = claims.rt`, `term = nextTerm(max(record.term, claims.term), now)` and a **new** leader token. Token claim `rt` (= `recoveredTerm ?? term`) makes in-process grants inherit the anchor, which also closes two holes of the same kind that a process-local `recoveredTerm` leaves open: drop and re-recreation in one process, and a second restart (6.6.3 rows 5-6). For never-recovered tokens `rt === term`, so this is exactly security's condition there. The "offline post-restart leader token pushes out B" case is row 2. Tests: every 6.6.3 row (commit 13). |
 | M1 | Supersede adopts the requester's codes **and** ticket generation, otherwise rotates both (`codes.updated {reason: 'superseded'}`), 6.6.2 step 5. Tested. |
 | M2 | Keys and fragments as listed in 3.2 (`logger.ts`); any-depth test with a `GroupRecord`-shaped object (12, AC43). |
 | M3 | D10: never evict `displacedLeaderId` or `viceId`; vice cleared if ever removed; `member.remove` on offline roster members (6.7). Tested. |
@@ -823,6 +852,21 @@ control RC1-RC14 is part of this plan; the map to commits is in 14.1.
 Conditions on the Gate 2 recommendations (section 4 of `security.md`) are in
 the plan: Q-A in D6, Q-B in D9 / 6.5 / 6.6, Q-C in D5, Q-D in D14, Q-E in 6.8
 and 8.2.
+
+### 13.2 Security plan review round 2: H2
+
+Source: [`security.md`](./security.md) "Round 2" (FAIL on H2). User decision
+after two failed rounds: apply security's fix exactly. Applied as written:
+
+| Finding | Handling in this plan (revision 2) |
+| --- | --- |
+| **H2a** (high) drop without a restart | `processStartedAt` removed from the rule and the plan. Every recreation (restart **or** drop) sets `record.recoveredAt = now` and `record.anchor = (claims.rt, claims.term)`; guard 3 is `claims.term < recoveredAt` (6.6.1). 6.6.3 rows 14, 15 (incl. `tokens.check` polling) and the rewritten row 9. |
+| **H2b** (high) same `rt` inside a recovered line | Guard 4 compares `(claims.rt, claims.term) > anchor` lexicographically; a supersede sets the anchor to the requester's pair and keeps `recoveredAt`; `term = nextTerm(max(record.term, claims.term), now)` and new tokens with `rt = claims.rt` as before (6.6.2). 6.6.3 rows 16 (drop) and 17 (restart). |
+| Clock note | `nextTerm` ahead of `now` and clock steps back fail closed (6.6.1, section 11). |
+| Section 11 wording | "after a restart or a drop". |
+
+Every 6.6.3 row 1-13 still holds with the new rule, as security checked;
+row 9 changes as security specified. Tests: 12 (AC26) and commit 13.
 
 ## 14. Implementation
 
@@ -870,10 +914,11 @@ in brackets.
     leader incl. leader return with a member token, L2); take-back sets
     `escalated = false` (RC13, Q-B); L3 slot cleared on leave; RC2; RC10
     tests]
-13. `feat(server): supersede a stale leader after a restart by recovery term`
-    [RC6 H1 fix: `processStartedAt`, `recoveredTerm`, `canSupersede`, `rt`
-    issued from `recoveredTerm`, new token on supersede, every 6.6.3 row
-    tested; RC7: requester block list first (L1), codes adopted or rotated
+13. `feat(server): supersede a stale leader by recovery anchor`
+    [RC6 H1/H2 fix: `recoveredAt` and `anchor` set on every recreation,
+    `canSupersede` with the lexicographic `(rt, term)` compare, `rt` issued
+    from `anchor.rt`, new token on supersede, every 6.6.3 row (1-18) and the
+    truth tables tested; RC7: requester block list first (L1), codes adopted or rotated
     (M1), slot cleared, vice validated; RC8 lat-expired never supersedes or
     recreates; RC13; M4 `admittedSinceRecovery` marker]
 14. `test(server): cover the role matrix, leader races and rate limits`
@@ -892,7 +937,7 @@ in brackets.
 21. `feat(client): add the leader preview helper`
 22. `test(client): cover handoff, take-back and removal on a real server`
 23. `docs: document roles, timers, lifecycle and the leader api`
-    [RC14 README security notes: restart residual (M4), auto-handoff power
+    [RC14 README security notes: restart or drop residual (M4), auto-handoff power
     (L7), name rendering (L8)]
 
 Required controls -> commits (from `security.md` section 5, unchanged mapping,
@@ -905,7 +950,7 @@ with the revision's additions):
 | RC3 | 6 |
 | RC4 | 7, 17 |
 | RC5 | 1 (now also `rt`) |
-| RC6 | 13 (generalized by `rt`, 6.6.1) |
+| RC6 | 13 (generalized by `rt`, 6.6.1; H2 anchor and `recoveredAt`) |
 | RC7 | 13 |
 | RC8 | 12, 13 |
 | RC9 | 4 (keys), 16 (test) |
@@ -924,8 +969,9 @@ with the revision's additions):
 - AC35: names follow the strict #10 rule (Gate 1 Q5.5); blank -> generated.
 - AC23: the recovery state lists `blockList, locked, viceId, handoff`;
   codes and pending approvals are sent alongside it.
-- AC26: "the higher term wins" -> "the leader token anchored on the most
-  recent pre-restart grant wins" (6.6.1).
+- AC26: "the higher term wins" -> "the leader token with the most recent
+  grant made before the recreation wins, ordered by recovery line, then term"
+  (6.6.1).
 
 ### 14.3 Gate 2 questions (recommendation first, security view beside each)
 
