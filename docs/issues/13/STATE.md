@@ -1,6 +1,6 @@
 # State: #13 feat: roles, timers and group lifecycle (PRD item 5)
 - Path: full
-- Phase: grooming
+- Phase: architecture
 - Branch: feat/13-roles-lifecycle
 - PR: none
 - Plan approved by user: no
@@ -12,8 +12,8 @@
   (`normalizeDisplayName`), not a new looser rule. Recorded in `spec.md`
   ("Gate 1 decisions").
 ## Open questions
-- none (Gate 1 closed)
+- Gate 2 questions Q-A to Q-E in `docs/issues/13/architecture.md` section 14.3 (each with a recommendation).
 ## Deviations from plan
 - Board: `.claude/github-project.env` had an empty `GH_PROJECT_NUMBER`; the card was added to project 8 ("sync system") with a temporary config copy. Restored to 8 on this branch in 8880f2d.
 ## Model log
-- architect planning: opus (default for architect; pm NEXT_MODEL opus)
+- architect planning: opus (default for architect; pm NEXT_MODEL opus) → DONE; recommends opus for engineer (Implementer model: opus)
