@@ -134,7 +134,45 @@ This item delivers those: the vice-leader role, the leader's lock / remove / pre
 - Voluntary leader-to-someone handover, renaming after join, multiple leaders, chat (Q2.5, Q5.3, PRD future work).
 - Parked follow-ups: **#12** (group-creation rate limits and live-group cap) is not needed by this item. Overlap noted: this item makes groups live longer (frozen, handoff), so a live-group cap would apply to them too; no change here. **#9** (client `forgetAllGroups` clock skew) is unrelated, but decision 5 and AC42 keep the new timers free of client clock dependence so this item does not widen it. #10's advisory M3 (pause abuse) is not part of lock group; lock is leader-controlled and separate.
 
-## Open questions for Gate 1 (each with a recommended default)
+## Gate 1 decisions (user)
+
+All questions below are **closed**. The user accepted every recommended
+default as written, with one change (Q5.5):
+
+- **Group 1 (timers):** Q1.1 defaults and ceilings as in #1 (grace 30 s / 120 s,
+  inactivity 20 min / 60 min, countdown 60 s / 120 s, max session 3 h / 8 h).
+  Q1.2 a missed keep-alive gets the full grace period before any handoff.
+  Q1.3 frozen mode after a missed keep-alive ends at the existing recovery
+  bound. Q1.4 any counted leader activity, or an explicit ack, answers the
+  keep-alive. Q1.5 a new leader gets a fresh, full inactivity period.
+- **Group 2 (handoff):** Q2.1 handoff mode `auto` or `frozen` chosen at
+  creation; app default `auto`. Q2.2 longest-connected = earliest admission
+  among connected members (ties by participant creation order). Q2.3 a new
+  leader that disconnects gets a second grace period and a further handoff.
+  Q2.4 only the most recent displaced leader can take back. Q2.5 no voluntary
+  handover. Q2.6 a leadership-term claim in the token (token format bump).
+- **Group 3 (vice-leader):** Q3.1 the designation lives in the leader
+  client's recovery state. Q3.2 the vice-leader does not see codes. Q3.3 only
+  the leader and the vice-leader know who the vice-leader is. Q3.4 the vice
+  must be present when designated.
+- **Group 4 (lock, remove, roster):** Q4.1 codes always rotate on removal.
+  Q4.2 while locked, pending approvals stay pending but cannot be approved;
+  admitted members still rejoin by token. Q4.3 the lock flag is restored from
+  the leader client after a restart. Q4.4 only the leader sees the roster.
+  Q4.5 removal is permanent for the session.
+- **Group 5 (names):** Q5.1 server-generated `Guest N` names with
+  `generated: true`. Q5.2 duplicate chosen names allowed. Q5.3 no renaming.
+  Q5.4 the client re-sends the name on token resume, else it is generated
+  again. **Q5.5 changed:** display names use the existing strict #10 rule,
+  `normalizeDisplayName` in `packages/protocol/src/join.ts` (Unicode-property
+  based; ZWNJ/ZWJ between letters rejected; at most 4 combining marks in a
+  row; tag characters only inside the 3 RGI subdivision flags). No new or
+  looser rule. AC35 is read with this rule.
+- **Group 6 (preview):** Q6.1 client-side preview plus a throttled
+  `leader.activity` signal. Q6.2 the core client ships the preview helper.
+- **Q7:** protocol version stays 1.
+
+## Open questions for Gate 1 (closed; see Gate 1 decisions above)
 
 **Group 1: timers and keep-alive**
 - **Q1.1 Defaults and ceilings.** Recommended: as recorded in #1 (grace 30 s / 120 s, inactivity 20 min / 60 min, countdown 60 s / 120 s, max session 3 h / 8 h), per-app values with env ceilings, startup error above ceiling. Alternative: different numbers.
