@@ -215,3 +215,20 @@ describe('activity and keep-alive messages (#13 AC16, AC30)', () => {
     expect(parseServerMessage({ type: 'activity.ack', reqId: 'a' }).ok).toBe(true);
   });
 });
+
+describe('pause on the wire (#13 D8, D12)', () => {
+  it('parses leader.offline with and without a cause and grace', () => {
+    expect(parseServerMessage({ type: 'leader.offline', groupId: GID }).ok).toBe(true);
+    expect(
+      parseServerMessage({ type: 'leader.offline', groupId: GID, cause: 'inactive', graceMs: 5 })
+        .ok,
+    ).toBe(true);
+    expect(parseServerMessage({ type: 'leader.offline', groupId: GID, cause: 'asleep' }).ok).toBe(
+      false,
+    );
+    expect(
+      parseServerMessage({ type: 'leader.offline', groupId: GID, cause: 'inactive', graceMs: -5 })
+        .ok,
+    ).toBe(false);
+  });
+});

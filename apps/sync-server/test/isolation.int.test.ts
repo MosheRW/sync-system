@@ -80,6 +80,8 @@ describe('group isolation (AC19)', () => {
       expect(await member.next('leader.offline')).toEqual({
         type: 'leader.offline',
         groupId: x.groupId,
+        cause: 'disconnected',
+        graceMs: expect.any(Number) as number,
       });
     }
     for (const client of [y.leader, ...y.members, z.leader, ...z.members]) {

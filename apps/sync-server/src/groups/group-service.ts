@@ -70,7 +70,7 @@ import {
   toWire,
 } from '../lifecycle/roster.js';
 import { LeaderControls } from '../lifecycle/leader-controls.js';
-import { LifecycleService } from '../lifecycle/lifecycle-service.js';
+import { LifecycleService, pauseOnWire } from '../lifecycle/lifecycle-service.js';
 import { type GroupRecord, type GroupStore, connectedCount } from './group-store.js';
 import type { EndedGroups } from './ended-groups.js';
 import { GroupTimers } from './group-timers.js';
@@ -237,6 +237,9 @@ export class GroupService implements GroupActions {
       deliverLater: (session, message) => this.deliverLater(session, message),
       refresherActivity: (namespace, groupId, at) =>
         this.refresher.activity(groupKey(namespace, groupId), at),
+      toMembers: (record, message) =>
+        this.deps.notifier.broadcast(this.memberKeys(record), message),
+      scheduleFrozenEnd: (app, record) => this.scheduleFrozenEnd(app, record),
       now: () => this.now(),
     });
     this.parking = new ParkingLot(deps.scheduler);
@@ -429,6 +432,7 @@ export class GroupService implements GroupActions {
       viceId: undefined,
       locked: false,
       keepAlivePending: false,
+      pause: undefined,
       leaderOnline: true,
       blockList: [],
       joinMethods: initial.methods,
@@ -676,8 +680,10 @@ export class GroupService implements GroupActions {
       ...this.ownName(record, participantId),
       metadata: record.metadata,
       token,
-      leaderOnline: record.leaderOnline,
+      // False while paused (#13 5.2): the group does not follow anyone now.
+      leaderOnline: record.leaderOnline && record.pause === undefined,
       locked: record.locked,
+      ...(record.pause === undefined ? {} : { leaderPause: pauseOnWire(record.pause, this.now()) }),
     };
     return record.position.has
       ? { ...base, hasPosition: true, position: record.position.payload }
@@ -1082,19 +1088,14 @@ export class GroupService implements GroupActions {
       ...rosterStateOf(online),
       roster: setConnected(online.roster, claims.pid, true, now),
     });
-    this.timers.clearFrozenEnd(groupKey(namespace, record.id));
     this.startRefresh(namespace, record.id, now);
     // A return is an activity: no prompt is outstanding (#13 6.2).
     if (updated.keepAlivePending) {
       await this.deps.store.patch(namespace, record.id, { keepAlivePending: false });
     }
     this.lifecycle.armKeepAlive(app, updated);
-    if (!record.leaderOnline) {
-      this.deps.notifier.broadcast(this.memberKeys(updated), {
-        type: 'leader.online',
-        groupId: record.id,
-      });
-    }
+    // The return ends a pause (offline or inactive); members get leader.online.
+    await this.lifecycle.unpause(app, updated);
     this.attach(session, { groupId: record.id, participantId: claims.pid });
     // The roster, then pending approval requests and a running pause, are
     // sent after the reply (#13 AC31, #10 AC21, AC29, AC34).
@@ -1160,6 +1161,7 @@ export class GroupService implements GroupActions {
       // The lock flag from the leader's recovery state (#13 Q4.3).
       locked: message.locked ?? false,
       keepAlivePending: false,
+      pause: undefined,
       leaderOnline: true,
       // Deduplicated; the leader's own ID is ignored.
       blockList: [...new Set(message.blockList ?? [])].filter((id) => id !== claims.pid),
@@ -1515,12 +1517,13 @@ export class GroupService implements GroupActions {
       await this.endGroup(app, groupId, 'empty');
       return;
     }
-    this.deps.notifier.broadcast(this.memberKeys(record), { type: 'leader.offline', groupId });
     this.deps.logger.info(
       { event: 'group_frozen', namespace, groupRef: groupRef(groupId) },
       'leader offline',
     );
-    await this.scheduleFrozenEnd(app, record);
+    // A pause with a grace period (#13 6.4, AC14); a running inactive pause
+    // keeps its grace end.
+    await this.lifecycle.pause(app, record, 'offline');
   }
 
   /**
@@ -1544,8 +1547,8 @@ export class GroupService implements GroupActions {
     this.timers.armFrozenEnd(groupKey(namespace, groupId), at, () => {
       this.runTimer(namespace, groupId, async () => {
         const current = await this.deps.store.get(namespace, groupId);
-        // Stale timer: the group is gone or the leader came back.
-        if (!current || current.leaderOnline) return;
+        // Stale timer: the group is gone or live again (#13 6.4).
+        if (!current || current.pause === undefined) return;
         await this.scheduleFrozenEnd(app, current);
       });
     });

@@ -115,6 +115,8 @@ export type {
   BlockListAckMessage,
   TokenRefreshedMessage,
   LeaderOfflineMessage,
+  LeaderPause,
+  LeaderPauseCause,
   LeaderOnlineMessage,
   CodesUpdatedMessage,
   CodesUpdatedReason,

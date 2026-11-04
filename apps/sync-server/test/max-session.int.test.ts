@@ -21,7 +21,10 @@ describe('max session time (#5 AC21, Q2)', () => {
     ts = await startTestServer({
       scheduler,
       store,
-      apps: [{ namespace: 'app-a', apiKey: KEY_A, maxSessionMinutes: 30 }],
+      // An inactivity limit past the max session: no keep-alive before the end.
+      apps: [
+        { namespace: 'app-a', apiKey: KEY_A, maxSessionMinutes: 30, inactivityLimitMinutes: 60 },
+      ],
     });
     const created = scheduler.now();
     const { groupId, leader, members } = await createGroupWithMembers(ts, 1);

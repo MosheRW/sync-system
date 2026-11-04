@@ -34,7 +34,12 @@ describe('frozen groups (#5 AC18)', () => {
     const { groupId, leader, members } = await createGroupWithMembers(ts, 2, { position: 1 });
     await leader.close();
     for (const member of members) {
-      expect(await member.next('leader.offline')).toEqual({ type: 'leader.offline', groupId });
+      expect(await member.next('leader.offline')).toEqual({
+        type: 'leader.offline',
+        groupId,
+        cause: 'disconnected',
+        graceMs: 30_000,
+      });
     }
     const record = await store.get('app-a', groupId);
     expect(record).toMatchObject({ leaderOnline: false, position: { has: true, payload: 1 } });
@@ -181,8 +186,8 @@ describe('frozen group end (#5 AC21)', () => {
     const { leader, members } = await createGroupWithMembers(ts, 1);
     await leader.close();
     await members[0]!.next('leader.offline');
-    // Max-session and frozen-end timers.
-    expect(scheduler.pending).toBe(2);
+    // Max-session, frozen-end and grace-end timers (#13 6.4).
+    expect(scheduler.pending).toBe(3);
     await members[0]!.close();
     await waitUntil(() => store.size === 0);
     // Ending the emptied group cancelled its timers.
@@ -225,8 +230,8 @@ describe('a group nobody is connected to ends (#13 D15; was dropped in #5 AC22)'
     const { leader, members } = await createGroupWithMembers(server, 1);
     await leader.close();
     await members[0]!.next('leader.offline');
-    // Max-session and frozen-end timers.
-    expect(scheduler.pending).toBe(2);
+    // Max-session, frozen-end and grace-end timers (#13 6.4).
+    expect(scheduler.pending).toBe(3);
     await server.close();
     ts = undefined;
     expect(scheduler.pending).toBe(0);

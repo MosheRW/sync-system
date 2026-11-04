@@ -135,12 +135,18 @@ describe('leader return (#5 AC19)', () => {
     const group = await createGroupWithMembers(ts, 1);
     await group.leader.close();
     await group.members[0]!.next('leader.offline');
-    expect(scheduler.pending).toBe(2);
-    await resumeWith(ts, group.leaderToken);
+    // Max session, frozen end and the grace end (#13 6.4).
+    expect(scheduler.pending).toBe(3);
+    const { client: back } = await resumeWith(ts, group.leaderToken);
+    group.leader = back;
     await group.members[0]!.next('leader.online');
     // Max session and the leader's keep-alive prompt (#13 6.3); no frozen end.
     expect(scheduler.pending).toBe(2);
-    scheduler.advance(WINDOW + 1);
+    // The leader stays active, so no keep-alive pause comes in between (#13).
+    scheduler.advance(15 * MINUTE);
+    group.leader.send({ type: 'leader.activity' });
+    await group.leader.next('activity.ack');
+    scheduler.advance(WINDOW + 1 - 15 * MINUTE);
     await group.members[0]!.expectNoMessage(30);
   });
 

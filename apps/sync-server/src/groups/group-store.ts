@@ -43,6 +43,12 @@ export interface GroupRecord {
    * leaves, is removed or becomes leader.
    */
   viceId: string | undefined;
+  /**
+   * A running pause (#13 D8): `offline` iff the leader is not connected,
+   * `inactive` after a missed keep-alive. `graceEndsAt` (epoch ms) only in
+   * `auto` mode, when a handoff can follow. Undefined while live.
+   */
+  pause: GroupPause | undefined;
   /** A keep-alive prompt is outstanding (#13 6.3). */
   keepAlivePending: boolean;
   /** The leader locked the group: no new admission by any method (#13 AC29). */
@@ -66,6 +72,12 @@ export interface GroupRecord {
   nextAdmissionSeq: number;
   /** N of the next generated `Guest N` name. */
   nextGuestNumber: number;
+}
+
+/** A running pause of a group (#13 D8). */
+export interface GroupPause {
+  readonly cause: 'offline' | 'inactive';
+  readonly graceEndsAt?: number;
 }
 
 /** Record fields `patch` may set in one atomic step (#13 3.2). */

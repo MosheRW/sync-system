@@ -374,6 +374,8 @@ interface GroupJoinedBase extends OwnName {
   leaderOnline: boolean;
   /** The leader locked the group: nobody new joins (#13 AC29). */
   locked: boolean;
+  /** The group is paused: why, and the grace left (#13 D8). `leaderOnline` is false. */
+  leaderPause?: LeaderPause;
 }
 
 /** `hasPosition: false` (and no `position` field) is the explicit "no position yet". */
@@ -485,10 +487,31 @@ export interface TokenRefreshedMessage {
   token: string;
 }
 
-/** To attached members: the leader's connection closed; the group is frozen (#5 AC18). */
+/**
+ * Why the group is paused (#13 D8): the leader's connection closed, or it
+ * missed the keep-alive while connected.
+ */
+export type LeaderPauseCause = 'disconnected' | 'inactive';
+
+/** A running pause as members see it (#13 D8, D12). */
+export interface LeaderPause {
+  cause: LeaderPauseCause;
+  /**
+   * Time left before the lead passes on (a duration, never a clock time).
+   * Present only when a handoff can follow (`auto` mode).
+   */
+  graceMs?: number;
+}
+
+/**
+ * To attached members: the group is paused (frozen, #5 AC18, #13 AC14,
+ * AC17). `cause` and `graceMs` are new in #13; older servers sent neither.
+ */
 export interface LeaderOfflineMessage {
   type: 'leader.offline';
   groupId: string;
+  cause?: LeaderPauseCause;
+  graceMs?: number;
 }
 
 /** To attached members: the leader is back (#5 AC19). */

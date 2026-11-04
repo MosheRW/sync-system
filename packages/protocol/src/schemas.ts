@@ -223,6 +223,8 @@ const schemas = buildJitless(() => {
   };
 
   const role = z.enum(['leader', 'vice-leader', 'member']);
+  const duration = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+  const pauseCause = z.enum(['disconnected', 'inactive']);
   const leaderState = z.object({
     blockList,
     locked: z.boolean(),
@@ -252,6 +254,7 @@ const schemas = buildJitless(() => {
     token,
     leaderOnline: z.boolean(),
     locked: z.boolean(),
+    leaderPause: z.object({ cause: pauseCause, graceMs: duration.optional() }).optional(),
   };
 
   const groupResumedBase = {
@@ -321,7 +324,12 @@ const schemas = buildJitless(() => {
     z.object({ type: z.literal('group.left'), reqId, groupId: z.string() }),
     z.object({ type: z.literal('blocklist.ack'), reqId }),
     z.object({ type: z.literal('token.refreshed'), groupId: z.string(), token }),
-    z.object({ type: z.literal('leader.offline'), groupId: z.string() }),
+    z.object({
+      type: z.literal('leader.offline'),
+      groupId: z.string(),
+      cause: pauseCause.optional(),
+      graceMs: duration.optional(),
+    }),
     z.object({ type: z.literal('leader.online'), groupId: z.string() }),
     z.object({
       type: z.literal('codes.updated'),
