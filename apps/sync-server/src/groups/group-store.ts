@@ -29,6 +29,13 @@ export interface GroupRecord {
    * by `nextTerm` on every grant. Every token carries it.
    */
   term: number;
+  /**
+   * Clock at the recreation of this group in this process (after a
+   * restart), `max(now, claims.term + 1)` (#13 6.6.1, RC18); undefined for a
+   * group created in this process. A group is recreated at most once per
+   * process (#13 6.9).
+   */
+  recoveredAt: number | undefined;
   /** False while the leader is offline: the group is frozen (#5 AC18). */
   leaderOnline: boolean;
   /** Blocked participant IDs (#5 AC26). Never logged. */

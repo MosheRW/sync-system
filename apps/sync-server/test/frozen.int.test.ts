@@ -176,7 +176,7 @@ describe('frozen group end (#5 AC21)', () => {
     await waitUntil(() => store.size === 0);
   });
 
-  it('a stale timer for a dropped group is a no-op', async () => {
+  it('a stale timer for an emptied group is a no-op', async () => {
     const { scheduler, store, ts } = await start();
     const { leader, members } = await createGroupWithMembers(ts, 1);
     await leader.close();
@@ -185,26 +185,30 @@ describe('frozen group end (#5 AC21)', () => {
     expect(scheduler.pending).toBe(2);
     await members[0]!.close();
     await waitUntil(() => store.size === 0);
-    // Dropping the group cancelled its timer.
+    // Ending the emptied group cancelled its timers.
     expect(scheduler.pending).toBe(0);
     scheduler.advance(WINDOW * 2);
     expect(ts.logs.events()).not.toContain('timer_error');
-    expect(ts.logs.events()).not.toContain('group_ended');
+    const ends = ts.logs.records().filter((r) => r.event === 'group_ended');
+    expect(ends.map((r) => r.endReason)).toEqual(['empty']);
   });
 });
 
-describe('dropping groups nobody is connected to (#5 AC22)', () => {
-  it('drops a group whose leader leaves alone, without ending it', async () => {
+describe('a group nobody is connected to ends (#13 D15; was dropped in #5 AC22)', () => {
+  it('ends a group whose leader leaves alone, as empty', async () => {
     const { store, ts, scheduler } = await start();
     const { leader } = await createGroupWithMembers(ts, 0);
     await leader.close();
     await waitUntil(() => store.size === 0);
     expect(scheduler.pending).toBe(0);
-    expect(ts.logs.events()).toContain('group_dropped');
-    expect(ts.logs.events()).not.toContain('group_ended');
+    expect(ts.logs.events()).not.toContain('group_dropped');
+    expect(ts.logs.records().find((r) => r.event === 'group_ended')).toMatchObject({
+      endReason: 'empty',
+      members: 0,
+    });
   });
 
-  it('drops a frozen group when its last member leaves', async () => {
+  it('ends a frozen group when its last member leaves', async () => {
     const { store, ts } = await start();
     const { leader, members } = await createGroupWithMembers(ts, 2);
     await leader.close();

@@ -31,6 +31,39 @@ export const DEFAULT_TEST_APPS: TestAppInput[] = [
   { namespace: 'app-b', apiKey: KEY_B },
 ];
 
+/**
+ * How far a simulated restart moves the clock ahead (#13 6.9 layer 2):
+ * tokens of an earlier instance must have an `iat` before the second the
+ * new instance started, or the new instance treats them as its own.
+ */
+export const RESTART_CLOCK_STEP_MS = 1_500;
+
+/** Instances started per secrets object and per manual scheduler. */
+const startsBySecrets = new WeakMap<object, number>();
+const startsByScheduler = new WeakMap<object, number>();
+
+/**
+ * A restart is simulated by a new instance on the same token secrets (or
+ * the same manual scheduler). Each such instance runs its clock
+ * RESTART_CLOCK_STEP_MS further ahead: a manual scheduler is advanced, a
+ * real clock is offset. A first instance keeps the clock as it is.
+ */
+function restartClock(options: StartOptions): Pick<StartOptions, 'now'> {
+  const scheduler = options.scheduler as { advance?: (ms: number) => void } | undefined;
+  if (scheduler !== undefined) {
+    const starts = startsByScheduler.get(scheduler) ?? 0;
+    startsByScheduler.set(scheduler, starts + 1);
+    if (starts > 0) scheduler.advance?.(RESTART_CLOCK_STEP_MS);
+    return {};
+  }
+  if (options.now !== undefined || options.tokenSecrets === undefined) return {};
+  const starts = startsBySecrets.get(options.tokenSecrets) ?? 0;
+  startsBySecrets.set(options.tokenSecrets, starts + 1);
+  if (starts === 0) return {};
+  const offset = starts * RESTART_CLOCK_STEP_MS;
+  return { now: () => Date.now() + offset };
+}
+
 /** A manually advanced clock for rate limiter tests. */
 export class TestClock {
   constructor(public time = 1_000_000) {}
@@ -63,7 +96,7 @@ export interface TestServer {
 }
 
 export async function startTestServer(options: StartOptions = {}): Promise<TestServer> {
-  const { env: envOverrides, apps, logLevel, ...rest } = options;
+  const { env: envOverrides, apps, logLevel, ...rest } = { ...options, ...restartClock(options) };
   const env = parseEnv({ LOG_LEVEL: logLevel ?? 'trace', ...envOverrides });
   const appInputs = (apps ?? DEFAULT_TEST_APPS).map((app) => ({ minAppVersion: '1.0.0', ...app }));
   const registry = new AppRegistry(parseAppsConfig(JSON.stringify({ apps: appInputs }), env));

@@ -24,6 +24,9 @@ import {
 import type { AppConfig } from '../apps/app-registry.js';
 import { jsonByteLength } from '../limits/json-size.js';
 import {
+  MAX_CLOCK_SKEW_MS,
+  RECREATIONS_PER_CONNECTION_PER_MINUTE,
+  RECREATION_WINDOW_MS,
   TOKENS_CHECK_PER_APP_PER_MINUTE,
   TOKENS_CHECK_PER_MINUTE,
   TOKENS_CHECK_WINDOW_MS,
@@ -68,6 +71,12 @@ export interface GroupServiceDeps {
   refresh: RefreshPolicy;
   /** Groups that ended in this process (Q8). */
   ended: EndedGroups;
+  /**
+   * When this process started, from the injected clock, read before any
+   * token was issued (#13 6.9 layer 2). Defaults to the clock at
+   * construction.
+   */
+  processStartedAt?: number;
   /** Signs and verifies QR tickets (#10). */
   qrTickets: QrTicketService;
   /** Signs and verifies codes blobs (#10). */
@@ -119,6 +128,10 @@ export class GroupService implements GroupActions {
   private readonly appBudgetWarnedAt = new Map<string, number>();
   /** Join codes and every join flow (#10). */
   private readonly joins: JoinService;
+  /** Group recreations per connection (#13 RC20). */
+  private readonly recreateLimiter: SlidingWindowRateLimiter;
+  /** When this process started (#13 6.9 layer 2). */
+  private readonly processStartedAt: number;
 
   constructor(private readonly deps: GroupServiceDeps) {
     this.joins = new JoinService(
@@ -142,6 +155,8 @@ export class GroupService implements GroupActions {
     );
     this.checkLimiter = new SlidingWindowRateLimiter(() => this.now(), TOKENS_CHECK_WINDOW_MS);
     this.appCheckLimiter = new SlidingWindowRateLimiter(() => this.now(), TOKENS_CHECK_WINDOW_MS);
+    this.recreateLimiter = new SlidingWindowRateLimiter(() => this.now(), RECREATION_WINDOW_MS);
+    this.processStartedAt = deps.processStartedAt ?? deps.scheduler.now();
     this.timers = new GroupTimers(deps.scheduler);
     this.parking = new ParkingLot(deps.scheduler);
     this.refresher = new TokenRefresher(deps.scheduler, deps.refresh);
@@ -154,6 +169,7 @@ export class GroupService implements GroupActions {
     this.refresher.clearAll();
     this.checkLimiter.clear();
     this.appCheckLimiter.clear();
+    this.recreateLimiter.clear();
     this.appBudgetWarnedAt.clear();
     this.joins.close();
   }
@@ -322,6 +338,7 @@ export class GroupService implements GroupActions {
       createdAt: now,
       lastActivityAt: now,
       term: now,
+      recoveredAt: undefined,
       leaderOnline: true,
       blockList: [],
       joinMethods: initial.methods,
@@ -597,6 +614,8 @@ export class GroupService implements GroupActions {
         app,
         record: await this.deps.store.get(app.namespace, claims.gid),
         ended: this.deps.ended.has(app.namespace, claims.gid),
+        processStartedAt: this.processStartedAt,
+        recoveryClosed: this.deps.ended.isRecoveryClosed(app.namespace),
         now,
         refreshMaxMs: this.deps.refresh.maxMs,
       });
@@ -699,7 +718,7 @@ export class GroupService implements GroupActions {
       this.deps.notifier.unregister(membershipKey(app.namespace, groupId, participantId), session);
       session.membership = undefined;
       const result = await this.deps.store.removeParticipant(app.namespace, groupId, participantId);
-      if (result && result.connected === 0) await this.dropGroup(app.namespace, groupId);
+      if (result && result.connected === 0) await this.endGroup(app, groupId, 'empty');
       this.deps.logger.info(
         { event: 'group_left', namespace: app.namespace, groupRef: groupRef(groupId) },
         'group left',
@@ -734,12 +753,17 @@ export class GroupService implements GroupActions {
 
     return this.locks.run(groupKey(app.namespace, claims.gid), async () => {
       if (this.busy(session)) return errorMessage(ErrorCode.ALREADY_IN_GROUP);
+      // The entry, the fence and the closure are read under the lock, with
+      // the record, so the classification and a recreation are one step
+      // (#13 RC17).
       const record = await this.deps.store.get(app.namespace, claims.gid);
       const status = classifyToken({
         claims,
         app,
         record,
         ended: this.deps.ended.has(app.namespace, claims.gid),
+        processStartedAt: this.processStartedAt,
+        recoveryClosed: this.deps.ended.isRecoveryClosed(app.namespace),
         now: this.now(),
         refreshMaxMs: this.deps.refresh.maxMs,
       });
@@ -756,8 +780,19 @@ export class GroupService implements GroupActions {
           return claims.role === 'leader'
             ? this.leaderReturn(session, record!, claims, message.blockList, message.joinCodes)
             : this.memberResume(session, record!, claims);
-        case 'recoverable':
+        case 'recoverable': {
+          // Slows a stock-up of recreations after a restart (#13 RC20, M5).
+          const rate = this.recreateLimiter.tryAcquire(
+            session.connectionId,
+            RECREATIONS_PER_CONNECTION_PER_MINUTE,
+          );
+          if (!rate.ok) {
+            return actionErrorMessage(ErrorCode.RATE_LIMITED, 'group.resume', {
+              details: { retryAfterMs: rate.retryAfterMs },
+            });
+          }
           return this.recreate(session, claims, message);
+        }
         case 'waiting':
           return this.parkMember(session, claims);
       }
@@ -864,6 +899,9 @@ export class GroupService implements GroupActions {
       lastActivityAt: now,
       // The recreating token's grant (#13 D3).
       term: claims.term,
+      // Clamped above the recreating term (#13 RC18), so a pre-restart token
+      // whose term ran ahead of the clock still leaves term < recoveredAt.
+      recoveredAt: Math.max(now, claims.term + 1),
       leaderOnline: true,
       // Deduplicated; the leader's own ID is ignored.
       blockList: [...new Set(message.blockList ?? [])].filter((id) => id !== claims.pid),
@@ -1051,6 +1089,7 @@ export class GroupService implements GroupActions {
 
   async disconnect(session: Session): Promise<void> {
     this.checkLimiter.forget(session.connectionId);
+    this.recreateLimiter.forget(session.connectionId);
     await this.joins.onDisconnect(session);
     // A parked session just stops waiting.
     this.parking.unpark(session);
@@ -1080,7 +1119,7 @@ export class GroupService implements GroupActions {
         return;
       }
       const result = await this.deps.store.removeParticipant(namespace, groupId, participantId);
-      if (result && result.connected === 0) await this.dropGroup(namespace, groupId);
+      if (result && result.connected === 0) await this.endGroup(app, groupId, 'empty');
     });
   }
 
@@ -1096,7 +1135,7 @@ export class GroupService implements GroupActions {
     this.refresher.clear(groupKey(namespace, groupId));
     if (!record) return;
     if (connectedCount(record) === 0) {
-      await this.dropGroup(namespace, groupId);
+      await this.endGroup(app, groupId, 'empty');
       return;
     }
     this.deps.notifier.broadcast(this.memberKeys(record), { type: 'leader.offline', groupId });
@@ -1135,17 +1174,12 @@ export class GroupService implements GroupActions {
     });
   }
 
-  /**
-   * Removes a group nobody is connected to from memory (#5 AC22). This is not
-   * an end: its tokens stay usable until their own limits pass.
-   */
-  private async dropGroup(namespace: string, groupId: string): Promise<void> {
-    const record = await this.deps.store.get(namespace, groupId);
-    await this.deps.store.delete(namespace, groupId);
-    this.forgetGroup(namespace, groupId, record);
-    this.deps.logger.info(
-      { event: 'group_dropped', namespace, groupRef: groupRef(groupId) },
-      'group dropped',
+  /** True when an open session owns any membership of the group (#13 RC19). */
+  private anyoneAttached(record: GroupRecord): boolean {
+    return record.participantIds.some((id) =>
+      isParticipantConnected(
+        this.deps.notifier.get(membershipKey(record.appNamespace, record.id, id)),
+      ),
     );
   }
 
@@ -1170,26 +1204,58 @@ export class GroupService implements GroupActions {
   private async endGroup(
     app: AppConfig,
     groupId: string,
-    reason: GroupEndedReason,
+    reason: GroupEndedReason | 'empty',
     requester?: Session,
   ): Promise<void> {
     const namespace = app.namespace;
     const record = await this.deps.store.get(namespace, groupId);
+    if (reason === 'empty' && record !== undefined && this.anyoneAttached(record)) {
+      // #13 RC19: an empty end with someone attached would end a live group
+      // without telling them. The callers re-check first, so this is a bug.
+      this.deps.logger.error(
+        { event: 'empty_end_refused', namespace, groupRef: groupRef(groupId) },
+        'refused to end a group as empty while a participant is attached',
+      );
+      return;
+    }
     await this.deps.store.delete(namespace, groupId);
     this.forgetGroup(namespace, groupId, record);
-    // Remembered until its max-session deadline, as a hashed ref only (Q8).
-    if (record) this.deps.ended.remember(namespace, groupId, this.maxSessionEndAt(app, record));
+    // Remembered until its max-session deadline, as a hashed ref only (Q8),
+    // for every end including `empty` (#13 D15). A group recreated in this
+    // process gets a guard: its pre-restart leader tokens are not covered
+    // by the `iat` fence until their `lat` window passed (#13 6.9 layer 1).
+    if (record) {
+      const deadline = this.maxSessionEndAt(app, record);
+      const guardUntil =
+        record.recoveredAt === undefined
+          ? undefined
+          : Math.min(
+              deadline,
+              this.processStartedAt +
+                app.inactivityLimitMinutes * MINUTE_MS +
+                this.deps.refresh.maxMs +
+                MAX_CLOCK_SKEW_MS,
+            );
+      this.deps.ended.remember(namespace, groupId, deadline, guardUntil);
+    }
     const keys = (record?.participantIds ?? []).map((id) => membershipKey(namespace, groupId, id));
-    const ended = JSON.stringify({ type: 'group.ended', groupId, reason } satisfies ServerMessage);
     let notified = 0;
-    for (const key of keys) {
-      const participant = this.deps.notifier.get(key);
-      if (participant === undefined) continue;
-      notified += 1;
-      this.deps.notifier.unregister(key, participant);
-      if (participant.membership?.groupId === groupId) participant.membership = undefined;
-      // The requester gets group.ended as its direct reply instead.
-      if (participant !== requester) participant.afterPending(() => participant.deliver(ended));
+    // `empty` has no wire reason: nobody is attached to be told (#13 6.9).
+    if (reason !== 'empty') {
+      const ended = JSON.stringify({
+        type: 'group.ended',
+        groupId,
+        reason,
+      } satisfies ServerMessage);
+      for (const key of keys) {
+        const participant = this.deps.notifier.get(key);
+        if (participant === undefined) continue;
+        notified += 1;
+        this.deps.notifier.unregister(key, participant);
+        if (participant.membership?.groupId === groupId) participant.membership = undefined;
+        // The requester gets group.ended as its direct reply instead.
+        if (participant !== requester) participant.afterPending(() => participant.deliver(ended));
+      }
     }
     this.deps.logger.info(
       {

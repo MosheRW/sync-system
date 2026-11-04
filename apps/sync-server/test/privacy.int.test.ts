@@ -158,7 +158,7 @@ describe('logs never contain personal or secret data (AC24, L5, L8)', () => {
       'flood_closed',
       'ws_closed',
       'group_frozen',
-      'group_dropped',
+      'group_ended',
       'dev_api_key',
     ]) {
       expect(events, event).toContain(event);

@@ -75,10 +75,25 @@ function plausible(claims: TokenClaims, now: number): boolean {
  * and never throws or returns anything that contains token content.
  */
 export class TokenService {
-  constructor(private readonly keyring: TokenKeyring) {}
+  /** `iat` floor in epoch seconds: the second this process started (#13 RC18). */
+  private readonly minIat: number;
+
+  /**
+   * `processStartedAt` (epoch ms) floors every issued `iat` (#13 RC18): a
+   * clock that steps back below the process start can never make a token
+   * issued here look like one from an earlier process to the recreation
+   * fence (6.9 layer 2). If the step is larger than the clock skew, such a
+   * token fails plausibility, which fails closed.
+   */
+  constructor(
+    private readonly keyring: TokenKeyring,
+    processStartedAt = 0,
+  ) {
+    this.minIat = Math.floor(processStartedAt / 1000);
+  }
 
   issue(input: IssueInput): string {
-    const iat = Math.floor(input.now / 1000);
+    const iat = Math.max(Math.floor(input.now / 1000), this.minIat);
     return this.sign(
       {
         v: TOKEN_FORMAT_VERSION,

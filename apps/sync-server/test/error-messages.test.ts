@@ -44,6 +44,7 @@ describe('per-action error texts (#7 A1)', () => {
         'codes.rotate': 'Too many code rotations',
         'group.joinByQr': 'Too many join attempts',
         'qr.issue': 'Too many QR code requests',
+        'group.resume': 'Too many group recoveries',
       },
       NOT_LEADER: {
         'position.update': 'Only the leader can update the position',

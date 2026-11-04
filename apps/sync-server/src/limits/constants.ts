@@ -70,6 +70,17 @@ export const MAX_CLOCK_SKEW_MS = 300_000;
 /** Most remembered ended-group refs; the oldest is evicted first (Q8, L4). */
 export const MAX_ENDED_GROUPS = 100_000;
 
+/**
+ * Group recreations (a `group.resume` that rebuilds a group after a restart)
+ * per connection per window (#13 RC20, M5): slows a stock-up of recreated
+ * and ended groups that would fill the ended-groups memory. Same size as the
+ * join-attempt budget.
+ */
+export const RECREATIONS_PER_CONNECTION_PER_MINUTE = 10;
+
+/** Window of the recreation limiter. */
+export const RECREATION_WINDOW_MS = 60_000;
+
 /** How often expired ended-group refs are swept. */
 export const ENDED_SWEEP_MS = 60_000;
 

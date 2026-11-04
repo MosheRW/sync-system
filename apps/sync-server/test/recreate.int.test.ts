@@ -127,15 +127,15 @@ describe('recreation after a restart (#5 AC23)', () => {
 });
 
 describe('recreation request rules (#5 AC24)', () => {
+  /** A group on a first instance, then a restarted one (#13 D15: no recreation in-process). */
   async function droppedGroup() {
-    const store = new InMemoryGroupStore();
-    ts = await startTestServer({
-      store,
-      apps: [{ namespace: 'app-a', apiKey: KEY_A, maxMessageBytes: 16384 }],
-    });
+    const tokenSecrets = secrets();
+    const apps = [{ namespace: 'app-a', apiKey: KEY_A, maxMessageBytes: 16384 }];
+    ts = await startTestServer({ tokenSecrets, apps });
     const group = await createGroupWithMembers(ts, 0);
-    await group.leader.close();
-    await waitUntil(() => store.size === 0);
+    await ts.close();
+    const store = new InMemoryGroupStore();
+    ts = await startTestServer({ tokenSecrets, apps, store });
     return { group, store, ts };
   }
 
@@ -185,11 +185,12 @@ describe('recreation request rules (#5 AC24)', () => {
 
 describe('one group per token (#5 AC27, AC28)', () => {
   it('two concurrent resumes with one leader token make one group; the first is replaced', async () => {
-    const store = new InMemoryGroupStore();
-    ts = await startTestServer({ store });
+    const tokenSecrets = secrets();
+    ts = await startTestServer({ tokenSecrets });
     const group = await createGroupWithMembers(ts, 0);
-    await group.leader.close();
-    await waitUntil(() => store.size === 0);
+    await ts.close();
+    const store = new InMemoryGroupStore();
+    ts = await startTestServer({ tokenSecrets, store });
 
     const a = await ts.connectReady();
     const b = await ts.connectReady();
@@ -217,14 +218,14 @@ describe('one group per token (#5 AC27, AC28)', () => {
     expect(store.size).toBe(0);
   });
 
-  it('"resume later": a dropped group is recreated within the window (AC28)', async () => {
+  it('"resume later" after a restart: recreated within the window (AC28)', async () => {
+    const tokenSecrets = secrets();
     const scheduler = new ManualScheduler();
-    const store = new InMemoryGroupStore();
-    ts = await startTestServer({ scheduler, store });
+    ts = await startTestServer({ tokenSecrets, scheduler });
     const group = await createGroupWithMembers(ts, 0, { position: 'p' });
-    await group.leader.close();
-    await waitUntil(() => store.size === 0);
+    await ts.close();
     scheduler.advance(20 * MINUTE);
+    ts = await startTestServer({ tokenSecrets, scheduler, store: new InMemoryGroupStore() });
     const { reply } = await resumeWith(ts, group.leaderToken, { metadata: {}, position: 'p' });
     expect(reply).toMatchObject({
       type: 'group.resumed',
@@ -232,6 +233,19 @@ describe('one group per token (#5 AC27, AC28)', () => {
       recreated: true,
       position: 'p',
     });
+  });
+
+  it('an emptied group ends and is never recreated in the same process (#13 D15)', async () => {
+    const scheduler = new ManualScheduler();
+    const store = new InMemoryGroupStore();
+    ts = await startTestServer({ scheduler, store });
+    const group = await createGroupWithMembers(ts, 0, { position: 'p' });
+    await group.leader.close();
+    await waitUntil(() => store.size === 0);
+    scheduler.advance(MINUTE);
+    const { reply } = await resumeWith(ts, group.leaderToken, { metadata: {}, position: 'p' });
+    expect(reply).toMatchObject({ type: 'error', code: 'GROUP_ENDED' });
+    expect(store.size).toBe(0);
   });
 
   it('a new instance holds no group until a leader resumes (AC11)', async () => {

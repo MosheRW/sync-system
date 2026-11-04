@@ -302,11 +302,13 @@ describe('token rejections (#5 AC7, AC8, AC9, AC27)', () => {
 
   it('reports TOKEN_EXPIRED one window after the last activity, and creates nothing', async () => {
     const scheduler = new ManualScheduler();
-    const store = new InMemoryGroupStore();
-    ts = await startTestServer({ scheduler, store });
+    const tokenSecrets = secrets();
+    ts = await startTestServer({ scheduler, tokenSecrets });
     const group = await createGroupWithMembers(ts, 0);
-    await group.leader.close();
-    await waitUntil(() => store.size === 0);
+    await ts.close();
+    // After a restart (#13 D15: in the same process the group ends instead).
+    const store = new InMemoryGroupStore();
+    ts = await startTestServer({ scheduler, tokenSecrets, store });
     scheduler.advance(WINDOW);
     const { reply } = await resumeWith(ts, group.leaderToken);
     expect(reply).toMatchObject({ code: 'TOKEN_EXPIRED', message: 'Token expired' });
@@ -315,16 +317,12 @@ describe('token rejections (#5 AC7, AC8, AC9, AC27)', () => {
 
   it('reports any token past the max session time as TOKEN_EXPIRED', async () => {
     const scheduler = new ManualScheduler();
-    const store = new InMemoryGroupStore();
-    ts = await startTestServer({
-      scheduler,
-      store,
-      apps: [{ namespace: 'app-a', apiKey: KEY_A, maxSessionMinutes: 5 }],
-    });
+    const tokenSecrets = secrets();
+    const apps = [{ namespace: 'app-a', apiKey: KEY_A, maxSessionMinutes: 5 }];
+    ts = await startTestServer({ scheduler, tokenSecrets, apps });
     const group = await createGroupWithMembers(ts, 1);
-    await group.members[0]!.close();
-    await group.leader.close();
-    await waitUntil(() => store.size === 0);
+    await ts.close();
+    ts = await startTestServer({ scheduler, tokenSecrets, apps });
     scheduler.advance(5 * MINUTE);
     expect((await resumeWith(ts, group.memberTokens[0])).reply).toMatchObject({
       code: 'TOKEN_EXPIRED',

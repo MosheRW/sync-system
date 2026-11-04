@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { SyncClientError } from '../../src/errors.js';
 import type { LogFields } from '../../src/logger.js';
@@ -48,8 +48,9 @@ describe('stored tokens against the real server (#5 AC31, AC37, AC38)', () => {
     await expect(leader.checkTokens()).resolves.toEqual([]);
   });
 
-  it('"resume later": a new client with the same storage recreates the group', async () => {
-    server = await startRealServer();
+  it('"resume later" after a restart: a new client with the same storage recreates the group', async () => {
+    const tokenSecrets = { current: randomBytes(32), source: 'env' as const };
+    server = await startRealServer({ tokenSecrets });
     const storage = memoryStorage();
     const { client: first } = newClient(server.url, { storage });
     await first.connect();
@@ -58,6 +59,10 @@ describe('stored tokens against the real server (#5 AC31, AC37, AC38)', () => {
     await first.addToBlockList(groupId, [blocked]);
     first.close();
     await waitUntil(() => storedCount(storage, server!) === 1);
+    // Only a restart leaves a group recoverable (#13 D15).
+    const { port } = server;
+    await server.close();
+    server = await startRealServer({ port, tokenSecrets });
 
     const { client: later } = newClient(server.url, { storage });
     await later.connect();
@@ -77,7 +82,8 @@ describe('stored tokens against the real server (#5 AC31, AC37, AC38)', () => {
   });
 
   it('a member waits for its leader, then is admitted; leaveGroup deletes its token', async () => {
-    server = await startRealServer();
+    const tokenSecrets = { current: randomBytes(32), source: 'env' as const };
+    server = await startRealServer({ tokenSecrets });
     const leaderStorage = memoryStorage();
     const memberStorage = memoryStorage();
     const { client: leader } = newClient(server.url, { storage: leaderStorage });
@@ -89,7 +95,10 @@ describe('stored tokens against the real server (#5 AC31, AC37, AC38)', () => {
     await joinCreated(member, created);
     leader.close();
     member.close();
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    // Only a restart leaves a group to wait for (#13 D15).
+    const { port } = server;
+    await server.close();
+    server = await startRealServer({ port, tokenSecrets });
 
     const { client: member2 } = newClient(server.url, { storage: memberStorage });
     await member2.connect();

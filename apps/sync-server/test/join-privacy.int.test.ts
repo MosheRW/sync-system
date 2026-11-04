@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import type { JoinMethod, ServerMessage } from '@sync-system/protocol';
@@ -34,11 +35,14 @@ async function drain(client: TestClient, ms = 50): Promise<ServerMessage[]> {
 describe('join secrets never reach logs or other clients (#10 AC10, AC20, AC31, R10, R13)', () => {
   it('logs no code, door code, ticket, blob, display name or request ID on any join path', async () => {
     const scheduler = new ManualScheduler();
-    ts = await startTestServer({
+    const tokenSecrets = { current: randomBytes(32), source: 'env' as const };
+    const options = {
       scheduler,
-      logLevel: 'trace',
+      tokenSecrets,
+      logLevel: 'trace' as const,
       apps: [{ namespace: 'app-a', apiKey: KEY_A, joinMethods: ALL }],
-    });
+    };
+    ts = await startTestServer(options);
     const secrets: string[] = [NAME];
     const remember = (codes: {
       groupCode?: string;
@@ -102,23 +106,26 @@ describe('join secrets never reach logs or other clients (#10 AC10, AC20, AC31, 
     await leaderB.next('join.decided');
     await asking.next('group.joined');
 
-    // Recreation with the blob (leader returns after a drop of everyone).
+    // Recreation with the blob after a restart (#13 D15: only a restart
+    // leaves a group recoverable).
     const lastBlob = createdB.codes.blob;
-    await asking.close();
-    await leaderB.close();
+    const firstLogs = ts.logs;
+    await ts.close();
+    ts = await startTestServer(options);
     const { reply } = await resumeWith(ts, createdB.token, { metadata: {}, joinCodes: lastBlob });
     expect(reply.type).toBe('group.resumed');
 
     // Pino's own numeric fields could contain any 6 digits by chance.
-    const text = ts.logs.text.replace(/"(time|pid|hostname)":("[^"]*"|\d+)/g, '');
+    const text = `${firstLogs.text}
+${ts.logs.text}`.replace(/"(time|pid|hostname)":("[^"]*"|\d+)/g, '');
     for (const secret of secrets) expect(text, 'log leak').not.toContain(secret);
     // No new log event uses a `reason` field (it is a redacted path since #5).
-    for (const record of ts.logs.records()) {
+    for (const record of [...firstLogs.records(), ...ts.logs.records()]) {
       if (typeof record.event === 'string' && /join|code|qr/.test(record.event)) {
         expect(Object.keys(record)).not.toContain('reason');
       }
     }
-    const events = new Set(ts.logs.events());
+    const events = new Set([...firstLogs.events(), ...ts.logs.events()]);
     for (const event of [
       'join_rejected',
       'codes_rotated',
