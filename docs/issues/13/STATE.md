@@ -2,7 +2,7 @@
 - Path: full
 - Phase: architecture
 - Branch: feat/13-roles-lifecycle
-- PR: none
+- PR: #14 (draft)
 - Plan approved by user: no
 - QA loops: 0
 - Last updated by: architect
