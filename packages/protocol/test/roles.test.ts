@@ -232,3 +232,44 @@ describe('pause on the wire (#13 D8, D12)', () => {
     ).toBe(false);
   });
 });
+
+describe('leadership messages (#13 AC23)', () => {
+  it('parses leader.granted, leader.lost and leader.changed; no ID in leader.changed', () => {
+    const codes = { generation: 1, alphaCode: 'ABCDEFGH', blob: `a.${'b'.repeat(43)}` };
+    const state = { blockList: [], locked: false, handoff: 'auto' };
+    expect(
+      parseServerMessage({
+        type: 'leader.granted',
+        groupId: GID,
+        reason: 'handoff_disconnect',
+        token: 't',
+        state,
+        joinMethods: ['C'],
+        codes,
+      }).ok,
+    ).toBe(true);
+    expect(
+      parseServerMessage({
+        type: 'leader.lost',
+        groupId: GID,
+        reason: 'superseded',
+        token: 't',
+        takeBackAvailable: false,
+      }).ok,
+    ).toBe(true);
+    const changed = parseServerMessage({
+      type: 'leader.changed',
+      groupId: GID,
+      reason: 'take_back',
+      participantId: PID,
+    });
+    expect(changed.ok && changed.message).toEqual({
+      type: 'leader.changed',
+      groupId: GID,
+      reason: 'take_back',
+    });
+    expect(parseServerMessage({ type: 'leader.changed', groupId: GID, reason: 'coup' }).ok).toBe(
+      false,
+    );
+  });
+});

@@ -240,6 +240,14 @@ export class GroupService implements GroupActions {
       toMembers: (record, message) =>
         this.deps.notifier.broadcast(this.memberKeys(record), message),
       scheduleFrozenEnd: (app, record) => this.scheduleFrozenEnd(app, record),
+      sessionOf: (record, pid) => this.sessionOf(record, pid),
+      issueToken: (record, pid, role) =>
+        this.issueToken(record.appNamespace, record, pid, role, this.now()),
+      leaderState: (record) => this.leaderState(record),
+      codesPayload: (record) => this.joins.payload(record),
+      rosterSnapshot: (record) => this.rosterSnapshot(record),
+      onLeaderReturn: (leader, record) => this.joins.onLeaderReturn(leader, record),
+      startRefresh: (namespace, groupId, at) => this.startRefresh(namespace, groupId, at),
       now: () => this.now(),
     });
     this.parking = new ParkingLot(deps.scheduler);
@@ -433,6 +441,8 @@ export class GroupService implements GroupActions {
       locked: false,
       keepAlivePending: false,
       pause: undefined,
+      displacedLeaderId: undefined,
+      escalated: false,
       leaderOnline: true,
       blockList: [],
       joinMethods: initial.methods,
@@ -1162,6 +1172,9 @@ export class GroupService implements GroupActions {
       locked: message.locked ?? false,
       keepAlivePending: false,
       pause: undefined,
+      // A recreated group starts a new line: no take-back slot (#13 6.6).
+      displacedLeaderId: undefined,
+      escalated: false,
       leaderOnline: true,
       // Deduplicated; the leader's own ID is ignored.
       blockList: [...new Set(message.blockList ?? [])].filter((id) => id !== claims.pid),
@@ -1342,7 +1355,7 @@ export class GroupService implements GroupActions {
 
   /** Roster entries that are never evicted (#13 D10, RC10). */
   private protectedPids(record: GroupRecord): Array<string | undefined> {
-    return [record.leaderId, record.viceId];
+    return [record.leaderId, record.viceId, record.displacedLeaderId];
   }
 
   /** Sends `message` to the group's attached leader, after its pending replies. */

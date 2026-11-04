@@ -1,9 +1,15 @@
-import type { ServerMessage } from '@sync-system/protocol';
+import type {
+  JoinCodesPayload,
+  LeaderState,
+  LeadershipReason,
+  ServerMessage,
+} from '@sync-system/protocol';
 import type { AppConfig } from '../apps/app-registry.js';
 import type { GroupPause, GroupRecord, GroupStore } from '../groups/group-store.js';
 import type { GroupTimers } from '../groups/group-timers.js';
 import type { Session } from '../groups/session.js';
 import { type Logger, groupRef } from '../logging/logger.js';
+import { nextTerm, pickSuccessor } from './succession.js';
 
 const MINUTE_MS = 60_000;
 
@@ -24,6 +30,20 @@ export interface LifecycleHost {
   toMembers(record: GroupRecord, message: ServerMessage): void;
   /** Arms the frozen bound, or ends the group if it passed (#5 AC21). */
   scheduleFrozenEnd(app: AppConfig, record: GroupRecord): Promise<void>;
+  /** The session attached as `pid`, if any. */
+  sessionOf(record: GroupRecord, pid: string): Session | undefined;
+  /** A token for `pid` with the record's current claims (term, gct, lat). */
+  issueToken(record: GroupRecord, pid: string, role: 'leader' | 'member'): string;
+  /** The leader recovery state (#13 D13). */
+  leaderState(record: GroupRecord): LeaderState;
+  /** The leader-only codes payload with a fresh blob. */
+  codesPayload(record: GroupRecord): JoinCodesPayload;
+  /** The whole roster for the leader. */
+  rosterSnapshot(record: GroupRecord): ServerMessage;
+  /** Re-sends pending approval requests and a running door pause to a new leader. */
+  onLeaderReturn(leader: Session, record: GroupRecord): void;
+  /** Restarts the leader-token refresh for the group's online leader. */
+  startRefresh(namespace: string, groupId: string, at: number): void;
   now(): number;
 }
 
@@ -242,14 +262,118 @@ export class LifecycleService {
   }
 
   /**
-   * After the grace period with the leader still away: nobody to hand off
-   * to yet, so the group stays paused until the frozen bound (#13 AC21).
+   * The grace period ended with the leader still away (#13 6.4, AC20): in
+   * `auto` mode the lead passes to the successor. With nobody eligible the
+   * group stays paused until the frozen bound, like frozen mode (AC21).
    */
-  protected async graceEnded(app: AppConfig, record: GroupRecord): Promise<void> {
+  private async graceEnded(app: AppConfig, record: GroupRecord): Promise<void> {
+    const successor = pickSuccessor(record, (pid) => {
+      const session = this.host.sessionOf(record, pid);
+      return session !== undefined && session.isOpen();
+    });
+    if (record.handoff !== 'auto' || successor === undefined || record.pause === undefined) {
+      this.host.logger.info(
+        { event: 'grace_ended', namespace: app.namespace, groupRef: groupRef(record.id) },
+        'grace period ended without a handoff',
+      );
+      return;
+    }
+    const reason = record.pause.cause === 'inactive' ? 'handoff_inactivity' : 'handoff_disconnect';
+    await this.handoff(app, record, successor, reason);
+  }
+
+  /**
+   * Hands the lead to `successor` (#13 6.5, AC20, AC23, RC13), in one step
+   * under the group lock: a new term from `nextTerm` with the recovery
+   * floor, the old leader displaced (the take-back slot), the escalation
+   * flag set only for an inactivity handoff, the vice cleared if it is the
+   * successor, the pause and keep-alive cleared, and a fresh inactivity
+   * period. The old leader leaves the leader slot if it is offline. Then
+   * the new leader gets `leader.granted`, the roster, pending requests; an
+   * attached old leader gets `leader.lost` with a member token; everyone
+   * else `leader.changed`.
+   */
+  async handoff(
+    app: AppConfig,
+    record: GroupRecord,
+    successor: string,
+    reason: 'handoff_disconnect' | 'handoff_inactivity' | 'take_back',
+  ): Promise<GroupRecord> {
+    const namespace = app.namespace;
+    const now = this.host.now();
+    const old = record.leaderId;
+    const oldSession = this.host.sessionOf(record, old);
+    const oldAttached = oldSession !== undefined && oldSession.isOpen();
+    const participantIds = oldAttached
+      ? record.participantIds
+      : record.participantIds.filter((pid) => pid !== old);
+    const updated =
+      (await this.host.store.patch(namespace, record.id, {
+        term: nextTerm(record.term, now, record.recoveredAt ?? 0),
+        leaderId: successor,
+        displacedLeaderId: old,
+        escalated: reason === 'handoff_inactivity',
+        viceId: record.viceId === successor ? undefined : record.viceId,
+        lastActivityAt: now,
+        leaderOnline: true,
+        pause: undefined,
+        keepAlivePending: false,
+        participantIds,
+      })) ?? record;
+    const key = keyOf(namespace, record.id);
+    this.host.timers.clearKind(key, 'grace');
+    this.host.timers.clearFrozenEnd(key);
+    this.stopKeepAlive(namespace, record.id);
+    this.armKeepAlive(app, updated);
+    this.host.startRefresh(namespace, record.id, now);
+    this.announce(updated, successor, old, reason, oldAttached ? oldSession : undefined);
     this.host.logger.info(
-      { event: 'grace_ended', namespace: app.namespace, groupRef: groupRef(record.id) },
-      'grace period ended',
+      { event: 'leader_handoff', namespace, groupRef: groupRef(record.id), handoffReason: reason },
+      'leadership handed over',
     );
-    return Promise.resolve();
+    return updated;
+  }
+
+  /** Tells the new leader, the old leader and everyone else (#13 AC23). */
+  private announce(
+    record: GroupRecord,
+    successor: string,
+    old: string,
+    reason: 'handoff_disconnect' | 'handoff_inactivity' | 'take_back',
+    oldSession: Session | undefined,
+  ): void {
+    const leader = this.host.sessionOf(record, successor);
+    if (leader !== undefined) {
+      this.host.deliverLater(leader, {
+        type: 'leader.granted',
+        groupId: record.id,
+        reason,
+        token: this.host.issueToken(record, successor, 'leader'),
+        state: this.host.leaderState(record),
+        joinMethods: [...record.joinMethods],
+        codes: this.host.codesPayload(record),
+      });
+      this.host.deliverLater(leader, this.host.rosterSnapshot(record));
+      this.host.onLeaderReturn(leader, record);
+    }
+    if (oldSession !== undefined) {
+      this.host.deliverLater(oldSession, {
+        type: 'leader.lost',
+        groupId: record.id,
+        reason,
+        token: this.host.issueToken(record, old, 'member'),
+        takeBackAvailable: record.displacedLeaderId === old,
+      });
+    }
+    const changed: ServerMessage = {
+      type: 'leader.changed',
+      groupId: record.id,
+      reason: reason satisfies LeadershipReason,
+    };
+    for (const pid of record.participantIds) {
+      if (pid === successor || pid === old) continue;
+      const session = this.host.sessionOf(record, pid);
+      if (session !== undefined) this.host.deliverLater(session, changed);
+    }
   }
 }

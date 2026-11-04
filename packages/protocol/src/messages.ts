@@ -681,6 +681,46 @@ export interface MemberRemovedMessage {
   blockList: string[];
 }
 
+/** Why the lead moved (#13 AC23). */
+export type LeadershipReason =
+  'handoff_disconnect' | 'handoff_inactivity' | 'take_back' | 'superseded';
+
+/**
+ * To the new leader: "you're now leading" (#13 AC23). A new leader token,
+ * the recovery state, the join methods and codes; then `roster.snapshot`,
+ * pending `join.requested` and a running `join.paused` follow.
+ */
+export interface LeaderGrantedMessage {
+  type: 'leader.granted';
+  reqId?: string;
+  groupId: string;
+  reason: 'handoff_disconnect' | 'handoff_inactivity' | 'take_back';
+  token: string;
+  state: LeaderState;
+  joinMethods: JoinMethod[];
+  codes: JoinCodesPayload;
+}
+
+/**
+ * To the displaced leader, if attached: it leads no more (#13 AC23). A member
+ * token replaces its leader token; `takeBackAvailable` says whether it may
+ * send `leader.takeBack`.
+ */
+export interface LeaderLostMessage {
+  type: 'leader.lost';
+  groupId: string;
+  reason: 'handoff_disconnect' | 'handoff_inactivity' | 'take_back' | 'superseded';
+  token: string;
+  takeBackAvailable: boolean;
+}
+
+/** To every other member: someone else leads now. No participant ID (#13 AC23, Q3.3). */
+export interface LeaderChangedMessage {
+  type: 'leader.changed';
+  groupId: string;
+  reason: LeadershipReason;
+}
+
 /** To the leader: the reply to leader.activity and keepalive.ack (#13 AC16, AC30). */
 export interface ActivityAckMessage {
   type: 'activity.ack';
@@ -773,6 +813,9 @@ export type ServerMessage =
   | ActivityAckMessage
   | KeepAlivePromptMessage
   | KeepAliveClearedMessage
+  | LeaderGrantedMessage
+  | LeaderLostMessage
+  | LeaderChangedMessage
   | ErrorMessage;
 
 export type ServerMessageType = ServerMessage['type'];

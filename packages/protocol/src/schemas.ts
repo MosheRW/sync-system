@@ -225,6 +225,12 @@ const schemas = buildJitless(() => {
   const role = z.enum(['leader', 'vice-leader', 'member']);
   const duration = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
   const pauseCause = z.enum(['disconnected', 'inactive']);
+  const leadershipReason = z.enum([
+    'handoff_disconnect',
+    'handoff_inactivity',
+    'take_back',
+    'superseded',
+  ]);
   const leaderState = z.object({
     blockList,
     locked: z.boolean(),
@@ -403,6 +409,24 @@ const schemas = buildJitless(() => {
       countdownMs: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
     }),
     z.object({ type: z.literal('keepalive.cleared'), groupId: z.string() }),
+    z.object({
+      type: z.literal('leader.granted'),
+      reqId,
+      groupId: z.string(),
+      reason: z.enum(['handoff_disconnect', 'handoff_inactivity', 'take_back']),
+      token,
+      state: leaderState,
+      joinMethods,
+      codes: joinCodesPayload,
+    }),
+    z.object({
+      type: z.literal('leader.lost'),
+      groupId: z.string(),
+      reason: leadershipReason,
+      token,
+      takeBackAvailable: z.boolean(),
+    }),
+    z.object({ type: z.literal('leader.changed'), groupId: z.string(), reason: leadershipReason }),
     z.object({
       type: z.literal('member.removed'),
       reqId,

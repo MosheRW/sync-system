@@ -21,6 +21,8 @@ function record(overrides: Partial<GroupRecord> = {}): GroupRecord {
     locked: false,
     keepAlivePending: false,
     pause: undefined,
+    displacedLeaderId: undefined,
+    escalated: false,
     roster: [],
     nextAdmissionSeq: 0,
     nextGuestNumber: 1,

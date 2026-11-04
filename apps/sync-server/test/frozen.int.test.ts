@@ -21,10 +21,19 @@ afterEach(async () => {
   ts = undefined;
 });
 
+/**
+ * Frozen mode (#13 AC21): these #5 tests are about a group that waits for
+ * its leader, which is what `frozen` keeps doing; `auto` hands off after
+ * the grace period (handoff.int.test.ts).
+ */
 async function start(apps?: TestAppInput[]) {
   const scheduler = new ManualScheduler();
   const store = new InMemoryGroupStore();
-  ts = await startTestServer({ scheduler, store, ...(apps ? { apps } : {}) });
+  const frozen = (apps ?? [{ namespace: 'app-a', apiKey: KEY_A }]).map((app) => ({
+    defaultHandoff: 'frozen',
+    ...app,
+  }));
+  ts = await startTestServer({ scheduler, store, apps: frozen });
   return { scheduler, store, ts };
 }
 
@@ -38,7 +47,6 @@ describe('frozen groups (#5 AC18)', () => {
         type: 'leader.offline',
         groupId,
         cause: 'disconnected',
-        graceMs: 30_000,
       });
     }
     const record = await store.get('app-a', groupId);
@@ -186,8 +194,8 @@ describe('frozen group end (#5 AC21)', () => {
     const { leader, members } = await createGroupWithMembers(ts, 1);
     await leader.close();
     await members[0]!.next('leader.offline');
-    // Max-session, frozen-end and grace-end timers (#13 6.4).
-    expect(scheduler.pending).toBe(3);
+    // Max-session and frozen-end timers (frozen mode: no grace end).
+    expect(scheduler.pending).toBe(2);
     await members[0]!.close();
     await waitUntil(() => store.size === 0);
     // Ending the emptied group cancelled its timers.
@@ -230,8 +238,8 @@ describe('a group nobody is connected to ends (#13 D15; was dropped in #5 AC22)'
     const { leader, members } = await createGroupWithMembers(server, 1);
     await leader.close();
     await members[0]!.next('leader.offline');
-    // Max-session, frozen-end and grace-end timers (#13 6.4).
-    expect(scheduler.pending).toBe(3);
+    // Max-session and frozen-end timers (frozen mode: no grace end).
+    expect(scheduler.pending).toBe(2);
     await server.close();
     ts = undefined;
     expect(scheduler.pending).toBe(0);

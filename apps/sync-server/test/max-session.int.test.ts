@@ -48,7 +48,10 @@ describe('max session time (#5 AC21, Q2)', () => {
     ts = await startTestServer({
       scheduler,
       store,
-      apps: [{ namespace: 'app-a', apiKey: KEY_A, maxSessionMinutes: 10 }],
+      // Frozen mode (#13 AC21): no handoff before the bounds under test.
+      apps: [
+        { namespace: 'app-a', apiKey: KEY_A, maxSessionMinutes: 10, defaultHandoff: 'frozen' },
+      ],
     });
     const created = scheduler.now();
     const { leader, members } = await createGroupWithMembers(ts, 1);
@@ -65,7 +68,10 @@ describe('max session time (#5 AC21, Q2)', () => {
     const scheduler = new ManualScheduler();
     ts = await startTestServer({
       scheduler,
-      apps: [{ namespace: 'app-a', apiKey: KEY_A, inactivityLimitMinutes: 1 }],
+      // Frozen mode (#13 AC21): no handoff before the bounds under test.
+      apps: [
+        { namespace: 'app-a', apiKey: KEY_A, inactivityLimitMinutes: 1, defaultHandoff: 'frozen' },
+      ],
     });
     const { leader, members } = await createGroupWithMembers(ts, 1);
     await leader.close();

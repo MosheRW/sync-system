@@ -302,7 +302,11 @@ describe('token rejections (#5 AC7, AC8, AC9, AC27)', () => {
 
   it('reports a leader token past the recovery window as TOKEN_EXPIRED (AC9)', async () => {
     const scheduler = new ManualScheduler();
-    ts = await startTestServer({ scheduler });
+    // Frozen mode (#13 AC21): the leader keeps the lead while away, as in #5.
+    ts = await startTestServer({
+      scheduler,
+      apps: [{ namespace: 'app-a', apiKey: KEY_A, defaultHandoff: 'frozen' }],
+    });
     const group = await createGroupWithMembers(ts, 1);
     // The group stays live through a member while the leader is gone; the
     // leader token itself has not been refreshed.

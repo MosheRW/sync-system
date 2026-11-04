@@ -51,6 +51,17 @@ export interface GroupRecord {
   pause: GroupPause | undefined;
   /** A keep-alive prompt is outstanding (#13 6.3). */
   keepAlivePending: boolean;
+  /**
+   * The most recent displaced leader: the only one that may take back the
+   * lead (#13 Q2.4). Never the leader; cleared when it leaves, is removed
+   * or the group is recreated.
+   */
+  displacedLeaderId: string | undefined;
+  /**
+   * The leader got the lead through a missed-keep-alive handoff and has not
+   * acted since (#13 D9, Q-B): its own missed keep-alive ends the group.
+   */
+  escalated: boolean;
   /** The leader locked the group: no new admission by any method (#13 AC29). */
   locked: boolean;
   /** `auto` hands off after the grace period; `frozen` never does (#13 AC3). */
