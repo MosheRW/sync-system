@@ -133,6 +133,7 @@ const schemas = buildJitless(() => {
     // Leader recovery state (#13 D13); used only for a recreation.
     handoff: z.enum(HANDOFF_MODES).optional(),
     viceId: z.string().regex(PARTICIPANT_ID_PATTERN).optional(),
+    locked: z.boolean().optional(),
     displayName: displayName.optional(),
   });
 
@@ -159,6 +160,8 @@ const schemas = buildJitless(() => {
   const participantId = z.string().regex(PARTICIPANT_ID_PATTERN);
   const viceSetSchema = z.object({ type: z.literal('vice.set'), reqId, participantId });
   const viceClearSchema = z.object({ type: z.literal('vice.clear'), reqId });
+  const groupLockSchema = z.object({ type: z.literal('group.lock'), reqId });
+  const groupUnlockSchema = z.object({ type: z.literal('group.unlock'), reqId });
 
   const clientMessageSchema = z.discriminatedUnion('type', [
     helloSchema,
@@ -178,6 +181,8 @@ const schemas = buildJitless(() => {
     joinDenySchema,
     viceSetSchema,
     viceClearSchema,
+    groupLockSchema,
+    groupUnlockSchema,
   ]);
 
   const appLimitsSchema = z.object({
@@ -211,6 +216,12 @@ const schemas = buildJitless(() => {
   };
 
   const role = z.enum(['leader', 'vice-leader', 'member']);
+  const leaderState = z.object({
+    blockList,
+    locked: z.boolean(),
+    viceId: z.string().regex(PARTICIPANT_ID_PATTERN).optional(),
+    handoff: z.enum(HANDOFF_MODES),
+  });
   const count = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
   const rosterEntry = z.object({
     participantId: z.string().regex(PARTICIPANT_ID_PATTERN),
@@ -233,6 +244,7 @@ const schemas = buildJitless(() => {
     metadata: opaqueObject,
     token,
     leaderOnline: z.boolean(),
+    locked: z.boolean(),
   };
 
   const groupResumedBase = {
@@ -248,6 +260,7 @@ const schemas = buildJitless(() => {
     joinMethods: joinMethodList,
     codes: joinCodesPayload,
     codesChanged: z.boolean(),
+    state: leaderState,
   };
 
   const serverMessageSchema = z.union([
@@ -272,6 +285,7 @@ const schemas = buildJitless(() => {
       participantId: z.string(),
       role: z.literal('leader'),
       handoff: z.enum(HANDOFF_MODES),
+      state: leaderState,
       ...ownName,
       token,
       joinMethods,
@@ -366,6 +380,7 @@ const schemas = buildJitless(() => {
       viceId: z.string().regex(PARTICIPANT_ID_PATTERN).nullable(),
     }),
     z.object({ type: z.literal('vice.changed'), groupId: z.string(), isVice: z.boolean() }),
+    z.object({ type: z.literal('lock.changed'), reqId, groupId: z.string(), locked: z.boolean() }),
     z.object({
       type: z.literal('error'),
       reqId,

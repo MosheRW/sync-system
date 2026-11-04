@@ -64,6 +64,7 @@ describe('members waiting for their leader (#5 AC25)', () => {
         role: 'member',
         displayName: expect.any(String) as string,
         generated: true,
+        locked: false,
         metadata: { m: 1 },
         token: expect.any(String) as string,
         leaderOnline: true,

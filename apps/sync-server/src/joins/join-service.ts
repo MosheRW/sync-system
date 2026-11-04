@@ -87,6 +87,11 @@ export interface JoinHost {
   /** Sends `message` to `session` after the replies it is already owed. */
   deliverLater(session: Session, message: ServerMessage): void;
   /**
+   * True while the group admits nobody new: the leader locked it (#13
+   * AC29). Read under the group lock.
+   */
+  admissionClosed(record: GroupRecord): boolean;
+  /**
    * Runs `task` under the group lock of the session's group, after
    * `authorizeLeader` passed against the record read under that lock
    * (#13 D1, RC1). Otherwise answers its error (NOT_LEADER with the action's
@@ -107,7 +112,8 @@ type RejectCause =
   | 'door_budget'
   | 'paused'
   | 'qr_invalid'
-  | 'qr_expired';
+  | 'qr_expired'
+  | 'locked';
 
 function groupKey(namespace: string, groupId: string): string {
   return `${namespace}:${groupId}`;
@@ -123,6 +129,12 @@ const INVALID_MESSAGE: ErrorMessage = Object.freeze(errorMessage(ErrorCode.INVAL
 /** One frozen answer for every invalid ticket (#10 AC25, R7); never echoes the ticket. */
 const QR_INVALID: ErrorMessage = Object.freeze(errorMessage(ErrorCode.QR_INVALID));
 const QR_EXPIRED: ErrorMessage = Object.freeze(errorMessage(ErrorCode.QR_EXPIRED));
+/**
+ * One frozen answer for every join method and for join.approve while the
+ * group admits nobody (#13 AC29, D14): no details, so the lock is the same
+ * for every method and tells nothing about a code.
+ */
+export const GROUP_LOCKED: ErrorMessage = Object.freeze(errorMessage(ErrorCode.GROUP_LOCKED));
 const REQUEST_NOT_FOUND: ErrorMessage = Object.freeze(
   errorMessage(ErrorCode.JOIN_REQUEST_NOT_FOUND),
 );
@@ -290,6 +302,11 @@ export class JoinService {
         this.rejected(namespace, 'qr_invalid');
         return QR_INVALID;
       }
+      // #13 D14: after the full ticket check, before approval or admission.
+      if (this.host.admissionClosed(record)) {
+        this.rejected(namespace, 'locked', groupId);
+        return GROUP_LOCKED;
+      }
       if (record.joinMethods.includes('B')) return this.requestApproval(session, record, name);
       return this.host.admit(session, groupId, 'D', name);
     });
@@ -403,6 +420,13 @@ export class JoinService {
     const namespace = session.app.namespace;
     return this.host.asLeader(session, action, async (record) => {
       const groupId = record.id;
+      // #13 Q4.2: while locked a request stays pending and cannot be approved.
+      if (decision === 'approve' && this.host.admissionClosed(record)) {
+        const pending = this.approvals
+          .list(groupKey(namespace, groupId))
+          .some((request) => request.requestId === requestId);
+        return pending ? GROUP_LOCKED : REQUEST_NOT_FOUND;
+      }
       const taken = this.approvals.take(groupKey(namespace, groupId), requestId);
       if (taken === undefined) return REQUEST_NOT_FOUND;
       if (decision === 'deny') {
@@ -613,16 +637,23 @@ export class JoinService {
         this.rejected(namespace, 'not_found');
         return CODE_NOT_FOUND;
       }
-      if (parsed.kind === 'alpha') {
-        if (!record.joinMethods.includes('C')) return CODE_NOT_FOUND;
-        return this.host.admit(session, groupId, 'C', parsed.name);
+      const usable =
+        parsed.kind === 'alpha'
+          ? record.joinMethods.includes('C')
+          : record.joinMethods.includes('A') || record.joinMethods.includes('B');
+      if (!usable) {
+        this.rejected(namespace, 'not_found');
+        return CODE_NOT_FOUND;
       }
+      // #13 D14: the code is resolved; the lock comes before the door-code
+      // compare, the approval queue and admission (no door failure counted).
+      if (this.host.admissionClosed(record)) {
+        this.rejected(namespace, 'locked', groupId);
+        return GROUP_LOCKED;
+      }
+      if (parsed.kind === 'alpha') return this.host.admit(session, groupId, 'C', parsed.name);
       if (record.joinMethods.includes('A')) return this.doorJoin(session, record, parsed);
-      if (record.joinMethods.includes('B')) {
-        return this.requestApproval(session, record, parsed.name);
-      }
-      this.rejected(namespace, 'not_found');
-      return CODE_NOT_FOUND;
+      return this.requestApproval(session, record, parsed.name);
     });
   }
 

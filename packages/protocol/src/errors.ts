@@ -102,6 +102,12 @@ export const ErrorCode = {
    * cause (#13 AC10, AC44).
    */
   PARTICIPANT_NOT_FOUND: 'PARTICIPANT_NOT_FOUND',
+  /**
+   * The group admits nobody new right now: the leader locked it, or nobody
+   * is connected to it (#13 AC29, Q-G). The same bytes for every join
+   * method and for join.approve, never with details.
+   */
+  GROUP_LOCKED: 'GROUP_LOCKED',
 } as const;
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];

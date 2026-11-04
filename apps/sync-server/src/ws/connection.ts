@@ -371,6 +371,10 @@ export class Connection implements HeartbeatTarget {
       case 'vice.clear':
         response = await groups.clearVice(session, message);
         break;
+      case 'group.lock':
+      case 'group.unlock':
+        response = await groups.setLock(session, message);
+        break;
     }
     this.reply(withReqId(response, message.reqId));
   }
@@ -445,6 +449,7 @@ function canCarryReqId(message: ServerMessage): boolean {
     message.type === 'join.decided' ||
     message.type === 'join.cancelled' ||
     message.type === 'qr.ticket' ||
-    message.type === 'vice.updated'
+    message.type === 'vice.updated' ||
+    message.type === 'lock.changed'
   );
 }

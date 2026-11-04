@@ -1,5 +1,7 @@
 import {
   ErrorCode,
+  type GroupLockMessage,
+  type GroupUnlockMessage,
   type ServerMessage,
   type ViceClearMessage,
   type ViceSetMessage,
@@ -8,6 +10,7 @@ import type { GroupPatch, GroupRecord } from '../groups/group-store.js';
 import type { Membership, Session } from '../groups/session.js';
 import {
   LEADER_CONTROL_WINDOW_MS,
+  LOCK_CHANGES_PER_GROUP_PER_MINUTE,
   VICE_CHANGES_PER_GROUP_PER_MINUTE,
 } from '../limits/constants.js';
 import { SlidingWindowRateLimiter } from '../limits/rate-limiter.js';
@@ -35,6 +38,8 @@ export interface LeaderControlsHost {
   deliverLater(session: Session, message: ServerMessage): void;
   /** Tells the leader one roster entry changed (#13 AC31). */
   rosterUpdated(record: GroupRecord, pid: string): void;
+  /** Sends `message` to every attached member (not the leader). */
+  toMembers(record: GroupRecord, message: ServerMessage): void;
   now(): number;
 }
 
@@ -54,6 +59,8 @@ function groupKey(record: GroupRecord): string {
 export class LeaderControls {
   /** vice.set / vice.clear per group (#13 8.2). */
   private readonly viceLimiter: SlidingWindowRateLimiter;
+  /** group.lock / group.unlock per group (#13 8.2). */
+  private readonly lockLimiter: SlidingWindowRateLimiter;
 
   constructor(
     private readonly host: LeaderControlsHost,
@@ -61,6 +68,40 @@ export class LeaderControls {
   ) {
     const now = (): number => host.now();
     this.viceLimiter = new SlidingWindowRateLimiter(now, LEADER_CONTROL_WINDOW_MS);
+    this.lockLimiter = new SlidingWindowRateLimiter(now, LEADER_CONTROL_WINDOW_MS);
+  }
+
+  /**
+   * group.lock / group.unlock (#13 AC29): idempotent. A change is broadcast
+   * to the members; a request that changes nothing is only answered. The
+   * lock is independent of the door-code pause (#10 AC29).
+   */
+  setLock(
+    session: Session,
+    message: GroupLockMessage | GroupUnlockMessage,
+  ): Promise<ServerMessage> {
+    const locked = message.type === 'group.lock';
+    return this.host.asLeader(session, message.type, async (record) => {
+      const rate = this.lockLimiter.tryAcquire(groupKey(record), LOCK_CHANGES_PER_GROUP_PER_MINUTE);
+      if (!rate.ok) {
+        return actionErrorMessage(ErrorCode.RATE_LIMITED, message.type, {
+          details: { retryAfterMs: rate.retryAfterMs },
+        });
+      }
+      if (record.locked !== locked) {
+        const updated = await this.host.patch(record, { locked });
+        this.host.toMembers(updated, { type: 'lock.changed', groupId: updated.id, locked });
+        this.logger.info(
+          {
+            event: locked ? 'group_locked' : 'group_unlocked',
+            namespace: record.appNamespace,
+            groupRef: groupRef(record.id),
+          },
+          locked ? 'group locked' : 'group unlocked',
+        );
+      }
+      return { type: 'lock.changed', groupId: record.id, locked };
+    });
   }
 
   /**
@@ -140,15 +181,17 @@ export class LeaderControls {
   /** The group ended: its budgets go (#13 RC2). */
   forgetGroup(namespace: string, groupId: string): void {
     this.viceLimiter.forget(`${namespace}:${groupId}`);
+    this.lockLimiter.forget(`${namespace}:${groupId}`);
   }
 
   /** Server shutdown (#13 RC2). */
   close(): void {
     this.viceLimiter.clear();
+    this.lockLimiter.clear();
   }
 
   /** Number of tracked limiter keys. For tests only. */
   get limiterSize(): number {
-    return this.viceLimiter.size;
+    return this.viceLimiter.size + this.lockLimiter.size;
   }
 }

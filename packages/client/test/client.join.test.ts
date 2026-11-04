@@ -37,6 +37,7 @@ function joined(reqId?: string) {
     type: 'group.joined',
     displayName: 'Guest 1',
     generated: true,
+    locked: false,
     ...(reqId === undefined ? {} : { reqId }),
     groupId: GROUP_ID,
     participantId: PARTICIPANT_ID,

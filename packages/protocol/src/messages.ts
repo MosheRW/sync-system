@@ -112,6 +112,8 @@ export interface GroupResumeMessage {
    * recreation; ignored unless that participant rejoins and is not blocked.
    */
   viceId?: string;
+  /** Leader recovery state (#13 D13, Q4.3): the lock flag, used for a recreation. */
+  locked?: boolean;
   /**
    * The participant's display name, sent again on every resume (#13 AC37,
    * Q5.4). Used when the participant gets a new roster entry (after a
@@ -211,6 +213,18 @@ export interface ViceClearMessage {
   reqId?: string;
 }
 
+/** The leader stops all new joining (#13 AC29). Idempotent. Reply: `lock.changed`. */
+export interface GroupLockMessage {
+  type: 'group.lock';
+  reqId?: string;
+}
+
+/** The leader allows joining again (#13 AC29). Idempotent. Reply: `lock.changed`. */
+export interface GroupUnlockMessage {
+  type: 'group.unlock';
+  reqId?: string;
+}
+
 export type ClientMessage =
   | HelloMessage
   | GroupCreateMessage
@@ -228,7 +242,9 @@ export type ClientMessage =
   | JoinApproveMessage
   | JoinDenyMessage
   | ViceSetMessage
-  | ViceClearMessage;
+  | ViceClearMessage
+  | GroupLockMessage
+  | GroupUnlockMessage;
 
 export type ClientMessageType = ClientMessage['type'];
 
@@ -305,6 +321,8 @@ export interface GroupCreatedMessage extends OwnName {
   role: 'leader';
   /** The group's handoff mode (#13 AC3). */
   handoff: HandoffMode;
+  /** The leader recovery state (#13 D13). */
+  state: LeaderState;
   /** The leader's participant token for this group (#5 AC5). */
   token: string;
   /** The group's join methods, canonical order (#10 AC5). */
@@ -324,6 +342,8 @@ interface GroupJoinedBase extends OwnName {
   token: string;
   /** False while the leader is offline (frozen group, #5 AC18). */
   leaderOnline: boolean;
+  /** The leader locked the group: nobody new joins (#13 AC29). */
+  locked: boolean;
 }
 
 /** `hasPosition: false` (and no `position` field) is the explicit "no position yet". */
@@ -352,6 +372,8 @@ interface GroupResumedBase extends OwnName {
    * generation): the codes the leader already has still hold (#10 AC33).
    */
   codesChanged: boolean;
+  /** The leader recovery state, the server's (#13 D13). */
+  state: LeaderState;
 }
 
 export type GroupResumedMessage =
@@ -574,6 +596,26 @@ export interface RosterUpdatedMessage {
   participant: RosterEntryWire;
 }
 
+/**
+ * What the leader's client keeps with its token to recover the group after
+ * a restart (#13 D13, decision 3): the block list, the lock flag, the
+ * vice-leader and the handoff mode. Sent to every leader.
+ */
+export interface LeaderState {
+  blockList: string[];
+  locked: boolean;
+  viceId?: string;
+  handoff: HandoffMode;
+}
+
+/** The reply to group.lock / group.unlock, and to members a change of it (#13 AC29). */
+export interface LockChangedMessage {
+  type: 'lock.changed';
+  reqId?: string;
+  groupId: string;
+  locked: boolean;
+}
+
 /** To the leader: the reply to vice.set / vice.clear (#13 AC10). */
 export interface ViceUpdatedMessage {
   type: 'vice.updated';
@@ -638,6 +680,7 @@ export type ServerMessage =
   | RosterRemovedMessage
   | ViceUpdatedMessage
   | ViceChangedMessage
+  | LockChangedMessage
   | ErrorMessage;
 
 export type ServerMessageType = ServerMessage['type'];

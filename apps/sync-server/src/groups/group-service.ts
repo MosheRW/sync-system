@@ -22,6 +22,9 @@ import {
   type TokensResultMessage,
   type ViceClearMessage,
   type ViceSetMessage,
+  type GroupLockMessage,
+  type GroupUnlockMessage,
+  type LeaderState,
   PARTICIPANT_ID_PATTERN,
   resolveDisplayName,
 } from '@sync-system/protocol';
@@ -42,7 +45,7 @@ import type { TokenService } from '../tokens/token-service.js';
 import type { CodesBlobService } from '../tokens/codes-blob.js';
 import type { QrTicketService } from '../tokens/qr-tickets.js';
 import type { RandomInt } from '../joins/codes.js';
-import { JoinService } from '../joins/join-service.js';
+import { GROUP_LOCKED, JoinService } from '../joins/join-service.js';
 import {
   type LeaderAction,
   authorizeLeader,
@@ -186,6 +189,7 @@ export class GroupService implements GroupActions {
         leaderOf: (record) =>
           this.deps.notifier.get(membershipKey(record.appNamespace, record.id, record.leaderId)),
         deliverLater: (session, message) => this.deliverLater(session, message),
+        admissionClosed: (record) => this.admissionClosed(record),
         asLeader: (session, action, task) => this.asLeader(session, action, task),
       },
     );
@@ -200,6 +204,8 @@ export class GroupService implements GroupActions {
         sessionOf: (record, pid) => this.sessionOf(record, pid),
         deliverLater: (session, message) => this.deliverLater(session, message),
         rosterUpdated: (record, pid) => this.rosterUpdated(record, pid),
+        toMembers: (record, message) =>
+          this.deps.notifier.broadcast(this.memberKeys(record), message),
         now: () => this.now(),
       },
       deps.logger,
@@ -394,6 +400,7 @@ export class GroupService implements GroupActions {
       recoveredAt: undefined,
       handoff: message.handoff ?? app.defaultHandoff,
       viceId: undefined,
+      locked: false,
       leaderOnline: true,
       blockList: [],
       joinMethods: initial.methods,
@@ -425,6 +432,7 @@ export class GroupService implements GroupActions {
       participantId,
       role: 'leader',
       handoff: record.handoff,
+      state: this.leaderState(record),
       displayName: roster.entry.name,
       generated: roster.entry.generated,
       token,
@@ -466,6 +474,33 @@ export class GroupService implements GroupActions {
       if (isGuardError(auth)) return auth;
       return task(record!, auth);
     });
+  }
+
+  /** group.lock / group.unlock (#13 AC29). */
+  setLock(
+    session: Session,
+    message: GroupLockMessage | GroupUnlockMessage,
+  ): Promise<ServerMessage> {
+    return this.controls.setLock(session, message);
+  }
+
+  /**
+   * True while the group admits nobody new, by any method (#13 AC29, D14):
+   * the leader locked it. Token resumes and parked admissions ignore it.
+   */
+  private admissionClosed(record: GroupRecord): boolean {
+    return record.locked;
+  }
+
+  /** The leader recovery state (#13 D13). */
+  private leaderState(record: GroupRecord): LeaderState {
+    const state: LeaderState = {
+      blockList: [...record.blockList],
+      locked: record.locked,
+      handoff: record.handoff,
+    };
+    if (record.viceId !== undefined) state.viceId = record.viceId;
+    return state;
   }
 
   /** vice.set (#13 AC10). */
@@ -535,6 +570,10 @@ export class GroupService implements GroupActions {
     name: NameChoice,
   ): Promise<ServerMessage> {
     const { app } = session;
+    // #13 D14 / RC3: the admit step checks the lock again under the same
+    // group lock, so a lock set after the method checks still refuses.
+    const current = await this.deps.store.get(app.namespace, groupId);
+    if (current !== undefined && this.admissionClosed(current)) return GROUP_LOCKED;
     const participantId = newParticipantId();
     const added = await this.deps.store.addParticipant(
       app.namespace,
@@ -587,6 +626,7 @@ export class GroupService implements GroupActions {
       metadata: record.metadata,
       token,
       leaderOnline: record.leaderOnline,
+      locked: record.locked,
     };
     return record.position.has
       ? { ...base, hasPosition: true, position: record.position.payload }
@@ -1033,6 +1073,8 @@ export class GroupService implements GroupActions {
         !(message.blockList ?? []).includes(message.viceId)
           ? message.viceId
           : undefined,
+      // The lock flag from the leader's recovery state (#13 Q4.3).
+      locked: message.locked ?? false,
       leaderOnline: true,
       // Deduplicated; the leader's own ID is ignored.
       blockList: [...new Set(message.blockList ?? [])].filter((id) => id !== claims.pid),
@@ -1282,6 +1324,7 @@ export class GroupService implements GroupActions {
       joinMethods: [...record.joinMethods],
       codes: this.joins.payload(record),
       codesChanged,
+      state: this.leaderState(record),
     };
     return record.position.has
       ? { ...base, hasPosition: true, position: record.position.payload }

@@ -54,6 +54,7 @@ async function liveLeader(): Promise<{
     handoff: 'auto',
     displayName: 'Guest 1',
     generated: true,
+    state: { blockList: [], locked: false, handoff: 'auto' },
     ...CREATED_FIELDS,
     reqId: socket.lastMessage().reqId,
     groupId: GID,

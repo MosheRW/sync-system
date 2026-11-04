@@ -225,6 +225,7 @@ describe('join by group code and door code (#10 AC14, AC15)', () => {
       role: 'member',
       displayName: expect.any(String) as string,
       generated: true,
+      locked: false,
       metadata: { c: 1 },
       token: expect.any(String) as string,
       leaderOnline: true,

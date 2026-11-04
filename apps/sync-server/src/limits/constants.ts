@@ -102,6 +102,9 @@ export const ROSTER_SNAPSHOT_HEADROOM_BYTES = 32_768;
 /** Window of the per-group leader control limiters (#13 8.2). */
 export const LEADER_CONTROL_WINDOW_MS = 60_000;
 
+/** group.lock and group.unlock per group per window (#13 8.2, Q-E). */
+export const LOCK_CHANGES_PER_GROUP_PER_MINUTE = 10;
+
 /** vice.set and vice.clear per group per window (#13 8.2, Q-E). */
 export const VICE_CHANGES_PER_GROUP_PER_MINUTE = 10;
 

@@ -47,6 +47,7 @@ describe('join by group ID is gone (#10 AC36, R15)', () => {
       denyJoin: true,
       setVice: true,
       clearVice: true,
+      setLock: true,
       disconnect: true,
     };
     expect(Object.keys(actions)).not.toContain('join');

@@ -16,6 +16,8 @@ import type {
   ServerMessage,
   ViceClearMessage,
   ViceSetMessage,
+  GroupLockMessage,
+  GroupUnlockMessage,
 } from '@sync-system/protocol';
 import type { AppConfig } from '../apps/app-registry.js';
 
@@ -110,6 +112,8 @@ export interface GroupActions {
   setVice(session: Session, message: ViceSetMessage): Promise<ServerMessage>;
   /** Leader clears the vice-leader (#13 AC10). */
   clearVice(session: Session, message: ViceClearMessage): Promise<ServerMessage>;
+  /** Leader locks or unlocks joining (#13 AC29). */
+  setLock(session: Session, message: GroupLockMessage | GroupUnlockMessage): Promise<ServerMessage>;
   /** Runs the disconnect rules (member removal, group end). */
   disconnect(session: Session): Promise<void>;
 }

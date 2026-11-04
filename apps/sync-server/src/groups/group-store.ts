@@ -43,6 +43,8 @@ export interface GroupRecord {
    * leaves, is removed or becomes leader.
    */
   viceId: string | undefined;
+  /** The leader locked the group: no new admission by any method (#13 AC29). */
+  locked: boolean;
   /** `auto` hands off after the grace period; `frozen` never does (#13 AC3). */
   handoff: HandoffMode;
   /** False while the leader is offline: the group is frozen (#5 AC18). */

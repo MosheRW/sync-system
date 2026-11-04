@@ -101,6 +101,7 @@ describe('roster frames (#13 AC31)', () => {
       handoff: 'auto',
       displayName: 'Dana',
       generated: false,
+      state: { blockList: [], locked: false, handoff: 'auto' },
       token: 't',
       joinMethods: ['C'],
       codes: { generation: 1, alphaCode: 'ABCDEFGH', blob: `a.${'b'.repeat(43)}` },
@@ -130,5 +131,37 @@ describe('vice-leader messages (#13 AC10, AC11)', () => {
     expect(parseServerMessage({ type: 'vice.updated', groupId: GID }).ok).toBe(false);
     expect(parseServerMessage({ type: 'vice.changed', groupId: GID, isVice: true }).ok).toBe(true);
     expect(parseServerMessage({ type: 'vice.changed', groupId: GID }).ok).toBe(false);
+  });
+});
+
+describe('lock messages and the leader state (#13 AC29, D13)', () => {
+  it('parses group.lock, group.unlock and lock.changed', () => {
+    expect(parseClientMessage({ type: 'group.lock' }).ok).toBe(true);
+    expect(parseClientMessage({ type: 'group.unlock', reqId: 'u' }).ok).toBe(true);
+    expect(parseServerMessage({ type: 'lock.changed', groupId: GID, locked: true }).ok).toBe(true);
+    expect(parseServerMessage({ type: 'lock.changed', groupId: GID }).ok).toBe(false);
+    expect(parseClientMessage({ type: 'group.resume', token: 't', locked: 'yes' }).ok).toBe(false);
+  });
+
+  it('bounds the leader state block list and checks its IDs', () => {
+    const base = {
+      type: 'group.created',
+      groupId: GID,
+      participantId: PID,
+      role: 'leader',
+      handoff: 'auto',
+      displayName: 'Dana',
+      generated: false,
+      token: 't',
+      joinMethods: ['C'],
+      codes: { generation: 1, alphaCode: 'ABCDEFGH', blob: `a.${'b'.repeat(43)}` },
+    };
+    const state = { blockList: [PID], locked: true, viceId: PID, handoff: 'frozen' };
+    expect(parseServerMessage({ ...base, state }).ok).toBe(true);
+    expect(parseServerMessage({ ...base, state: { ...state, blockList: ['x'] } }).ok).toBe(false);
+    expect(
+      parseServerMessage({ ...base, state: { ...state, blockList: Array(257).fill(PID) } }).ok,
+    ).toBe(false);
+    expect(parseServerMessage({ ...base, state: { ...state, locked: undefined } }).ok).toBe(false);
   });
 });
