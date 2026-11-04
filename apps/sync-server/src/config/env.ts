@@ -46,6 +46,10 @@ export interface ServerEnv {
   qrTicketSecondsCeiling: number;
   /** Ceiling for app `approvalTimeoutSeconds` (#10 AC3). */
   approvalTimeoutSecondsCeiling: number;
+  /** Ceiling for app `disconnectGraceSeconds` (#13 AC1). */
+  disconnectGraceSecondsCeiling: number;
+  /** Ceiling for app `keepAliveCountdownSeconds` (#13 AC1). */
+  keepAliveCountdownSecondsCeiling: number;
 }
 
 export type EnvSource = Readonly<Record<string, string | undefined>>;
@@ -102,6 +106,19 @@ const NUMERIC_VARS: readonly NumericVar[] = [
     name: 'APPROVAL_TIMEOUT_SECONDS_CEILING',
     defaultValue: 600,
     min: 15,
+    max: 3600,
+  },
+  // #13 AC1: timers of the group lifecycle.
+  {
+    key: 'disconnectGraceSecondsCeiling',
+    name: 'DISCONNECT_GRACE_SECONDS_CEILING',
+    defaultValue: 120,
+    max: 3600,
+  },
+  {
+    key: 'keepAliveCountdownSecondsCeiling',
+    name: 'KEEP_ALIVE_COUNTDOWN_SECONDS_CEILING',
+    defaultValue: 120,
     max: 3600,
   },
 ];
@@ -252,5 +269,7 @@ export function parseEnv(env: EnvSource): ServerEnv {
     joinMethodsAllowed: Object.freeze([...joinMethodsAllowed]),
     qrTicketSecondsCeiling: n.qrTicketSecondsCeiling,
     approvalTimeoutSecondsCeiling: n.approvalTimeoutSecondsCeiling,
+    disconnectGraceSecondsCeiling: n.disconnectGraceSecondsCeiling,
+    keepAliveCountdownSecondsCeiling: n.keepAliveCountdownSecondsCeiling,
   };
 }

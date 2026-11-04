@@ -16,6 +16,7 @@ function record(overrides: Partial<GroupRecord> = {}): GroupRecord {
     lastActivityAt: 1,
     term: 1,
     recoveredAt: undefined,
+    handoff: 'auto',
     leaderOnline: true,
     blockList: [],
     joinMethods: ['A', 'D'],

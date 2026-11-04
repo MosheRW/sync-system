@@ -22,7 +22,9 @@ export {
   MAX_QR_TICKET_LENGTH,
   MAX_QR_TICKET_INPUT_LENGTH,
   MAX_CODES_BLOB_LENGTH,
+  HANDOFF_MODES,
 } from './limits.js';
+export type { HandoffMode } from './limits.js';
 export {
   JOIN_METHODS,
   ALPHA_CODE_ALPHABET,

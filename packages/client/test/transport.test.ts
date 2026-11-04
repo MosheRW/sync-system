@@ -79,6 +79,9 @@ describe('limits (M1)', () => {
         maxSessionMinutes: 180,
         qrTicketSeconds: 300,
         approvalTimeoutSeconds: 120,
+        inactivityLimitMinutes: 20,
+        disconnectGraceSeconds: 30,
+        keepAliveCountdownSeconds: 60,
       }),
     ).toBeUndefined();
     expect(findOutOfBoundsLimit({ ...CLIENT_LIMIT_BOUNDS })).toBeUndefined();
@@ -105,6 +108,9 @@ describe('limits (M1)', () => {
       maxSessionMinutes: 180,
       qrTicketSeconds: 300,
       approvalTimeoutSeconds: 120,
+      inactivityLimitMinutes: 20,
+      disconnectGraceSeconds: 30,
+      keepAliveCountdownSeconds: 60,
     };
     expect(findOutOfBoundsLimit({ ...limits, [key]: value })).toBe(key);
   });
@@ -119,6 +125,9 @@ describe('limits (M1)', () => {
         maxSessionMinutes: 180,
         qrTicketSeconds: 300,
         approvalTimeoutSeconds: 120,
+        inactivityLimitMinutes: 20,
+        disconnectGraceSeconds: 30,
+        keepAliveCountdownSeconds: 60,
       }),
     ).toBe(45_056);
     expect(
@@ -129,6 +138,9 @@ describe('limits (M1)', () => {
         maxSessionMinutes: 180,
         qrTicketSeconds: 300,
         approvalTimeoutSeconds: 120,
+        inactivityLimitMinutes: 20,
+        disconnectGraceSeconds: 30,
+        keepAliveCountdownSeconds: 60,
       }),
     ).toBe(60_000 + 8192 + 2048);
   });

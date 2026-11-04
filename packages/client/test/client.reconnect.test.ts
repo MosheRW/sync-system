@@ -114,6 +114,7 @@ describe('automatic reconnect (AC26)', () => {
       participantId: 'p',
       joinMethods: ['A'],
       limits: { ...LIMITS, maxMessageBytes: 2 ** 53 },
+      defaultHandoff: 'auto',
     });
     expect(reconnecting(client).attempt).toBe(1);
     client.close();

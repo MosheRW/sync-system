@@ -1,6 +1,7 @@
 import type { ErrorCode } from './errors.js';
 import type { JoinMethod } from './join.js';
 import type { JsonObject, JsonValue } from './json.js';
+import type { HandoffMode } from './limits.js';
 
 /** Role of a participant in a group. Later issues add more roles. */
 export type Role = 'leader' | 'member';
@@ -51,6 +52,8 @@ export interface GroupCreateMessage {
    * never both A and B. Omitted: the app's methods minus B when A is there.
    */
   joinMethods?: JoinMethod[];
+  /** The group's handoff mode (#13 AC3); omitted: the app's `defaultHandoff`. */
+  handoff?: HandoffMode;
 }
 
 /**
@@ -97,6 +100,8 @@ export interface GroupResumeMessage {
    * codes it signed for this group.
    */
   joinCodes?: string;
+  /** Leader recovery state (#13 D13): the group's handoff mode, used for a recreation. */
+  handoff?: HandoffMode;
 }
 
 /**
@@ -215,6 +220,12 @@ export interface AppLimits {
   qrTicketSeconds: number;
   /** How long a method B join request waits for the leader (#10 AC3, AC4). */
   approvalTimeoutSeconds: number;
+  /** Leader inactivity before the group pauses (#5 AC4, #13 AC15). */
+  inactivityLimitMinutes: number;
+  /** Grace period after the leader disconnects or misses a keep-alive (#13 AC1). */
+  disconnectGraceSeconds: number;
+  /** Keep-alive countdown before the inactivity limit (#13 AC1, AC16). */
+  keepAliveCountdownSeconds: number;
 }
 
 export interface HelloOkMessage {
@@ -226,6 +237,8 @@ export interface HelloOkMessage {
   /** The join methods this app allows, canonical order (#10 AC4). */
   joinMethods: JoinMethod[];
   limits: AppLimits;
+  /** The handoff mode of a group created without one (#13 AC3). */
+  defaultHandoff: HandoffMode;
 }
 
 /**

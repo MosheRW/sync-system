@@ -339,6 +339,7 @@ export class GroupService implements GroupActions {
       lastActivityAt: now,
       term: now,
       recoveredAt: undefined,
+      handoff: message.handoff ?? app.defaultHandoff,
       leaderOnline: true,
       blockList: [],
       joinMethods: initial.methods,
@@ -902,6 +903,8 @@ export class GroupService implements GroupActions {
       // Clamped above the recreating term (#13 RC18), so a pre-restart token
       // whose term ran ahead of the clock still leaves term < recoveredAt.
       recoveredAt: Math.max(now, claims.term + 1),
+      // From the leader's recovery state, else the app default (#13 D13).
+      handoff: message.handoff ?? app.defaultHandoff,
       leaderOnline: true,
       // Deduplicated; the leader's own ID is ignored.
       blockList: [...new Set(message.blockList ?? [])].filter((id) => id !== claims.pid),

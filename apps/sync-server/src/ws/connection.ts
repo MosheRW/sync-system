@@ -306,7 +306,11 @@ export class Connection implements HeartbeatTarget {
         maxSessionMinutes: app.maxSessionMinutes,
         qrTicketSeconds: app.qrTicketSeconds,
         approvalTimeoutSeconds: app.approvalTimeoutSeconds,
+        inactivityLimitMinutes: app.inactivityLimitMinutes,
+        disconnectGraceSeconds: app.disconnectGraceSeconds,
+        keepAliveCountdownSeconds: app.keepAliveCountdownSeconds,
       },
+      defaultHandoff: app.defaultHandoff,
     });
   }
 

@@ -358,7 +358,11 @@ describe('server message schemas', () => {
           maxSessionMinutes: 180,
           qrTicketSeconds: 300,
           approvalTimeoutSeconds: 120,
+          inactivityLimitMinutes: 20,
+          disconnectGraceSeconds: 30,
+          keepAliveCountdownSeconds: 60,
         },
+        defaultHandoff: 'auto',
       },
       {
         type: 'group.created',
@@ -436,7 +440,11 @@ describe('server message schemas', () => {
         maxSessionMinutes: 1,
         qrTicketSeconds: 30,
         approvalTimeoutSeconds: 15,
+        inactivityLimitMinutes: 20,
+        disconnectGraceSeconds: 30,
+        keepAliveCountdownSeconds: 60,
       },
+      defaultHandoff: 'auto',
     };
     expect(parseServerMessage(helloOk).ok).toBe(true);
     expect(parseServerMessage({ ...helloOk, namespace: 'Bad App' }).ok).toBe(false);
@@ -456,9 +464,26 @@ describe('server message schemas', () => {
         maxSessionMinutes: 1,
         qrTicketSeconds: 300,
         approvalTimeoutSeconds: 120,
+        inactivityLimitMinutes: 20,
+        disconnectGraceSeconds: 30,
+        keepAliveCountdownSeconds: 60,
       },
+      defaultHandoff: 'auto',
     };
     expect(parseServerMessage(helloOk).ok).toBe(true);
+    // #13 AC1, AC3: the lifecycle timers and the default handoff mode.
+    for (const defaultHandoff of [undefined, 'manual']) {
+      expect(parseServerMessage({ ...helloOk, defaultHandoff }).ok).toBe(false);
+    }
+    for (const key of [
+      'inactivityLimitMinutes',
+      'disconnectGraceSeconds',
+      'keepAliveCountdownSeconds',
+    ]) {
+      expect(parseServerMessage({ ...helloOk, limits: { ...helloOk.limits, [key]: 0 } }).ok).toBe(
+        false,
+      );
+    }
     for (const joinMethods of [undefined, [], ['E'], ['a'], 'A', ['A', 'B', 'C', 'D', 'A']]) {
       expect(parseServerMessage({ ...helloOk, joinMethods }).ok).toBe(false);
     }

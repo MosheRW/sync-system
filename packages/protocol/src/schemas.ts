@@ -10,6 +10,7 @@ import {
 } from './join.js';
 import type { JsonObject, JsonValue } from './json.js';
 import {
+  HANDOFF_MODES,
   MAX_API_KEY_LENGTH,
   MAX_APP_VERSION_INPUT_LENGTH,
   MAX_BLOCK_LIST_SIZE,
@@ -76,6 +77,7 @@ const schemas = buildJitless(() => {
     metadata: opaqueObject,
     position: opaqueValue.optional(),
     joinMethods: joinMethodList.optional(),
+    handoff: z.enum(HANDOFF_MODES).optional(),
   });
 
   const joinCode = z.string().max(MAX_JOIN_CODE_INPUT_LENGTH);
@@ -121,6 +123,8 @@ const schemas = buildJitless(() => {
     blockList: blockList.optional(),
     // The blob is checked by the server; a bad one only means new codes (#10 AC33).
     joinCodes: z.string().max(MAX_CODES_BLOB_LENGTH).optional(),
+    // Leader recovery state (#13 D13); used only for a recreation.
+    handoff: z.enum(HANDOFF_MODES).optional(),
   });
 
   const tokensCheckSchema = z.object({
@@ -168,6 +172,9 @@ const schemas = buildJitless(() => {
     maxSessionMinutes: z.number().int().positive(),
     qrTicketSeconds: z.number().int().positive(),
     approvalTimeoutSeconds: z.number().int().positive(),
+    inactivityLimitMinutes: z.number().int().positive(),
+    disconnectGraceSeconds: z.number().int().positive(),
+    keepAliveCountdownSeconds: z.number().int().positive(),
   });
 
   const joinMethods = joinMethodList;
@@ -220,6 +227,7 @@ const schemas = buildJitless(() => {
       namespace: z.string().regex(NAMESPACE_PATTERN),
       joinMethods,
       limits: appLimitsSchema,
+      defaultHandoff: z.enum(HANDOFF_MODES),
     }),
     z.object({
       type: z.literal('group.created'),

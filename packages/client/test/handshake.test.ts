@@ -51,6 +51,7 @@ describe('checkHelloOk (M1, R2-L2)', () => {
     participantId: 'p',
     namespace: 'app-a',
     joinMethods: ['A' as const],
+    defaultHandoff: 'auto' as const,
   };
 
   it('accepts limits in bounds', () => {
@@ -61,6 +62,9 @@ describe('checkHelloOk (M1, R2-L2)', () => {
       maxMessageBytes: 4096,
       qrTicketSeconds: 300,
       approvalTimeoutSeconds: 120,
+      inactivityLimitMinutes: 20,
+      disconnectGraceSeconds: 30,
+      keepAliveCountdownSeconds: 60,
     };
     expect(checkHelloOk({ ...base, limits }, welcome(1, 1))).toBeUndefined();
   });
@@ -73,6 +77,9 @@ describe('checkHelloOk (M1, R2-L2)', () => {
       maxMessageBytes: 2 ** 53,
       qrTicketSeconds: 300,
       approvalTimeoutSeconds: 120,
+      inactivityLimitMinutes: 20,
+      disconnectGraceSeconds: 30,
+      keepAliveCountdownSeconds: 60,
     };
     const result = checkHelloOk({ ...base, limits }, welcome(1, 1));
     expect(result?.fatal).toBe(true);

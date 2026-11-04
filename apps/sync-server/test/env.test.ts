@@ -57,7 +57,25 @@ describe('parseEnv', () => {
       joinMethodsAllowed: ['A', 'B', 'C', 'D'],
       qrTicketSecondsCeiling: 3600,
       approvalTimeoutSecondsCeiling: 600,
+      disconnectGraceSecondsCeiling: 120,
+      keepAliveCountdownSecondsCeiling: 120,
     });
+  });
+
+  it('reads the lifecycle timer ceilings within 1-3600 (#13 AC1)', () => {
+    expect(
+      parseEnv({
+        DISCONNECT_GRACE_SECONDS_CEILING: '60',
+        KEEP_ALIVE_COUNTDOWN_SECONDS_CEILING: '3600',
+      }),
+    ).toMatchObject({ disconnectGraceSecondsCeiling: 60, keepAliveCountdownSecondsCeiling: 3600 });
+    for (const name of [
+      'DISCONNECT_GRACE_SECONDS_CEILING',
+      'KEEP_ALIVE_COUNTDOWN_SECONDS_CEILING',
+    ]) {
+      expect(() => parseEnv({ [name]: '3601' })).toThrow(`${name} must be between 1 and 3600`);
+      expect(() => parseEnv({ [name]: '0' })).toThrow(`${name} must be a positive integer`);
+    }
   });
 
   it('reads every variable', () => {

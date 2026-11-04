@@ -14,6 +14,9 @@ export const LIMITS: AppLimits = {
   maxSessionMinutes: 180,
   qrTicketSeconds: 300,
   approvalTimeoutSeconds: 120,
+  inactivityLimitMinutes: 20,
+  disconnectGraceSeconds: 30,
+  keepAliveCountdownSeconds: 60,
 };
 
 /** The app's join methods in the fake `hello.ok`: every method, so every flow can be tested. */
@@ -80,6 +83,7 @@ export function serverHandshake(
     namespace: 'app-a',
     joinMethods: options.joinMethods ?? JOIN_METHODS_ALL,
     limits: options.limits ?? LIMITS,
+    defaultHandoff: 'auto',
   });
 }
 

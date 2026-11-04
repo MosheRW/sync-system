@@ -61,5 +61,15 @@ export const MAX_QR_TICKET_INPUT_LENGTH = 512;
 /** Longest signed codes blob (#10 AC32). */
 export const MAX_CODES_BLOB_LENGTH = 512;
 
+/**
+ * Handoff modes (#13 AC3, Q2.1): `auto` hands the lead to the vice-leader or
+ * the longest-connected member after the grace period; `frozen` never hands
+ * off and waits for the leader.
+ */
+export const HANDOFF_MODES = ['auto', 'frozen'] as const;
+
+/** A group's handoff mode. */
+export type HandoffMode = (typeof HANDOFF_MODES)[number];
+
 /** An app namespace (also the token audience and part of the client storage key). */
 export const NAMESPACE_PATTERN = /^[a-z0-9][a-z0-9_-]{0,62}$/;

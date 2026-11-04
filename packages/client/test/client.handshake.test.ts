@@ -60,6 +60,7 @@ describe('connect and handshake (AC8, AC9)', () => {
       participantId: PARTICIPANT_ID,
       joinMethods: ['A', 'D'],
       limits: LIMITS,
+      defaultHandoff: 'auto',
     });
     const info = await connecting;
     expect(info).toEqual({
@@ -126,6 +127,8 @@ describe('client-side version check (AC12)', () => {
       { ...LIMITS, maxGroupSize: 10_001 },
       { ...LIMITS, qrTicketSeconds: 86_401 },
       { ...LIMITS, approvalTimeoutSeconds: 3_601 },
+      { ...LIMITS, disconnectGraceSeconds: 3_601 },
+      { ...LIMITS, keepAliveCountdownSeconds: 3_601 },
     ]) {
       FakeWebSocket.reset();
       const client = makeClient();
@@ -140,6 +143,7 @@ describe('client-side version check (AC12)', () => {
         namespace: 'app-a',
         joinMethods: ['A'],
         limits,
+        defaultHandoff: 'auto',
       });
       const error = await rejection(connecting);
       expect(isSyncClientError(error, 'SERVER_UNSUPPORTED')).toBe(true);

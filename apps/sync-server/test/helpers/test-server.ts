@@ -24,6 +24,9 @@ export interface TestAppInput {
   joinMethods?: string[];
   qrTicketSeconds?: number;
   approvalTimeoutSeconds?: number;
+  disconnectGraceSeconds?: number;
+  keepAliveCountdownSeconds?: number;
+  defaultHandoff?: string;
 }
 
 export const DEFAULT_TEST_APPS: TestAppInput[] = [

@@ -52,8 +52,40 @@ describe('handshake', () => {
         maxSessionMinutes: 180,
         qrTicketSeconds: 300,
         approvalTimeoutSeconds: 120,
+        inactivityLimitMinutes: 20,
+        disconnectGraceSeconds: 30,
+        keepAliveCountdownSeconds: 60,
       },
+      defaultHandoff: 'auto',
     });
+  });
+
+  it('sends the lifecycle timers and the default handoff mode in hello.ok (#13 AC1, AC3)', async () => {
+    const custom = await startTestServer({
+      apps: [
+        {
+          namespace: 'app-a',
+          apiKey: KEY_A,
+          inactivityLimitMinutes: 10,
+          disconnectGraceSeconds: 45,
+          keepAliveCountdownSeconds: 90,
+          defaultHandoff: 'frozen',
+        },
+      ],
+    });
+    try {
+      const client = await custom.connect();
+      expect(await client.hello({ apiKey: KEY_A })).toMatchObject({
+        limits: {
+          inactivityLimitMinutes: 10,
+          disconnectGraceSeconds: 45,
+          keepAliveCountdownSeconds: 90,
+        },
+        defaultHandoff: 'frozen',
+      });
+    } finally {
+      await custom.close();
+    }
   });
 
   it('sends the app join methods and join timers in hello.ok (#10 AC4)', async () => {

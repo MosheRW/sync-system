@@ -218,6 +218,7 @@ describe('one group request in flight (L5, R2-L4)', () => {
       participantId: 'p2',
       joinMethods: ['A', 'B', 'C', 'D'],
       limits: LIMITS,
+      defaultHandoff: 'auto',
     });
     await reconnecting;
     void joinTestGroup(client).catch(() => {});

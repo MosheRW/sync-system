@@ -14,6 +14,9 @@ const LIMITS = {
   maxSessionMinutes: 180,
   qrTicketSeconds: 300,
   approvalTimeoutSeconds: 120,
+  inactivityLimitMinutes: 20,
+  disconnectGraceSeconds: 30,
+  keepAliveCountdownSeconds: 60,
 };
 
 const connections: Record<string, ConnectionState> = {

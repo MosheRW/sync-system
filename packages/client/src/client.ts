@@ -1552,6 +1552,9 @@ export class SyncClient {
       maxSessionMinutes,
       qrTicketSeconds,
       approvalTimeoutSeconds,
+      inactivityLimitMinutes,
+      disconnectGraceSeconds,
+      keepAliveCountdownSeconds,
     } = message.limits;
     const limits = Object.freeze({
       maxGroupSize,
@@ -1560,6 +1563,9 @@ export class SyncClient {
       maxSessionMinutes,
       qrTicketSeconds,
       approvalTimeoutSeconds,
+      inactivityLimitMinutes,
+      disconnectGraceSeconds,
+      keepAliveCountdownSeconds,
     });
     const info: ConnectedInfo = Object.freeze({
       participantId: message.participantId,

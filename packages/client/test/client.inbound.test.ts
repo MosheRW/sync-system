@@ -98,6 +98,7 @@ describe('handshake messages after connected (L8)', () => {
       participantId: 'other',
       joinMethods: ['C'],
       limits: { ...LIMITS, maxMessageBytes: 100_000 },
+      defaultHandoff: 'auto',
     });
     expect(errors.map((e) => e.code)).toEqual(['INVALID_SERVER_MESSAGE', 'INVALID_SERVER_MESSAGE']);
     expect(client.getSnapshot()).toBe(before);

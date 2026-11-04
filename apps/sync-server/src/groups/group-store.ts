@@ -1,4 +1,4 @@
-import type { JoinMethod, JsonObject, JsonValue } from '@sync-system/protocol';
+import type { HandoffMode, JoinMethod, JsonObject, JsonValue } from '@sync-system/protocol';
 import type { GroupCodes } from '../joins/codes.js';
 
 /** `has: false` is the explicit "no position yet", so `null` stays a real payload. */
@@ -36,6 +36,8 @@ export interface GroupRecord {
    * process (#13 6.9).
    */
   recoveredAt: number | undefined;
+  /** `auto` hands off after the grace period; `frozen` never does (#13 AC3). */
+  handoff: HandoffMode;
   /** False while the leader is offline: the group is frozen (#5 AC18). */
   leaderOnline: boolean;
   /** Blocked participant IDs (#5 AC26). Never logged. */
