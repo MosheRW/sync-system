@@ -150,7 +150,10 @@ describe('the leader-only roster (#13 AC5, AC31)', () => {
     const roster = (await store.get('app-a', group.groupId))!.roster;
     expect(roster.map((e) => e.pid)).not.toContain(group.memberIds[0]);
     expect(roster[0]?.pid).toBe(group.leaderId);
-    const removed = group.leader.rosterFrames.filter((f) => f.type === 'roster.removed');
+    // The removal reaches the leader after the store changed: wait for it.
+    const isRemoval = (f: ServerMessage) => f.type === 'roster.removed';
+    await waitUntil(() => group.leader.rosterFrames.some(isRemoval), 2000, 'roster.removed');
+    const removed = group.leader.rosterFrames.filter(isRemoval);
     expect(removed).toEqual([
       { type: 'roster.removed', groupId: group.groupId, participantId: group.memberIds[0] },
     ]);

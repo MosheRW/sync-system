@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createGroupWithMembers, joinByCode, resumeWith } from './helpers/groups.js';
 import { KEY_A, type TestServer, startTestServer } from './helpers/test-server.js';
+import { waitUntil } from './helpers/wait.js';
 
 let ts: TestServer | undefined;
 
@@ -45,6 +46,12 @@ describe('display names (#13 AC35-AC38)', () => {
     expect(chosen.reply).toMatchObject({ displayName: 'Guest 2', generated: false });
     const blank = await joinByCode(ts, created, { extra: { displayName: '' } });
     expect(blank.reply).toMatchObject({ displayName: 'Guest 3', generated: true });
+    // Roster deltas reach the leader after the joiners' replies: wait for both.
+    await waitUntil(
+      () => leader.rosterFrames.filter((f) => f.type === 'roster.updated').length === 2,
+      2000,
+      'two roster deltas',
+    );
     const roster = leader.rosterFrames
       .filter((f) => f.type === 'roster.updated')
       .map((f) => (f.type === 'roster.updated' ? f.participant : undefined));
