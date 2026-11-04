@@ -71,11 +71,12 @@ describe('max session time (#5 AC21, Q2)', () => {
     expect((await members[0]!.next('group.ended')).reason).toBe('leader_timeout');
   });
 
-  it('a dropped group’s max-session timer is cancelled', async () => {
+  it('an emptied group’s timers are cancelled', async () => {
     const scheduler = new ManualScheduler();
     ts = await startTestServer({ scheduler });
     const { leader } = await createGroupWithMembers(ts, 0);
-    expect(scheduler.pending).toBe(1);
+    // Max session and the keep-alive prompt (#13 6.3).
+    expect(scheduler.pending).toBe(2);
     await leader.close();
     await waitUntil(() => scheduler.pending === 0);
   });

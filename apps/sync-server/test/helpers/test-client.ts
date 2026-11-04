@@ -12,23 +12,34 @@ export interface HelloOptions {
 
 type MessageOf<T extends ServerMessageType> = Extract<ServerMessage, { type: T }>;
 
-/** Leader-only roster frames (#13 AC31), kept apart from the other frames. */
+/**
+ * Frames that #13 added beside every flow, kept apart from the other frames:
+ * the leader-only roster (AC31) and the keep-alive frames (AC16, AC30).
+ */
+const SIDE_TYPES: ReadonlySet<string> = new Set([
+  'keepalive.prompt',
+  'keepalive.cleared',
+  'activity.ack',
+]);
+
 function isRosterFrame(message: ServerMessage): boolean {
-  return message.type.startsWith('roster.');
+  return message.type.startsWith('roster.') || SIDE_TYPES.has(message.type);
 }
 
 /**
  * A `ws` client wrapper for integration tests. It buffers every message from
  * the moment the socket opens, so `welcome` is never missed.
  *
- * Roster frames (`roster.*`, #13) go to their own queue: `next()` and
- * `expectNoMessage()` never see them, so flows written before the roster
- * read the same frames as before. `next('roster.snapshot')` and the other
- * roster types read the roster queue; `rosterFrames` holds every one.
+ * Roster frames (`roster.*`, #13) and the keep-alive frames
+ * (`keepalive.prompt`, `keepalive.cleared`, `activity.ack`) go to their own
+ * queue: `next()` and `expectNoMessage()` never see them, so flows written
+ * before #13 read the same frames as before. `next(type)` with one of those
+ * types reads that queue; `rosterFrames` holds every one of them.
  */
 export class TestClient {
   private readonly queue: ServerMessage[] = [];
   private readonly rosterQueue: ServerMessage[] = [];
+  private readonly keepAliveQueue: ServerMessage[] = [];
   /** Every roster frame received, in order. */
   readonly rosterFrames: ServerMessage[] = [];
   private waiters: Array<() => void> = [];
@@ -40,7 +51,7 @@ export class TestClient {
       const text = isBinary ? '' : (data as Buffer).toString('utf8');
       const message = JSON.parse(text) as ServerMessage;
       if (isRosterFrame(message)) {
-        this.rosterQueue.push(message);
+        (message.type.startsWith('roster.') ? this.rosterQueue : this.keepAliveQueue).push(message);
         this.rosterFrames.push(message);
       } else {
         this.queue.push(message);
@@ -84,7 +95,14 @@ export class TestClient {
   async next(type?: undefined, timeoutMs?: number): Promise<ServerMessage>;
   async next(type?: ServerMessageType, timeoutMs = 2000): Promise<ServerMessage> {
     const deadline = Date.now() + timeoutMs;
-    const queue = type !== undefined && type.startsWith('roster.') ? this.rosterQueue : this.queue;
+    const queue =
+      type === undefined
+        ? this.queue
+        : type.startsWith('roster.')
+          ? this.rosterQueue
+          : SIDE_TYPES.has(type)
+            ? this.keepAliveQueue
+            : this.queue;
     while (queue.length === 0) {
       if (this.isClosed) throw new Error(`socket closed while waiting for ${type ?? 'a message'}`);
       const remaining = deadline - Date.now();

@@ -175,7 +175,10 @@ describe('vice-leader designation (#13 AC10-AC12)', () => {
     });
     scheduler.advance(60_000);
     group.leader.send({ type: 'vice.clear' });
-    expect(await group.leader.next()).toMatchObject({ type: 'vice.updated' });
+    // Accepted actions count as activity, so a refreshed token may come first.
+    let reply = await group.leader.next();
+    while (reply.type === 'token.refreshed') reply = await group.leader.next();
+    expect(reply).toMatchObject({ type: 'vice.updated' });
   });
 });
 

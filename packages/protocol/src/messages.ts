@@ -236,6 +236,22 @@ export interface MemberRemoveMessage {
   participantId: string;
 }
 
+/**
+ * The leader is active without moving the group, e.g. while previewing
+ * (#13 AC30). No payload: a previewed position never reaches the server.
+ * Reply: `activity.ack`.
+ */
+export interface LeaderActivityMessage {
+  type: 'leader.activity';
+  reqId?: string;
+}
+
+/** The leader answers a keep-alive prompt (#13 AC16). Reply: `activity.ack`. */
+export interface KeepAliveAckMessage {
+  type: 'keepalive.ack';
+  reqId?: string;
+}
+
 export type ClientMessage =
   | HelloMessage
   | GroupCreateMessage
@@ -256,7 +272,9 @@ export type ClientMessage =
   | ViceClearMessage
   | GroupLockMessage
   | GroupUnlockMessage
-  | MemberRemoveMessage;
+  | MemberRemoveMessage
+  | LeaderActivityMessage
+  | KeepAliveAckMessage;
 
 export type ClientMessageType = ClientMessage['type'];
 
@@ -640,6 +658,29 @@ export interface MemberRemovedMessage {
   blockList: string[];
 }
 
+/** To the leader: the reply to leader.activity and keepalive.ack (#13 AC16, AC30). */
+export interface ActivityAckMessage {
+  type: 'activity.ack';
+  reqId?: string;
+}
+
+/**
+ * To the leader: no counted activity for a while; answer within
+ * `countdownMs` (a duration, never a clock time, D12) or the group pauses
+ * (#13 AC16, AC17). Members never get it.
+ */
+export interface KeepAlivePromptMessage {
+  type: 'keepalive.prompt';
+  groupId: string;
+  countdownMs: number;
+}
+
+/** To the leader: an activity answered the prompt (#13 AC16). */
+export interface KeepAliveClearedMessage {
+  type: 'keepalive.cleared';
+  groupId: string;
+}
+
 /** To the leader: the reply to vice.set / vice.clear (#13 AC10). */
 export interface ViceUpdatedMessage {
   type: 'vice.updated';
@@ -706,6 +747,9 @@ export type ServerMessage =
   | ViceChangedMessage
   | LockChangedMessage
   | MemberRemovedMessage
+  | ActivityAckMessage
+  | KeepAlivePromptMessage
+  | KeepAliveClearedMessage
   | ErrorMessage;
 
 export type ServerMessageType = ServerMessage['type'];

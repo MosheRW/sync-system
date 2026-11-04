@@ -195,3 +195,23 @@ describe('removal (#13 AC32, Gate 2 Q-A)', () => {
     expect(new Set(codes).size).toBe(codes.length);
   });
 });
+
+describe('activity and keep-alive messages (#13 AC16, AC30)', () => {
+  it('parses leader.activity without a payload field, and keepalive.ack', () => {
+    const parsed = parseClientMessage({ type: 'leader.activity', position: { page: 3 } });
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) expect(parsed.message).toEqual({ type: 'leader.activity' });
+    expect(parseClientMessage({ type: 'keepalive.ack', reqId: 'k' }).ok).toBe(true);
+  });
+
+  it('parses the prompt with a non-negative duration, the cleared event and the ack', () => {
+    expect(
+      parseServerMessage({ type: 'keepalive.prompt', groupId: GID, countdownMs: 60_000 }).ok,
+    ).toBe(true);
+    expect(parseServerMessage({ type: 'keepalive.prompt', groupId: GID, countdownMs: -1 }).ok).toBe(
+      false,
+    );
+    expect(parseServerMessage({ type: 'keepalive.cleared', groupId: GID }).ok).toBe(true);
+    expect(parseServerMessage({ type: 'activity.ack', reqId: 'a' }).ok).toBe(true);
+  });
+});

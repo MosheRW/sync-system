@@ -25,6 +25,8 @@ const NAMES: Record<string, RegExp> = {
   'group.lock': /lock/i,
   'group.unlock': /unlock/i,
   'member.remove': /remov/i,
+  'leader.activity': /leader activity/i,
+  'keepalive.ack': /keep-alive/i,
 };
 
 describe('per-action error texts (#7 A1)', () => {
@@ -56,6 +58,8 @@ describe('per-action error texts (#7 A1)', () => {
         'group.lock': 'Too many group locks',
         'group.unlock': 'Too many group unlocks',
         'member.remove': 'Too many member removals',
+        'leader.activity': 'Too many leader activity signals',
+        'keepalive.ack': 'Too many keep-alive answers',
       },
       NOT_LEADER: {
         'position.update': 'Only the leader can update the position',
@@ -70,6 +74,8 @@ describe('per-action error texts (#7 A1)', () => {
         'group.lock': 'Only the leader can lock the group',
         'group.unlock': 'Only the leader can unlock the group',
         'member.remove': 'Only the leader can remove members',
+        'leader.activity': 'Only the leader can send leader activity',
+        'keepalive.ack': 'Only the leader can answer the keep-alive',
       },
       NOT_ALLOWED: {
         'vice.set': 'This participant cannot be the vice-leader now',

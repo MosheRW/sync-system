@@ -22,6 +22,8 @@ import {
   type TokensCheckMessage,
   type TokensResultMessage,
   type MemberRemoveMessage,
+  type KeepAliveAckMessage,
+  type LeaderActivityMessage,
   CloseCode,
   MAX_BLOCK_LIST_SIZE,
   type ViceClearMessage,
@@ -68,6 +70,7 @@ import {
   toWire,
 } from '../lifecycle/roster.js';
 import { LeaderControls } from '../lifecycle/leader-controls.js';
+import { LifecycleService } from '../lifecycle/lifecycle-service.js';
 import { type GroupRecord, type GroupStore, connectedCount } from './group-store.js';
 import type { EndedGroups } from './ended-groups.js';
 import { GroupTimers } from './group-timers.js';
@@ -169,6 +172,8 @@ export class GroupService implements GroupActions {
   private readonly appBudgetWarnedAt = new Map<string, number>();
   /** Join codes and every join flow (#10). */
   private readonly joins: JoinService;
+  /** Activity, keep-alive and, later, pause and handoff (#13 section 6). */
+  private readonly lifecycle: LifecycleService;
   /** Vice, lock, removal and the other leader controls (#13 3.1). */
   private readonly controls: LeaderControls;
   /** Group recreations per connection (#13 RC20). */
@@ -223,6 +228,17 @@ export class GroupService implements GroupActions {
     );
     this.processStartedAt = deps.processStartedAt ?? deps.scheduler.now();
     this.timers = new GroupTimers(deps.scheduler);
+    this.lifecycle = new LifecycleService({
+      store: deps.store,
+      timers: this.timers,
+      logger: deps.logger,
+      runTimer: (namespace, groupId, task) => this.runTimer(namespace, groupId, task),
+      leaderSession: (record) => this.sessionOf(record, record.leaderId),
+      deliverLater: (session, message) => this.deliverLater(session, message),
+      refresherActivity: (namespace, groupId, at) =>
+        this.refresher.activity(groupKey(namespace, groupId), at),
+      now: () => this.now(),
+    });
     this.parking = new ParkingLot(deps.scheduler);
     this.refresher = new TokenRefresher(deps.scheduler, deps.refresh);
   }
@@ -412,6 +428,7 @@ export class GroupService implements GroupActions {
       handoff: message.handoff ?? app.defaultHandoff,
       viceId: undefined,
       locked: false,
+      keepAlivePending: false,
       leaderOnline: true,
       blockList: [],
       joinMethods: initial.methods,
@@ -428,6 +445,7 @@ export class GroupService implements GroupActions {
     }
     this.armMaxSession(app, record);
     this.startRefresh(app.namespace, record.id, now);
+    this.lifecycle.armKeepAlive(app, record);
     this.attach(session, { groupId: record.id, participantId });
     this.deps.logger.info(
       { event: 'group_created', namespace: app.namespace, groupRef: groupRef(record.id) },
@@ -483,8 +501,25 @@ export class GroupService implements GroupActions {
         action,
       );
       if (isGuardError(auth)) return auth;
-      return task(record!, auth);
+      const reply = await task(record!, auth);
+      // An accepted leader action is a leader activity (#13 6.2, AC15).
+      // Rejected, rate-limited and refused actions never count.
+      if (reply.type !== 'error' && action !== 'group.end') {
+        const current = await this.deps.store.get(namespace, groupId);
+        if (current !== undefined && current.leaderId === auth.participantId) {
+          await this.lifecycle.activity(session.app, current, this.now(), session);
+        }
+      }
+      return reply;
     });
+  }
+
+  /** leader.activity / keepalive.ack (#13 AC16, AC30). */
+  leaderActivity(
+    session: Session,
+    message: LeaderActivityMessage | KeepAliveAckMessage,
+  ): Promise<ServerMessage> {
+    return this.controls.leaderActivity(session, message);
   }
 
   /** member.remove (#13 AC32). */
@@ -680,7 +715,6 @@ export class GroupService implements GroupActions {
       const at = this.now();
       const stored = await this.deps.store.setPosition(namespace, groupId, message.position, at);
       if (!stored) return errorMessage(ErrorCode.NOT_IN_GROUP);
-      this.refresher.activity(groupKey(namespace, groupId), at);
 
       // Members only: the leader gets position.ack, not the broadcast (AC13).
       this.deps.notifier.broadcast(this.memberKeys(record), {
@@ -1050,6 +1084,11 @@ export class GroupService implements GroupActions {
     });
     this.timers.clearFrozenEnd(groupKey(namespace, record.id));
     this.startRefresh(namespace, record.id, now);
+    // A return is an activity: no prompt is outstanding (#13 6.2).
+    if (updated.keepAlivePending) {
+      await this.deps.store.patch(namespace, record.id, { keepAlivePending: false });
+    }
+    this.lifecycle.armKeepAlive(app, updated);
     if (!record.leaderOnline) {
       this.deps.notifier.broadcast(this.memberKeys(updated), {
         type: 'leader.online',
@@ -1120,6 +1159,7 @@ export class GroupService implements GroupActions {
           : undefined,
       // The lock flag from the leader's recovery state (#13 Q4.3).
       locked: message.locked ?? false,
+      keepAlivePending: false,
       leaderOnline: true,
       // Deduplicated; the leader's own ID is ignored.
       blockList: [...new Set(message.blockList ?? [])].filter((id) => id !== claims.pid),
@@ -1139,6 +1179,7 @@ export class GroupService implements GroupActions {
     }
     this.armMaxSession(app, record);
     this.startRefresh(namespace, record.id, now);
+    this.lifecycle.armKeepAlive(app, record);
     this.attach(session, { groupId: record.id, participantId: claims.pid });
     this.deliverLater(session, this.rosterSnapshot(record));
     await this.admitParked(app, record);
@@ -1468,6 +1509,8 @@ export class GroupService implements GroupActions {
       ...rosterStateOf(offline),
       roster: setConnected(offline.roster, offline.leaderId, false, this.now()),
     });
+    // Nobody to prompt while the leader is away (#13 6.3).
+    this.lifecycle.stopKeepAlive(namespace, groupId);
     if (connectedCount(record) === 0) {
       await this.endGroup(app, groupId, 'empty');
       return;

@@ -43,6 +43,8 @@ export interface GroupRecord {
    * leaves, is removed or becomes leader.
    */
   viceId: string | undefined;
+  /** A keep-alive prompt is outstanding (#13 6.3). */
+  keepAlivePending: boolean;
   /** The leader locked the group: no new admission by any method (#13 AC29). */
   locked: boolean;
   /** `auto` hands off after the grace period; `frozen` never does (#13 AC3). */

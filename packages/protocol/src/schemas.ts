@@ -163,6 +163,9 @@ const schemas = buildJitless(() => {
   const groupLockSchema = z.object({ type: z.literal('group.lock'), reqId });
   const groupUnlockSchema = z.object({ type: z.literal('group.unlock'), reqId });
   const memberRemoveSchema = z.object({ type: z.literal('member.remove'), reqId, participantId });
+  // No payload: unknown keys are stripped, so nothing sent with it is read (#13 AC30).
+  const leaderActivitySchema = z.object({ type: z.literal('leader.activity'), reqId });
+  const keepAliveAckSchema = z.object({ type: z.literal('keepalive.ack'), reqId });
 
   const clientMessageSchema = z.discriminatedUnion('type', [
     helloSchema,
@@ -185,6 +188,8 @@ const schemas = buildJitless(() => {
     groupLockSchema,
     groupUnlockSchema,
     memberRemoveSchema,
+    leaderActivitySchema,
+    keepAliveAckSchema,
   ]);
 
   const appLimitsSchema = z.object({
@@ -383,6 +388,13 @@ const schemas = buildJitless(() => {
     }),
     z.object({ type: z.literal('vice.changed'), groupId: z.string(), isVice: z.boolean() }),
     z.object({ type: z.literal('lock.changed'), reqId, groupId: z.string(), locked: z.boolean() }),
+    z.object({ type: z.literal('activity.ack'), reqId }),
+    z.object({
+      type: z.literal('keepalive.prompt'),
+      groupId: z.string(),
+      countdownMs: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    }),
+    z.object({ type: z.literal('keepalive.cleared'), groupId: z.string() }),
     z.object({
       type: z.literal('member.removed'),
       reqId,

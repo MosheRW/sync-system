@@ -4,6 +4,8 @@ import {
   type GroupLockMessage,
   type GroupUnlockMessage,
   type ErrorMessage,
+  type KeepAliveAckMessage,
+  type LeaderActivityMessage,
   type JoinCodesPayload,
   type MemberRemoveMessage,
   type ServerMessage,
@@ -15,6 +17,7 @@ import type { Membership, Session } from '../groups/session.js';
 import type { AppConfig } from '../apps/app-registry.js';
 import type { GroupCodes } from '../joins/codes.js';
 import {
+  LEADER_ACTIVITY_PER_GROUP_PER_MINUTE,
   LEADER_CONTROL_WINDOW_MS,
   LOCK_CHANGES_PER_GROUP_PER_MINUTE,
   MEMBER_REMOVALS_PER_GROUP_PER_MINUTE,
@@ -93,6 +96,8 @@ export class LeaderControls {
   private readonly lockLimiter: SlidingWindowRateLimiter;
   /** member.remove per group (#13 8.2). */
   private readonly removeLimiter: SlidingWindowRateLimiter;
+  /** leader.activity and keepalive.ack per group, shared (#13 8.2). */
+  private readonly activityLimiter: SlidingWindowRateLimiter;
 
   constructor(
     private readonly host: LeaderControlsHost,
@@ -102,6 +107,36 @@ export class LeaderControls {
     this.viceLimiter = new SlidingWindowRateLimiter(now, LEADER_CONTROL_WINDOW_MS);
     this.lockLimiter = new SlidingWindowRateLimiter(now, LEADER_CONTROL_WINDOW_MS);
     this.removeLimiter = new SlidingWindowRateLimiter(now, LEADER_CONTROL_WINDOW_MS);
+    this.activityLimiter = new SlidingWindowRateLimiter(now, LEADER_CONTROL_WINDOW_MS);
+  }
+
+  /**
+   * leader.activity and keepalive.ack (#13 AC16, AC30, L5): the activity
+   * itself is counted by the facade for every accepted leader action. The
+   * shared budget is charged after authorization; the first keepalive.ack
+   * while a prompt is outstanding is always accepted and not charged.
+   */
+  leaderActivity(
+    session: Session,
+    message: LeaderActivityMessage | KeepAliveAckMessage,
+  ): Promise<ServerMessage> {
+    return this.host.asLeader(session, message.type, (record) => {
+      const free = message.type === 'keepalive.ack' && record.keepAlivePending;
+      if (!free) {
+        const rate = this.activityLimiter.tryAcquire(
+          groupKey(record),
+          LEADER_ACTIVITY_PER_GROUP_PER_MINUTE,
+        );
+        if (!rate.ok) {
+          return Promise.resolve(
+            actionErrorMessage(ErrorCode.RATE_LIMITED, message.type, {
+              details: { retryAfterMs: rate.retryAfterMs },
+            }),
+          );
+        }
+      }
+      return Promise.resolve({ type: 'activity.ack' });
+    });
   }
 
   /**
@@ -276,6 +311,7 @@ export class LeaderControls {
     this.viceLimiter.forget(`${namespace}:${groupId}`);
     this.lockLimiter.forget(`${namespace}:${groupId}`);
     this.removeLimiter.forget(`${namespace}:${groupId}`);
+    this.activityLimiter.forget(`${namespace}:${groupId}`);
   }
 
   /** Server shutdown (#13 RC2). */
@@ -283,10 +319,16 @@ export class LeaderControls {
     this.viceLimiter.clear();
     this.lockLimiter.clear();
     this.removeLimiter.clear();
+    this.activityLimiter.clear();
   }
 
   /** Number of tracked limiter keys. For tests only. */
   get limiterSize(): number {
-    return this.viceLimiter.size + this.lockLimiter.size + this.removeLimiter.size;
+    return (
+      this.viceLimiter.size +
+      this.lockLimiter.size +
+      this.removeLimiter.size +
+      this.activityLimiter.size
+    );
   }
 }

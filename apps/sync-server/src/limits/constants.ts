@@ -102,6 +102,13 @@ export const ROSTER_SNAPSHOT_HEADROOM_BYTES = 32_768;
 /** Window of the per-group leader control limiters (#13 8.2). */
 export const LEADER_CONTROL_WINDOW_MS = 60_000;
 
+/**
+ * leader.activity and keepalive.ack per group per window, shared (#13 8.2,
+ * Q-E). The first keepalive.ack of an outstanding prompt is never charged
+ * (L5), so a spent budget cannot make the real answer fail.
+ */
+export const LEADER_ACTIVITY_PER_GROUP_PER_MINUTE = 12;
+
 /** member.remove per group per window (#13 8.2, Q-E). */
 export const MEMBER_REMOVALS_PER_GROUP_PER_MINUTE = 10;
 

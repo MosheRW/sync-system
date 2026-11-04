@@ -138,7 +138,8 @@ describe('leader return (#5 AC19)', () => {
     expect(scheduler.pending).toBe(2);
     await resumeWith(ts, group.leaderToken);
     await group.members[0]!.next('leader.online');
-    expect(scheduler.pending).toBe(1);
+    // Max session and the leader's keep-alive prompt (#13 6.3); no frozen end.
+    expect(scheduler.pending).toBe(2);
     scheduler.advance(WINDOW + 1);
     await group.members[0]!.expectNoMessage(30);
   });

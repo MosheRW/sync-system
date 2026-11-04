@@ -19,6 +19,8 @@ import type {
   GroupLockMessage,
   GroupUnlockMessage,
   MemberRemoveMessage,
+  LeaderActivityMessage,
+  KeepAliveAckMessage,
 } from '@sync-system/protocol';
 import type { AppConfig } from '../apps/app-registry.js';
 
@@ -122,6 +124,11 @@ export interface GroupActions {
   setLock(session: Session, message: GroupLockMessage | GroupUnlockMessage): Promise<ServerMessage>;
   /** Leader removes a participant (#13 AC32). */
   removeMember(session: Session, message: MemberRemoveMessage): Promise<ServerMessage>;
+  /** The leader is active without moving the group (#13 AC30), or answers the keep-alive (AC16). */
+  leaderActivity(
+    session: Session,
+    message: LeaderActivityMessage | KeepAliveAckMessage,
+  ): Promise<ServerMessage>;
   /** Runs the disconnect rules (member removal, group end). */
   disconnect(session: Session): Promise<void>;
 }
