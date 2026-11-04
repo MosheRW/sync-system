@@ -50,7 +50,7 @@ export {
   parseClaimsSegment,
   decodeTokenClaims,
 } from './tokens.js';
-export type { TokenClaims } from './tokens.js';
+export type { TokenClaims, TokenRole } from './tokens.js';
 export type {
   Role,
   GroupEndedReason,

@@ -14,6 +14,7 @@ function record(overrides: Partial<GroupRecord> = {}): GroupRecord {
     participantIds: ['leader'],
     createdAt: 1,
     lastActivityAt: 1,
+    term: 1,
     leaderOnline: true,
     blockList: [],
     joinMethods: ['A', 'D'],

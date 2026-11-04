@@ -31,6 +31,7 @@ function issueAt(
     role: overrides.role ?? 'leader',
     groupCreatedAt: now - 60_000,
     lastActivityAt: now - 1_000,
+    term: now - 30_000,
     now,
   });
 }
@@ -47,17 +48,19 @@ describe('TokenService.issue (AC5)', () => {
       'role',
       'gct',
       'lat',
+      'term',
       'iat',
       'exp',
     ]);
     expect(claimsOf(token)).toEqual({
-      v: 1,
+      v: 2,
       aud: 'app-a',
       gid: GID,
       pid: PID,
       role: 'leader',
       gct: NOW - 60_000,
       lat: NOW - 1_000,
+      term: NOW - 30_000,
       iat: NOW / 1000,
       exp: NOW / 1000 + 31_536_000,
     });
@@ -140,7 +143,7 @@ describe('TokenService.verify (AC7, AC8, M2)', () => {
   });
 
   it('rejects an unknown format version, an expired exp and an over-long token', () => {
-    expect(svc.verify(forge(claimsAt(NOW, { v: 2 }), KEY_A), 'app-a', NOW).ok).toBe(false);
+    expect(svc.verify(forge(claimsAt(NOW, { v: 1 }), KEY_A), 'app-a', NOW).ok).toBe(false);
     const issuedLongAgo = NOW - (TOKEN_TTL_SECONDS + 10) * 1000;
     const expired = forge(claimsAt(issuedLongAgo), KEY_A);
     expect(svc.verify(expired, 'app-a', NOW).ok).toBe(false);
@@ -158,6 +161,13 @@ describe('TokenService.verify (AC7, AC8, M2)', () => {
     expect(payload.toString()).not.toContain('codes');
   });
 
+  it('keeps the leadership term when it re-signs a token (#13 RC5)', () => {
+    const token = forge(claimsAt(NOW, { term: NOW + 7 }), KEY_A);
+    const result = svc.verify(token, 'app-a', NOW);
+    if (!result.ok) throw new Error('expected ok');
+    expect(claimsOf(svc.resign(result.claims, 'app-a')).term).toBe(NOW + 7);
+  });
+
   it('rejects implausible claims (M2)', () => {
     const skew = MAX_CLOCK_SKEW_MS;
     const future = NOW + skew + 1_000;
@@ -169,11 +179,20 @@ describe('TokenService.verify (AC7, AC8, M2)', () => {
         'iat beyond the skew',
         claimsAt(NOW, { iat: futureIat, exp: futureIat + TOKEN_TTL_SECONDS }),
       ],
-      ['gct beyond the skew', claimsAt(NOW, { gct: future, lat: future })],
+      ['gct beyond the skew', claimsAt(NOW, { gct: future, lat: future, term: future })],
+      ['term beyond the skew (#13 RC5)', claimsAt(NOW, { term: future })],
       ['lat beyond the skew', claimsAt(NOW, { lat: future })],
       ['lat after issue', claimsAt(NOW, { lat: Math.floor(NOW / 1000) * 1000 + 1_001 })],
       ['lat before gct', claimsAt(NOW, { lat: NOW - 1 })],
-      ['gct in the year 3000', claimsAt(NOW, { gct: 32_503_680_000_000, lat: 32_503_680_000_000 })],
+      ['term before gct (#13 RC5)', claimsAt(NOW, { term: NOW - 1 })],
+      [
+        'gct in the year 3000',
+        claimsAt(NOW, {
+          gct: 32_503_680_000_000,
+          lat: 32_503_680_000_000,
+          term: 32_503_680_000_000,
+        }),
+      ],
     ];
     for (const [label, claims] of cases) {
       expect(svc.verify(forge(claims, KEY_A), 'app-a', NOW).ok, label).toBe(false);
@@ -189,7 +208,7 @@ describe('TokenService.verify (AC7, AC8, M2)', () => {
     const failures = [
       svc.verify('garbage', 'app-a', NOW),
       svc.verify(issueAt(svc), 'app-b', NOW),
-      svc.verify(forge(claimsAt(NOW, { v: 2 }), KEY_A), 'app-a', NOW),
+      svc.verify(forge(claimsAt(NOW, { v: 1 }), KEY_A), 'app-a', NOW),
     ];
     for (const failure of failures) expect(failure).toBe(failures[0]);
     expect(JSON.stringify(failures[0])).toBe('{"ok":false}');

@@ -1,7 +1,7 @@
 import {
-  type Role,
   TOKEN_FORMAT_VERSION,
   type TokenClaims,
+  type TokenRole,
   parseClaimsSegment,
 } from '@sync-system/protocol';
 import { MAX_CLOCK_SKEW_MS, TOKEN_TTL_SECONDS } from '../limits/constants.js';
@@ -12,11 +12,13 @@ export interface IssueInput {
   namespace: string;
   groupId: string;
   participantId: string;
-  role: Role;
+  role: TokenRole;
   /** Group creation time, epoch ms. */
   groupCreatedAt: number;
   /** The leader's last activity, epoch ms. */
   lastActivityAt: number;
+  /** The group's current leadership term (#13 D3); always `record.term`. */
+  term: number;
   /** Issue time, epoch ms. */
   now: number;
 }
@@ -29,8 +31,9 @@ export type VerifyResult =
 const INVALID: VerifyResult = Object.freeze({ ok: false });
 
 /**
- * Serializes exactly the nine known claims in a fixed order (L3), so a
- * re-signed token never carries forward a claim this server did not write.
+ * Serializes exactly the ten known claims in a fixed order (L3), so a
+ * re-signed token never carries forward a claim this server did not write,
+ * and `resign` keeps the leadership term (#13 RC5).
  */
 function payloadJson(claims: TokenClaims): string {
   return JSON.stringify({
@@ -41,6 +44,7 @@ function payloadJson(claims: TokenClaims): string {
     role: claims.role,
     gct: claims.gct,
     lat: claims.lat,
+    term: claims.term,
     iat: claims.iat,
     exp: claims.exp,
   });
@@ -59,7 +63,10 @@ function plausible(claims: TokenClaims, now: number): boolean {
     claims.gct <= latest &&
     claims.lat <= latest &&
     claims.lat <= claims.iat * 1000 + 1000 &&
-    claims.lat >= claims.gct
+    claims.lat >= claims.gct &&
+    // #13 RC5: a term is a time-based grant, never ahead of the clock.
+    claims.term >= claims.gct &&
+    claims.term <= latest
   );
 }
 
@@ -81,6 +88,7 @@ export class TokenService {
         role: input.role,
         gct: input.groupCreatedAt,
         lat: input.lastActivityAt,
+        term: input.term,
         iat,
         exp: iat + TOKEN_TTL_SECONDS,
       },

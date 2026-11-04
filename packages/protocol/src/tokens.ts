@@ -7,10 +7,15 @@ import {
   NAMESPACE_PATTERN,
   PARTICIPANT_ID_PATTERN,
 } from './limits.js';
-import type { Role } from './messages.js';
 
-/** Version of the token claim set. Additive claims keep it at 1 (#5 AC40). */
-export const TOKEN_FORMAT_VERSION = 1;
+/**
+ * Version of the token claim set. Format 2 adds the required leadership
+ * `term` claim (#13 D3); a format 1 token is rejected like any bad token.
+ */
+export const TOKEN_FORMAT_VERSION = 2;
+
+/** Role claimed by a token: the vice-leader holds a member token (#13 Q3.1). */
+export type TokenRole = 'leader' | 'member';
 
 /**
  * Claims of a participant token (architecture 4.1). The payload is readable
@@ -25,11 +30,16 @@ export interface TokenClaims {
   readonly gid: string;
   /** Group-scoped participant ID. */
   readonly pid: string;
-  readonly role: Role;
+  readonly role: TokenRole;
   /** Group creation time, epoch ms. */
   readonly gct: number;
   /** The leader's last activity when the token was issued, epoch ms. */
   readonly lat: number;
+  /**
+   * Leadership term of the group when the token was issued, epoch-ms based
+   * and only increasing (#13 D3). Orders leader grants; `term >= gct`.
+   */
+  readonly term: number;
   /** Issued at, epoch seconds. */
   readonly iat: number;
   /** Expiry, epoch seconds. */
@@ -46,8 +56,8 @@ const timestamp = () => z.number().int().nonnegative().max(Number.MAX_SAFE_INTEG
 
 /**
  * Claims schema. Unknown extra claims are stripped (they are ignored, never
- * carried forward when a token is re-signed). `lat >= gct` and `exp > iat`
- * hold for every token the server issues.
+ * carried forward when a token is re-signed). `lat >= gct`, `term >= gct`
+ * and `exp > iat` hold for every token the server issues.
  */
 export const tokenClaimsSchema = buildJitless(() =>
   z
@@ -59,11 +69,14 @@ export const tokenClaimsSchema = buildJitless(() =>
       role: z.enum(['leader', 'member']),
       gct: timestamp(),
       lat: timestamp(),
+      term: timestamp(),
       iat: timestamp(),
       exp: timestamp(),
     })
     .strip()
-    .refine((claims) => claims.lat >= claims.gct && claims.exp > claims.iat),
+    .refine(
+      (claims) => claims.lat >= claims.gct && claims.term >= claims.gct && claims.exp > claims.iat,
+    ),
 );
 
 const BASE64URL_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';

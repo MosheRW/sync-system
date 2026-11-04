@@ -23,6 +23,12 @@ export interface GroupRecord {
   createdAt: number;
   /** Epoch ms of the leader's last activity (#5 AC12). */
   lastActivityAt: number;
+  /**
+   * Leadership term (#13 D3): epoch-ms based, only increases. Set to
+   * `createdAt` on create, kept from the token on a recreation, and moved
+   * by `nextTerm` on every grant. Every token carries it.
+   */
+  term: number;
   /** False while the leader is offline: the group is frozen (#5 AC18). */
   leaderOnline: boolean;
   /** Blocked participant IDs (#5 AC26). Never logged. */

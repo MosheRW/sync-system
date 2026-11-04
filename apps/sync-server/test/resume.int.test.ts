@@ -228,7 +228,9 @@ describe('token rejections (#5 AC7, AC8, AC9, AC27)', () => {
       forge(claims, key, { header: headerSegment({ alg: 'none', typ: 'JWT' }) }),
       forge(claims, key, { algorithm: 'sha512' }),
       forge(claims, randomBytes(32)),
-      forge({ ...claims, v: 2 }, key),
+      forge({ ...claims, v: 1 }, key),
+      // #13 RC5: a format 1 token (no term) is invalid like any bad token.
+      forge({ ...claims, v: 1, term: undefined }, key),
       forge({ ...claims, role: 'admin' }, key),
       `${h}.${p}.${(s[0] === 'A' ? 'B' : 'A') + s.slice(1)}`,
       `${h}.${p}`,
@@ -278,6 +280,7 @@ describe('token rejections (#5 AC7, AC8, AC9, AC27)', () => {
       role: 'leader',
       groupCreatedAt: claims.gct,
       lastActivityAt: claims.lat,
+      term: claims.term,
       now: Date.now(),
     });
     const { reply } = await resumeWith(ts, impostor);
@@ -367,6 +370,7 @@ describe('token rejections (#5 AC7, AC8, AC9, AC27)', () => {
       role: 'member',
       groupCreatedAt: claims.gct,
       lastActivityAt: claims.lat,
+      term: claims.term,
       now: Date.now(),
     });
     const { reply } = await resumeWith(ts, oldToken);

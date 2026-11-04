@@ -12,13 +12,14 @@ const HEADER = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9';
 const SIG = 'A'.repeat(43);
 
 const CLAIMS = {
-  v: 1,
+  v: 2,
   aud: 'reading-app',
   gid: 'G'.repeat(43),
   pid: '0b6a3f5e-8c1d-4e2f-9a7b-1c2d3e4f5a6b',
   role: 'leader',
   gct: 1_767_225_600_000,
   lat: 1_767_226_800_000,
+  term: 1_767_225_600_000,
   iat: 1_767_226_800,
   exp: 1_767_226_800 + 31_536_000,
 };
@@ -85,6 +86,18 @@ describe('decodeTokenClaims', () => {
     expect(Object.getPrototypeOf(claims)).toBe(Object.prototype);
   });
 
+  it('reads the leadership term of format 2 (#13 D3)', () => {
+    expect(decodeTokenClaims(token({ ...CLAIMS, term: CLAIMS.gct + 5 }))?.term).toBe(
+      CLAIMS.gct + 5,
+    );
+  });
+
+  it('rejects a format 1 token without a term (#13 RC5)', () => {
+    const v1: Record<string, unknown> = { ...CLAIMS, v: 1 };
+    delete v1.term;
+    expect(decodeTokenClaims(token(v1))).toBeUndefined();
+  });
+
   it('rejects every missing or wrongly typed claim', () => {
     for (const key of Object.keys(CLAIMS)) {
       const missing: Record<string, unknown> = { ...CLAIMS };
@@ -95,7 +108,8 @@ describe('decodeTokenClaims', () => {
   });
 
   it('rejects an unknown format version, bad patterns and impossible times', () => {
-    expect(decodeTokenClaims(token({ ...CLAIMS, v: 2 }))).toBeUndefined();
+    expect(decodeTokenClaims(token({ ...CLAIMS, v: 1 }))).toBeUndefined();
+    expect(decodeTokenClaims(token({ ...CLAIMS, v: 3 }))).toBeUndefined();
     expect(decodeTokenClaims(token({ ...CLAIMS, aud: 'Bad App' }))).toBeUndefined();
     expect(decodeTokenClaims(token({ ...CLAIMS, gid: 'short' }))).toBeUndefined();
     expect(decodeTokenClaims(token({ ...CLAIMS, pid: CLAIMS.pid.toUpperCase() }))).toBeUndefined();
@@ -103,6 +117,9 @@ describe('decodeTokenClaims', () => {
     expect(decodeTokenClaims(token({ ...CLAIMS, gct: 1.5 }))).toBeUndefined();
     expect(decodeTokenClaims(token({ ...CLAIMS, gct: -1 }))).toBeUndefined();
     expect(decodeTokenClaims(token({ ...CLAIMS, lat: CLAIMS.gct - 1 }))).toBeUndefined();
+    expect(decodeTokenClaims(token({ ...CLAIMS, term: CLAIMS.gct - 1 }))).toBeUndefined();
+    expect(decodeTokenClaims(token({ ...CLAIMS, term: 1.5 }))).toBeUndefined();
+    expect(decodeTokenClaims(token({ ...CLAIMS, term: 2 ** 60 }))).toBeUndefined();
     expect(decodeTokenClaims(token({ ...CLAIMS, exp: CLAIMS.iat }))).toBeUndefined();
     expect(decodeTokenClaims(token({ ...CLAIMS, exp: 2 ** 60 }))).toBeUndefined();
   });

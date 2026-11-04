@@ -32,13 +32,14 @@ export function forge(
 export function claimsAt(nowMs: number, overrides: Partial<Record<string, unknown>> = {}) {
   const iat = Math.floor(nowMs / 1000);
   return {
-    v: 1,
+    v: 2,
     aud: 'app-a',
     gid: 'G'.repeat(43),
     pid: randomUUID(),
     role: 'leader',
     gct: nowMs,
     lat: nowMs,
+    term: nowMs,
     iat,
     exp: iat + TOKEN_TTL_SECONDS,
     ...overrides,

@@ -16,9 +16,9 @@ import {
   type GroupLeaveMessage,
   type GroupResumeMessage,
   type PositionUpdateMessage,
-  type Role,
   type ServerMessage,
   type TokenClaims,
+  type TokenRole,
   type TokensCheckMessage,
   type TokensResultMessage,
 } from '@sync-system/protocol';
@@ -230,7 +230,7 @@ export class GroupService implements GroupActions {
     namespace: string,
     record: GroupRecord,
     participantId: string,
-    role: Role,
+    role: TokenRole,
     now: number,
   ): string {
     return this.deps.tokens.issue({
@@ -240,6 +240,7 @@ export class GroupService implements GroupActions {
       role,
       groupCreatedAt: record.createdAt,
       lastActivityAt: record.lastActivityAt,
+      term: record.term,
       now,
     });
   }
@@ -315,6 +316,7 @@ export class GroupService implements GroupActions {
       participantIds: [participantId],
       createdAt: now,
       lastActivityAt: now,
+      term: now,
       leaderOnline: true,
       blockList: [],
       joinMethods: initial.methods,
@@ -861,6 +863,8 @@ export class GroupService implements GroupActions {
       participantIds: [claims.pid],
       createdAt: claims.gct,
       lastActivityAt: now,
+      // The recreating token's grant (#13 D3).
+      term: claims.term,
       leaderOnline: true,
       // Deduplicated; the leader's own ID is ignored.
       blockList: [...new Set(message.blockList ?? [])].filter((id) => id !== claims.pid),
