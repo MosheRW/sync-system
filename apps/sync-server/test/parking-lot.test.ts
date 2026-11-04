@@ -12,6 +12,7 @@ function session(): Session {
     deliver: () => undefined,
     afterPending: (task) => task(),
     isOpen: () => true,
+    close: () => undefined,
   };
 }
 

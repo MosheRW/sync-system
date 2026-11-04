@@ -18,6 +18,7 @@ import type {
   ViceSetMessage,
   GroupLockMessage,
   GroupUnlockMessage,
+  MemberRemoveMessage,
 } from '@sync-system/protocol';
 import type { AppConfig } from '../apps/app-registry.js';
 
@@ -64,6 +65,11 @@ export interface Session {
   isOpen(): boolean;
   /** Sends an already serialized frame to this participant. */
   deliver(text: string): void;
+  /**
+   * Closes the WebSocket with `code` (#13 Q-A: `CloseCode.REMOVED`). Call it
+   * from `afterPending`, right after the last frame for the session.
+   */
+  close(code: number, reason: string): void;
   /**
    * Runs `task` after every message this participant has already sent has
    * been handled and answered, so events it triggers arrive after those
@@ -114,6 +120,8 @@ export interface GroupActions {
   clearVice(session: Session, message: ViceClearMessage): Promise<ServerMessage>;
   /** Leader locks or unlocks joining (#13 AC29). */
   setLock(session: Session, message: GroupLockMessage | GroupUnlockMessage): Promise<ServerMessage>;
+  /** Leader removes a participant (#13 AC32). */
+  removeMember(session: Session, message: MemberRemoveMessage): Promise<ServerMessage>;
   /** Runs the disconnect rules (member removal, group end). */
   disconnect(session: Session): Promise<void>;
 }

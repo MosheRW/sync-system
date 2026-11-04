@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  CloseCode,
   HANDOFF_MODES,
   PROTOCOL_VERSION,
   parseClientMessage,
@@ -163,5 +164,34 @@ describe('lock messages and the leader state (#13 AC29, D13)', () => {
       parseServerMessage({ ...base, state: { ...state, blockList: Array(257).fill(PID) } }).ok,
     ).toBe(false);
     expect(parseServerMessage({ ...base, state: { ...state, locked: undefined } }).ok).toBe(false);
+  });
+});
+
+describe('removal (#13 AC32, Gate 2 Q-A)', () => {
+  it('parses member.remove and member.removed, and the codes reason', () => {
+    expect(parseClientMessage({ type: 'member.remove', participantId: PID }).ok).toBe(true);
+    expect(parseClientMessage({ type: 'member.remove', participantId: 'x' }).ok).toBe(false);
+    expect(
+      parseServerMessage({
+        type: 'member.removed',
+        groupId: GID,
+        participantId: PID,
+        blockList: [PID],
+      }).ok,
+    ).toBe(true);
+    expect(
+      parseServerMessage({
+        type: 'codes.updated',
+        groupId: GID,
+        reason: 'member_removed',
+        codes: { generation: 2, alphaCode: 'ABCDEFGH', blob: `a.${'b'.repeat(43)}` },
+      }).ok,
+    ).toBe(true);
+  });
+
+  it('has a dedicated close code next to the existing ones', () => {
+    expect(CloseCode.REMOVED).toBe(4004);
+    const codes = Object.values(CloseCode);
+    expect(new Set(codes).size).toBe(codes.length);
   });
 });

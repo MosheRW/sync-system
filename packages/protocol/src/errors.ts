@@ -108,6 +108,11 @@ export const ErrorCode = {
    * method and for join.approve, never with details.
    */
   GROUP_LOCKED: 'GROUP_LOCKED',
+  /**
+   * The block list would exceed 256 IDs; nothing changed (#13 AC34, Q-C).
+   * Entries are never evicted or truncated. `details.maxBlockList`.
+   */
+  BLOCK_LIST_FULL: 'BLOCK_LIST_FULL',
 } as const;
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];

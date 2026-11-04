@@ -162,6 +162,7 @@ const schemas = buildJitless(() => {
   const viceClearSchema = z.object({ type: z.literal('vice.clear'), reqId });
   const groupLockSchema = z.object({ type: z.literal('group.lock'), reqId });
   const groupUnlockSchema = z.object({ type: z.literal('group.unlock'), reqId });
+  const memberRemoveSchema = z.object({ type: z.literal('member.remove'), reqId, participantId });
 
   const clientMessageSchema = z.discriminatedUnion('type', [
     helloSchema,
@@ -183,6 +184,7 @@ const schemas = buildJitless(() => {
     viceClearSchema,
     groupLockSchema,
     groupUnlockSchema,
+    memberRemoveSchema,
   ]);
 
   const appLimitsSchema = z.object({
@@ -320,7 +322,7 @@ const schemas = buildJitless(() => {
       type: z.literal('codes.updated'),
       reqId,
       groupId: z.string(),
-      reason: z.enum(['rotated', 'door_failures']),
+      reason: z.enum(['rotated', 'door_failures', 'member_removed']),
       codes: joinCodesPayload,
     }),
     z.object({
@@ -381,6 +383,13 @@ const schemas = buildJitless(() => {
     }),
     z.object({ type: z.literal('vice.changed'), groupId: z.string(), isVice: z.boolean() }),
     z.object({ type: z.literal('lock.changed'), reqId, groupId: z.string(), locked: z.boolean() }),
+    z.object({
+      type: z.literal('member.removed'),
+      reqId,
+      groupId: z.string(),
+      participantId: z.string().regex(PARTICIPANT_ID_PATTERN),
+      blockList,
+    }),
     z.object({
       type: z.literal('error'),
       reqId,

@@ -24,6 +24,7 @@ const NAMES: Record<string, RegExp> = {
   'vice.clear': /vice-leader/i,
   'group.lock': /lock/i,
   'group.unlock': /unlock/i,
+  'member.remove': /remov/i,
 };
 
 describe('per-action error texts (#7 A1)', () => {
@@ -54,6 +55,7 @@ describe('per-action error texts (#7 A1)', () => {
         'vice.clear': 'Too many vice-leader clears',
         'group.lock': 'Too many group locks',
         'group.unlock': 'Too many group unlocks',
+        'member.remove': 'Too many member removals',
       },
       NOT_LEADER: {
         'position.update': 'Only the leader can update the position',
@@ -67,9 +69,11 @@ describe('per-action error texts (#7 A1)', () => {
         'vice.clear': 'Only the leader can clear the vice-leader',
         'group.lock': 'Only the leader can lock the group',
         'group.unlock': 'Only the leader can unlock the group',
+        'member.remove': 'Only the leader can remove members',
       },
       NOT_ALLOWED: {
         'vice.set': 'This participant cannot be the vice-leader now',
+        'member.remove': 'This participant cannot be removed',
       },
     });
   });

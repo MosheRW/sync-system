@@ -507,36 +507,10 @@ export class JoinService {
           details: { retryAfterMs: rate.retryAfterMs },
         });
       }
-      const now = this.now();
-      const next = issueCodeSet(
-        this.index,
-        namespace,
-        groupId,
-        record.joinMethods,
-        record.codes.generation,
-        now,
-        this.random,
-      );
+      const next = this.claimFullSet(record);
       if (next === 'exhausted') return errorMessage(ErrorCode.CODES_EXHAUSTED);
-      const updated = await this.deps.store.setCodes(namespace, groupId, next);
-      if (updated === undefined) {
-        this.index.release(namespace, groupId, next);
-        return errorMessage(ErrorCode.NOT_IN_GROUP);
-      }
-      // The new codes differ from the old ones, which are freed now.
-      this.index.release(namespace, groupId, record.codes);
-      const lifted = this.doors.reset(key, now);
-      this.deps.logger.info(
-        { event: 'codes_rotated', namespace, groupRef: groupRef(groupId), cause: 'leader' },
-        'codes rotated',
-      );
-      if (lifted) {
-        this.deps.logger.info(
-          { event: 'join_resumed', namespace, groupRef: groupRef(groupId) },
-          'door code joining resumed',
-        );
-        this.host.deliverLater(session, { type: 'join.resumed', groupId });
-      }
+      const updated = await this.commitFullSet(record, next, 'leader', session);
+      if (updated === undefined) return errorMessage(ErrorCode.NOT_IN_GROUP);
       return {
         type: 'codes.updated',
         groupId,
@@ -544,6 +518,65 @@ export class JoinService {
         codes: this.payload(updated),
       };
     });
+  }
+
+  /**
+   * Claims a full new code set for the group (#10 AC30, #13 RC4): new
+   * codes, and the ticket generation moves with the code generation, so
+   * every older QR ticket stops working (D12). Nothing changes until
+   * `commitFullSet`; on `exhausted` nothing was claimed.
+   */
+  claimFullSet(record: GroupRecord): GroupCodes | 'exhausted' {
+    return issueCodeSet(
+      this.index,
+      record.appNamespace,
+      record.id,
+      record.joinMethods,
+      record.codes.generation,
+      this.now(),
+      this.random,
+    );
+  }
+
+  /**
+   * Stores a claimed full set and frees the old codes; door-code failures,
+   * rotation history and any pause are cleared, and a lifted pause is told
+   * to `leader` (`join.resumed`). Returns the updated record, or undefined
+   * when the group is gone (the claim is released). Under the group lock.
+   */
+  async commitFullSet(
+    record: GroupRecord,
+    next: GroupCodes,
+    cause: 'leader' | 'member_removed',
+    leader: Session | undefined,
+  ): Promise<GroupRecord | undefined> {
+    const namespace = record.appNamespace;
+    const groupId = record.id;
+    const updated = await this.deps.store.setCodes(namespace, groupId, next);
+    if (updated === undefined) {
+      this.index.release(namespace, groupId, next);
+      return undefined;
+    }
+    // The new codes differ from the old ones, which are freed now.
+    this.index.release(namespace, groupId, record.codes);
+    const lifted = this.doors.reset(groupKey(namespace, groupId), this.now());
+    this.deps.logger.info(
+      { event: 'codes_rotated', namespace, groupRef: groupRef(groupId), cause },
+      'codes rotated',
+    );
+    if (lifted) {
+      this.deps.logger.info(
+        { event: 'join_resumed', namespace, groupRef: groupRef(groupId) },
+        'door code joining resumed',
+      );
+      if (leader !== undefined) this.host.deliverLater(leader, { type: 'join.resumed', groupId });
+    }
+    return updated;
+  }
+
+  /** Releases a claimed set that was never committed. */
+  releaseClaim(record: GroupRecord, claimed: GroupCodes): void {
+    this.index.release(record.appNamespace, record.id, claimed);
   }
 
   /**

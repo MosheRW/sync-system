@@ -400,64 +400,64 @@ four protocol versions, and `limit` for out-of-range limits),
 Apps must not retry fatal errors automatically; tell the user to update or
 fix the configuration.
 
-| Code                      | Source | When                                                                         |
-| ------------------------- | ------ | ---------------------------------------------------------------------------- |
-| `INVALID_OPTIONS`         | client | Bad constructor option (`details.field`).                                    |
-| `NO_WEBSOCKET`            | client | No WebSocket implementation. Fatal.                                          |
-| `NOT_CONNECTED`           | client | Group call while not `connected`.                                            |
-| `CLOSED`                  | client | The app called `close()`.                                                    |
-| `CONNECTION_LOST`         | client | The socket dropped or failed. Retryable.                                     |
-| `REQUEST_TIMEOUT`         | client | No reply in time (`request` says which).                                     |
-| `RECONNECT_FAILED`        | client | `maxAttempts` used up.                                                       |
-| `SERVER_UNSUPPORTED`      | client | Server protocol versions or limits not supported. Fatal.                     |
-| `HANDSHAKE_REJECTED`      | client | Close 4001 without an error frame. Fatal.                                    |
-| `INVALID_PAYLOAD`         | client | Metadata, position or group ID is not valid input.                           |
-| `INVALID_SERVER_MESSAGE`  | client | The server sent an invalid frame (`details.issues`: schema paths only).      |
-| `REQUEST_IN_PROGRESS`     | client | A create/join is already in flight.                                          |
-| `TOKEN_NOT_FOUND`         | client | No stored token for that group (`resumeGroup`, block-list methods, rejoin).  |
-| `BLOCK_LIST_FULL`         | client | The block list would hold more than 256 IDs (`details.limit`).               |
-| `INVALID_JOIN_CODE`       | client | Not a 6-digit or 8-character code (`details.field`: `code` or `doorCode`).   |
-| `INVALID_DISPLAY_NAME`    | client | Empty, over 32 characters, or with control or invisible characters.          |
-| `JOIN_METHOD_UNAVAILABLE` | client | The app or the group does not allow that join method.                        |
-| `JOIN_CANCELLED`          | client | `cancelJoin()` withdrew the pending request.                                 |
-| `INVALID_API_KEY`         | server | Unknown or missing key. Fatal.                                               |
-| `INVALID_APP_VERSION`     | server | `appVersion` is not semver. Fatal.                                           |
-| `PROTOCOL_TOO_OLD`        | server | This client's protocol is too old. Fatal.                                    |
-| `APP_VERSION_TOO_OLD`     | server | This app version is too old. Fatal.                                          |
-| `INVALID_MESSAGE`         | server | The server rejected a message. Fatal during the handshake.                   |
-| `HANDSHAKE_REQUIRED`      | server | Fatal.                                                                       |
-| `ALREADY_AUTHENTICATED`   | server | Fatal.                                                                       |
-| `HANDSHAKE_TIMEOUT`       | server | Close 4002. Retryable.                                                       |
-| `APP_CONNECTION_LIMIT`    | server | Close 4003, the app is at its connection cap. Retryable (busy).              |
-| `TOO_MANY_MESSAGES`       | server | Close 4008. Retryable (busy).                                                |
-| `INTERNAL_ERROR`          | server | Retryable during the handshake.                                              |
-| `GROUP_NOT_FOUND`         | server | Unknown group ID.                                                            |
-| `GROUP_FULL`              | server | `details.maxGroupSize`.                                                      |
-| `ALREADY_IN_GROUP`        | both   | Create/join while in a group (also checked locally).                         |
-| `NOT_IN_GROUP`            | both   | Position update outside a group.                                             |
-| `NOT_LEADER`              | both   | Position update, `endGroup()` or block list change by a member.              |
-| `RATE_LIMITED`            | server | Position updates or `checkTokens()`. `details.retryAfterMs` (+ max rate).    |
-| `MESSAGE_TOO_LARGE`       | both   | `details.field`, `details.limitBytes`, `details.sizeBytes?`.                 |
-| `LEADER_CANNOT_LEAVE`     | both   | The leader called `leaveGroup()`; it ends the group with `endGroup()`.       |
-| `TOKEN_INVALID`           | server | The stored token is not valid here (any cause, same answer). Deleted.        |
-| `TOKEN_EXPIRED`           | server | The token is past its group's limits. Deleted.                               |
-| `GROUP_ENDED`             | server | The group ended on this server. Deleted.                                     |
-| `PARTICIPANT_BLOCKED`     | server | The leader blocked this participant. Deleted.                                |
-| `JOIN_METHOD_NOT_ALLOWED` | server | `createGroup()` with join methods the app does not allow.                    |
-| `CODES_EXHAUSTED`         | server | No free join code; try again. Nothing was created.                           |
-| `CODE_NOT_FOUND`          | server | No live group of this app has that code (one answer for every cause).        |
-| `DOOR_CODE_REQUIRED`      | server | A method A group code without the door code. Ask for it and send both.       |
-| `DOOR_CODE_WRONG`         | server | Wrong door code. Five wrong codes rotate it.                                 |
-| `JOIN_PAUSED`             | server | Door-code joining is paused after repeated failures. `details.retryAfterMs`. |
-| `JOIN_DENIED`             | server | The leader denied the join request.                                          |
-| `APPROVAL_TIMEOUT`        | server | The leader did not decide in time.                                           |
-| `APPROVAL_QUEUE_FULL`     | server | The group has 10 pending requests. `details.maxPending`.                     |
-| `JOIN_REQUEST_NOT_FOUND`  | server | Approve, deny or cancel of an unknown or settled request.                    |
-| `QR_INVALID`              | both   | Not a valid QR ticket here (any cause, same answer). Also checked locally.   |
-| `QR_EXPIRED`              | server | The QR ticket expired; ask the leader for a fresh one.                       |
-| `NOT_ALLOWED`             | server | Not allowed for that participant (for example the leader as vice-leader).    |
-| `PARTICIPANT_NOT_FOUND`   | server | The participant ID is not on this group's roster (any cause, same answer).   |
-| `GROUP_LOCKED`            | server | The group admits nobody new now (locked by the leader, or nobody connected). |
+| Code                      | Source | When                                                                             |
+| ------------------------- | ------ | -------------------------------------------------------------------------------- |
+| `INVALID_OPTIONS`         | client | Bad constructor option (`details.field`).                                        |
+| `NO_WEBSOCKET`            | client | No WebSocket implementation. Fatal.                                              |
+| `NOT_CONNECTED`           | client | Group call while not `connected`.                                                |
+| `CLOSED`                  | client | The app called `close()`.                                                        |
+| `CONNECTION_LOST`         | client | The socket dropped or failed. Retryable.                                         |
+| `REQUEST_TIMEOUT`         | client | No reply in time (`request` says which).                                         |
+| `RECONNECT_FAILED`        | client | `maxAttempts` used up.                                                           |
+| `SERVER_UNSUPPORTED`      | client | Server protocol versions or limits not supported. Fatal.                         |
+| `HANDSHAKE_REJECTED`      | client | Close 4001 without an error frame. Fatal.                                        |
+| `INVALID_PAYLOAD`         | client | Metadata, position or group ID is not valid input.                               |
+| `INVALID_SERVER_MESSAGE`  | client | The server sent an invalid frame (`details.issues`: schema paths only).          |
+| `REQUEST_IN_PROGRESS`     | client | A create/join is already in flight.                                              |
+| `TOKEN_NOT_FOUND`         | client | No stored token for that group (`resumeGroup`, block-list methods, rejoin).      |
+| `BLOCK_LIST_FULL`         | both   | Over 256 IDs; nothing changed (`details.limit`; server: `details.maxBlockList`). |
+| `INVALID_JOIN_CODE`       | client | Not a 6-digit or 8-character code (`details.field`: `code` or `doorCode`).       |
+| `INVALID_DISPLAY_NAME`    | client | Empty, over 32 characters, or with control or invisible characters.              |
+| `JOIN_METHOD_UNAVAILABLE` | client | The app or the group does not allow that join method.                            |
+| `JOIN_CANCELLED`          | client | `cancelJoin()` withdrew the pending request.                                     |
+| `INVALID_API_KEY`         | server | Unknown or missing key. Fatal.                                                   |
+| `INVALID_APP_VERSION`     | server | `appVersion` is not semver. Fatal.                                               |
+| `PROTOCOL_TOO_OLD`        | server | This client's protocol is too old. Fatal.                                        |
+| `APP_VERSION_TOO_OLD`     | server | This app version is too old. Fatal.                                              |
+| `INVALID_MESSAGE`         | server | The server rejected a message. Fatal during the handshake.                       |
+| `HANDSHAKE_REQUIRED`      | server | Fatal.                                                                           |
+| `ALREADY_AUTHENTICATED`   | server | Fatal.                                                                           |
+| `HANDSHAKE_TIMEOUT`       | server | Close 4002. Retryable.                                                           |
+| `APP_CONNECTION_LIMIT`    | server | Close 4003, the app is at its connection cap. Retryable (busy).                  |
+| `TOO_MANY_MESSAGES`       | server | Close 4008. Retryable (busy).                                                    |
+| `INTERNAL_ERROR`          | server | Retryable during the handshake.                                                  |
+| `GROUP_NOT_FOUND`         | server | Unknown group ID.                                                                |
+| `GROUP_FULL`              | server | `details.maxGroupSize`.                                                          |
+| `ALREADY_IN_GROUP`        | both   | Create/join while in a group (also checked locally).                             |
+| `NOT_IN_GROUP`            | both   | Position update outside a group.                                                 |
+| `NOT_LEADER`              | both   | Position update, `endGroup()` or block list change by a member.                  |
+| `RATE_LIMITED`            | server | Position updates or `checkTokens()`. `details.retryAfterMs` (+ max rate).        |
+| `MESSAGE_TOO_LARGE`       | both   | `details.field`, `details.limitBytes`, `details.sizeBytes?`.                     |
+| `LEADER_CANNOT_LEAVE`     | both   | The leader called `leaveGroup()`; it ends the group with `endGroup()`.           |
+| `TOKEN_INVALID`           | server | The stored token is not valid here (any cause, same answer). Deleted.            |
+| `TOKEN_EXPIRED`           | server | The token is past its group's limits. Deleted.                                   |
+| `GROUP_ENDED`             | server | The group ended on this server. Deleted.                                         |
+| `PARTICIPANT_BLOCKED`     | server | The leader blocked this participant. Deleted.                                    |
+| `JOIN_METHOD_NOT_ALLOWED` | server | `createGroup()` with join methods the app does not allow.                        |
+| `CODES_EXHAUSTED`         | server | No free join code; try again. Nothing was created.                               |
+| `CODE_NOT_FOUND`          | server | No live group of this app has that code (one answer for every cause).            |
+| `DOOR_CODE_REQUIRED`      | server | A method A group code without the door code. Ask for it and send both.           |
+| `DOOR_CODE_WRONG`         | server | Wrong door code. Five wrong codes rotate it.                                     |
+| `JOIN_PAUSED`             | server | Door-code joining is paused after repeated failures. `details.retryAfterMs`.     |
+| `JOIN_DENIED`             | server | The leader denied the join request.                                              |
+| `APPROVAL_TIMEOUT`        | server | The leader did not decide in time.                                               |
+| `APPROVAL_QUEUE_FULL`     | server | The group has 10 pending requests. `details.maxPending`.                         |
+| `JOIN_REQUEST_NOT_FOUND`  | server | Approve, deny or cancel of an unknown or settled request.                        |
+| `QR_INVALID`              | both   | Not a valid QR ticket here (any cause, same answer). Also checked locally.       |
+| `QR_EXPIRED`              | server | The QR ticket expired; ask the leader for a fresh one.                           |
+| `NOT_ALLOWED`             | server | Not allowed for that participant (for example the leader as vice-leader).        |
+| `PARTICIPANT_NOT_FOUND`   | server | The participant ID is not on this group's roster (any cause, same answer).       |
+| `GROUP_LOCKED`            | server | The group admits nobody new now (locked by the leader, or nobody connected).     |
 
 Unknown server message types are ignored, so a newer server can add events
 without breaking older clients. A known type with a bad shape, a binary,

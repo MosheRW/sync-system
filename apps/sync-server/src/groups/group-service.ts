@@ -7,6 +7,7 @@ import {
   type GroupJoinByQrMessage,
   type QrIssueMessage,
   ErrorCode,
+  type ErrorMessage,
   type GroupCreateMessage,
   type GroupEndMessage,
   type GroupEndedReason,
@@ -20,6 +21,9 @@ import {
   type TokenRole,
   type TokensCheckMessage,
   type TokensResultMessage,
+  type MemberRemoveMessage,
+  CloseCode,
+  MAX_BLOCK_LIST_SIZE,
   type ViceClearMessage,
   type ViceSetMessage,
   type GroupLockMessage,
@@ -204,6 +208,13 @@ export class GroupService implements GroupActions {
         sessionOf: (record, pid) => this.sessionOf(record, pid),
         deliverLater: (session, message) => this.deliverLater(session, message),
         rosterUpdated: (record, pid) => this.rosterUpdated(record, pid),
+        block: (app, record, pids) => this.applyBlockList(app, record, pids),
+        claimFullSet: (record) => this.joins.claimFullSet(record),
+        commitFullSet: (record, next, leader) =>
+          this.joins.commitFullSet(record, next, 'member_removed', leader),
+        releaseClaim: (record, claimed) => this.joins.releaseClaim(record, claimed),
+        codesPayload: (record) => this.joins.payload(record),
+        get: (record) => this.deps.store.get(record.appNamespace, record.id),
         toMembers: (record, message) =>
           this.deps.notifier.broadcast(this.memberKeys(record), message),
         now: () => this.now(),
@@ -474,6 +485,11 @@ export class GroupService implements GroupActions {
       if (isGuardError(auth)) return auth;
       return task(record!, auth);
     });
+  }
+
+  /** member.remove (#13 AC32). */
+  removeMember(session: Session, message: MemberRemoveMessage): Promise<ServerMessage> {
+    return this.controls.removeMember(session, message);
   }
 
   /** group.lock / group.unlock (#13 AC29). */
@@ -767,24 +783,35 @@ export class GroupService implements GroupActions {
    */
   setBlockList(session: Session, message: BlockListSetMessage): Promise<ServerMessage> {
     return this.asLeader(session, 'blocklist.set', async (record) => {
-      await this.applyBlockList(session.app, record, message.blockList);
-      return { type: 'blocklist.ack' };
+      const refused = await this.applyBlockList(session.app, record, message.blockList);
+      return refused ?? { type: 'blocklist.ack' };
     });
   }
 
   /**
-   * Stores a deduplicated block list (without the leader's own ID) and
-   * removes listed members that are attached. Runs under the group lock.
+   * Adds `list` to the block list (#13 D5, Q-C): the list only grows while
+   * the group is live, and a union past 256 IDs answers BLOCK_LIST_FULL and
+   * changes nothing (never truncates: that would unblock someone). Listed
+   * attached members are removed (D6, Q-A), listed entries leave the
+   * roster, and a listed vice loses the designation. Returns the error, or
+   * undefined. Runs under the group lock.
    */
   private async applyBlockList(
     app: AppConfig,
     record: GroupRecord,
     list: readonly string[],
-  ): Promise<void> {
+  ): Promise<ErrorMessage | undefined> {
     const namespace = app.namespace;
-    const blockList = [...new Set(list)].filter((id) => id !== record.leaderId);
+    const blockList = [...new Set([...record.blockList, ...list])].filter(
+      (id) => id !== record.leaderId,
+    );
+    if (blockList.length > MAX_BLOCK_LIST_SIZE) {
+      return errorMessage(ErrorCode.BLOCK_LIST_FULL, {
+        details: { maxBlockList: MAX_BLOCK_LIST_SIZE },
+      });
+    }
     const result = await this.deps.store.setBlockList(namespace, record.id, blockList);
-    if (!result) return;
+    if (!result) return undefined;
     // Blocked participants leave the roster, attached or not (#13 AC31),
     // and a blocked vice-leader loses the designation (AC12).
     const gone = record.roster.filter((e) => blockList.includes(e.pid)).map((e) => e.pid);
@@ -799,19 +826,7 @@ export class GroupService implements GroupActions {
       });
       this.rosterRemoved(updated, gone);
     }
-    const text = JSON.stringify({
-      type: 'group.ended',
-      groupId: record.id,
-      reason: 'removed',
-    } satisfies ServerMessage);
-    for (const participantId of result.removed) {
-      const key = membershipKey(namespace, record.id, participantId);
-      const member = this.deps.notifier.get(key);
-      if (member === undefined) continue;
-      this.deps.notifier.unregister(key, member);
-      if (member.membership?.groupId === record.id) member.membership = undefined;
-      member.afterPending(() => member.deliver(text));
-    }
+    for (const participantId of result.removed) this.detachRemoved(record, participantId);
     this.deps.logger.info(
       {
         event: 'block_list_set',
@@ -822,6 +837,32 @@ export class GroupService implements GroupActions {
       },
       'block list set',
     );
+    return undefined;
+  }
+
+  /**
+   * Detaches a removed participant's session (#13 D6, RC4, Gate 2 Q-A): it
+   * loses the membership at once, so no later broadcast reaches it; it gets
+   * `group.ended {reason: 'removed'}` as its last group frame, after its
+   * pending replies, and then its socket is closed with
+   * `CloseCode.REMOVED`. A participant with no attached session (offline)
+   * has nothing to close.
+   */
+  private detachRemoved(record: GroupRecord, participantId: string): void {
+    const key = membershipKey(record.appNamespace, record.id, participantId);
+    const member = this.deps.notifier.get(key);
+    if (member === undefined) return;
+    this.deps.notifier.unregister(key, member);
+    if (member.membership?.groupId === record.id) member.membership = undefined;
+    const text = JSON.stringify({
+      type: 'group.ended',
+      groupId: record.id,
+      reason: 'removed',
+    } satisfies ServerMessage);
+    member.afterPending(() => {
+      member.deliver(text);
+      member.close(CloseCode.REMOVED, 'removed');
+    });
   }
 
   /**
@@ -996,7 +1037,11 @@ export class GroupService implements GroupActions {
     const now = this.now();
     this.replaceOwner(namespace, record.id, claims.pid, session);
     // Only an explicit list replaces the server's; an omitted one keeps it (L5).
-    if (blockList !== undefined) await this.applyBlockList(app, record, blockList);
+    // A union only (#13 D5); past 256 the leader is told and nothing changes.
+    if (blockList !== undefined) {
+      const refused = await this.applyBlockList(app, record, blockList);
+      if (refused !== undefined) return refused;
+    }
     const online = await this.deps.store.setLeaderOnline(namespace, record.id, true, now);
     if (!online) return errorMessage(ErrorCode.GROUP_NOT_FOUND);
     const updated = await this.putRoster(online, {

@@ -10,6 +10,7 @@ function session(): Session {
     app: {} as Session['app'],
     membership: undefined,
     isOpen: () => true,
+    close: () => undefined,
     deliver: () => {},
     afterPending: (task) => task(),
   };

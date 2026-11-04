@@ -253,7 +253,8 @@ export interface JoinRequest {
 }
 
 /** Why the group's codes changed (#10 AC40). */
-export type CodesChangedReason = 'created' | 'resumed' | 'rotated' | 'door_failures';
+export type CodesChangedReason =
+  'created' | 'resumed' | 'rotated' | 'door_failures' | 'member_removed';
 
 export interface CodesChangedEvent {
   readonly groupId: string;

@@ -82,6 +82,8 @@ export type {
   GroupUnlockMessage,
   LockChangedMessage,
   LeaderState,
+  MemberRemoveMessage,
+  MemberRemovedMessage,
   JoinPendingMessage,
   JoinRequestedMessage,
   JoinWithdrawnMessage,

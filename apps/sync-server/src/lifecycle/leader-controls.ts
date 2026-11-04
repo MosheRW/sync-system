@@ -1,16 +1,23 @@
 import {
   ErrorCode,
+  MAX_BLOCK_LIST_SIZE,
   type GroupLockMessage,
   type GroupUnlockMessage,
+  type ErrorMessage,
+  type JoinCodesPayload,
+  type MemberRemoveMessage,
   type ServerMessage,
   type ViceClearMessage,
   type ViceSetMessage,
 } from '@sync-system/protocol';
 import type { GroupPatch, GroupRecord } from '../groups/group-store.js';
 import type { Membership, Session } from '../groups/session.js';
+import type { AppConfig } from '../apps/app-registry.js';
+import type { GroupCodes } from '../joins/codes.js';
 import {
   LEADER_CONTROL_WINDOW_MS,
   LOCK_CHANGES_PER_GROUP_PER_MINUTE,
+  MEMBER_REMOVALS_PER_GROUP_PER_MINUTE,
   VICE_CHANGES_PER_GROUP_PER_MINUTE,
 } from '../limits/constants.js';
 import { SlidingWindowRateLimiter } from '../limits/rate-limiter.js';
@@ -40,6 +47,29 @@ export interface LeaderControlsHost {
   rosterUpdated(record: GroupRecord, pid: string): void;
   /** Sends `message` to every attached member (not the leader). */
   toMembers(record: GroupRecord, message: ServerMessage): void;
+  /**
+   * Adds `pids` to the block list (union, BLOCK_LIST_FULL past 256) and
+   * removes them: detach, roster, vice (#13 D5, D6). Undefined or the error.
+   */
+  block(
+    app: AppConfig,
+    record: GroupRecord,
+    pids: readonly string[],
+  ): Promise<ErrorMessage | undefined>;
+  /** Claims a full new code set (codes and QR ticket generation). */
+  claimFullSet(record: GroupRecord): GroupCodes | 'exhausted';
+  /** Stores a claimed set and frees the old codes. */
+  commitFullSet(
+    record: GroupRecord,
+    next: GroupCodes,
+    leader: Session | undefined,
+  ): Promise<GroupRecord | undefined>;
+  /** Releases a claimed set that was not committed. */
+  releaseClaim(record: GroupRecord, claimed: GroupCodes): void;
+  /** The leader-only codes payload. */
+  codesPayload(record: GroupRecord): JoinCodesPayload;
+  /** Re-reads the record. */
+  get(record: GroupRecord): Promise<GroupRecord | undefined>;
   now(): number;
 }
 
@@ -61,6 +91,8 @@ export class LeaderControls {
   private readonly viceLimiter: SlidingWindowRateLimiter;
   /** group.lock / group.unlock per group (#13 8.2). */
   private readonly lockLimiter: SlidingWindowRateLimiter;
+  /** member.remove per group (#13 8.2). */
+  private readonly removeLimiter: SlidingWindowRateLimiter;
 
   constructor(
     private readonly host: LeaderControlsHost,
@@ -69,6 +101,67 @@ export class LeaderControls {
     const now = (): number => host.now();
     this.viceLimiter = new SlidingWindowRateLimiter(now, LEADER_CONTROL_WINDOW_MS);
     this.lockLimiter = new SlidingWindowRateLimiter(now, LEADER_CONTROL_WINDOW_MS);
+    this.removeLimiter = new SlidingWindowRateLimiter(now, LEADER_CONTROL_WINDOW_MS);
+  }
+
+  /**
+   * member.remove (#13 AC32-AC34, RC4, 6.7). Order: authorization; the
+   * target is any roster entry, connected or offline, not the leader
+   * (NOT_ALLOWED); a full block list answers BLOCK_LIST_FULL; then the
+   * per-group limiter; then a full new code set is claimed, so the removal
+   * happens completely or not at all (CODES_EXHAUSTED). Effect: block-list
+   * append, detach with `group.ended removed` and close 4004, roster
+   * removal, vice cleared, codes and QR ticket generation rotated. The reply
+   * carries the full block list for the leader's client to keep; then
+   * `codes.updated {reason: 'member_removed'}`.
+   */
+  removeMember(session: Session, message: MemberRemoveMessage): Promise<ServerMessage> {
+    return this.host.asLeader(session, 'member.remove', async (record) => {
+      const target = message.participantId;
+      if (target === record.leaderId) {
+        return actionErrorMessage(ErrorCode.NOT_ALLOWED, 'member.remove');
+      }
+      if (find(record.roster, target) === undefined) return PARTICIPANT_NOT_FOUND;
+      if (record.blockList.length >= MAX_BLOCK_LIST_SIZE) {
+        return errorMessage(ErrorCode.BLOCK_LIST_FULL, {
+          details: { maxBlockList: MAX_BLOCK_LIST_SIZE },
+        });
+      }
+      const rate = this.removeLimiter.tryAcquire(
+        groupKey(record),
+        MEMBER_REMOVALS_PER_GROUP_PER_MINUTE,
+      );
+      if (!rate.ok) {
+        return actionErrorMessage(ErrorCode.RATE_LIMITED, 'member.remove', {
+          details: { retryAfterMs: rate.retryAfterMs },
+        });
+      }
+      const next = this.host.claimFullSet(record);
+      if (next === 'exhausted') return errorMessage(ErrorCode.CODES_EXHAUSTED);
+      const refused = await this.host.block(session.app, record, [target]);
+      if (refused !== undefined) {
+        this.host.releaseClaim(record, next);
+        return refused;
+      }
+      const blocked = (await this.host.get(record)) ?? record;
+      const rotated = (await this.host.commitFullSet(blocked, next, session)) ?? blocked;
+      this.host.deliverLater(session, {
+        type: 'codes.updated',
+        groupId: rotated.id,
+        reason: 'member_removed',
+        codes: this.host.codesPayload(rotated),
+      });
+      this.logger.info(
+        { event: 'member_removed', namespace: record.appNamespace, groupRef: groupRef(record.id) },
+        'member removed',
+      );
+      return {
+        type: 'member.removed',
+        groupId: rotated.id,
+        participantId: target,
+        blockList: [...rotated.blockList],
+      };
+    });
   }
 
   /**
@@ -182,16 +275,18 @@ export class LeaderControls {
   forgetGroup(namespace: string, groupId: string): void {
     this.viceLimiter.forget(`${namespace}:${groupId}`);
     this.lockLimiter.forget(`${namespace}:${groupId}`);
+    this.removeLimiter.forget(`${namespace}:${groupId}`);
   }
 
   /** Server shutdown (#13 RC2). */
   close(): void {
     this.viceLimiter.clear();
     this.lockLimiter.clear();
+    this.removeLimiter.clear();
   }
 
   /** Number of tracked limiter keys. For tests only. */
   get limiterSize(): number {
-    return this.viceLimiter.size + this.lockLimiter.size;
+    return this.viceLimiter.size + this.lockLimiter.size + this.removeLimiter.size;
   }
 }

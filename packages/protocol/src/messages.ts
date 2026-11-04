@@ -225,6 +225,17 @@ export interface GroupUnlockMessage {
   reqId?: string;
 }
 
+/**
+ * The leader removes a participant (#13 AC32): it is blocked for the rest of
+ * the session, its connection is closed and every code rotates. Reply:
+ * `member.removed`, then `codes.updated` (reason `member_removed`).
+ */
+export interface MemberRemoveMessage {
+  type: 'member.remove';
+  reqId?: string;
+  participantId: string;
+}
+
 export type ClientMessage =
   | HelloMessage
   | GroupCreateMessage
@@ -244,7 +255,8 @@ export type ClientMessage =
   | ViceSetMessage
   | ViceClearMessage
   | GroupLockMessage
-  | GroupUnlockMessage;
+  | GroupUnlockMessage
+  | MemberRemoveMessage;
 
 export type ClientMessageType = ClientMessage['type'];
 
@@ -480,8 +492,11 @@ export interface CodesUpdatedMessage {
   codes: JoinCodesPayload;
 }
 
-/** Why the codes changed: the leader rotated them, or the door code rotated after failures. */
-export type CodesUpdatedReason = 'rotated' | 'door_failures';
+/**
+ * Why the codes changed: the leader rotated them, the door code rotated
+ * after failures, or a removal rotated every code (#13 Q4.1).
+ */
+export type CodesUpdatedReason = 'rotated' | 'door_failures' | 'member_removed';
 
 /** To the leader: door-code joining paused after repeated failures (#10 AC29). */
 export interface JoinPausedMessage {
@@ -616,6 +631,15 @@ export interface LockChangedMessage {
   locked: boolean;
 }
 
+/** To the leader: the reply to member.remove, with the full block list to keep (#13 AC32). */
+export interface MemberRemovedMessage {
+  type: 'member.removed';
+  reqId?: string;
+  groupId: string;
+  participantId: string;
+  blockList: string[];
+}
+
 /** To the leader: the reply to vice.set / vice.clear (#13 AC10). */
 export interface ViceUpdatedMessage {
   type: 'vice.updated';
@@ -681,6 +705,7 @@ export type ServerMessage =
   | ViceUpdatedMessage
   | ViceChangedMessage
   | LockChangedMessage
+  | MemberRemovedMessage
   | ErrorMessage;
 
 export type ServerMessageType = ServerMessage['type'];
