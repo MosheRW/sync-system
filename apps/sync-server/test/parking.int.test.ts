@@ -94,8 +94,12 @@ describe('members waiting for their leader (#5 AC25)', () => {
       code: 'NOT_LEADER',
       message: 'Only the leader can set the block list',
     });
+    // #13 D1: a parked session is refused like every non-leader.
     client.send({ type: 'position.update', position: 1 });
-    expect(await client.next('error')).toMatchObject({ code: 'NOT_IN_GROUP' });
+    expect(await client.next('error')).toMatchObject({
+      code: 'NOT_LEADER',
+      message: 'Only the leader can update the position',
+    });
   });
 
   it('stops waiting on group.leave and on disconnect', async () => {

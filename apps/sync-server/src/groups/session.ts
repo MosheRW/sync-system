@@ -13,16 +13,18 @@ import type {
   GroupResumeMessage,
   PositionUpdateMessage,
   TokensCheckMessage,
-  Role,
   ServerMessage,
 } from '@sync-system/protocol';
 import type { AppConfig } from '../apps/app-registry.js';
 
-/** A session's place in a group. The participant ID is group-scoped. */
+/**
+ * A session's place in a group. The participant ID is group-scoped. There is
+ * deliberately no role here (#13 D1): who leads is `GroupRecord.leaderId`,
+ * read under the group lock, so no code can authorize from a cached role.
+ */
 export interface Membership {
   readonly groupId: string;
   readonly participantId: string;
-  readonly role: Role;
 }
 
 /**

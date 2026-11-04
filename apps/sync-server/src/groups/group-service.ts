@@ -7,7 +7,6 @@ import {
   type GroupJoinByQrMessage,
   type QrIssueMessage,
   ErrorCode,
-  type ErrorMessage,
   type GroupCreateMessage,
   type GroupEndMessage,
   type GroupEndedReason,
@@ -36,7 +35,13 @@ import type { TokenService } from '../tokens/token-service.js';
 import type { CodesBlobService } from '../tokens/codes-blob.js';
 import type { QrTicketService } from '../tokens/qr-tickets.js';
 import type { RandomInt } from '../joins/codes.js';
-import { JoinService, type LeaderAction } from '../joins/join-service.js';
+import { JoinService } from '../joins/join-service.js';
+import {
+  type LeaderAction,
+  authorizeLeader,
+  isGuardError,
+  isParticipantConnected,
+} from '../lifecycle/leader-guard.js';
 import { actionErrorMessage, errorMessage } from '../ws/error-messages.js';
 import { type GroupRecord, type GroupStore, connectedCount } from './group-store.js';
 import type { EndedGroups } from './ended-groups.js';
@@ -132,7 +137,7 @@ export class GroupService implements GroupActions {
         leaderOf: (record) =>
           this.deps.notifier.get(membershipKey(record.appNamespace, record.id, record.leaderId)),
         deliverLater: (session, message) => this.deliverLater(session, message),
-        ownedLeader: (session, action) => this.ownedLeader(session, action),
+        asLeader: (session, action, task) => this.asLeader(session, action, task),
       },
     );
     this.checkLimiter = new SlidingWindowRateLimiter(() => this.now(), TOKENS_CHECK_WINDOW_MS);
@@ -330,7 +335,7 @@ export class GroupService implements GroupActions {
     }
     this.armMaxSession(app, record);
     this.startRefresh(app.namespace, record.id, now);
-    this.attach(session, { groupId: record.id, participantId, role: 'leader' });
+    this.attach(session, { groupId: record.id, participantId });
     this.deps.logger.info(
       { event: 'group_created', namespace: app.namespace, groupRef: groupRef(record.id) },
       'group created',
@@ -349,17 +354,38 @@ export class GroupService implements GroupActions {
   }
 
   /**
-   * The session's leader membership, authorized by ownership in the
-   * notifier, not by the cached role (M4, #10 R12). A parked or member
-   * session gets NOT_LEADER with the action's text; a groupless one
-   * NOT_IN_GROUP.
+   * Runs a leader-only action (#13 D1, RC1): takes the lock of the session's
+   * group, re-reads the record under it and calls `authorizeLeader` against
+   * `record.leaderId` before `task` runs. Nothing outside the lock decides
+   * who leads, so an action racing a handoff gets either its full effect or
+   * NOT_LEADER (AC8). `task` must not release the lock between its checks
+   * and its effect.
    */
-  private ownedLeader(session: Session, action: LeaderAction): Membership | ErrorMessage {
-    if (session.parked !== undefined) return actionErrorMessage(ErrorCode.NOT_LEADER, action);
+  private async asLeader(
+    session: Session,
+    action: LeaderAction,
+    task: (record: GroupRecord, membership: Membership) => Promise<ServerMessage>,
+  ): Promise<ServerMessage> {
+    // Parked, pending or groupless sessions are answered without a lock.
     const membership = this.owned(session);
-    if (membership === undefined) return errorMessage(ErrorCode.NOT_IN_GROUP);
-    if (membership.role !== 'leader') return actionErrorMessage(ErrorCode.NOT_LEADER, action);
-    return membership;
+    if (membership === undefined || session.parked !== undefined) {
+      const refused = authorizeLeader(
+        { session, owned: membership, groupId: '', record: undefined },
+        action,
+      );
+      return isGuardError(refused) ? refused : errorMessage(ErrorCode.NOT_IN_GROUP);
+    }
+    const { groupId } = membership;
+    const namespace = session.app.namespace;
+    return this.locks.run(groupKey(namespace, groupId), async () => {
+      const record = await this.deps.store.get(namespace, groupId);
+      const auth = authorizeLeader(
+        { session, owned: this.owned(session), groupId, record },
+        action,
+      );
+      if (isGuardError(auth)) return auth;
+      return task(record!, auth);
+    });
   }
 
   /** codes.rotate (#10 AC30). */
@@ -430,7 +456,7 @@ export class GroupService implements GroupActions {
     method?: JoinMethod,
   ): ServerMessage {
     const { app } = session;
-    this.attach(session, { groupId: record.id, participantId, role: 'member' });
+    this.attach(session, { groupId: record.id, participantId });
     this.deps.logger.info(
       {
         event: 'group_joined',
@@ -464,55 +490,51 @@ export class GroupService implements GroupActions {
       : { ...base, hasPosition: false };
   }
 
-  async update(session: Session, message: PositionUpdateMessage): Promise<ServerMessage> {
-    // Authorized by ownership, not by the cached role alone (M4).
-    const membership = this.owned(session);
-    if (membership === undefined) return errorMessage(ErrorCode.NOT_IN_GROUP);
-    if (membership.role !== 'leader') {
-      return actionErrorMessage(ErrorCode.NOT_LEADER, 'position.update');
-    }
-
+  /**
+   * position.update runs under the group lock (#13 D2): authorization, then
+   * the size check, then the rate limit, then the relay. An update racing a
+   * handoff is never relayed after it (AC8).
+   */
+  update(session: Session, message: PositionUpdateMessage): Promise<ServerMessage> {
     const { app } = session;
     const namespace = app.namespace;
-    const { groupId } = membership;
-    const tooLarge = sizeError('position', message.position, app.maxMessageBytes);
-    if (tooLarge) return tooLarge;
+    return this.asLeader(session, 'position.update', async (record) => {
+      const groupId = record.id;
+      const tooLarge = sizeError('position', message.position, app.maxMessageBytes);
+      if (tooLarge) return tooLarge;
+      // Checked last, so rejected updates never use rate budget. Over-rate
+      // updates are rejected, never queued or coalesced (AC22).
+      const rate = this.deps.rateLimiter.tryAcquire(
+        groupKey(namespace, groupId),
+        app.maxLeaderUpdatesPerSecond,
+      );
+      if (!rate.ok) {
+        return actionErrorMessage(ErrorCode.RATE_LIMITED, 'position.update', {
+          details: {
+            maxLeaderUpdatesPerSecond: app.maxLeaderUpdatesPerSecond,
+            retryAfterMs: rate.retryAfterMs,
+          },
+        });
+      }
 
-    // Checked last, so rejected updates never use rate budget. Over-rate
-    // updates are rejected, never queued or coalesced (AC22).
-    const rate = this.deps.rateLimiter.tryAcquire(
-      groupKey(namespace, groupId),
-      app.maxLeaderUpdatesPerSecond,
-    );
-    if (!rate.ok) {
-      return actionErrorMessage(ErrorCode.RATE_LIMITED, 'position.update', {
-        details: {
-          maxLeaderUpdatesPerSecond: app.maxLeaderUpdatesPerSecond,
-          retryAfterMs: rate.retryAfterMs,
-        },
-      });
-    }
+      // An accepted update is a leader activity (#5 AC12).
+      const at = this.now();
+      const stored = await this.deps.store.setPosition(namespace, groupId, message.position, at);
+      if (!stored) return errorMessage(ErrorCode.NOT_IN_GROUP);
+      this.refresher.activity(groupKey(namespace, groupId), at);
 
-    // An accepted update is a leader activity (#5 AC12).
-    const at = this.now();
-    const stored = await this.deps.store.setPosition(namespace, groupId, message.position, at);
-    if (!stored) return errorMessage(ErrorCode.NOT_IN_GROUP);
-    this.refresher.activity(groupKey(namespace, groupId), at);
-
-    const record = await this.deps.store.get(namespace, groupId);
-    if (record) {
       // Members only: the leader gets position.ack, not the broadcast (AC13).
       this.deps.notifier.broadcast(this.memberKeys(record), {
         type: 'position.updated',
         groupId,
         position: message.position,
       });
-    }
-    this.deps.logger.debug(
-      { event: 'position_updated', namespace, groupRef: groupRef(groupId) },
-      'position updated',
-    );
-    return { type: 'position.ack' };
+      this.deps.logger.debug(
+        { event: 'position_updated', namespace, groupRef: groupRef(groupId) },
+        'position updated',
+      );
+      return { type: 'position.ack' };
+    });
   }
 
   /**
@@ -598,22 +620,9 @@ export class GroupService implements GroupActions {
    * later resumes with those IDs get PARTICIPANT_BLOCKED. The list is kept
    * in memory only and never logged (a count at most).
    */
-  async setBlockList(session: Session, message: BlockListSetMessage): Promise<ServerMessage> {
-    if (session.parked !== undefined) {
-      return actionErrorMessage(ErrorCode.NOT_LEADER, 'blocklist.set');
-    }
-    const membership = this.owned(session);
-    if (membership === undefined) return errorMessage(ErrorCode.NOT_IN_GROUP);
-    if (membership.role !== 'leader') {
-      return actionErrorMessage(ErrorCode.NOT_LEADER, 'blocklist.set');
-    }
-    const { app } = session;
-    const { groupId } = membership;
-    return this.locks.run(groupKey(app.namespace, groupId), async () => {
-      if (this.owned(session) !== membership) return errorMessage(ErrorCode.NOT_IN_GROUP);
-      const record = await this.deps.store.get(app.namespace, groupId);
-      if (!record) return errorMessage(ErrorCode.NOT_IN_GROUP);
-      await this.applyBlockList(app, record, message.blockList);
+  setBlockList(session: Session, message: BlockListSetMessage): Promise<ServerMessage> {
+    return this.asLeader(session, 'blocklist.set', async (record) => {
+      await this.applyBlockList(session.app, record, message.blockList);
       return { type: 'blocklist.ack' };
     });
   }
@@ -660,23 +669,10 @@ export class GroupService implements GroupActions {
    * group.end (#5 AC29): the leader ends the group. Members get group.ended
    * `ended_by_leader`; the leader gets the same message as its reply.
    */
-  async end(session: Session, _message: GroupEndMessage): Promise<ServerMessage> {
-    // A parked session is a member waiting for its leader.
-    if (session.parked !== undefined) {
-      return actionErrorMessage(ErrorCode.NOT_LEADER, 'group.end');
-    }
-    const membership = this.owned(session);
-    if (membership === undefined) return errorMessage(ErrorCode.NOT_IN_GROUP);
-    if (membership.role !== 'leader') {
-      return actionErrorMessage(ErrorCode.NOT_LEADER, 'group.end');
-    }
-    const { app } = session;
-    const { groupId } = membership;
-    return this.locks.run(groupKey(app.namespace, groupId), async () => {
-      // Replaced while waiting for the lock (M4).
-      if (this.owned(session) !== membership) return errorMessage(ErrorCode.NOT_IN_GROUP);
-      await this.endGroup(app, groupId, 'ended_by_leader', session);
-      return { type: 'group.ended', groupId, reason: 'ended_by_leader' };
+  end(session: Session, _message: GroupEndMessage): Promise<ServerMessage> {
+    return this.asLeader(session, 'group.end', async (record) => {
+      await this.endGroup(session.app, record.id, 'ended_by_leader', session);
+      return { type: 'group.ended', groupId: record.id, reason: 'ended_by_leader' };
     });
   }
 
@@ -692,11 +688,14 @@ export class GroupService implements GroupActions {
     }
     const membership = this.owned(session);
     if (membership === undefined) return errorMessage(ErrorCode.NOT_IN_GROUP);
-    if (membership.role === 'leader') return errorMessage(ErrorCode.LEADER_CANNOT_LEAVE);
     const { app } = session;
     const { groupId, participantId } = membership;
     return this.locks.run(groupKey(app.namespace, groupId), async () => {
       if (this.owned(session) !== membership) return errorMessage(ErrorCode.NOT_IN_GROUP);
+      // Decided under the lock against the live record (#13 L3): right after
+      // a handoff the old leader may leave and the new one may not.
+      const current = await this.deps.store.get(app.namespace, groupId);
+      if (current?.leaderId === participantId) return errorMessage(ErrorCode.LEADER_CANNOT_LEAVE);
       this.deps.notifier.unregister(membershipKey(app.namespace, groupId, participantId), session);
       session.membership = undefined;
       const result = await this.deps.store.removeParticipant(app.namespace, groupId, participantId);
@@ -821,7 +820,7 @@ export class GroupService implements GroupActions {
         groupId: record.id,
       });
     }
-    this.attach(session, { groupId: record.id, participantId: claims.pid, role: 'leader' });
+    this.attach(session, { groupId: record.id, participantId: claims.pid });
     // Pending approval requests and a running pause are re-sent after the
     // reply (#10 AC21, AC29, AC34).
     this.joins.onLeaderReturn(session, updated);
@@ -881,7 +880,7 @@ export class GroupService implements GroupActions {
     }
     this.armMaxSession(app, record);
     this.startRefresh(namespace, record.id, now);
-    this.attach(session, { groupId: record.id, participantId: claims.pid, role: 'leader' });
+    this.attach(session, { groupId: record.id, participantId: claims.pid });
     await this.admitParked(app, record);
     this.deps.logger.info(
       {
@@ -977,7 +976,7 @@ export class GroupService implements GroupActions {
         );
         continue;
       }
-      this.attach(member, { groupId: record.id, participantId, role: 'member' });
+      this.attach(member, { groupId: record.id, participantId });
       const token = this.issueToken(namespace, added.group, participantId, 'member', this.now());
       this.deliverLater(member, this.joinedMessage(added.group, participantId, token));
     }
@@ -1035,7 +1034,7 @@ export class GroupService implements GroupActions {
     if (added.status === 'full') {
       return errorMessage(ErrorCode.GROUP_FULL, { details: { maxGroupSize: app.maxGroupSize } });
     }
-    this.attach(session, { groupId: record.id, participantId: claims.pid, role: 'member' });
+    this.attach(session, { groupId: record.id, participantId: claims.pid });
     this.deps.logger.info(
       {
         event: 'group_resumed',
@@ -1069,7 +1068,14 @@ export class GroupService implements GroupActions {
     // Under the group lock, so a join cannot land between the removal and
     // the delete.
     await this.locks.run(groupKey(namespace, groupId), async () => {
-      if (membership.role === 'leader') {
+      // #13 RC19: the participant resumed on a new socket before this close
+      // was handled; that session owns the membership, so nothing changes.
+      const owner = this.deps.notifier.get(membershipKey(namespace, groupId, participantId));
+      if (isParticipantConnected(owner)) return;
+      const record = await this.deps.store.get(namespace, groupId);
+      if (record === undefined) return;
+      // The role is read from the live record, never from the session (#13 D1).
+      if (record.leaderId === participantId) {
         await this.leaderOffline(app, groupId);
         return;
       }

@@ -15,6 +15,7 @@ import {
 import type { AppConfig } from '../apps/app-registry.js';
 import type { GroupRecord, GroupStore } from '../groups/group-store.js';
 import type { Membership, Session } from '../groups/session.js';
+import type { LeaderAction } from '../lifecycle/leader-guard.js';
 import {
   QR_ISSUE_PER_CONNECTION_PER_MINUTE,
   QR_ISSUE_WINDOW_MS,
@@ -80,17 +81,16 @@ export interface JoinHost {
   /** Sends `message` to `session` after the replies it is already owed. */
   deliverLater(session: Session, message: ServerMessage): void;
   /**
-   * The session's leader membership, ownership-checked (M4, R12), or the
-   * error to reply (NOT_LEADER with the action's text, NOT_IN_GROUP).
+   * Runs `task` under the group lock of the session's group, after
+   * `authorizeLeader` passed against the record read under that lock
+   * (#13 D1, RC1). Otherwise answers its error (NOT_LEADER with the action's
+   * text, NOT_IN_GROUP) and runs nothing.
    */
-  ownedLeader(session: Session, action: LeaderAction): Membership | ErrorMessage;
-}
-
-/** The leader-only actions of JoinService, each with its own NOT_LEADER text (R12). */
-export type LeaderAction = 'codes.rotate' | 'join.approve' | 'join.deny' | 'qr.issue';
-
-function isError(value: Membership | ErrorMessage): value is ErrorMessage {
-  return 'type' in value && value.type === 'error';
+  asLeader(
+    session: Session,
+    action: LeaderAction,
+    task: (record: GroupRecord, membership: Membership) => Promise<ServerMessage>,
+  ): Promise<ServerMessage>;
 }
 
 /** Why a join attempt was refused, for the debug log (never a code or group ref for not_found). */
@@ -206,28 +206,23 @@ export class JoinService {
    * group gets a ticket bound to the group's current **ticket** generation,
    * read under the group lock. Limited to 6 per connection per minute.
    */
-  async issueQr(session: Session): Promise<ServerMessage> {
-    const membership = this.host.ownedLeader(session, 'qr.issue');
-    if (isError(membership)) return membership;
+  issueQr(session: Session): Promise<ServerMessage> {
     const namespace = session.app.namespace;
-    const { groupId } = membership;
-    return this.host.runLocked(namespace, groupId, async () => {
-      const again = this.host.ownedLeader(session, 'qr.issue');
-      if (isError(again)) return again;
-      if (again.groupId !== groupId) return errorMessage(ErrorCode.NOT_IN_GROUP);
-      const record = await this.deps.store.get(namespace, groupId);
-      if (record === undefined) return errorMessage(ErrorCode.NOT_IN_GROUP);
+    return this.host.asLeader(session, 'qr.issue', (record) => {
+      const groupId = record.id;
       if (!record.joinMethods.includes('D')) {
-        return errorMessage(ErrorCode.JOIN_METHOD_NOT_ALLOWED);
+        return Promise.resolve(errorMessage(ErrorCode.JOIN_METHOD_NOT_ALLOWED));
       }
       const rate = this.qrLimiter.tryAcquire(
         session.connectionId,
         QR_ISSUE_PER_CONNECTION_PER_MINUTE,
       );
       if (!rate.ok) {
-        return actionErrorMessage(ErrorCode.RATE_LIMITED, 'qr.issue', {
-          details: { retryAfterMs: rate.retryAfterMs },
-        });
+        return Promise.resolve(
+          actionErrorMessage(ErrorCode.RATE_LIMITED, 'qr.issue', {
+            details: { retryAfterMs: rate.retryAfterMs },
+          }),
+        );
       }
       const issued = this.deps.qrTickets.issue(
         namespace,
@@ -240,7 +235,11 @@ export class JoinService {
         { event: 'qr_issued', namespace, groupRef: groupRef(groupId) },
         'qr ticket issued',
       );
-      return { type: 'qr.ticket', ticket: issued.ticket, expiresInMs: issued.expiresInMs };
+      return Promise.resolve({
+        type: 'qr.ticket',
+        ticket: issued.ticket,
+        expiresInMs: issued.expiresInMs,
+      });
     });
   }
 
@@ -392,14 +391,9 @@ export class JoinService {
     decision: 'approve' | 'deny',
   ): Promise<ServerMessage> {
     const action = decision === 'approve' ? 'join.approve' : 'join.deny';
-    const membership = this.host.ownedLeader(session, action);
-    if (isError(membership)) return membership;
     const namespace = session.app.namespace;
-    const { groupId } = membership;
-    return this.host.runLocked(namespace, groupId, async () => {
-      const again = this.host.ownedLeader(session, action);
-      if (isError(again)) return again;
-      if (again.groupId !== groupId) return errorMessage(ErrorCode.NOT_IN_GROUP);
+    return this.host.asLeader(session, action, async (record) => {
+      const groupId = record.id;
       const taken = this.approvals.take(groupKey(namespace, groupId), requestId);
       if (taken === undefined) return REQUEST_NOT_FOUND;
       if (decision === 'deny') {
@@ -465,18 +459,10 @@ export class JoinService {
    * cleared; a lifted pause is announced with `join.resumed` after the
    * reply. Limited to 6 per group per minute.
    */
-  async rotate(session: Session): Promise<ServerMessage> {
-    const membership = this.host.ownedLeader(session, 'codes.rotate');
-    if (isError(membership)) return membership;
+  rotate(session: Session): Promise<ServerMessage> {
     const namespace = session.app.namespace;
-    const { groupId } = membership;
-    return this.host.runLocked(namespace, groupId, async () => {
-      // Replaced while waiting for the lock (M4).
-      const again = this.host.ownedLeader(session, 'codes.rotate');
-      if (isError(again)) return again;
-      if (again.groupId !== groupId) return errorMessage(ErrorCode.NOT_IN_GROUP);
-      const record = await this.deps.store.get(namespace, groupId);
-      if (record === undefined) return errorMessage(ErrorCode.NOT_IN_GROUP);
+    return this.host.asLeader(session, 'codes.rotate', async (record) => {
+      const groupId = record.id;
       const key = groupKey(namespace, groupId);
       const rate = this.rotateLimiter.tryAcquire(key, CODE_ROTATIONS_PER_GROUP_PER_MINUTE);
       if (!rate.ok) {
