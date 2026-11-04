@@ -1,17 +1,48 @@
 # State: #13 feat: roles, timers and group lifecycle (PRD item 5)
 - Path: full
-- Phase: architecture
+- Phase: implementation
 - Branch: feat/13-roles-lifecycle
 - PR: #14 (draft)
-- Plan approved by user: no
+- Plan approved by user: yes (Gate 2, 2026-11-04)
 - QA loops: 0
 - Security-sensitive: yes
-- Last updated by: security
+- Last updated by: engineer
 ## Gate 1 decisions
 - User accepted every recommended default Q1.1-Q7 as written in `spec.md`,
   with one change: Q5.5 display names use the existing strict #10 rule
   (`normalizeDisplayName`), not a new looser rule. Recorded in `spec.md`
   ("Gate 1 decisions").
+## Gate 2 decisions (user, 2026-11-04)
+- Plan approved. Q-B, Q-C, Q-D, Q-E: as recommended. Q-F: no (`rcv` not
+  added; R-2R accepted, README states it with the operator guidance: no two
+  restarts within the inactivity limit plus the refresh slack while groups
+  are live).
+- Q-A changed: removal detaches the session (D6), sends
+  `group.ended {reason: 'removed'}` as the last group frame, then closes the
+  WebSocket with the new close code 4004 (`CloseCode.REMOVED`). The client
+  treats it as terminal (no reconnect, `closed`, token and recovery deleted,
+  `removed` event).
+- Q-G yes: an empty group is held, paused, for `disconnectGraceSeconds`, with
+  security RC21 (no admission while held, one deadline never extended, end
+  at the deadline in both modes).
+- Recorded in `spec.md` ("Gate 2 decisions"; AC14, AC19, AC21, AC27, AC32,
+  AC45) and `architecture.md` section 16 (and D6, D15, 5.4).
+## Required controls -> commits (engineer's placement)
+- RC1: 2, 6, 7 (+ 14). RC2: 5-8, 12 (+ 14, 15). RC3: 6. RC4: 7 (+ Q-A close
+  4004), 17. RC5: 1. RC6, RC7, RC15: 13. RC8: 12, 13. RC9: 4, 16. RC10: 4,
+  12. RC11: 14. RC12: 20. RC13: 8-13, 15. RC14, RC16 docs, L13: 23 (RC16
+  clock tests: 13). RC17: 2a.
+- RC18 (L11): `iat` floor at process start in 2a (it needs
+  `processStartedAt`); `recoveredAt = max(now, claims.term + 1)` in 2a, where
+  `recoveredAt` is introduced; tests in 2a and 13.
+- RC19 (L12): 2a (the re-check guards every pause and end on a socket close).
+- RC20 (M5): 2a (namespace with most guarded entries; recreating-resume
+  budget per connection).
+- RC21 (Q-G): new chunk 10a after the handoff chunk (it needs the grace
+  config of 3, `GROUP_LOCKED` of 6, the pause of 9 and the handoff of 10).
+- 5.4 wording fix (refresh issues a new `iat`; only `resign` keeps it):
+  architecture 5.4 corrected; the code keeps the refresher on `issue`
+  (`sendRefreshedToken`).
 ## Open questions
 - Gate 2 questions Q-A to Q-E in `docs/issues/13/architecture.md` section 14.3 (each with a recommendation).
 - Security plan review (`docs/issues/13/security.md`): round 1 FAIL on H1.
@@ -80,3 +111,4 @@
 - architect revise (round 4 input): opus (rule: fix after failed review) → DONE
 - pm spec update (rescope): sonnet (default) → DONE
 - security plan (round 4): opus (rule) → PASS
+- engineer implement: opus (Implementer model: opus; security-sensitive)

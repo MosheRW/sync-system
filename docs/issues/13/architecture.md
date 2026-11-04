@@ -96,9 +96,9 @@ Connection ──> GroupService (facade, GroupActions, per-group KeyedLock)
 | D2 | **`position.update` runs under the group lock** (size check before the lock, rate limit last, as today). | Without the lock an update racing a handoff could be relayed after the handoff (AC8). The lock is in-process and uncontended at <= 10 updates/s per group. |
 | D3 | **Leadership term.** `term`: integer ms, set at create to `createdAt`, and on every handoff, take-back or supersede to `nextTerm(prev, now, floor) = max(prev + 1, now, floor)` with `floor = record.recoveredAt ?? 0` (supersede: `prev = max(record.term, claims.term)`). A recreation keeps the token's term. The floor makes "every grant made in this process for a recreated group has `term >= recoveredAt`" hold structurally, also if the clock steps back during the process. Token format version **2** with `term` required (`term >= gct`). No `rt` claim (revision 3). v1 tokens are rejected as `TOKEN_INVALID` (an unknown format, same as #5 AC8). | Q2.6. A plain counter breaks after a restart. The clock rule alone also breaks (security H1): a stale recreator hands off inside the new process and the new grant's `term` beats every pre-restart term. So supersede compares only **pre-restart** grants (`term < recoveredAt`, 6.6.1). Since a group is recreated at most once per process (6.9), "granted before this recreation" is the same as "granted before this process", and the term order of pre-restart grants is the order in which the previous process made them. Nothing is released, so the format bump costs nothing (spec AC39, #5 Q13). |
 | D4 | **Role on resume comes from the record, not the token** (live group): `pid === record.leaderId` -> leader return (even with a member token; the `lat` bound then applies to that token too, advisory L2). A leader token that passes `canSupersede` (section 6.6) -> **supersede**. Any other token -> **member resume**, including a displaced leader's leader token (AC24) and every in-process leader token. The leader-token `lat` expiry (#5 check 3) applies whenever the token would act as leader (recreate, leader return, supersede). A `lat`-expired leader token never recreates or supersedes: for a group not in memory it gets `TOKEN_EXPIRED` (as #5 today) unless the group ended in this process (`GROUP_ENDED`, 6.9 order), for a live group it resumes as a member (block list applies). | AC24, AC26, RC8. A displaced leader holds only its old leader token; it must still be able to rejoin as a member after the 25 min `lat` window. |
-| D15 | **A group that empties ends** (revision 3, user decision; replaces #5 AC22 "drop"). When nobody is connected any more (leader offline and the last member disconnects or leaves, or the leader disconnects alone), the group is ended with the server-internal reason `empty` and remembered in ended-groups memory. No recreation is possible in this process: ended-groups entry first, plus a stateless `iat` fence, plus a fail-closed cap rule (6.9). | Every failed security round (H1-H3) needed "empty the group, then recreate it in the same process". Removing in-process recreation removes the whole class. Product cost: a solo leader's network blip, or a whole group losing Wi-Fi at once, ends the group (section 15). |
+| D15 | **A group that empties ends** (revision 3, user decision; replaces #5 AC22 "drop"; **Gate 2 Q-G: after a hold of `disconnectGraceSeconds`, section 16**). When nobody is connected any more (leader offline and the last member disconnects or leaves, or the leader disconnects alone), the group is ended with the server-internal reason `empty` and remembered in ended-groups memory. No recreation is possible in this process: ended-groups entry first, plus a stateless `iat` fence, plus a fail-closed cap rule (6.9). | Every failed security round (H1-H3) needed "empty the group, then recreate it in the same process". Removing in-process recreation removes the whole class. Product cost: a solo leader's network blip, or a whole group losing Wi-Fi at once, ends the group (section 15). |
 | D5 | **Block list is append-only while the group is live** (Q4.5). `blocklist.set` and a leader return with `blockList` **merge** (union) and never remove entries. A union past 256 entries fails with `BLOCK_LIST_FULL` and changes nothing; it never truncates or evicts (truncation would be an unblock; Q-C condition). A recreation takes the client's list as given (the server has none). A **supersede** replaces the stale list with the superseding leader's list, applied before the stale leader is demoted (section 6.6). | Q4.5 "removal is permanent for the session". The #5 test "unblocks when the list no longer holds the ID" changes on purpose. |
-| D6 | **Removal reuses the #5 path**: the target's session is **fully detached** (notifier unregistered, any parked or pending-approval entry of that session dropped, no later broadcast reaches it) and gets `group.ended {reason: 'removed'}` as its **last** group frame, queued after its pending replies. The WebSocket stays open, as for a #5 block, and behaves as a fresh groupless connection under the existing join budgets. Then block-list append (`BLOCK_LIST_FULL`, never eviction), roster removal, vice cleared, take-back slot cleared, and a full rotation of codes **and** the QR ticket generation (`codes.updated` reason `member_removed`). Works on an offline roster member too (no session to detach). | AC32-AC33, RC4. "Connections closed" in AC32 is read as "group membership closed". Closing the socket would only start a reconnect loop that rejoin rules reject anyway. Gate 2 Q-A. |
+| D6 | **Removal reuses the #5 path**: the target's session is **fully detached** (notifier unregistered, any parked or pending-approval entry of that session dropped, no later broadcast reaches it) and gets `group.ended {reason: 'removed'}` as its **last** group frame, queued after its pending replies. **Gate 2 Q-A (user):** the WebSocket is then closed with `CloseCode.REMOVED` (4004), right after that frame; the client treats it as terminal (section 16). Then block-list append (`BLOCK_LIST_FULL`, never eviction), roster removal, vice cleared, take-back slot cleared, and a full rotation of codes **and** the QR ticket generation (`codes.updated` reason `member_removed`). Works on an offline roster member too (no session to detach). | AC32-AC33, RC4. "Connections closed" in AC32 is read as "group membership closed". Closing the socket would only start a reconnect loop that rejoin rules reject anyway. Gate 2 Q-A. |
 | D7 | **Lazy timers.** One timer per kind per group (`GroupTimers`). The callback takes the lock, re-reads the record, and if the deadline moved (activity), re-arms instead of acting. `recordActivity()` only cancels a timer when it must send something (`keepalive.cleared`, unpause). | Position updates at 10/s must not cancel and re-arm timers. Same pattern as the max-session and frozen-end timers (#5 R3). |
 | D8 | **Pause state** `record.pause = {cause: 'offline' \| 'inactive', graceEndsAt?: number}`. `leaderOnline` keeps its meaning (the connection). Members see a pause as `leader.offline {cause, graceMs?}` and the end of a pause as `leader.online`. `graceMs` is present only when a handoff can follow (`auto` mode). | AC14, AC17, AC28. Reuses the #5 messages, with two optional fields added. |
 | D9 | **Escalation flag** `record.escalated`: true when the current leader got the lead through a *missed keep-alive* handoff; take-back, supersede and a disconnect handoff set it to `false` (RC13). It is cleared by that leader's first counted activity. While it is true, a missed keep-alive ends the group with reason `inactivity` when the countdown ends (AC22). | PRD: "escalation goes one step only". Clearing on activity means a new leader who answered once is treated like any other leader later. Gate 2 Q-B. |
@@ -324,9 +324,13 @@ keep-alive, Q1.3). Spec wording corrections are listed in 14.2.
 ```
 Every token carries the group's current `term`. It only matters for leader
 tokens (D3, D4, 6.6). Schema: integer, `term >= gct`; plausibility
-`term <= now + skew`; in the fixed-order `payloadJson`, so a refresh
-(`resign`) keeps it unchanged (RC5). `iat` is unchanged from format 1 and
-`resign` keeps it too, which the recreation fence relies on (6.9). There is still no name, vice, lock or code in the token
+`term <= now + skew`; in the fixed-order `payloadJson`, so a re-signed
+token (`resign`, used only for key rotation in `tokens.check`) keeps it
+unchanged (RC5). `iat` is unchanged from format 1. A leader-token refresh
+(`token.refreshed`) is a new `issue` with a new `iat` (and the record's
+`term` and `lat`); only `resign` keeps the old `iat` (security round 4
+wording fix). The recreation fence (6.9) is safe either way: a refreshed
+token is "issued here", and a re-signed token keeps its original `iat`. There is still no name, vice, lock or code in the token
 (AC37, AC40).
 
 ### 5.5 Frame sizes
@@ -1266,6 +1270,39 @@ with the revision's additions):
   *Security:* values fine. Conditions (in the plan, 6.8, 8.2): charged only
   after authorization and validation, keyed by namespace + group, forgotten
   on end/drop and cleared in `close()`; plus L5 for the ack (adopted).
+
+## 16. Gate 2 decisions (user, 2026-11-04) and their place in the build
+
+Plan approved. Decisions: Q-B to Q-E as recommended; Q-F **no** (R-2R
+accepted, README operator guidance); **Q-A changed** and **Q-G yes**:
+
+- **Q-A, removal closes the socket.** Every removal (`member.remove`, a
+  `blocklist.set` or leader-return union that lists an attached member, and
+  supersede step 1) detaches the session as in D6, queues
+  `group.ended {reason: 'removed'}` as its last group frame, and then closes
+  the WebSocket with the new `CloseCode.REMOVED = 4004` (the next free code
+  after 4001-4003; 4008 stays the policy close). No other frame follows. The
+  core client treats 4004 as fatal: no reconnect, state `closed` until
+  `connect()`, the token and recovery of that group deleted, a `removed`
+  event; the backoff classifies it with the other fatal closes. A modified
+  client that reconnects gets nothing (blocked, codes and ticket generation
+  rotated, normal budgets). An offline roster target has no socket. Built in
+  chunk 7 (server) and chunk 19 (client).
+- **Q-G, empty-group hold.** When nobody is connected any more (the three
+  former drop sites, behind the RC19 re-check), the group is not ended at
+  once: it is **held**, paused (`cause: 'offline'`), until one deadline:
+  `pause.graceEndsAt` (auto mode) or, in frozen mode, `pause.holdEndsAt`,
+  set once; neither is ever extended (a running pause keeps its deadline,
+  6.4). While held (`!leaderOnline && connectedCount === 0`) every new
+  admission (code, QR, approval, the admit-step re-check) gets the
+  byte-identical `GROUP_LOCKED` of the D14 order; only token resumes (D4,
+  block list applies) re-attach. At the deadline, under the lock: still
+  nobody connected -> `endGroup('empty')` in both modes (never the frozen
+  bound); someone connected -> the normal 6.4 path (handoff or stay frozen).
+  Security RC21 (a)-(f). Built as chunk **10a**
+  `feat(server): hold an empty group for the grace period before it ends`,
+  after the pause (9) and handoff (10) machinery it uses; until then chunk
+  2a ends an emptied group at once.
 
 ## 15. Spec impact (revision 3 rescope; `spec.md` not edited here)
 
