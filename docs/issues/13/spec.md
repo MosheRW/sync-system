@@ -48,7 +48,7 @@ This item delivers those: the vice-leader role, the leader's lock / remove / pre
 3. **Recovery state travels with the leader's client**, like the block list (#5): block list, lock flag, vice-leader's participant ID and the handoff mode. On handoff the server hands this state to the new leader's client so it survives a later restart.
 4. **Preview is client-side.** The server only learns "the leader is active" through a lightweight activity signal; it never sees the previewed position.
 5. **Durations on the wire, not clock times.** Countdowns and grace periods are sent as remaining milliseconds, so client clock skew (parked follow-up #9) cannot affect them.
-6. **Timers are server-driven and per group**, all cancelled when a group is dropped or ended (extends #5 R7: `server.close()` leaves zero pending timers).
+6. **Timers are server-driven and per group**, all cancelled when a group ends for any reason, including when it empties (extends #5 R7: `server.close()` leaves zero pending timers).
 
 ## Acceptance criteria
 
@@ -72,22 +72,22 @@ This item delivers those: the vice-leader role, the leader's lock / remove / pre
 - [ ] AC13. The vice-leader designation is part of the recovery state the leader's client holds (decision 3), so it survives a server restart. A recovered designation is validated against the rejoining participants; a stale or unknown ID is ignored.
 
 ### Timers: disconnection grace, inactivity, keep-alive, max session
-- [ ] AC14. **Disconnection timeout.** When the leader's last connection drops, the group freezes (existing #5 behavior, members told) and a grace timer of the app's `disconnectGraceSeconds` starts. If the leader resumes within the grace period, the group unfreezes, the leader is still leading, and no role changes. The frozen event carries the remaining grace as a duration.
+- [ ] AC14. **Disconnection timeout.** When the leader's last connection drops **and at least one other participant is connected**, the group freezes (existing #5 behavior, members told) and a grace timer of the app's `disconnectGraceSeconds` starts. **If nobody else is connected, the group ends at once (AC27).** If the leader resumes within the grace period, the group unfreezes, the leader is still leading, and no role changes. The frozen event carries the remaining grace as a duration.
 - [ ] AC15. **Inactivity limit.** The server tracks the leader's last activity in memory while the leader is online. Counted: accepted position updates, preview activity (AC30), keep-alive answers, and accepted leader actions (lock, remove, rotate, vice changes, approve / deny). Not counted: rejected, rate-limited or non-leader actions, member actions, transport heartbeats, and the leader merely being connected. The existing token last-activity refresh (#5) keeps working from the same signal.
 - [ ] AC16. **Keep-alive.** At `inactivityLimit - keepAliveCountdown` of leader inactivity the server sends the leader a keep-alive prompt carrying the remaining countdown (a duration). Any counted leader activity, or an explicit `keepalive.ack`, cancels the countdown and restarts the inactivity timer. Members are not sent the prompt.
 - [ ] AC17. **Missed keep-alive (first leader).** When the countdown ends unanswered, the group freezes for the grace period exactly as in AC14, then follows the handoff mode (AC20, AC21). Q1.2 records the alternative.
 - [ ] AC18. **Max session time.** Enforced for every group, whoever leads and in every state (live, frozen, handoff pending), measured from group creation; at expiry the group ends for everyone with reason `max_session`. A handoff does not extend it, and the new leader's token keeps the original creation time. (Already enforced in #5; add tests for the live states introduced here.)
-- [ ] AC19. Timer tests use the injected `ManualScheduler` (no real sleeps) and prove: no timer fires after a group ends or is dropped, and `server.close()` leaves no pending timer.
+- [ ] AC19. Timer tests use the injected `ManualScheduler` (no real sleeps) and prove: no timer fires after a group ends (for any reason, including when it empties), and `server.close()` leaves no pending timer.
 
 ### Group lifecycle: handoff, take-back, end
 - [ ] AC20. **Automatic handoff** (mode `auto`). When a grace period (AC14 or AC17) lapses with the leader still away, leadership passes to the connected vice-leader, or, if none, to the longest-connected member (Q2.2 defines "longest-connected"). Pending joiners and parked participants are never candidates. The new leader's inactivity timer starts fresh and the old leader becomes a member (role change in the record).
-- [ ] AC21. **Frozen mode.** The group never hands off. It stays frozen until the leader returns, bounded as today (inactivity limit plus refresh slack, #5 AC18-AC21) and by max session; after a missed keep-alive the group ends at that bound (Q1.3). If there is no eligible candidate in `auto` mode (no other connected participant), the group behaves like frozen mode.
+- [ ] AC21. **Frozen mode.** The group never hands off. It stays frozen until the leader returns, bounded as today (inactivity limit plus refresh slack, #5 AC18-AC21) and by max session; after a missed keep-alive the group ends at that bound (Q1.3). If there is no eligible candidate in `auto` mode (the leader is still connected but inactive and no other participant is connected), the group behaves like frozen mode. A leader who disconnects with nobody else connected ends the group (AC27).
 - [ ] AC22. **One-step escalation.** If a leader who gained the lead through a handoff caused by a *missed keep-alive* also misses the keep-alive, the group ends with reason `inactivity` when that countdown ends. There is no second handoff in that chain. (Q2.3 covers a new leader that merely disconnects.)
 - [ ] AC23. **"You're now leading".** The new leader receives a distinct event (reason: `handoff_disconnect`, `handoff_inactivity` or `take_back`), a new leader token, and the recovery state (block list, lock flag, vice-leader, handoff mode, current codes, pending approvals). Other participants receive a leader-changed event with no participant IDs beyond what each role may see. The displaced leader's client is told it is no longer leading if it is connected.
 - [ ] AC24. **Original leader returns.** The displaced leader presenting its old token to the live group rejoins as a member with a "take-back offered" notice. It does *not* regain control by presenting its old leader token (decision 2, Q2.6). A `leader.takeBack` request from the *most recent displaced leader* (Q2.4) swaps roles: it becomes leader, the current leader becomes a member and is told. Any other participant requesting it gets `NOT_ALLOWED` and no state change.
 - [ ] AC25. After a take-back, the displaced-leader slot holds the leader who was displaced by it, and inactivity timers restart for the leader who now leads. The take-back offer expires if the group ends.
-- [ ] AC26. **Server restart after handoff.** The new leader's token supersedes the old: when both are presented after a restart, the higher leadership term wins; a stale old leader token presented first recreates the group, and is then superseded and demoted when the higher-term token arrives (Q2.6). A test covers both arrival orders.
-- [ ] AC27. A group ends (all members told, tokens deleted by clients, group removed from memory and recorded in ended-groups memory per #5) when: the leader ends it (`leader_ended`), max session expires (`max_session`), or inactivity goes unanswered by both the leader and the next in line (`inactivity`, AC22). Each ends with a distinct reason on the existing ended event.
+- [ ] AC26. **Server restart after handoff.** Takeover by presenting a token happens only after a server restart. After a restart, of the leader tokens granted before the restart (and still inside their `lat` and max-session bounds), the one with the latest leadership term wins: a stale older leader token presented first recreates the group and is then superseded and demoted when the later token arrives (Q2.6); no grant made after the restart can supersede. Tests cover both arrival orders. Residuals (documented in the README): two restarts within one leader's inactivity window, and a server clock that steps back across a restart.
+- [ ] AC27. A group ends (all members told where anyone is attached, tokens deleted by clients, group removed from memory and recorded in ended-groups memory per #5) when: the leader ends it (`ended_by_leader`), max session expires (`max_session`), inactivity goes unanswered by both the leader and the next in line (`inactivity`, AC22), the frozen bound passes (`leader_timeout`), or nobody is connected any more (`empty`: logged only, since nobody is attached to be told; later resumes get `GROUP_ENDED` and `tokens.check` reports `ended`). Each ends with a distinct reason. **An ended group can't be recreated in the same server process by any token.**
 - [ ] AC28. Members get status events for every lifecycle state: live, frozen with remaining grace (leader offline or leader inactive), leader changed, ended with reason. The core client maps these onto its connection / leader state for the item 8 indicator, extending #3 AC25 with "leader offline, grace period".
 
 ### Lock, remove, roster, preview
@@ -101,7 +101,7 @@ This item delivers those: the vice-leader role, the leader's lock / remove / pre
 ### Display names and generated names
 - [ ] AC35. `group.create`, join requests (`group.joinByCode`, `group.joinByQr`) and token resume accept an optional display name, 1-32 characters after trimming, no control characters, and (Q5.5) no bidi override or isolate characters. Invalid names are rejected as invalid input; the same rule applies to the creator, to joiners and to the name shown in `join.requested` (#10 AC20).
 - [ ] AC36. A participant with no name, or a blank one, gets a generated name (Q5.1) that is unique in the group and carries a `generated: true` flag so apps can localize it. The name is held in memory only for the life of the participant in the group and is not part of the token.
-- [ ] AC37. A returning member (token resume, after a drop or a server restart) may send its name again; with no name it is generated again. Names are never put in tokens, logs, error messages or metrics.
+- [ ] AC37. A returning member (token resume, after a reconnect or a server restart) may send its name again; with no name it is generated again. Names are never put in tokens, logs, error messages or metrics.
 - [ ] AC38. Names are plain text. The server never interprets them. (The reading app escapes them in items 7-8; the README states the rule for app developers.)
 
 ### Core client and protocol
@@ -113,7 +113,7 @@ This item delivers those: the vice-leader role, the leader's lock / remove / pre
 ### Privacy, logging and security tests
 - [ ] AC43. A log-capture test over every new flow (grace, handoff, take-back, keep-alive, lock, remove, vice, names, roster, restart-after-handoff) asserts no display name, participant ID (other than existing hashed refs), token, code, position or metadata appears at any level. Names and IDs are also absent from error messages.
 - [ ] AC44. Cross-app isolation: all new actions and events stay inside the app namespace and group; a participant ID or token from another group or app is treated like garbage (same response as an unknown ID).
-- [ ] AC45. Security test suite (listed for the review): role matrix (AC6), stale leader after handoff (AC24), double-leader race (AC8), restart supersession (AC26), removal bypass on every path (AC33), lock on every join path (AC29), name injection / bidi / control characters (AC35), rate limits (AC9), block list transferred to the new leader and enforced after a later restart.
+- [ ] AC45. Security test suite (listed for the review): role matrix (AC6), stale leader after handoff (AC24), double-leader race (AC8), restart supersession (AC26), an emptied group can't be recreated in the same process (resume and `tokens.check`, also with ended-groups memory full), removal bypass on every path (AC33), lock on every join path (AC29), name injection / bidi / control characters (AC35), rate limits (AC9), block list transferred to the new leader and enforced after a later restart.
 - [ ] AC46. Existing suites stay green; `pnpm lint`, `pnpm typecheck`, `pnpm test` and `pnpm build` pass; no new dependencies unless the architect justifies one.
 
 ## Security-sensitive areas (for architect and security review)
@@ -171,6 +171,17 @@ default as written, with one change (Q5.5):
 - **Group 6 (preview):** Q6.1 client-side preview plus a throttled
   `leader.activity` signal. Q6.2 the core client ships the preview helper.
 - **Q7:** protocol version stays 1.
+
+## Rescope decision (user, 2026-11-04, after 3 failed security plan rounds)
+
+The user chose **"Simplify the scope"**: automatic leader takeover by token
+happens only after a **server restart**. A group that empties completely
+while the server is running **ends** (reason `empty`) and cannot be recovered
+later in that server process; the leader starts a new group. This supersedes
+#5 AC22 for this case. Affected wording: AC14, AC19, AC21, AC26, AC27, AC37,
+AC45 and decision 6 (applied above, per `architecture.md` section 15). The
+architect's Gate 2 questions Q-F and Q-G (see `architecture.md` 14.3) remain
+open for Gate 2.
 
 ## Open questions for Gate 1 (closed; see Gate 1 decisions above)
 

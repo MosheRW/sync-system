@@ -6,7 +6,7 @@
 - Plan approved by user: no
 - QA loops: 0
 - Security-sensitive: yes
-- Last updated by: architect
+- Last updated by: pm
 ## Gate 1 decisions
 - User accepted every recommended default Q1.1-Q7 as written in `spec.md`,
   with one change: Q5.5 display names use the existing strict #10 rule
@@ -32,9 +32,9 @@
   accept the residual) and Q-G (hold an empty group for the grace period
   instead of ending it at once; not planned, offered because of the
   solo-leader blip impact).
-- Spec impact (architecture.md section 15): AC14, AC19, AC21, AC26, AC27,
-  AC37, AC45 and decision 6 need new wording; `spec.md` not edited by the
-  architect. User / `pm` to apply.
+- Spec impact (architecture.md section 15): applied to `spec.md` by pm
+  (AC14, AC19, AC21, AC26, AC27, AC37, AC45, decision 6); rescope decision
+  recorded 2026-11-04.
 ## Deviations from plan
 - Board: `.claude/github-project.env` had an empty `GH_PROJECT_NUMBER`; the card was added to project 8 ("sync system") with a temporary config copy. Restored to 8 on this branch in 8880f2d.
 - Plan revision 1 (after security round 1): H1 closed in architecture.md 6.6
@@ -78,3 +78,4 @@
 - architect revise (round 3 input): opus (rule: fix after failed review) → DONE
 - security plan (round 3): opus (rule) → FAIL
 - architect revise (round 4 input): opus (rule: fix after failed review) → DONE
+- pm spec update (rescope): sonnet (default) → DONE
