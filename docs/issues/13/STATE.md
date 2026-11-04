@@ -5,7 +5,7 @@
 - PR: #14 (draft)
 - Plan approved by user: no
 - QA loops: 0
-- Last updated by: architect
+- Last updated by: security
 ## Gate 1 decisions
 - User accepted every recommended default Q1.1-Q7 as written in `spec.md`,
   with one change: Q5.5 display names use the existing strict #10 rule
@@ -21,6 +21,9 @@
   `security.md` "Round 2" before Gate 2.
 - Plan revision 2 done (security's H2 fix applied exactly, per user
   decision); needs security plan re-check (round 3) before Gate 2.
+- Security round 3: FAIL on H3 (same-`rt` laundering of an in-line grant
+  through a second recreation); fix = lineage path `lin` replacing `rt`
+  (`security.md` "Round 3"). Advisories L9, L10.
 ## Deviations from plan
 - Board: `.claude/github-project.env` had an empty `GH_PROJECT_NUMBER`; the card was added to project 8 ("sync system") with a temporary config copy. Restored to 8 on this branch in 8880f2d.
 - Plan revision 1 (after security round 1): H1 closed in architecture.md 6.6
@@ -47,3 +50,4 @@
 - architect plan revision 1: opus (security NEXT_MODEL opus; revision after a failed review) -> DONE; recommends opus for security re-check and engineer
 - security plan review round 2: opus → FAIL (H2: drop-without-restart and same-rt ordering defeat supersede; fix = recoveredAt + (rt, term) anchor); recommends opus for architect revision
 - architect revise (round 3 input): opus (rule: fix after failed review) → DONE
+- security plan (round 3): opus (rule) → FAIL

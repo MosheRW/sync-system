@@ -402,3 +402,199 @@ protected entries, the L5 carve-out and the client clean-up. 11 still says
 "after a restart" for the residual. It should say "after a restart or a
 drop", because a drop opens the same stale-leader window (bounded by the
 stale token's `lat`).
+
+## Round 3 (plan revision 2, head ba8f60f)
+
+Reviewed: `git show ba8f60f` (architecture.md D3, 4, 5.4, 6.5, 6.6,
+6.6.1-6.6.3, 11, 12 AC26, 13.2, 14.1; `STATE.md`), and the resume path on
+`main` (`group-service.ts` `resume` / `recreate`: classification and
+recreation run inside `locks.run(groupKey)`).
+
+**Verdict: FAIL.** The H2 fix is applied exactly and completely, and nothing
+closed earlier regressed. But trying to break the revised rule turned up one
+more high finding, H3. The `(rt, term)` pair keeps only the first and the
+last step of a token's history, so the H1 trick (a handoff inside a
+recreated line mints a term above every earlier grant) still works when it
+is **laundered through a second recreation** inside one `rt`. My round 2
+check (rows 5, 6, 18) only covered lines with a *different* `rt`, so I
+missed it. Same root cause as H1, but not fixed by anything so far. A
+pair or triple can't fix it (reason below). The fix is a lineage path in
+the token.
+
+### H2 fix: verification
+
+| Item (round 2 fix) | Where in ba8f60f | Status |
+|---|---|---|
+| `recoveredAt = now` and `anchor = (claims.rt, claims.term)` on **every** recreation (restart or drop) | 4, 6.6 "Recreation", 6.6.1 | Done |
+| `processStartedAt` removed from the rule | 4, 6.6.1 | Done |
+| `canSupersede`: anchor defined, leader role, `pid !== leaderId`, `term < recoveredAt`, lexicographic `pairGreater`, `lat` + max session | 6.6.1 | Done, word for word |
+| Supersede: anchor := requester pair, `recoveredAt` kept, `term = nextTerm(max(...))`, new token with `rt = claims.rt` | 6.6.2 steps 2, 6 | Done |
+| `rt` issuance `anchor?.rt ?? term`; handoff and take-back inherit it | D3, 5.4, 6.5, 6.6 | Done |
+| H2a drop without a restart (row 14) | 6.6.3, 12 AC26 | Done |
+| H2a with `tokens.check` polling (row 15) | 6.6.3, 12 AC26 | Done |
+| H2b drop and restart variants, both arrival orders (rows 16, 17) | 6.6.3, 12 AC26 | Done |
+| Row 9 rewritten | 6.6.3 | Done, correct |
+| `canSupersede` and `pairGreater` truth tables (equal `rt` with lower / equal / higher term) | 12 AC26 | Done |
+| Clock note (fails toward "no supersede") and 11 wording "restart or drop" | 6.6.1, 11 | Done (wording nit L10) |
+| Row 18 (architect's addition: repeated drop after a supersede) | 6.6.3 | Correct for its case (different `rt`) |
+
+### Regression check (earlier findings and controls)
+
+H1 (rows 1-8, 10-13 still hold), M1 (6.6.2 step 5), M2 (3.2 keys; the 12
+AC43 test now also asserts `term`/`rt` survive), M3 (D10), M4 (11, 6.6.4,
+RC14), L1 (6.6.2 step 1), L2 (D4), L3 (6.7), L4 (9.3), L5 (8.2), L6-L8,
+Q-A to Q-E conditions (D5, D6, D9, D14, 6.8, 8.2), RC1-RC14 (14.1 table):
+**all unchanged, no regression.**
+
+### Attempts to break the revised rule
+
+| Attempt | Result |
+|---|---|
+| Repeated drops, different `rt` (stale line `rt` T0, real line T1) | Holds: the stale line can never raise its `rt` (rows 5, 6, 18). |
+| Repeated drops, **same `rt`** (inside a recovered line, or after a supersede) | **Broken: H3.** |
+| Interleaved supersedes by two pre-recreation tokens (B then C, C later) | Holds: C's pair is greater and pre-recreation, so C supersedes B; B's new token has `term >= recoveredAt`. |
+| Supersede, then the superseder's **new** token recreates after a drop | **Broken in the same-`rt` case: H3 path 2.** |
+| Same-ms terms (`nextTerm` ahead of `now`, grant in the ms of the recreation) | Fails toward "no supersede". Accepted residual (see L10). |
+| Clock forward step | Holds: `lat` and guard 3 use the same `now`, so a forward jump can't revive an expired token. |
+| Clock backward step | Real leader can't supersede. Accepted residual (NTP, #10 D4); wording L10. |
+| Token replay / refresh of an old leader token | Holds: `resign` keeps `term`/`rt` (RC5, row 13). A replay is the same grant. |
+| Removed / blocked stale leader | Holds: requester's list first, stale list skipped (6.6.2 step 1, rows 1, 3, 4). |
+| Vice-leader and grace handoff to an accomplice or second identity | Holds on its own (row 1). It is the minting step of H3. |
+| Take-back inside a recreated line | Same minting as handoff (H3 path 3). |
+| Two recreations racing for one dropped group | Holds: classification and `recreate` run under `locks.run(groupKey)` (`group-service.ts:735`); the second request is classified against the new record. One nit: L9. |
+| Group created in this process, forged-looking token | Holds (guard 1, row 8). |
+
+### High (blocking)
+
+**H3. Inside one `rt`, a stale leader can launder a fresh in-line grant through a second recreation and keep the lead for good.**
+Location: architecture.md D3, 5.4 (`rt = anchor?.rt ?? term`), 6.5 /
+6.6 ("successor inherits `rt`"), 6.6.1 guard 4 (`pairGreater`), 6.6.2 step 6
+(new token `(claims.rt, nextTerm)`), 6.6.3 rows 16-18.
+
+Precondition: the group is in a **recovered line** (it was recreated once
+after any restart or drop, e.g. a routine deploy), so its grants share
+`rt = R`. Scenario (path 1, handoff):
+1. B leads with `(R, X)` and hands off to C `(R, Y)`, `Y > X`. C removes B.
+   B keeps its old leader token.
+2. C disconnects alone, so the group is dropped. B polls `tokens.check` and
+   recreates at once: anchor `(R, X)`, `recoveredAt = rA1`.
+3. B joins a second identity M through its codes (or uses any connected
+   member), makes M vice, disconnects. After the 30 s grace M leads with
+   `(R, m)`, `m >= rA1 > Y`.
+4. M disconnects alone, so the group drops again. M recreates: anchor
+   `(R, m)`, `rA2`.
+5. C arrives with `(R, Y)`: `Y < rA2`, but `(R, Y) < (R, m)`, so C gets a
+   plain member resume. C is not on B's stale list. M (and B through M)
+   leads for good and can remove C.
+
+Arrival order doesn't save C. If C recreates first after step 4 (anchor
+`(R, Y)`), M then **supersedes C**: `m < rA_C` and `(R, m) > (R, Y)`. The
+whole thing takes about a minute after C's drop, and an honest removed B
+whose client auto-recovers can trigger it by accident with any connected
+member. Impact is the same as H1 and H2: AC26 is defeated permanently. The
+preconditions are comparable to H2b. Rated **high**.
+
+Path 2 (supersede token): in the same line, B supersedes an even staler
+recreator A `(R, a)` and gets a new token `(R, z)` with `z = nextTerm(...) >
+Y`. Then a drop, B recreates with `(R, z)`, and C `(R, Y)` loses. Path 3:
+the same with a take-back grant.
+
+Why the guards miss it: guard 3 stops an in-line grant from *superseding*,
+but nothing stops it from *recreating*. A recreation turns its high term
+into the anchor. `(rt, term)` keeps the first step (`rt`) and the last
+(`term`) of the history, and loses the middle step (`X`) where C's history
+and the fork split. **A fixed-size encoding can't fix this.** I worked
+through `(rt, at, term)`, "anchor := the token's line anchor", and "grants
+in an unconfirmed line can't recreate / supersede". Each one either fails
+one nesting level deeper (one more recreate-and-handoff cycle, ~35 s each)
+or breaks H2a/H2b for honest users. So don't try those.
+
+**Fix (6.6.1, 6.6.2, D3, 5.4, `resume.ts`, `tokens.ts`; commits 1, 10, 12,
+13): replace `rt` by a lineage path.**
+- Token claim `lin: [r, t][]` (1..`MAX_LINEAGE` steps, `MAX_LINEAGE = 8`)
+  replaces `rt`. The token's last step's `t` is its `term`. It goes in the
+  fixed-order `payloadJson`, so `resign` keeps it (RC5). Schema: integer
+  pairs, `t >= r`, every `t <= now + skew`, first step `t >= gct`.
+- Record: `anchor: lin | undefined` and `lineAt: number | undefined`
+  replace the pair anchor and `recoveredAt`. `lineAt` is unique and
+  increasing per process: `max(now, lastLineAt + 1)`.
+- Grants (create, handoff, take-back): with no anchor, `lin = [[0, term]]`.
+  With an anchor, `lin = anchor ++ [[lineAt, term]]`.
+- Recreation by `L`: `anchor = L`, `lineAt = new`, `term = last(L).t`. The
+  recreator's refreshed token keeps `L`.
+- Supersede by `L`: `anchor = L`, `lineAt = new`,
+  `term = nextTerm(max(record.term, last(L).t), now)`. The requester's new
+  token is `L ++ [[lineAt, term]]`.
+- Order `cmp(a, b)`: step by step, and the first unequal step decides. For
+  two steps, the **smaller `r` is greater** (of two recreations of the
+  same parent, the earlier line is the real one: a later recreation by the
+  bare parent token is by a stale copy). For an equal `r`, the larger `t`
+  is greater. If one path is a prefix of the other, the longer one is
+  greater.
+- `canSupersede(record, L)` = anchor defined && leader role &&
+  `pid !== leaderId` && `cmp(L, anchor) > 0` && **not in the current
+  line** (`!(startsWith(L, anchor) && L[anchor.length].r === lineAt)`) &&
+  `lat` && max session && `L.length <= MAX_LINEAGE`. Guard 3
+  (`last(L).t < lineAt`) may stay as a redundant check.
+- A grant whose `lin` would exceed `MAX_LINEAGE` is still made (the group
+  goes on), but the token is marked so that it can neither recreate nor
+  supersede (fail closed: the group ends on its next drop instead of being
+  recovered). Re-check the 5.5 frame budget (`RECOVERY_EXTRA_BYTES`, token
+  size; ~8 x 2 x 13 digits).
+
+Checked: rows 1-18 keep their results, using `[[0, t]]` for created-group
+grants (e.g. row 1: B `[[0,T1]]` > anchor `[[0,T0]]`, M
+`[[0,T0],[rA,m]]` < B). H3 path 1: M is `K0 ++ [[r0,X],[rA1,m]]` and C is
+`K0 ++ [[r0,Y]]`, so C > M at the step where they split. This holds at any
+depth and in both arrival orders. "C descends from B's earlier honest line
+and B recreates again with its bare token": C is `B ++ [[r1,c]]` and the
+fork is `B ++ [[r2,m]]` with `r1 < r2`, so C wins. A displaced in-line
+leader in a live group is in the current line, so it can't supersede (D4
+unchanged). Paths 2 and 3 have the same shape.
+
+Tests (`restart-handoff.int`, `resume.test.ts`): H3 path 1 with a drop and
+with a restart at step 4, both arrival orders; path 2 (supersede token);
+path 3 (take-back); three nested recreate-and-handoff cycles; "C extends
+the stale anchor" (B recreates honestly, B -> C, C removes B, drop, B
+recreates with its bare token, B -> M, drop, M recreates, C arrives -> C
+supersedes); `MAX_LINEAGE` overflow -> no recreate and no supersede; a
+`cmp` truth table (earlier `r` beats later `r` for the same parent, larger
+`t` for an equal `r`, prefix < extension) and the current-line exclusion.
+All of rows 1-18 again, with expected `lin` values.
+
+### Low (advisory)
+
+**L9. `recreate`'s `createIfAbsent === 'exists'` fallback calls
+`leaderReturn` for any claims** (`group-service.ts` around line 870). It
+can't be reached under the in-process lock, but after this change it would
+grant leadership to a pid that isn't `record.leaderId`. Fix: re-run the
+classification (supersede / member resume / blocked) instead of
+`leaderReturn`. That is one line in commit 13.
+
+**L10. Clock wording (6.6.1, 11).** "Fails closed ... until its own window
+ends" overstates it. When the real leader can't supersede, the stale
+recreator keeps the lead (it refreshes its own token), not only until a
+window ends. State it as an NTP-dependent residual (#10 D4): a backward step
+larger than the time between the real leader's grant and the recreation
+lets the stale line win. With the lineage fix the same assumption also
+orders two recreations of one parent across a restart (`r`).
+
+### Accepted residuals (not findings)
+
+- The M4 recreation window (the stale recreator leads until the real leader
+  arrives inside its own `lat` window). Inherent without persistence.
+- A real leader that doesn't return within its `lat` window (~25 min) never
+  supersedes. Intended bound.
+- Clock steps back by more than the gaps above (L10). NTP assumption.
+- A stolen current token is equivalent to its holder (out of scope, #5).
+
+### Required controls: changes from round 3
+
+| # | Control | Commit(s) |
+|---|---|---|
+| RC5 (amended) | Token format 2 carries `term` and `lin` (not `rt`) in the fixed-order `payloadJson`; schema per the H3 fix; v1 -> `TOKEN_INVALID`. | 1 |
+| RC6 (amended) | H1/H2/H3: lineage `lin`, record `anchor` (path) + `lineAt`, `cmp`, current-line exclusion, new token on supersede, `MAX_LINEAGE` fail-closed; rows 1-18 plus the H3 tests. | 10, 12, 13 |
+| RC15 | The recreation fallback re-classifies; never `leaderReturn` for a pid other than `record.leaderId` (L9). | 13 |
+| RC16 | 6.6.1 / 11 wording per L10; the README residual paragraph mentions the NTP assumption. | 23 |
+
+Everything else in section 5 stands as written.
