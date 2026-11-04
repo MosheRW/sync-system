@@ -598,3 +598,235 @@ orders two recreations of one parent across a restart (`r`).
 | RC16 | 6.6.1 / 11 wording per L10; the README residual paragraph mentions the NTP assumption. | 23 |
 
 Everything else in section 5 stands as written.
+
+## Round 4 (plan revision 3, restart-only rescope, heads f40b673 + 550d181)
+
+Reviewed: `git diff ed3257d..550d181` (architecture.md D3, D4, D15, 4, 5.4,
+6.4-6.6.4, 6.9, 10, 11, 12, 12.1, 13.3, 14, 15; spec.md AC14, AC19, AC21,
+AC26, AC27, AC37, AC45, rescope note; `STATE.md`), and on `main`:
+`token-service.ts` (`issue` sets `iat` from `now`; `resign` keeps every
+claim, used only for key rotation in `tokens.check`), the token refresher
+(issues a fresh token through `issueToken`, so a refresh gets a new `iat` and
+the record's `lat`), `ended-groups.ts` (one global map for all namespaces),
+`resume.ts`, and `group-service.ts` `resume` (classification and recreation
+under `locks.run`), `disconnect` / `leaderOffline` / `leave` (the three
+`dropGroup` sites) and `endGroup`.
+
+**Verdict: PASS.** No critical or high finding. The rescope removes the
+whole H1-H3 class inside a running process: a group is recreated at most
+once per process, and only from tokens of an earlier process. What is left
+needs two operator restarts (R-2R) and is acceptable as a residual. Trying
+to break the new mechanisms found one medium (M5, cross-app availability)
+and three lows (L11-L13). I make M5's fix, L11 and L12 required controls
+because each is a few lines and the plan is not built yet.
+
+### Round 1-3 findings: status
+
+| Finding | Status in revision 3 |
+|---|---|
+| **H1** (stale recreator hands off in-process, new term beats pre-restart terms) | **Closed** for one restart: guard 3 (`term < recoveredAt`) plus the `nextTerm` floor (D3) make "no grant made in this process supersedes" structural, also with a clock step back during the process. Two-restart form = R-2R, accepted residual. |
+| **H2a** (drop without restart, stale recreates first) | **Closed.** An emptied group ends (D15). Its tokens get `ended` from the entry, and from the `iat` fence if the entry is gone. `tokens.check` never turns `recoverable` in the same process (rows 11, 12). |
+| **H2b** (same `rt` inside a recovered line) | **Closed.** `rt` is gone. Inside one restart, pre-restart grants of one group are compared by term, which is the order the previous process made them in (strictly increasing per group, also when that process was itself a recovered one). Row 14. |
+| **H3** (launder an in-line grant through a second recreation) | **Reduced to R-2R.** Every path needs a second recreation. In one process that is impossible (6.9 layers 1-3); across processes it needs a second restart. |
+| M1-M4 | Unchanged (6.6.2 step 5; 3.2 logger keys; D10; 6.6.4 + section 11, now also lists "end by emptying", row 13). No regression. |
+| L1-L8 | Unchanged (6.6.2 step 1, D4, 6.7, 9.3, 8.2, 11, 10). No regression. |
+| L9 / RC15 | Closed: the `exists` fallback re-classifies (6.6 "Recreation"), store-stub test in 12. |
+| L10 / RC16 | Closed: 6.6.1 "Clock" and section 11 state the residual plainly ("keeps the lead for good"), README notes in 10. |
+| Q-A to Q-E conditions | Unchanged (D6, D9, D5, D14, 6.8/8.2; 14.3). |
+| RC1-RC16 | Mapped in 14.1; RC6 reworded for the restart-only rule; RC17 (new) in commit 2a. |
+
+### Attempts to break the new mechanisms
+
+| Attempt | Result |
+|---|---|
+| **`iat` fence: does a refresh keep `iat`?** | No. The refresher issues a new token through `issueToken` (`iat = floor(now/1000)`, `lat = record.lastActivityAt`). Only `resign` keeps `iat`, and it is used only to re-sign a pre-existing token for key rotation. A refreshed token is always "issued here", which is the safe direction. The plan's 5.4 wording ("a refresh (`resign`) keeps it") conflates the two; the engineer must not route the refresher through `resign` (code-mode check). |
+| Token minted by the old process in the start second | Counts as issued here, so the group is `ended` instead of recovered. Fail closed, documented, tested (12 AC26). |
+| Token minted by the new process in its first second | `now >= processStartedAt` gives `iat >= floor(processStartedAt/1000)`. No gap, as long as `processStartedAt` is read from the same injected clock before any token is issued. |
+| Clock step back **across** a restart | Old tokens can look "issued here", so `ended`: fail closed for the fence. The supersede side is the L10 residual (stated). |
+| Clock step back **during** the process, below `processStartedAt` | Tokens issued after the step look pre-restart to the fence. That only matters if the group's ended entry was also evicted (plain entries go first). Needs a step larger than the uptime, which is realistic only right after start (a host that boots with a fast clock and is corrected by NTP a few minutes later). **L11**. |
+| Old-process token with `term >= recoveredAt` (term bumped ahead of `now` by `prev + 1`, or skew) | Would break the invariant `anchorTerm < recoveredAt`, so no supersede ever: fail closed, but untested. **L11** (one-line clamp). |
+| Ended-groups eviction of a **plain** entry | Safe: a group created in this process has only tokens issued here (fence). A guarded entry past `guardUntil` is safe too: every pre-restart leader token has `lat <= processStartedAt` (NTP), so it is `lat`-expired by `processStartedAt + limit + refresh.maxMs + skew`. Same app config in both checks. Holds. |
+| Pre-restart **member** token of a group whose guarded entry passed its guard and was evicted | `waiting`, parks until the parking timeout. No leader can recreate (old leader tokens `lat`-expired, new ones fenced). Harmless; `tokens.check` says `waiting` for an ended group. Accepted. |
+| **Cap rule (b), "recovery closed for the app"**: can an attacker deny service to other groups? | Yes, in a narrow window, and **across apps**: `EndedGroups` is one map for every namespace, and rule (b) evicts the **oldest** guarded entry, which closes recovery for **that entry's** namespace, not the flooder's. **M5**. |
+| Order of `tokens.check` vs resume | One `classifyToken` for both (6.9). Resume classifies and recreates under the group lock (`group-service.ts` resume, `locks.run`), so the entry, fence and closure reads and the recreation are atomic. `tokens.check` reads outside the lock but changes nothing. Holds; code-mode check that the new `ended` / `issuedHere` / `recoveryClosed` inputs are read inside the lock in resume. |
+| Races at the moment a group empties (joins, resumes, approvals) | Join, resume and admit run under the same group lock as the end, and the end releases codes and fails pending approvals inside the lock. A resume after the end hits the entry or the fence. Holds. **One race does not**: a stale socket close processed after the same participant's new session resumed. **L12**. |
+| New `canSupersede` | Holds. The only tokens issued in this process with `term < recoveredAt` are the recreator's refreshed / member tokens carrying the recreation term, which equals the anchor (guard 4 is strict) or is below a later anchor. Every grant has `term >= recoveredAt` (floor). Equal terms never supersede (row 7). Member tokens never supersede (role). |
+| Second recreation inside one process | Impossible: entry first, then the fence for tokens issued here, the guard for pre-restart tokens, and closure if a guarded entry must go. |
+| Stale recreator empties or ends the group before the real leader arrives (row 13) | It can end it for good in this process. That is the M4 residual, already listed (section 11). Availability only. |
+| Two server instances running at once on one keyring (rolling or blue/green deploy) | The restart model breaks: the old process can keep minting grants with terms above the new process's `recoveredAt`, and the two can both host a group. **L13** (operating assumption, docs only). |
+
+### Medium (advisory, fix made a required control: RC20)
+
+**M5. A flood of guarded ended entries closes recovery for other apps after a restart.**
+Location: architecture.md 6.9 layer 3 (b), `ended-groups.ts` (one global map).
+Scenario: an attacker in any app keeps creating groups and ending them (there
+is no `group.create` budget today) so that, whenever an operator restarts,
+it holds a large stock of old-process leader tokens with fresh `lat`. In the
+~25 min after the restart it recreates and ends them (resume + `group.end`)
+until 100 000 guarded entries fill the map. From then on each new guarded
+entry evicts the oldest guarded one, which closes recovery for **that
+entry's** namespace. Honest apps whose recovered groups ended early in the
+window get closed first. While closed, their not-yet-recovered groups' tokens
+get `ended`, and clients delete them, so those groups are lost. No control
+is gained (it fails closed), the window is bounded by `guardUntil`, and it
+needs heavy volume timed around a restart the attacker can't trigger. Hence
+medium, not high.
+Fix (RC20, commit 2a): at rule (b), evict the oldest guarded entry of the
+namespace that holds the **most** guarded entries (keep a per-namespace
+count), so closure lands on the flooding app. Also add a per-connection
+budget for recreating resumes (for example the join-attempt budget), which
+slows the stock-up and the fill. Unit test: two namespaces, cap 3, the one
+with more guarded entries is closed, the other is not.
+
+### Low (advisory; L11 and L12 made required controls RC18, RC19)
+
+**L11. The fence and the anchor invariant depend on the clock without a floor.**
+Location: 6.9 layer 2, 6.6 "Recreation", `token-service.ts` `issue`.
+(a) A clock step back during the process to before `processStartedAt` makes
+new tokens look pre-restart. Combined with an evicted plain entry, such a
+token could recreate the ended group in the same process (the H2 class, under
+a clock fault). (b) A pre-restart token with `term >= now` at recreation
+(skew, or `prev + 1` bumps) gives `anchorTerm >= recoveredAt`.
+Fix (RC18): `issue` uses `iat = max(floor(now/1000),
+floor(processStartedAt/1000))`. If the step is larger than the skew, such
+tokens then fail plausibility, which fails closed. At recreation,
+`recoveredAt = max(now, claims.term + 1)`. Tests: injected clock stepped
+below the start, entry evicted, then the token gets `ended`; recreation with
+`claims.term = now + 5` keeps `anchorTerm < recoveredAt`.
+
+**L12. A late close of a participant's old socket can end a group that has a connected session.**
+Location: 6.9 trigger, `group-service.ts` `disconnect` (ownership check by
+`notifier.unregister` runs **before** the lock), `leaderOffline`.
+Scenario: the client reconnects and sends `group.resume` on a new socket. The
+old socket's close is processed while that resume waits for the lock:
+`unregister` still succeeds (the old session owns the key), the resume runs
+first (leader return, new session registered), then the queued disconnect
+marks the leader offline and, with nobody else connected, ends the group
+`empty`. The leader is attached, which the "no frame, nobody attached"
+assumption excludes. Today that is a recoverable drop. With D15 it is a
+permanent end. Members have the same race. Availability only, no attacker
+control, rare.
+Fix (RC19, commits 2/2a): inside the lock, before pausing or ending, check
+that no open session is registered for that `(group, pid)`
+(`isParticipantConnected`), and return if one is. `endGroup(..., 'empty')`
+asserts `connectedCount === 0` and no attached session. Test with the
+scheduler holding the lock across the resume and the close.
+
+**L13. Single-instance assumption not stated.**
+The restart rule and the fence assume the old process has stopped issuing
+before the new one serves (no overlap on one keyring). Fix: add one sentence
+to the README operating assumptions (RC14/RC16 docs chunk): stop the old
+instance before starting the new one; no replicas.
+
+### Accepted residuals (not findings)
+
+- **R-2R** (6.6.3 row 19): see the Q-F recommendation below.
+- **M4 window** after a single restart, including "stale recreator ends the
+  group by emptying it" (row 13).
+- **Clock step back across a restart** (L10): stated, NTP assumption.
+- **Ended-groups memory lost on restart** (row 18, #5).
+- **Product cost of D15**: a solo leader's blip or a shared Wi-Fi outage
+  ends the group. In frozen mode, the last connected member can now end a
+  group whose leader is briefly offline by leaving or disconnecting. Before,
+  that was a recoverable drop. This is availability and was decided by the
+  user. Q-G softens it.
+
+### Gate 2 Q-F (close R-2R with an `rcv` claim): security recommendation **No**
+
+R-2R needs, all at once: two operator restarts inside one leader's `lat`
+window (~25 min, at most ~65); a **malicious** former leader who kept its old
+leader token (an honest client replaces it with a member token on
+`leader.lost` / member resume, and deletes it on removal); that party online
+right after restart 1 and before the real leader; a P2 grant (accomplice or
+second identity plus the 30 s grace); and the real leader absent for **all**
+of P2 (if it connects during P2 it supersedes, row 1). The impact is one
+group taken over for good. Restarts are operator actions, so it is
+acceptable as a documented residual, with operator guidance: avoid a second
+restart within inactivity limit + refresh slack of the first while groups
+are live (a deploy followed by a quick rollback is the realistic case).
+
+Q-F as written is **worse**, not just costlier. With `rcv`, after a second
+restart only tokens from the first process can recreate. Example: P1 A -> B,
+B removes A. P2: B recreates honestly and its tokens get `rcv`. P3: B can't
+recover, and A's kept P1 token (still inside its `lat` window) **recreates
+and leads, and nothing can supersede it**. That is the H1 impact with fewer
+preconditions than R-2R: no accomplice, and no need for the real leader to
+stay away. The architect's "recovers it to that older leader" is this case.
+Under the plan as written, the same P3 sequence is correct (B's or its
+successor's P2 term is above A's and below `recoveredAt`, so it supersedes A).
+Closing R-2R properly needs server persistence or the lineage path, both
+out of scope by user decision. **Recommend: do not take Q-F; accept R-2R
+with the README note** (already in 10) plus the operator guidance above.
+
+### Gate 2 Q-G (hold an empty group for the grace period): **safe to choose, with controls RC21**
+
+The record stays in memory during the hold and leaves only through
+`endGroup('empty')`, with the same entry, guard and fence. So nothing is
+dropped and nothing can be recreated in the process, and H1-H3 do not come
+back. Supersede during the hold follows 6.6.1 as for any live record. Two
+real risks need controls:
+
+1. **Ownerless-group capture.** During the hold nobody is connected. A
+   stranger who joins by code or QR becomes the only connected member and,
+   in `auto` mode, the successor when the grace ends. They get the codes,
+   the block list and removal power. Today there is no such window (it ends),
+   and with members connected the stranger is last in admission order.
+2. **Lingering records.** Grace end with no candidate today means "act like
+   frozen: stay paused until the frozen bound" (~25 min). Applied to an empty
+   group, that would keep ownerless records (and their join codes) for 25 min
+   instead of 30 s.
+
+Required controls if Q-G is chosen (**RC21**, commit 2a, `empty-end.int`):
+- (a) While held (leader offline and `connectedCount === 0`), every new
+  admission is refused: code, QR, `join.approve`, the admit-step re-check.
+  Use exactly the locked-group path (D14 order, byte-identical
+  `GROUP_LOCKED`) so the hold is no new oracle. Only token resumes (D4,
+  block list applies) may re-attach.
+- (b) One deadline: the hold uses the existing `pause.graceEndsAt`. A resume
+  during the hold never extends it ("keeps its earlier `graceEndsAt`", 6.4).
+  The hold length is the app's `disconnectGraceSeconds` (ceiling-bounded).
+- (c) At that deadline, under the lock, re-read the record. If still nobody
+  is connected, `endGroup('empty')` at once, in **both** `auto` and `frozen`
+  mode. Never fall back to the frozen bound for an empty group. If someone is
+  connected, the normal 6.4 path (handoff or frozen) applies.
+- (d) Handoff candidates stay as in 6.5 (the displaced leader is never one).
+  A member resuming during the hold may become the successor at the deadline,
+  which is today's `auto` behavior for a connected member.
+- (e) Max session, frozen-end and limiter cleanup unchanged; the L12 re-check
+  (RC19) applies to the hold trigger too; stale-timer check by
+  `term` / `pause`.
+- (f) Tests: a code/QR/approval during the hold gets `GROUP_LOCKED` and no
+  admission; the leader returns inside the hold and keeps the lead with no
+  role change; a member resumes inside the hold and the handoff happens at
+  the original deadline (not later); a frozen-mode empty group ends at the
+  hold deadline; held then ended, then resume and `tokens.check` give
+  `ended`; a recreated group (after a simulated restart) held, then B
+  supersedes inside the hold.
+
+Memory: held records are bounded by connection churn x 30 s. That is less
+than an attacker holding connections open today. #12 remains the general
+cap. No extra control needed beyond (c).
+
+### Required controls: changes in round 4
+
+| # | Control | Commit(s) |
+|---|---|---|
+| RC17 (confirmed) | As in 6.9; plus: the resume path reads the entry, `issuedHere` and `recoveryClosed` inside the group lock; the refresher keeps using `issue` (new `iat`), never `resign`. | 2a |
+| RC18 (L11) | `iat` floored at `floor(processStartedAt/1000)` in `issue`; `recoveredAt = max(now, claims.term + 1)`; the two tests in L11. | 1/2a, 13 |
+| RC19 (L12) | Under the lock, the empty trigger (and any pause on disconnect) returns if an open session is registered for that pid; `endGroup('empty')` asserts nobody is attached; race test. | 2, 2a |
+| RC20 (M5) | Cap rule (b) evicts from the namespace with the most guarded entries; per-connection budget on recreating resumes; two-namespace unit test. | 2a |
+| RC21 (Q-G, only if chosen) | Hold controls (a)-(f) above. | 2a |
+| RC14/RC16 (docs) | README adds: single instance, stop the old one before starting the new one (L13); operator guidance for R-2R (no second restart within inactivity limit + refresh slack while groups are live). | 23 |
+
+### What I will check in code mode (additions)
+
+- The 6.9 classification order, identical for `tokens.check` and resume, and
+  resume's inputs read under the lock.
+- No `dropGroup` left; every former site calls `endGroup(..., 'empty')`
+  behind the RC19 re-check; no `group.ended` frame for `empty`.
+- `EndedGroups`: two maps, `remember` deletes the ref from both before
+  re-inserting, the eviction order, per-namespace closure (RC20), warning
+  rate, sweep.
+- `canSupersede` matches 6.6.1 and the 12.1 table, `nextTerm` floor, RC18
+  clamps, the invariant `anchorTerm < recoveredAt`.
+- The R-2R test exists and asserts today's outcome; the Q-G tests if chosen.

@@ -6,7 +6,7 @@
 - Plan approved by user: no
 - QA loops: 0
 - Security-sensitive: yes
-- Last updated by: pm
+- Last updated by: security
 ## Gate 1 decisions
 - User accepted every recommended default Q1.1-Q7 as written in `spec.md`,
   with one change: Q5.5 display names use the existing strict #10 rule
@@ -79,3 +79,4 @@
 - security plan (round 3): opus (rule) → FAIL
 - architect revise (round 4 input): opus (rule: fix after failed review) → DONE
 - pm spec update (rescope): sonnet (default) → DONE
+- security plan (round 4): opus (rule) → PASS
