@@ -5,7 +5,8 @@
 - PR: #14 (draft)
 - Plan approved by user: no
 - QA loops: 0
-- Last updated by: security
+- Security-sensitive: yes
+- Last updated by: architect
 ## Gate 1 decisions
 - User accepted every recommended default Q1.1-Q7 as written in `spec.md`,
   with one change: Q5.5 display names use the existing strict #10 rule
@@ -24,6 +25,16 @@
 - Security round 3: FAIL on H3 (same-`rt` laundering of an in-line grant
   through a second recreation); fix = lineage path `lin` replacing `rt`
   (`security.md` "Round 3"). Advisories L9, L10.
+- Plan revision 3 done (rescope per user decision): needs security plan
+  re-check (round 4) before Gate 2. New Gate 2 questions in
+  architecture.md 14.3: Q-F (close the two-restart residual R-2R with a
+  `rcv` claim, so a group survives at most one restart; recommended: no,
+  accept the residual) and Q-G (hold an empty group for the grace period
+  instead of ending it at once; not planned, offered because of the
+  solo-leader blip impact).
+- Spec impact (architecture.md section 15): AC14, AC19, AC21, AC26, AC27,
+  AC37, AC45 and decision 6 need new wording; `spec.md` not edited by the
+  architect. User / `pm` to apply.
 ## Deviations from plan
 - Board: `.claude/github-project.env` had an empty `GH_PROJECT_NUMBER`; the card was added to project 8 ("sync system") with a temporary config copy. Restored to 8 on this branch in 8880f2d.
 - Plan revision 1 (after security round 1): H1 closed in architecture.md 6.6
@@ -44,6 +55,21 @@
   polling, H2b drop/restart, repeated drop), row 9 rewritten; truth tables in
   `resume.test.ts`. Commit 13 renamed to "supersede a stale leader by
   recovery anchor"; section 11 says "after a restart or a drop".
+- Plan revision 3 (user decision after 3 failed security plan rounds,
+  H1/H2/H3: "simplify the scope"): rescoped recovery. Takeover/supersede by
+  token only after a server restart; a group that empties in a running
+  process ends (`empty`) and can't be recreated in that process (ended-groups
+  entry with TTL = max-session deadline and a `guardUntil` for groups
+  recreated in this process, a stateless `iat >= processStartedAt` fence,
+  fail-closed cap with per-namespace recovery closure; `tokens.check` and
+  resume share one classification order). Supersede rule:
+  `recoveredAt` defined, leader token of another pid,
+  `anchorTerm < term < recoveredAt`, `lat`/max session; `nextTerm` floored at
+  `recoveredAt`. `rt` claim, `(rt, term)` anchor and the lineage proposal
+  dropped. L9 (exists fallback re-classifies, RC15) and L10 (clock residual
+  stated plainly, NTP + restart assumptions in README, RC16) fixed. New RC17
+  and commit 2a (`feat(server)!: end a group that empties instead of
+  dropping it`). Two-restart residual R-2R documented (6.6.3 row 19).
 ## Model log
 - architect planning: opus (default for architect; pm NEXT_MODEL opus) → DONE; recommends opus for engineer (Implementer model: opus)
 - security plan review: opus (rule: security always opus) → FAIL (H1); recommends opus for architect revision
@@ -51,3 +77,4 @@
 - security plan review round 2: opus → FAIL (H2: drop-without-restart and same-rt ordering defeat supersede; fix = recoveredAt + (rt, term) anchor); recommends opus for architect revision
 - architect revise (round 3 input): opus (rule: fix after failed review) → DONE
 - security plan (round 3): opus (rule) → FAIL
+- architect revise (round 4 input): opus (rule: fix after failed review) → DONE
