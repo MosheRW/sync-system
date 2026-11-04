@@ -1,13 +1,13 @@
 # State: #10 Join methods A-D (door code, approval, alphanumeric, QR)
 - Path: full
-- Phase: validation (fix round 3 done, awaiting review round 4)
+- Phase: validation (review round 4 QA PASS)
 - Branch: feat/10-join-methods
 - PR: #11 (ready for review)
 - Plan approved by user: yes (Gate 2, with decisions Q-A to Q-E below)
 - Security-sensitive: yes (door codes, approval, brute-force limits, QR ticket signing, codes blob, removal of join by group ID)
-- Review rounds: 3 (code review); security plan review rounds: 3 (round 1 FAIL, round 2 PASS, round 3 targeted PASS)
-- QA verdict: FAIL (round 3, head 81726e5)
-- Last updated by: engineer (fix round 3)
+- Review rounds: 4 (code review); security plan review rounds: 3 (round 1 FAIL, round 2 PASS, round 3 targeted PASS)
+- QA verdict: PASS (round 4, head 712b234)
+- Last updated by: qa (review round 4)
 
 ## Notes
 - PRD item 4 of 9. "item N" in spec.md means PRD item N, not GitHub issue N.
@@ -186,6 +186,24 @@ Recorded in architecture.md section 12 (plan revision 2).
 - Checks: lint, typecheck, test (protocol 186, server 912, client 538),
   build and `pnpm audit --audit-level=high` all exit 0. No dependency
   changes.
+
+## QA validation (round 4, head 712b234)
+- Verdict: PASS (review comment on PR #11).
+- Checks: install --frozen-lockfile, lint, typecheck, test (protocol 186,
+  server 912, client 538), build and `pnpm audit` all exit 0; CI `check`
+  2/2 pass.
+- Round 3 findings closed: QA-1 (tags only in the 3 RGI flags; hidden-text
+  payloads rejected, verified by probe and tests), QA-2 (`msg` redacted).
+- Behaviour changes accepted: log calls keep `errorCode`, `closeCode` and
+  `err: safeErr(err)` (name/code kept); value-shape redaction keeps
+  namespace, groupRef, counts and every error-code literal; safeErr
+  returns no frames when the message is not in the stack.
+- Acceptance criteria: 45/45 met. AC20 judged with the Gate 3 ZWNJ/ZWJ
+  decision.
+- Notes (non-blocking): a 6-digit namespace is logged as `[Redacted]`
+  (over-redaction); value-shape redaction is string-only (codes are
+  strings in the protocol); confusables, RTL and Unicode-data differences
+  are inherent.
 
 ## Open questions
 - none (M2 is tracked as issue #12).
