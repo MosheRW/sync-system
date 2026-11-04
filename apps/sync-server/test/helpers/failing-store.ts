@@ -1,4 +1,5 @@
 import type { JsonValue } from '@sync-system/protocol';
+import type { GroupCodes } from '../../src/joins/codes.js';
 import type {
   AddParticipantResult,
   GroupRecord,
@@ -24,6 +25,15 @@ export class FailingStore implements GroupStore {
       this.failing.delete(method);
       throw new Error(message);
     }
+  }
+
+  async setCodes(
+    namespace: string,
+    id: string,
+    codes: GroupCodes,
+  ): Promise<GroupRecord | undefined> {
+    this.check('setCodes');
+    return this.inner.setCodes(namespace, id, codes);
   }
 
   async create(group: GroupRecord): Promise<void> {

@@ -30,7 +30,12 @@ describe('RequestTracker (AC17)', () => {
     const update = callbacks();
     const joinId = tracker.nextId();
     const updateId = tracker.nextId();
-    tracker.add(joinId, { kind: 'group.join', timeoutKind: 'drop', timeoutMs: 1000, ...join });
+    tracker.add(joinId, {
+      kind: 'group.joinByCode',
+      timeoutKind: 'drop',
+      timeoutMs: 1000,
+      ...join,
+    });
     tracker.add(updateId, {
       kind: 'position.update',
       timeoutKind: 'ack',
@@ -42,7 +47,7 @@ describe('RequestTracker (AC17)', () => {
     tracker.take(updateId)?.resolve({ type: 'position.ack' });
     expect(update.resolve).toHaveBeenCalledWith({ type: 'position.ack' });
     expect(join.resolve).not.toHaveBeenCalled();
-    expect(tracker.take(joinId)?.kind).toBe('group.join');
+    expect(tracker.take(joinId)?.kind).toBe('group.joinByCode');
     expect(tracker.take(joinId)).toBeUndefined();
     expect(tracker.size).toBe(0);
     expect(vi.getTimerCount()).toBe(0);
@@ -84,7 +89,7 @@ describe('RequestTracker (AC17)', () => {
     const a = callbacks();
     const b = callbacks();
     tracker.add(tracker.nextId(), {
-      kind: 'group.join',
+      kind: 'group.joinByCode',
       timeoutKind: 'drop',
       timeoutMs: 1000,
       ...a,

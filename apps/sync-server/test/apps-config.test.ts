@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -41,6 +41,9 @@ describe('parseAppsConfig', () => {
           maxConnections: 50,
           maxSessionMinutes: 120,
           inactivityLimitMinutes: 10,
+          joinMethods: ['D', 'B'],
+          qrTicketSeconds: 600,
+          approvalTimeoutSeconds: 60,
         }),
       ),
       env,
@@ -55,6 +58,9 @@ describe('parseAppsConfig', () => {
       maxConnections: 50,
       maxSessionMinutes: 120,
       inactivityLimitMinutes: 10,
+      joinMethods: ['B', 'D'],
+      qrTicketSeconds: 600,
+      approvalTimeoutSeconds: 60,
     });
     expect(JSON.stringify(loaded)).not.toContain(KEY_A);
   });
@@ -68,6 +74,9 @@ describe('parseAppsConfig', () => {
       maxConnections: 1000,
       maxSessionMinutes: 180,
       inactivityLimitMinutes: 20,
+      joinMethods: ['A', 'D'],
+      qrTicketSeconds: 300,
+      approvalTimeoutSeconds: 120,
     });
   });
 
@@ -85,6 +94,8 @@ describe('parseAppsConfig', () => {
       MAX_BUFFERED_BYTES: '65536',
       MAX_SESSION_MINUTES_CEILING: '90',
       INACTIVITY_LIMIT_MINUTES_CEILING: '5',
+      QR_TICKET_SECONDS_CEILING: '60',
+      APPROVAL_TIMEOUT_SECONDS_CEILING: '20',
     });
     const [loaded] = parseAppsConfig(config(app()), low);
     expect(loaded).toMatchObject({
@@ -94,6 +105,8 @@ describe('parseAppsConfig', () => {
       maxConnections: 100,
       maxSessionMinutes: 90,
       inactivityLimitMinutes: 5,
+      qrTicketSeconds: 60,
+      approvalTimeoutSeconds: 20,
     });
   });
 
@@ -104,6 +117,8 @@ describe('parseAppsConfig', () => {
     ['maxConnections', 10000, 'MAX_APP_CONNECTIONS_CEILING'],
     ['maxSessionMinutes', 480, 'MAX_SESSION_MINUTES_CEILING'],
     ['inactivityLimitMinutes', 60, 'INACTIVITY_LIMIT_MINUTES_CEILING'],
+    ['qrTicketSeconds', 3600, 'QR_TICKET_SECONDS_CEILING'],
+    ['approvalTimeoutSeconds', 600, 'APPROVAL_TIMEOUT_SECONDS_CEILING'],
   ] as const;
 
   for (const [field, ceiling, ceilingName] of ceilingCases) {
@@ -124,6 +139,75 @@ describe('parseAppsConfig', () => {
     expect(errorOf(config(app({ maxLeaderUpdatesPerSecond: 1.5 }))).message).toContain(
       'maxLeaderUpdatesPerSecond',
     );
+  });
+
+  it('enforces the join timer minimums (#10 AC3)', () => {
+    expect(errorOf(config(app({ qrTicketSeconds: 29 }))).message).toBe(
+      'apps.json: apps[0] (namespace "reading-app"): qrTicketSeconds must be an integer >= 30',
+    );
+    expect(errorOf(config(app({ approvalTimeoutSeconds: 14 }))).message).toBe(
+      'apps.json: apps[0] (namespace "reading-app"): approvalTimeoutSeconds must be an integer >= 15',
+    );
+    const [loaded] = parseAppsConfig(
+      config(app({ qrTicketSeconds: 30, approvalTimeoutSeconds: 15 })),
+      env,
+    );
+    expect(loaded).toMatchObject({ qrTicketSeconds: 30, approvalTimeoutSeconds: 15 });
+  });
+
+  describe('joinMethods (#10 AC2)', () => {
+    it('defaults to A and D intersected with JOIN_METHODS_ALLOWED', () => {
+      const onlyD = parseEnv({ JOIN_METHODS_ALLOWED: 'C,D' });
+      expect(parseAppsConfig(config(app()), onlyD)[0]?.joinMethods).toEqual(['D']);
+      const all = parseAppsConfig(config(app()), env)[0];
+      expect(all?.joinMethods).toEqual(['A', 'D']);
+      expect(Object.isFrozen(all?.joinMethods)).toBe(true);
+    });
+
+    it('is required when the env allows neither A nor D', () => {
+      const err = errorOf(config(app()), parseEnv({ JOIN_METHODS_ALLOWED: 'B,C' }));
+      expect(err.message).toBe(
+        'apps.json: apps[0] (namespace "reading-app"): joinMethods is required because JOIN_METHODS_ALLOWED does not include A or D',
+      );
+      const ok = parseAppsConfig(
+        config(app({ joinMethods: ['C'] })),
+        parseEnv({ JOIN_METHODS_ALLOWED: 'B,C' }),
+      );
+      expect(ok[0]?.joinMethods).toEqual(['C']);
+    });
+
+    it('rejects a method the env does not allow, naming the app, field and method', () => {
+      const err = errorOf(
+        config(app({ joinMethods: ['A', 'C'] })),
+        parseEnv({ JOIN_METHODS_ALLOWED: 'A,D' }),
+      );
+      expect(err.message).toBe(
+        'apps.json: apps[0] (namespace "reading-app"): joinMethods "C" is not in JOIN_METHODS_ALLOWED',
+      );
+    });
+
+    it.each([[[]], [['A', 'A']], [['E']], [['a']], ['A'], [[1]], [['A', 'B', 'C', 'D', 'A']]])(
+      'rejects joinMethods %j',
+      (joinMethods) => {
+        const err = errorOf(config(app({ joinMethods })));
+        expect(err.message).toContain(
+          'apps[0] (namespace "reading-app"): joinMethods must be a non-empty array of distinct methods "A", "B", "C", "D"',
+        );
+      },
+    );
+
+    it('keeps the canonical order', () => {
+      const [loaded] = parseAppsConfig(config(app({ joinMethods: ['D', 'C', 'A', 'B'] })), env);
+      expect(loaded?.joinMethods).toEqual(['A', 'B', 'C', 'D']);
+    });
+
+    it('parses the example and dev configs with joinMethods', () => {
+      for (const name of ['apps.example.json', 'apps.dev.json']) {
+        const text = readFileSync(new URL(`../../../config/${name}`, import.meta.url), 'utf8');
+        const apps = parseAppsConfig(text, env);
+        for (const loaded of apps) expect(loaded.joinMethods.length).toBeGreaterThan(0);
+      }
+    });
   });
 
   it('reports a missing required field (AC6)', () => {

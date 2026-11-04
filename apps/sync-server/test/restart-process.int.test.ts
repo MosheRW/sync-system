@@ -1,3 +1,4 @@
+import { codesOf } from './helpers/groups.js';
 import { type ChildProcess, spawn } from 'node:child_process';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
@@ -74,7 +75,7 @@ async function connect(url: string): Promise<TestClient> {
   return client;
 }
 
-describe('recovery across a real process restart (#5 AC23)', () => {
+describe('recovery across a real process restart (#5 AC23, #10 AC35)', () => {
   it('recreates the group in a new process with the same secret', { timeout: 90_000 }, async () => {
     const dir = mkdtempSync(join(tmpdir(), 'sync-restart-'));
     const configPath = join(dir, 'apps.json');
@@ -100,7 +101,7 @@ describe('recovery across a real process restart (#5 AC23)', () => {
     leader.send({ type: 'group.create', metadata: { book: 'b' }, position: { page: 1 } });
     const created = await leader.next('group.created');
     const member = await connect(url);
-    member.send({ type: 'group.join', groupId: created.groupId });
+    member.send({ type: 'group.joinByCode', ...codesOf(created.codes) });
     const joined = await member.next('group.joined');
     leader.send({ type: 'position.update', position: { page: 2 } });
     await leader.next('position.ack');
@@ -117,6 +118,7 @@ describe('recovery across a real process restart (#5 AC23)', () => {
       token: created.token,
       metadata: { book: 'b' },
       position: { page: 2 },
+      joinCodes: created.codes.blob,
     });
     const resumed = await newLeader.next('group.resumed');
     expect(resumed).toMatchObject({
@@ -124,7 +126,18 @@ describe('recovery across a real process restart (#5 AC23)', () => {
       participantId: created.participantId,
       recreated: true,
       position: { page: 2 },
+      // Same codes after the restart: the blob verifies with the same secret (#10 AC35).
+      codesChanged: false,
+      codes: {
+        generation: created.codes.generation,
+        groupCode: created.codes.groupCode,
+        doorCode: created.codes.doorCode,
+      },
     });
+    const newcomer = await connect(url);
+    newcomer.send({ type: 'group.joinByCode', ...codesOf(created.codes) });
+    expect(await newcomer.next('group.joined')).toMatchObject({ groupId: created.groupId });
+    newcomer.terminate();
 
     const newMember = await connect(url);
     newMember.send({ type: 'group.resume', token: joined.token });

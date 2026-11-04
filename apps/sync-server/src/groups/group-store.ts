@@ -1,4 +1,5 @@
-import type { JsonObject, JsonValue } from '@sync-system/protocol';
+import type { JoinMethod, JsonObject, JsonValue } from '@sync-system/protocol';
+import type { GroupCodes } from '../joins/codes.js';
 
 /** `has: false` is the explicit "no position yet", so `null` stays a real payload. */
 export type StoredPosition = { has: false } | { has: true; payload: JsonValue };
@@ -26,6 +27,10 @@ export interface GroupRecord {
   leaderOnline: boolean;
   /** Blocked participant IDs (#5 AC26). Never logged. */
   blockList: readonly string[];
+  /** The group's join methods, canonical order, never both A and B (#10 AC5). */
+  joinMethods: readonly JoinMethod[];
+  /** The group's join codes and generations (#10 AC6). Never logged. */
+  codes: GroupCodes;
 }
 
 /**
@@ -96,6 +101,8 @@ export interface GroupStore {
     id: string,
     blockList: readonly string[],
   ): Promise<{ removed: string[] } | undefined>;
+  /** Replaces the group's join codes (#10 AC29, AC30). Returns the updated snapshot. */
+  setCodes(namespace: string, id: string, codes: GroupCodes): Promise<GroupRecord | undefined>;
   delete(namespace: string, id: string): Promise<void>;
 }
 

@@ -22,6 +22,9 @@ export interface TestApp {
   maxConnections?: number;
   maxSessionMinutes?: number;
   inactivityLimitMinutes?: number;
+  joinMethods?: string[];
+  qrTicketSeconds?: number;
+  approvalTimeoutSeconds?: number;
 }
 
 export interface RealServerOptions {

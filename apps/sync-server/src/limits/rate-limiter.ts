@@ -28,6 +28,35 @@ export class SlidingWindowRateLimiter {
     return { ok: true };
   }
 
+  /**
+   * Whether one more event for `key` would be within `limit`, without
+   * recording anything (#10 R1b). Used with `record` for budgets that are
+   * checked before an action and only charged when it fails.
+   */
+  check(key: string, limit: number): RateResult {
+    const now = this.now();
+    const cutoff = now - this.windowMs;
+    const recent = (this.events.get(key) ?? []).filter((time) => time > cutoff);
+    if (recent.length === 0) {
+      this.events.delete(key);
+      return { ok: true };
+    }
+    this.events.set(key, recent);
+    if (recent.length >= limit) {
+      return { ok: false, retryAfterMs: Math.max(1, recent[0]! + this.windowMs - now) };
+    }
+    return { ok: true };
+  }
+
+  /** Records one event for `key` now, whatever the limit (#10 R1b). */
+  record(key: string): void {
+    const now = this.now();
+    const cutoff = now - this.windowMs;
+    const recent = (this.events.get(key) ?? []).filter((time) => time > cutoff);
+    recent.push(now);
+    this.events.set(key, recent);
+  }
+
   forget(key: string): void {
     this.events.delete(key);
   }

@@ -137,10 +137,10 @@ describe('fromServerError', () => {
 describe('invalidServerMessage (L2)', () => {
   it('keeps at most 10 issues of at most 128 characters', () => {
     const issues = Array.from({ length: 50 }, (_, i) => `${'p'.repeat(300)}${i}: invalid_type`);
-    const error = invalidServerMessage(issues, 'group.join');
+    const error = invalidServerMessage(issues, 'group.joinByCode');
     expect(error.details.issues).toHaveLength(10);
     for (const issue of error.details.issues) expect(issue.length).toBeLessThanOrEqual(128);
-    expect(error.request).toBe('group.join');
+    expect(error.request).toBe('group.joinByCode');
   });
 });
 
@@ -148,7 +148,7 @@ describe('error serialization (L3)', () => {
   it('holds no cause, frame, payload or group ID', () => {
     const groupId = 'G'.repeat(43);
     const frame = serverError('GROUP_NOT_FOUND', { groupId, marker: 'PAYLOAD-MARKER' });
-    const error = fromServerError(frame, { request: 'group.join' });
+    const error = fromServerError(frame, { request: 'group.joinByCode' });
     const json = JSON.stringify(error);
     expect(error.cause).toBeUndefined();
     expect(json).not.toContain(groupId);
@@ -164,6 +164,8 @@ describe('per-request texts for shared codes (#7 A1, aligned with the server)', 
     ['NOT_LEADER', 'position.update', 'Only the leader can update the position'],
     ['NOT_LEADER', 'group.end', 'Only the leader can end the group'],
     ['NOT_LEADER', 'blocklist.set', 'Only the leader can set the block list'],
+    ['RATE_LIMITED', 'group.joinByCode', 'Too many join attempts'],
+    ['RATE_LIMITED', 'group.joinByQr', 'Too many join attempts'],
   ] as const)('%s for %s: %s', (code, request, text) => {
     expect(fromServerError(serverError(code), { request }).message).toBe(text);
     expect(new SyncClientError(code, { request }).message).toBe(text);
@@ -174,14 +176,17 @@ describe('per-request texts for shared codes (#7 A1, aligned with the server)', 
     expect(new SyncClientError('NOT_LEADER').message).toBe(
       'Only the leader can update the position',
     );
-    expect(fromServerError(serverError('NOT_LEADER'), { request: 'group.join' }).message).toBe(
+    expect(fromServerError(serverError('NOT_LEADER'), { request: 'group.leave' }).message).toBe(
       'Only the leader can update the position',
     );
   });
 
   it('gives each request its own fixed text', () => {
     for (const rows of Object.values(ACTION_MESSAGES)) {
-      const texts = Object.values(rows);
+      // Both join requests share "Too many join attempts", as on the server (#10 4.4).
+      const texts = Object.entries(rows)
+        .filter(([request]) => request !== 'group.joinByQr')
+        .map(([, text]) => text);
       expect(new Set(texts).size).toBe(texts.length);
       for (const text of texts) expect(text).not.toMatch(/[{}$%<>]/);
     }

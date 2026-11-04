@@ -1,4 +1,11 @@
-import type { AppLimits, JsonObject, JsonValue, Role, TokenStatus } from '@sync-system/protocol';
+import type {
+  AppLimits,
+  JoinMethod,
+  JsonObject,
+  JsonValue,
+  Role,
+  TokenStatus,
+} from '@sync-system/protocol';
 import type { ClientErrorCode, SyncClientError } from './errors.js';
 
 /** Why the client is closed (AC24). */
@@ -20,6 +27,7 @@ export type ConnectionState =
       readonly status: 'connected';
       readonly participantId: string;
       readonly namespace: string;
+      readonly joinMethods: readonly JoinMethod[];
       readonly limits: Readonly<AppLimits>;
     }
   | {
@@ -92,6 +100,16 @@ export type GroupState =
       readonly groupId: string;
       readonly reason: GroupEndedReason;
       readonly code?: ClientErrorCode;
+    }
+  | {
+      /**
+       * A method B join request waits for the leader (#10 AC39). No group ID:
+       * the server does not reveal it before admission.
+       */
+      readonly status: 'awaiting_approval';
+      readonly requestId: string;
+      /** Local epoch ms when the server times the request out. */
+      readonly expiresAt: number;
     };
 
 /**
@@ -108,13 +126,35 @@ export interface ConnectedInfo {
   readonly participantId: string;
   /** The app's namespace from `hello.ok` (#5 AC33). */
   readonly namespace: string;
+  /** The join methods the app allows, from `hello.ok` (#10 AC4). */
+  readonly joinMethods: readonly JoinMethod[];
   readonly limits: Readonly<AppLimits>;
+}
+
+/**
+ * A group's join codes, for its leader only (#10 AC6, AC40). Show them to
+ * the people who should join; never log them. The signed recovery copy is
+ * kept by the client and is not exposed.
+ */
+export interface JoinCodes {
+  /** Increases on every code change. */
+  readonly generation: number;
+  /** 6 digits; methods A and B. */
+  readonly groupCode?: string;
+  /** 6 digits; method A. */
+  readonly doorCode?: string;
+  /** 8 characters; method C. */
+  readonly alphaCode?: string;
 }
 
 export interface CreatedGroup {
   readonly groupId: string;
   readonly role: 'leader';
   readonly participantId: string;
+  /** The group's join methods (#10 AC38). */
+  readonly joinMethods: readonly JoinMethod[];
+  /** The group's join codes (#10 AC38). */
+  readonly codes: JoinCodes;
 }
 
 export interface JoinedGroup {
@@ -173,11 +213,90 @@ export interface SyncClientEvents {
   groupEnded: GroupEndedInfo;
   rejoined: ResumedGroup;
   leaderStatus: LeaderStatusEvent;
+  /** Leader: the group's codes changed (#10 AC40). */
+  codesChanged: CodesChangedEvent;
+  /** Leader: someone asks to join (method B, #10 AC19). */
+  joinRequested: JoinRequestedEvent;
+  /** Leader: a request ended without a decision (#10 AC21). */
+  joinWithdrawn: JoinWithdrawnEvent;
+  /** Leader: door-code joining paused after repeated failures (#10 AC29). */
+  joinPaused: JoinPausedEvent;
+  /** Leader: door-code joining works again (#10 AC29, AC30). */
+  joinResumed: JoinResumedEvent;
   error: SyncClientError;
 }
 
+/** Options of `createGroup()` (#10 AC38). */
+export interface CreateGroupOptions {
+  /**
+   * The group's join methods: a non-empty subset of the app's (`hello.ok`),
+   * never both A and B. Omitted: the app's methods minus B when A is allowed.
+   */
+  readonly joinMethods?: readonly JoinMethod[];
+}
+
+/** A QR ticket for the leader to show (#10 AC23, AC40). A bearer credential: never log or persist it. */
+export interface QrTicket {
+  /** Opaque, URL-safe, at most 256 characters. Put it in a URL fragment, not a query string. */
+  readonly ticket: string;
+  /** Local epoch ms when it stops working (local clock + the server's relative lifetime). */
+  readonly expiresAt: number;
+}
+
+/** A pending join request, for the leader's approval prompt (#10 AC19, AC40). */
+export interface JoinRequest {
+  readonly requestId: string;
+  /** Untrusted: render as text only, never as HTML. */
+  readonly displayName?: string;
+  /** Local epoch ms when the request times out. */
+  readonly expiresAt: number;
+}
+
+/** Why the group's codes changed (#10 AC40). */
+export type CodesChangedReason = 'created' | 'resumed' | 'rotated' | 'door_failures';
+
+export interface CodesChangedEvent {
+  readonly groupId: string;
+  readonly codes: JoinCodes;
+  readonly reason: CodesChangedReason;
+}
+
+export interface JoinRequestedEvent extends JoinRequest {
+  readonly groupId: string;
+}
+
+export interface JoinWithdrawnEvent {
+  readonly groupId: string;
+  readonly requestId: string;
+  readonly reason: 'cancelled' | 'disconnected' | 'timeout';
+}
+
+export interface JoinPausedEvent {
+  readonly groupId: string;
+  readonly retryAfterMs: number;
+}
+
+export interface JoinResumedEvent {
+  readonly groupId: string;
+}
+
+/** Options of `joinByCode()` (#10 AC39). */
+export interface JoinOptions {
+  /** Method A: the 6-digit door code. */
+  readonly doorCode?: string;
+  /** Method B: shown to the leader in the approval prompt (1-32 characters). */
+  readonly displayName?: string;
+}
+
+/** Options of `joinByQr()` (#10 AC39). */
+export interface JoinByQrOptions {
+  /** Shown to the leader if the group needs approval (method B). */
+  readonly displayName?: string;
+}
+
 /** What an app shows for the PRD's sync indicator (AC25). */
-export type SyncIndicator = 'none' | 'following' | 'leading' | 'reconnecting' | 'leader_offline';
+export type SyncIndicator =
+  'none' | 'following' | 'leading' | 'reconnecting' | 'leader_offline' | 'awaiting_approval';
 
 /**
  * Maps a snapshot to the indicator (#5 AC36, Q-E; documented in the README):
@@ -189,11 +308,16 @@ export type SyncIndicator = 'none' | 'following' | 'leading' | 'reconnecting' | 
  * - connected, active member, leader offline: `leader_offline`;
  * - connected, active member, leader online: `following`;
  * - connected, active leader: `leading`;
+ * - connected and waiting for a leader's approval: `awaiting_approval`
+ *   (the request is dropped with the connection, so otherwise `none`, #10);
  * - anything else: `none`.
  */
 export function indicatorOf(snapshot: SyncClientSnapshot): SyncIndicator {
   const { connection, group } = snapshot;
   if (group === null || group.status === 'ended') return 'none';
+  if (group.status === 'awaiting_approval') {
+    return connection.status === 'connected' ? 'awaiting_approval' : 'none';
+  }
   if (connection.status === 'connecting' || connection.status === 'reconnecting') {
     return 'reconnecting';
   }

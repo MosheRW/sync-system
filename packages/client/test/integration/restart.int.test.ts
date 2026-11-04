@@ -4,6 +4,7 @@ import { memoryStorage } from '../../src/storage.js';
 import { closeClients, newClient, nextEvent } from '../helpers/int.js';
 import { type RealServer, startRealServer } from '../helpers/real-server.js';
 import { waitUntil } from '../helpers/wait.js';
+import { joinCreated } from '../helpers/join.js';
 
 let server: RealServer | undefined;
 
@@ -22,8 +23,9 @@ describe('recovery across a server restart, client side (#5 AC23, AC35)', () => 
     const { client: member } = newClient(server.url, { storage: memoryStorage() });
     await leader.connect();
     await member.connect();
-    const { groupId } = await leader.createGroup({ book: 'b' }, { page: 1 });
-    await member.joinGroup(groupId);
+    const created = await leader.createGroup({ book: 'b' }, { page: 1 });
+    const { groupId } = created;
+    await joinCreated(member, created);
     const firstUpdate = nextEvent(member, 'positionUpdated');
     leader.updatePosition({ page: 2 });
     await firstUpdate;

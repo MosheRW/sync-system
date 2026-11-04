@@ -4,6 +4,7 @@ import { memoryStorage } from '../../src/storage.js';
 import { closeClients, newClient, nextEvent } from '../helpers/int.js';
 import { type RealServer, startRealServer } from '../helpers/real-server.js';
 import { type TcpProxy, startTcpProxy } from '../helpers/tcp-proxy.js';
+import { joinCreated } from '../helpers/join.js';
 
 let server: RealServer | undefined;
 let proxy: TcpProxy | undefined;
@@ -24,8 +25,9 @@ describe('leader offline and back, client side (#5 AC18, AC19, AC36)', () => {
     const { client: member } = newClient(server.url, { storage: memoryStorage() });
     await leader.connect();
     await member.connect();
-    const { groupId } = await leader.createGroup({ book: 'b' }, { page: 1 });
-    await member.joinGroup(groupId);
+    const created = await leader.createGroup({ book: 'b' }, { page: 1 });
+    const { groupId } = created;
+    await joinCreated(member, created);
     expect(indicatorOf(member.getSnapshot())).toBe('following');
 
     const offline = nextEvent(member, 'leaderStatus', (e) => !e.online);

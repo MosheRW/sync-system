@@ -54,6 +54,10 @@ describe('recreation after a restart (#5 AC23)', () => {
       position: { page: 7 },
       token: expect.any(String) as string,
       recreated: true,
+      // No blob was sent: a full new set of codes (#10 AC33).
+      joinMethods: ['A', 'D'],
+      codes: expect.any(Object) as object,
+      codesChanged: true,
     });
     if (reply.type !== 'group.resumed') throw new Error('expected resumed');
     const fresh = claimsOf(reply.token);
@@ -238,8 +242,8 @@ describe('one group per token (#5 AC27, AC28)', () => {
     const store = new InMemoryGroupStore();
     ts = await startTestServer({ tokenSecrets, store });
     const member = await ts.connectReady();
-    member.send({ type: 'group.join', groupId: group.groupId });
-    expect(await member.next('error')).toMatchObject({ code: 'GROUP_NOT_FOUND' });
+    member.send({ type: 'group.joinByCode', ...group.join });
+    expect(await member.next('error')).toMatchObject({ code: 'CODE_NOT_FOUND' });
     expect(store.size).toBe(0);
   });
 });

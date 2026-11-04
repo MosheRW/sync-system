@@ -13,12 +13,21 @@ const NAMES: Record<string, RegExp> = {
   'tokens.check': /token check/i,
   'group.end': /end the group/i,
   'blocklist.set': /block list/i,
+  'group.joinByCode': /join attempts/i,
+  'codes.rotate': /rotat/i,
+  'join.approve': /approve join/i,
+  'join.deny': /deny join/i,
+  'group.joinByQr': /join attempts/i,
+  'qr.issue': /QR code/i,
 };
 
 describe('per-action error texts (#7 A1)', () => {
   it('gives each action its own text that names the action (AC19)', () => {
     for (const [code, rows] of Object.entries(ACTION_ERROR_TEXT)) {
-      const texts = Object.values(rows);
+      // Both join requests share "Too many join attempts" (#10 4.4).
+      const texts = Object.entries(rows)
+        .filter(([action]) => action !== 'group.joinByQr')
+        .map(([, text]) => text);
       expect(new Set(texts).size, code).toBe(texts.length);
       for (const [action, text] of Object.entries(rows)) {
         expect(text, `${code} ${action}`).toMatch(NAMES[action]!);
@@ -31,11 +40,19 @@ describe('per-action error texts (#7 A1)', () => {
       RATE_LIMITED: {
         'position.update': 'Too many position updates',
         'tokens.check': 'Too many token checks',
+        'group.joinByCode': 'Too many join attempts',
+        'codes.rotate': 'Too many code rotations',
+        'group.joinByQr': 'Too many join attempts',
+        'qr.issue': 'Too many QR code requests',
       },
       NOT_LEADER: {
         'position.update': 'Only the leader can update the position',
         'group.end': 'Only the leader can end the group',
         'blocklist.set': 'Only the leader can set the block list',
+        'codes.rotate': 'Only the leader can rotate the codes',
+        'join.approve': 'Only the leader can approve join requests',
+        'join.deny': 'Only the leader can deny join requests',
+        'qr.issue': 'Only the leader can issue QR codes',
       },
     });
   });

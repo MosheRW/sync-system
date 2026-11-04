@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { SyncClient } from '../../src/client.js';
 import { nextEvent } from '../helpers/int.js';
 import { KEY_A, type RealServer, startRealServer } from '../helpers/real-server.js';
+import { joinCreated } from '../helpers/join.js';
 
 let server: RealServer;
 
@@ -22,8 +23,8 @@ describe("Node's global WHATWG WebSocket, no injection (AC4)", () => {
     try {
       await leader.connect();
       await member.connect();
-      const { groupId } = await leader.createGroup({ book: 'b' });
-      const joined = await member.joinGroup(groupId);
+      const created = await leader.createGroup({ book: 'b' });
+      const joined = await joinCreated(member, created);
       expect(joined.hasPosition).toBe(false);
       const received = nextEvent(member, 'positionUpdated');
       leader.updatePosition({ page: 3 });

@@ -16,6 +16,8 @@ function record(overrides: Partial<GroupRecord> = {}): GroupRecord {
     lastActivityAt: 1,
     leaderOnline: true,
     blockList: [],
+    joinMethods: ['A', 'D'],
+    codes: { generation: 1, ticketGeneration: 1, groupCode: '123456', doorCode: '654321' },
     ...overrides,
   };
 }
@@ -170,7 +172,21 @@ describe('InMemoryGroupStore', () => {
       | 'setLeaderOnline'
       | 'setPosition'
       | 'setBlockList'
+      | 'setCodes'
       | 'delete'
     >();
+  });
+
+  it('replaces the join codes and copies them on read (#10)', async () => {
+    const store = new InMemoryGroupStore();
+    await store.create(record());
+    const codes = { generation: 2, ticketGeneration: 1, groupCode: '123456', doorCode: '111111' };
+    const updated = await store.setCodes('app-a', ID, codes);
+    expect(updated?.codes).toEqual(codes);
+    expect(updated?.codes).not.toBe(codes);
+    const read = (await store.get('app-a', ID))!;
+    expect(read.codes).toEqual(codes);
+    expect(read.joinMethods).toEqual(['A', 'D']);
+    expect(await store.setCodes('app-b', ID, codes)).toBeUndefined();
   });
 });

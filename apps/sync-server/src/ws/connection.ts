@@ -97,7 +97,7 @@ export class Connection implements HeartbeatTarget {
     // Without an 'error' listener, a protocol violation from the peer would
     // throw from the EventEmitter and crash the process (H4).
     ws.on('error', (err: NodeJS.ErrnoException) => {
-      deps.logger.debug({ event: 'ws_error', code: err.code, name: err.name }, 'websocket error');
+      deps.logger.debug({ event: 'ws_error', err: safeErr(err) }, 'websocket error');
     });
     // The client's close reason is never logged (L8).
     ws.on('close', (code: number) => this.onClose(code));
@@ -254,7 +254,7 @@ export class Connection implements HeartbeatTarget {
     const result = checkHello(message, this.deps.registry, this.deps.counter);
     if (!result.ok) {
       this.deps.logger.info(
-        { event: 'handshake_rejected', code: result.code },
+        { event: 'handshake_rejected', errorCode: result.code },
         'handshake rejected',
       );
       this.rejectHandshake(
@@ -272,6 +272,7 @@ export class Connection implements HeartbeatTarget {
       connectionId: this.connectionId,
       app,
       membership: undefined,
+      isOpen: () => !this.closed,
       deliver: (text) => {
         this.transmit(text);
       },
@@ -296,11 +297,15 @@ export class Connection implements HeartbeatTarget {
       participantId: this.connectionId,
       // Not secret: clients key token storage by it (#5 AC33).
       namespace: app.namespace,
+      // The client rejects an unsupported method locally (#10 AC4).
+      joinMethods: [...app.joinMethods],
       limits: {
         maxGroupSize: app.maxGroupSize,
         maxLeaderUpdatesPerSecond: app.maxLeaderUpdatesPerSecond,
         maxMessageBytes: app.maxMessageBytes,
         maxSessionMinutes: app.maxSessionMinutes,
+        qrTicketSeconds: app.qrTicketSeconds,
+        approvalTimeoutSeconds: app.approvalTimeoutSeconds,
       },
     });
   }
@@ -317,8 +322,8 @@ export class Connection implements HeartbeatTarget {
       case 'group.create':
         response = await groups.create(session, message);
         break;
-      case 'group.join':
-        response = await groups.join(session, message);
+      case 'group.joinByCode':
+        response = await groups.joinByCode(session, message);
         break;
       case 'position.update':
         response = await groups.update(session, message);
@@ -337,6 +342,24 @@ export class Connection implements HeartbeatTarget {
         break;
       case 'group.leave':
         response = await groups.leave(session, message);
+        break;
+      case 'codes.rotate':
+        response = await groups.rotateCodes(session, message);
+        break;
+      case 'group.joinByQr':
+        response = await groups.joinByQr(session, message);
+        break;
+      case 'qr.issue':
+        response = await groups.issueQr(session, message);
+        break;
+      case 'join.cancel':
+        response = await groups.cancelJoin(session, message);
+        break;
+      case 'join.approve':
+        response = await groups.approveJoin(session, message);
+        break;
+      case 'join.deny':
+        response = await groups.denyJoin(session, message);
         break;
     }
     this.reply(withReqId(response, message.reqId));
@@ -378,7 +401,7 @@ export class Connection implements HeartbeatTarget {
     this.closed = true;
     clearTimeout(this.handshakeTimer);
     this.deps.counter.closed(this.session?.app.namespace);
-    this.deps.logger.debug({ event: 'ws_closed', code }, 'websocket closed');
+    this.deps.logger.debug({ event: 'ws_closed', closeCode: code }, 'websocket closed');
     const session = this.session;
     const groups = this.deps.groups;
     if (session) {
@@ -406,6 +429,11 @@ function canCarryReqId(message: ServerMessage): boolean {
     message.type === 'tokens.result' ||
     message.type === 'group.ended' ||
     message.type === 'group.left' ||
-    message.type === 'blocklist.ack'
+    message.type === 'blocklist.ack' ||
+    message.type === 'codes.updated' ||
+    message.type === 'join.pending' ||
+    message.type === 'join.decided' ||
+    message.type === 'join.cancelled' ||
+    message.type === 'qr.ticket'
   );
 }

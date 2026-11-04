@@ -12,12 +12,20 @@ const LIMITS = {
   maxLeaderUpdatesPerSecond: 5,
   maxMessageBytes: 4096,
   maxSessionMinutes: 180,
+  qrTicketSeconds: 300,
+  approvalTimeoutSeconds: 120,
 };
 
 const connections: Record<string, ConnectionState> = {
   idle: { status: 'idle' },
   connecting: { status: 'connecting' },
-  connected: { status: 'connected', participantId: 'p', namespace: 'app-a', limits: LIMITS },
+  connected: {
+    status: 'connected',
+    participantId: 'p',
+    namespace: 'app-a',
+    joinMethods: ['A', 'D'],
+    limits: LIMITS,
+  },
   reconnecting: { status: 'reconnecting', attempt: 1, delayMs: 500, retryAt: 0, attempting: false },
   closed: { status: 'closed', reason: 'fatal', error: new SyncClientError('INVALID_API_KEY') },
 };
@@ -43,6 +51,7 @@ const rejoining: GroupState = {
 };
 const rejoiningLeader: GroupState = { ...rejoining, role: 'leader' };
 const waiting: GroupState = { status: 'waiting', groupId: 'g', role: 'member' };
+const awaiting: GroupState = { status: 'awaiting_approval', requestId: 'r', expiresAt: 0 };
 const endedReasons = [
   'ended_by_leader',
   'leader_timeout',
@@ -80,6 +89,11 @@ describe('indicatorOf (#5 AC36, Q-E)', () => {
     ['connected', memberLeaderOffline, 'leader_offline'],
     ['connected', member, 'following'],
     ['connected', leader, 'leading'],
+    // waiting for a leader's approval (#10 AC39)
+    ['connected', awaiting, 'awaiting_approval'],
+    ['reconnecting', awaiting, 'none'],
+    ['connecting', awaiting, 'none'],
+    ['closed', awaiting, 'none'],
     // anything else
     ['idle', null, 'none'],
     ['connected', null, 'none'],

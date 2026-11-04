@@ -1,3 +1,4 @@
+import { codesOf } from './helpers/groups.js';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { GroupRecord } from '../src/groups/group-store.js';
 import { InMemoryGroupStore } from '../src/groups/in-memory-group-store.js';
@@ -64,10 +65,10 @@ describe('inbound message limit (H3)', () => {
     ts = await startTestServer({ env: FLOOD_ENV, now: clock.now });
     const leader = await ts.connectReady();
     leader.send({ type: 'group.create', metadata: {} });
-    const { groupId } = await leader.next('group.created');
+    const { codes } = await leader.next('group.created');
 
     const member = await ts.connectReady();
-    member.send({ type: 'group.join', groupId }); // tokens used: hello, join
+    member.send({ type: 'group.joinByCode', ...codesOf(codes) }); // tokens used: hello, join
     await member.next('group.joined');
     for (let i = 0; i < 3; i++) member.send({ type: 'position.update', position: i });
     await drainErrors(member, 3, 'NOT_LEADER');
@@ -76,9 +77,10 @@ describe('inbound message limit (H3)', () => {
     expect((await member.closed()).code).toBe(4008);
 
     const joiner = await ts.connectReady();
-    for (let i = 0; i < 4; i++) joiner.send({ type: 'group.join', groupId: 'R'.repeat(43) });
-    await drainErrors(joiner, 4, 'GROUP_NOT_FOUND');
-    for (let i = 0; i < 5; i++) joiner.send({ type: 'group.join', groupId: 'R'.repeat(43) });
+    const unknown = codes.groupCode === '000000' ? '000001' : '000000';
+    for (let i = 0; i < 4; i++) joiner.send({ type: 'group.joinByCode', joinCode: unknown });
+    await drainErrors(joiner, 4, 'CODE_NOT_FOUND');
+    for (let i = 0; i < 5; i++) joiner.send({ type: 'group.joinByCode', joinCode: unknown });
     expect(await joiner.next('error')).toMatchObject({ code: 'TOO_MANY_MESSAGES' });
     expect((await joiner.closed()).code).toBe(4008);
   });

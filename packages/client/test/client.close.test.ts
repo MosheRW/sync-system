@@ -1,7 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SyncClient } from '../src/client.js';
 import { isSyncClientError } from '../src/errors.js';
-import { PARTICIPANT_ID, connectedClient, makeClient, serverHandshake } from './helpers/client.js';
+import {
+  CREATED_FIELDS,
+  PARTICIPANT_ID,
+  connectedClient,
+  makeClient,
+  serverHandshake,
+  joinTestGroup,
+} from './helpers/client.js';
 import { FakeWebSocket } from './helpers/fake-websocket.js';
 
 const GROUP_ID = 'G'.repeat(43);
@@ -56,6 +63,7 @@ describe('close() (AC28)', () => {
     const creating = client.createGroup({});
     socket.receive({
       type: 'group.created',
+      ...CREATED_FIELDS,
       token: 'h.p.s',
       reqId: socket.lastMessage().reqId,
       groupId: GROUP_ID,
@@ -75,7 +83,7 @@ describe('close() (AC28)', () => {
 
   it('rejects a pending create/join with CLOSED', async () => {
     const { client } = await connectedClient();
-    const joining = client.joinGroup(GROUP_ID);
+    const joining = joinTestGroup(client);
     client.close();
     expect(isSyncClientError(await rejection(joining), 'CLOSED')).toBe(true);
   });
@@ -98,6 +106,7 @@ describe('close() from a listener inside an internal flow (AC28)', () => {
     const creating = client.createGroup({});
     socket.receive({
       type: 'group.created',
+      ...CREATED_FIELDS,
       token: 'h.p.s',
       reqId: socket.lastMessage().reqId,
       groupId: GROUP_ID,
@@ -110,7 +119,7 @@ describe('close() from a listener inside an internal flow (AC28)', () => {
 
   async function memberClient(): Promise<{ client: SyncClient; socket: FakeWebSocket }> {
     const { client, socket } = await connectedClient();
-    const joining = client.joinGroup(GROUP_ID);
+    const joining = joinTestGroup(client);
     socket.receive({
       type: 'group.joined',
       token: 'h.p.s',
@@ -355,7 +364,7 @@ describe('connect() after a fatal or gave-up close (M5)', () => {
 
   it('resets the group to null on connect() from closed', async () => {
     const { client } = await connectedClient();
-    const joining = client.joinGroup(GROUP_ID);
+    const joining = joinTestGroup(client);
     client.close();
     await rejection(joining);
     vi.advanceTimersByTime(1000);
@@ -396,7 +405,7 @@ describe('no unhandled rejections inside the client (L6)', () => {
       const p = client.connect().catch(() => undefined);
       serverHandshake(FakeWebSocket.last);
       await p;
-      const joining = client.joinGroup(GROUP_ID).catch(() => undefined);
+      const joining = joinTestGroup(client).catch(() => undefined);
       FakeWebSocket.last.receive({
         type: 'group.joined',
         token: 'h.p.s',

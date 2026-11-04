@@ -17,6 +17,18 @@ export type {
   GroupEndedReason,
   GroupState,
   JoinedGroup,
+  JoinOptions,
+  JoinCodes,
+  CreateGroupOptions,
+  QrTicket,
+  JoinRequest,
+  CodesChangedReason,
+  CodesChangedEvent,
+  JoinRequestedEvent,
+  JoinWithdrawnEvent,
+  JoinPausedEvent,
+  JoinResumedEvent,
+  JoinByQrOptions,
   LeaderStatusEvent,
   PositionUpdatedEvent,
   ResumeOptions,
@@ -27,4 +39,11 @@ export type {
   SyncIndicator,
 } from './state.js';
 export { CLIENT_PROTOCOL_VERSION, MIN_SERVER_PROTOCOL_VERSION } from './version.js';
-export type { AppLimits, JsonObject, JsonValue, Role, TokenStatus } from '@sync-system/protocol';
+export type {
+  AppLimits,
+  JoinMethod,
+  JsonObject,
+  JsonValue,
+  Role,
+  TokenStatus,
+} from '@sync-system/protocol';

@@ -2,7 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SyncClient } from '../src/client.js';
 import type { LogFields, SyncClientLogger } from '../src/logger.js';
 import type { SyncClientOptions } from '../src/options.js';
-import { PARTICIPANT_ID, TEST_API_KEY, makeClient, serverHandshake } from './helpers/client.js';
+import {
+  CREATED_FIELDS,
+  PARTICIPANT_ID,
+  TEST_API_KEY,
+  makeClient,
+  serverHandshake,
+} from './helpers/client.js';
 import { FakeWebSocket } from './helpers/fake-websocket.js';
 
 const GROUP_ID = 'G'.repeat(43);
@@ -30,6 +36,7 @@ async function fullFlow(extra: Partial<SyncClientOptions> = {}): Promise<SyncCli
   const creating = client.createGroup({ secret: MARKER }, { page: MARKER });
   socket.receive({
     type: 'group.created',
+    ...CREATED_FIELDS,
     token: 'h.p.s',
     reqId: socket.lastMessage().reqId,
     groupId: GROUP_ID,

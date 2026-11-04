@@ -53,6 +53,43 @@ export const ErrorCode = {
   GROUP_ENDED: 'GROUP_ENDED',
   /** The participant is on the leader's block list (#5 AC17, AC26). */
   PARTICIPANT_BLOCKED: 'PARTICIPANT_BLOCKED',
+  /**
+   * A join method set the app does not allow at group.create, or a QR
+   * ticket requested for a group without method D (#10 AC5, AC23).
+   */
+  JOIN_METHOD_NOT_ALLOWED: 'JOIN_METHOD_NOT_ALLOWED',
+  /** No free join code was found; nothing was created (#10 AC9). */
+  CODES_EXHAUSTED: 'CODES_EXHAUSTED',
+  /**
+   * The code matches no live group of this app, or a group that does not
+   * use that code type. One answer for every cause (#10 AC13).
+   */
+  CODE_NOT_FOUND: 'CODE_NOT_FOUND',
+  /** A method A group code without a door code; not counted as a failure (#10 AC15). */
+  DOOR_CODE_REQUIRED: 'DOOR_CODE_REQUIRED',
+  /** A wrong door code; counted as a door-code failure (#10 AC15). */
+  DOOR_CODE_WRONG: 'DOOR_CODE_WRONG',
+  /**
+   * Door-code joining for this group is paused after repeated door-code
+   * failures; `details.retryAfterMs` (#10 AC29).
+   */
+  JOIN_PAUSED: 'JOIN_PAUSED',
+  /** The leader denied the method B join request (#10 AC21). */
+  JOIN_DENIED: 'JOIN_DENIED',
+  /** The leader did not decide within approvalTimeoutSeconds (#10 AC21). */
+  APPROVAL_TIMEOUT: 'APPROVAL_TIMEOUT',
+  /** The group already has 10 pending join requests; `details.maxPending` (#10 AC22). */
+  APPROVAL_QUEUE_FULL: 'APPROVAL_QUEUE_FULL',
+  /** Approve, deny or cancel of an unknown or already settled request (#10 AC21). */
+  JOIN_REQUEST_NOT_FOUND: 'JOIN_REQUEST_NOT_FOUND',
+  /**
+   * The QR ticket is not valid here: malformed, too long, bad signature,
+   * another app, a group no longer in memory, or a revoked ticket. One
+   * answer for every cause (#10 AC25).
+   */
+  QR_INVALID: 'QR_INVALID',
+  /** A well-formed, correctly signed QR ticket whose time has passed (#10 AC25). */
+  QR_EXPIRED: 'QR_EXPIRED',
 } as const;
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];

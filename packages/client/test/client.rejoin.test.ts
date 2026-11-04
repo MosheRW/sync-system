@@ -3,7 +3,14 @@ import type { SyncClient } from '../src/client.js';
 import { DEFAULT_REQUEST_TIMEOUT_MS } from '../src/options.js';
 import { type TokenStorage, memoryStorage } from '../src/storage.js';
 import type { GroupEndedInfo, LeaderStatusEvent, ResumedGroup } from '../src/state.js';
-import { connectedClient, serverHandshake } from './helpers/client.js';
+import {
+  TEST_CODES,
+  RESUMED_FIELDS,
+  CREATED_FIELDS,
+  connectedClient,
+  serverHandshake,
+  joinTestGroup,
+} from './helpers/client.js';
 import { FakeWebSocket } from './helpers/fake-websocket.js';
 import { fakeToken, groupIdOf } from './helpers/tokens.js';
 
@@ -41,7 +48,7 @@ interface Setup {
 
 async function member(storage: TokenStorage = memoryStorage()): Promise<Setup> {
   const { client, socket } = await connectedClient({ storage });
-  const joining = client.joinGroup(GROUP_ID);
+  const joining = joinTestGroup(client);
   const token = fakeToken({ gid: GROUP_ID, role: 'member' });
   socket.receive({
     type: 'group.joined',
@@ -66,6 +73,7 @@ async function leader(storage: TokenStorage = memoryStorage()): Promise<Setup> {
   const token = fakeToken({ gid: GROUP_ID });
   socket.receive({
     type: 'group.created',
+    ...CREATED_FIELDS,
     reqId: socket.lastMessage().reqId,
     groupId: GROUP_ID,
     participantId: 'leader-pid',
@@ -176,6 +184,8 @@ describe('token rejoin after an unexpected drop (#5 AC35, AC36)', () => {
       metadata: METADATA,
       position: { page: 7 },
       blockList: [],
+      // The codes blob from group.created goes back with the resume (#10 AC32).
+      joinCodes: TEST_CODES.blob,
     });
     next.receive({
       type: 'group.resumed',
@@ -188,6 +198,7 @@ describe('token rejoin after an unexpected drop (#5 AC35, AC36)', () => {
       position: { page: 6 },
       token: fakeToken({ gid: GROUP_ID }),
       recreated: true,
+      ...RESUMED_FIELDS,
     });
     expect(client.getSnapshot().group).toMatchObject({
       status: 'active',

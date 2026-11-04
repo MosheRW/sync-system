@@ -4,6 +4,7 @@ import type { SyncClientError } from '../../src/errors.js';
 import { closeClients, newClient } from '../helpers/int.js';
 import { KEY_A, type RealServer, startRealServer } from '../helpers/real-server.js';
 import { sleep, waitUntil } from '../helpers/wait.js';
+import { joinCreated } from '../helpers/join.js';
 
 let server: RealServer;
 
@@ -27,8 +28,8 @@ describe('leader throttling against the real server (AC21)', () => {
     const { client: member } = newClient(server.url);
     await leader.connect();
     await member.connect();
-    const { groupId } = await leader.createGroup({});
-    await member.joinGroup(groupId);
+    const created = await leader.createGroup({});
+    await joinCreated(member, created);
 
     const errors: SyncClientError[] = [];
     leader.on('error', (e) => errors.push(e));

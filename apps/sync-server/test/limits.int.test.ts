@@ -28,7 +28,7 @@ describe('leader update rate (AC22)', () => {
   }
 
   it('accepts 5 updates per second, rejects the 6th and relays only the accepted', async () => {
-    const { groupId, leader, member } = await setup();
+    const { join, leader, member } = await setup();
     for (let page = 1; page <= 5; page++) {
       leader.send({ type: 'position.update', position: { page } });
       await leader.next('position.ack');
@@ -48,7 +48,7 @@ describe('leader update rate (AC22)', () => {
     await member.expectNoMessage();
 
     const late = await ts!.connectReady();
-    late.send({ type: 'group.join', groupId });
+    late.send({ type: 'group.joinByCode', ...join });
     expect(await late.next('group.joined')).toMatchObject({ position: { page: 5 } });
     expect(leader.isClosed).toBe(false);
   });
@@ -128,11 +128,11 @@ describe('max message size (AC27)', () => {
 
   it('keeps the stored position after an oversized update', async () => {
     await setup();
-    const { groupId, leader } = await createGroupWithMembers(ts!, 0, { position: 'kept' });
+    const { join, leader } = await createGroupWithMembers(ts!, 0, { position: 'kept' });
     leader.send({ type: 'position.update', position: positionOf(5000) });
     expect(await leader.next('error')).toMatchObject({ code: 'MESSAGE_TOO_LARGE' });
     const late = await ts!.connectReady();
-    late.send({ type: 'group.join', groupId });
+    late.send({ type: 'group.joinByCode', ...join });
     expect(await late.next('group.joined')).toMatchObject({ position: 'kept' });
   });
 
@@ -202,10 +202,10 @@ describe('max group size (AC21)', () => {
         { namespace: 'app-b', apiKey: KEY_B },
       ],
     });
-    const { groupId } = await createGroupWithMembers(ts, 2);
+    const { groupId, join } = await createGroupWithMembers(ts, 2);
 
     const extra = await ts.connectReady();
-    extra.send({ type: 'group.join', groupId, reqId: 'full' });
+    extra.send({ type: 'group.joinByCode', reqId: 'full', ...join });
     expect(await extra.next('error')).toEqual({
       type: 'error',
       reqId: 'full',

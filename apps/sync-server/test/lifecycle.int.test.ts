@@ -35,14 +35,14 @@ describe('disconnects (AC17)', () => {
       store,
       apps: [{ namespace: 'app-a', apiKey: KEY_A, maxGroupSize: 2 }],
     });
-    const { groupId, members } = await createGroupWithMembers(ts, 1);
+    const { groupId, join, members } = await createGroupWithMembers(ts, 1);
     const late = await ts.connectReady();
-    late.send({ type: 'group.join', groupId });
+    late.send({ type: 'group.joinByCode', ...join });
     expect(await late.next('error')).toMatchObject({ code: 'GROUP_FULL' });
 
     await members[0]!.close();
     await waitUntil(async () => (await store.get('app-a', groupId))?.participantIds.length === 1);
-    late.send({ type: 'group.join', groupId });
+    late.send({ type: 'group.joinByCode', ...join });
     expect((await late.next('group.joined')).groupId).toBe(groupId);
   });
 

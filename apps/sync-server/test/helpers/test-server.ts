@@ -21,6 +21,9 @@ export interface TestAppInput {
   maxConnections?: number;
   maxSessionMinutes?: number;
   inactivityLimitMinutes?: number;
+  joinMethods?: string[];
+  qrTicketSeconds?: number;
+  approvalTimeoutSeconds?: number;
 }
 
 export const DEFAULT_TEST_APPS: TestAppInput[] = [

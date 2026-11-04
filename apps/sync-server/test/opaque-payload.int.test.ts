@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { TestClient } from './helpers/test-client.js';
 import { type TestServer, startTestServer } from './helpers/test-server.js';
+import { type JoinFields, codesOf } from './helpers/groups.js';
 
 let ts: TestServer;
 
@@ -59,15 +60,21 @@ function nested(depth: number): string {
   return '['.repeat(depth) + ']'.repeat(depth);
 }
 
-async function setup(): Promise<{ leader: TestClient; member: TestClient; groupId: string }> {
+async function setup(): Promise<{
+  leader: TestClient;
+  member: TestClient;
+  groupId: string;
+  join: JoinFields;
+}> {
   const leader = await ts.connectReady();
   leader.sendRaw(frame('group.create', { metadata: METADATA_TEXT }));
-  const { groupId } = await leader.next('group.created');
+  const { groupId, codes } = await leader.next('group.created');
+  const join = codesOf(codes);
   const member = await ts.connectReady();
-  member.send({ type: 'group.join', groupId });
+  member.send({ type: 'group.joinByCode', ...join });
   const joined = await member.next('group.joined');
   expectSameJson(joined.metadata, JSON.parse(METADATA_TEXT));
-  return { leader, member, groupId };
+  return { leader, member, groupId, join };
 }
 
 describe('opaque payloads (AC14)', () => {
@@ -83,22 +90,22 @@ describe('opaque payloads (AC14)', () => {
       // Initial position on create, read back through join.
       const creator = await ts.connectReady();
       creator.sendRaw(frame('group.create', { metadata: '{}', position: json }));
-      const { groupId: createdId } = await creator.next('group.created');
+      const { groupId: createdId, codes } = await creator.next('group.created');
       const joiner = await ts.connectReady();
-      joiner.send({ type: 'group.join', groupId: createdId });
+      joiner.send({ type: 'group.joinByCode', ...codesOf(codes) });
       const joined = await joiner.next('group.joined');
       expect(joined).toMatchObject({ groupId: createdId, role: 'member', hasPosition: true });
       expectSameJson(joined.hasPosition && joined.position, expected);
 
       // Update relayed to a member, then read back by a late joiner.
-      const { leader, member, groupId } = await setup();
+      const { leader, member, join } = await setup();
       leader.sendRaw(frame('position.update', { position: json }));
       await leader.next('position.ack');
       const updated = await member.next('position.updated');
       expectSameJson(updated.position, expected);
 
       const late = await ts.connectReady();
-      late.send({ type: 'group.join', groupId });
+      late.send({ type: 'group.joinByCode', ...join });
       const lateJoined = await late.next('group.joined');
       expect(lateJoined.hasPosition).toBe(true);
       expectSameJson(lateJoined.hasPosition && lateJoined.position, expected);

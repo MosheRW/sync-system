@@ -1,7 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SyncClient } from '../src/client.js';
 import { type SyncClientError, isSyncClientError } from '../src/errors.js';
-import { LIMITS, PARTICIPANT_ID, connectedClient, makeClient } from './helpers/client.js';
+import {
+  CREATED_FIELDS,
+  LIMITS,
+  PARTICIPANT_ID,
+  connectedClient,
+  makeClient,
+  joinTestGroup,
+} from './helpers/client.js';
 import { FakeWebSocket } from './helpers/fake-websocket.js';
 
 const GROUP_ID = 'G'.repeat(43);
@@ -39,6 +46,7 @@ async function leader(limits = LIMITS): Promise<{ client: SyncClient; socket: Fa
   const reqId = socket.lastMessage().reqId;
   socket.receive({
     type: 'group.created',
+    ...CREATED_FIELDS,
     token: 'h.p.s',
     reqId,
     groupId: GROUP_ID,
@@ -56,9 +64,7 @@ describe('calls while not connected (AC11)', () => {
       expect(isSyncClientError(await rejection(client.createGroup({})), 'NOT_CONNECTED')).toBe(
         true,
       );
-      expect(isSyncClientError(await rejection(client.joinGroup(GROUP_ID)), 'NOT_CONNECTED')).toBe(
-        true,
-      );
+      expect(isSyncClientError(await rejection(joinTestGroup(client)), 'NOT_CONNECTED')).toBe(true);
       expect(
         isSyncClientError(
           thrown(() => client.updatePosition(1)),
@@ -85,9 +91,7 @@ describe('calls while not connected (AC11)', () => {
       expect(isSyncClientError(await rejection(client.createGroup({})), 'NOT_CONNECTED')).toBe(
         true,
       );
-      expect(isSyncClientError(await rejection(client.joinGroup(GROUP_ID)), 'NOT_CONNECTED')).toBe(
-        true,
-      );
+      expect(isSyncClientError(await rejection(joinTestGroup(client)), 'NOT_CONNECTED')).toBe(true);
       expect(
         isSyncClientError(
           thrown(() => client.updatePosition(1)),
@@ -136,7 +140,7 @@ describe('reqId matching (AC17)', () => {
 
   it('rejects pending requests with CONNECTION_LOST when the socket drops', async () => {
     const { client, socket } = await connectedClient();
-    const joining = client.joinGroup(GROUP_ID);
+    const joining = joinTestGroup(client);
     socket.serverClose(1006);
     const error = await rejection(joining);
     expect(isSyncClientError(error, 'CONNECTION_LOST')).toBe(true);
@@ -145,21 +149,21 @@ describe('reqId matching (AC17)', () => {
 
   it('a create/join without reply in 10 s rejects REQUEST_TIMEOUT and drops the socket (Q-C)', async () => {
     const { client, socket } = await connectedClient();
-    const joining = client.joinGroup(GROUP_ID);
+    const joining = joinTestGroup(client);
     const error = rejection(joining);
     vi.advanceTimersByTime(9_999);
     expect(socket.closeCalls).toHaveLength(0);
     vi.advanceTimersByTime(1);
     const result = await error;
     expect(isSyncClientError(result, 'REQUEST_TIMEOUT')).toBe(true);
-    if (isSyncClientError(result)) expect(result.request).toBe('group.join');
+    if (isSyncClientError(result)) expect(result.request).toBe('group.joinByCode');
     expect(socket.closeCalls).toHaveLength(1);
     client.close();
   });
 
   it('a reply of the wrong type rejects the request with INVALID_SERVER_MESSAGE', async () => {
     const { client, socket } = await connectedClient();
-    const joining = client.joinGroup(GROUP_ID);
+    const joining = joinTestGroup(client);
     socket.receive({ type: 'position.ack', reqId: socket.lastMessage().reqId });
     expect(isSyncClientError(await rejection(joining), 'INVALID_SERVER_MESSAGE')).toBe(true);
     client.close();
@@ -167,7 +171,7 @@ describe('reqId matching (AC17)', () => {
 
   it('an invalid frame with a pending reqId rejects that request (AC10)', async () => {
     const { client, socket } = await connectedClient();
-    const joining = client.joinGroup(GROUP_ID);
+    const joining = joinTestGroup(client);
     socket.receive({ type: 'group.joined', reqId: socket.lastMessage().reqId, groupId: 5 });
     expect(isSyncClientError(await rejection(joining), 'INVALID_SERVER_MESSAGE')).toBe(true);
     client.close();
@@ -177,8 +181,8 @@ describe('reqId matching (AC17)', () => {
 describe('one group request in flight (L5, R2-L4)', () => {
   it('rejects a second create/join while one is pending, sending one frame', async () => {
     const { client, socket } = await connectedClient();
-    void client.joinGroup(GROUP_ID).catch(() => {});
-    const second = await rejection(client.joinGroup(GROUP_ID));
+    void joinTestGroup(client).catch(() => {});
+    const second = await rejection(joinTestGroup(client));
     const third = await rejection(client.createGroup({}));
     expect(isSyncClientError(second, 'REQUEST_IN_PROGRESS')).toBe(true);
     expect(isSyncClientError(third, 'REQUEST_IN_PROGRESS')).toBe(true);
@@ -188,17 +192,17 @@ describe('one group request in flight (L5, R2-L4)', () => {
 
   it('clears the flag after a server error', async () => {
     const { client, socket } = await connectedClient();
-    const joining = client.joinGroup(GROUP_ID);
+    const joining = joinTestGroup(client);
     socket.receive({ type: 'error', reqId: 'c2', code: 'GROUP_NOT_FOUND', message: 'x' });
     await rejection(joining);
-    void client.joinGroup(GROUP_ID).catch(() => {});
-    expect(socket.lastMessage()).toMatchObject({ type: 'group.join', reqId: 'c3' });
+    void joinTestGroup(client).catch(() => {});
+    expect(socket.lastMessage()).toMatchObject({ type: 'group.joinByCode', reqId: 'c3' });
     client.close();
   });
 
   it('clears the flag after close() and a new connect()', async () => {
     const { client } = await connectedClient();
-    const joining = client.joinGroup(GROUP_ID);
+    const joining = joinTestGroup(client);
     client.close();
     expect(isSyncClientError(await rejection(joining), 'CLOSED')).toBe(true);
     const reconnecting = client.connect();
@@ -212,11 +216,12 @@ describe('one group request in flight (L5, R2-L4)', () => {
       namespace: 'app-a',
       reqId: socket.lastMessage().reqId,
       participantId: 'p2',
+      joinMethods: ['A', 'B', 'C', 'D'],
       limits: LIMITS,
     });
     await reconnecting;
-    void client.joinGroup(GROUP_ID).catch(() => {});
-    expect(socket.lastMessage().type).toBe('group.join');
+    void joinTestGroup(client).catch(() => {});
+    expect(socket.lastMessage().type).toBe('group.joinByCode');
     client.close();
   });
 });
@@ -230,7 +235,7 @@ describe('updatePosition rules (AC18)', () => {
         'NOT_IN_GROUP',
       ),
     ).toBe(true);
-    const joining = client.joinGroup(GROUP_ID);
+    const joining = joinTestGroup(client);
     socket.receive({
       type: 'group.joined',
       token: 'h.p.s',

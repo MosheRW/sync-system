@@ -1,3 +1,4 @@
+import { codesOf } from './helpers/groups.js';
 import { randomBytes } from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
 import { TOKEN_TTL_SECONDS } from '../src/limits/constants.js';
@@ -50,7 +51,7 @@ describe('tokens on create and join (#5 AC5, AC6)', () => {
     scheduler.advance(5_000);
 
     const member = await ts.connectReady();
-    member.send({ type: 'group.join', groupId: created.groupId });
+    member.send({ type: 'group.joinByCode', ...codesOf(created.codes) });
     const joined = await member.next('group.joined');
     expect(verifier.verify(joined.token, 'app-a', scheduler.now()).ok).toBe(true);
     const claims = claimsOf(joined.token);

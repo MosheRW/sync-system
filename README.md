@@ -108,25 +108,35 @@ The server loads its client apps from a JSON file at `SYNC_CONFIG_PATH`.
       "maxMessageBytes": 4096,
       "maxConnections": 1000,
       "maxSessionMinutes": 180,
-      "inactivityLimitMinutes": 20
+      "inactivityLimitMinutes": 20,
+      "joinMethods": ["A", "D"],
+      "qrTicketSeconds": 300,
+      "approvalTimeoutSeconds": 120
     }
   ]
 }
 ```
 
-| Field                       | Required | Default | Rule                                                        |
-| --------------------------- | -------- | ------- | ----------------------------------------------------------- |
-| `namespace`                 | yes      |         | `^[a-z0-9][a-z0-9_-]{0,62}$`, unique.                       |
-| `apiKey`                    | yes      |         | 32-256 characters, unique. Stored only as a sha256 hash.    |
-| `minAppVersion`             | yes      |         | Valid semver. Older clients get `APP_VERSION_TOO_OLD`.      |
-| `maxGroupSize`              | no       | 30      | Integer >= 2, <= `MAX_GROUP_SIZE_CEILING`. Leader counts.   |
-| `maxLeaderUpdatesPerSecond` | no       | 5       | Integer >= 1, <= `MAX_LEADER_UPDATE_RATE_CEILING`.          |
-| `maxMessageBytes`           | no       | 4096    | Integer >= 1, <= `MAX_MESSAGE_SIZE_CEILING`. Per field.     |
-| `maxConnections`            | no       | 1000    | Integer >= 1, <= `MAX_APP_CONNECTIONS_CEILING`.             |
-| `maxSessionMinutes`         | no       | 180     | Integer >= 1, <= `MAX_SESSION_MINUTES_CEILING`. Group life. |
-| `inactivityLimitMinutes`    | no       | 20      | Integer >= 1, <= `INACTIVITY_LIMIT_MINUTES_CEILING`.        |
+| Field                       | Required | Default  | Rule                                                                                              |
+| --------------------------- | -------- | -------- | ------------------------------------------------------------------------------------------------- |
+| `namespace`                 | yes      |          | `^[a-z0-9][a-z0-9_-]{0,62}$`, unique.                                                             |
+| `apiKey`                    | yes      |          | 32-256 characters, unique. Stored only as a sha256 hash.                                          |
+| `minAppVersion`             | yes      |          | Valid semver. Older clients get `APP_VERSION_TOO_OLD`.                                            |
+| `maxGroupSize`              | no       | 30       | Integer >= 2, <= `MAX_GROUP_SIZE_CEILING`. Leader counts.                                         |
+| `maxLeaderUpdatesPerSecond` | no       | 5        | Integer >= 1, <= `MAX_LEADER_UPDATE_RATE_CEILING`.                                                |
+| `maxMessageBytes`           | no       | 4096     | Integer >= 1, <= `MAX_MESSAGE_SIZE_CEILING`. Per field.                                           |
+| `maxConnections`            | no       | 1000     | Integer >= 1, <= `MAX_APP_CONNECTIONS_CEILING`.                                                   |
+| `maxSessionMinutes`         | no       | 180      | Integer >= 1, <= `MAX_SESSION_MINUTES_CEILING`. Group life.                                       |
+| `inactivityLimitMinutes`    | no       | 20       | Integer >= 1, <= `INACTIVITY_LIMIT_MINUTES_CEILING`.                                              |
+| `joinMethods`               | no       | `A`, `D` | Distinct letters `A`-`D`, each in `JOIN_METHODS_ALLOWED`. See [Joining](#joining-methods-a-to-d). |
+| `qrTicketSeconds`           | no       | 300      | Integer >= 30, <= `QR_TICKET_SECONDS_CEILING`. QR ticket life.                                    |
+| `approvalTimeoutSeconds`    | no       | 120      | Integer >= 15, <= `APPROVAL_TIMEOUT_SECONDS_CEILING`.                                             |
 
 - Unknown fields are rejected (catches typos).
+- `joinMethods` omitted means `["A", "D"]` intersected with
+  `JOIN_METHODS_ALLOWED` (an empty result is a startup error naming the app).
+  A listed method the env does not allow is a startup error naming the app,
+  the field and the method; it is never dropped.
 - A value above its env ceiling is a startup error naming the app and field;
   values are never clamped. An omitted value uses `min(default, ceiling)`.
 - Any invalid config makes the server print `Config error: ...` and exit 1.
@@ -140,8 +150,8 @@ openssl rand -base64 32
 ```
 
 An API key identifies an app and selects its limits. In a browser app anyone
-can read it, so it is **not** access control: group IDs (256 random bits) are
-what keeps groups apart in this version.
+can read it, so it is **not** access control: join codes and QR tickets admit
+people to a group, and codes resolve only within their own app.
 
 ### Environment variables
 
@@ -171,6 +181,9 @@ Numeric variables must be positive integers; anything else (empty, `0`, `-1`,
 | `TOKEN_REFRESH_ACTIVITIES`         | `10`                 | Leader updates that allow a token refresh after the min interval.        |
 | `TOKEN_REFRESH_MIN_SECONDS`        | `60`                 | Min seconds between leader token refreshes. <= the max.                  |
 | `TOKEN_REFRESH_MAX_SECONDS`        | `300`                | Max seconds between refreshes (<= 3600); also the recovery slack.        |
+| `JOIN_METHODS_ALLOWED`             | `A,B,C,D`            | Join methods any app may use: distinct `A`-`D`, comma-separated.         |
+| `QR_TICKET_SECONDS_CEILING`        | `3600`               | Ceiling for `qrTicketSeconds`; 30-86400.                                 |
+| `APPROVAL_TIMEOUT_SECONDS_CEILING` | `600`                | Ceiling for `approvalTimeoutSeconds`; 15-3600.                           |
 
 Fixed limits: hello within 5 s, at most 32 queued messages per connection, JSON
 nesting at most 64 levels, heartbeat ping every 30 s, HTTP header timeout 10 s
@@ -204,7 +217,84 @@ the frame being handled); a frame over either cap closes the socket with
 2.1 GiB (2.3 GB), on top of the outbound buffers above. Size the machine for
 both, or lower `MAX_CONNECTIONS`.
 
+### Joining (methods A to D)
+
+Each app picks its join methods (`joinMethods`) within `JOIN_METHODS_ALLOWED`,
+and the leader picks the group's methods at creation (A and B are exclusive
+in one group; the default drops B when A is allowed).
+
+| Method | What the joiner enters                                | Admission              |
+| ------ | ----------------------------------------------------- | ---------------------- |
+| A      | 6-digit group code, then the 6-digit door code        | Direct                 |
+| B      | 6-digit group code (optional display name)            | The leader approves    |
+| C      | 8-character code (`23456789ABCDEFGHJKMNPQRSTUVWXYZ`)  | Direct                 |
+| D      | A QR ticket (signed, expires after `qrTicketSeconds`) | Direct (approval in B) |
+
+Codes are drawn uniformly from the CSPRNG, are unique per app among live
+groups, are freed when a group ends or leaves memory, and are sent only to
+the leader. Input is case-insensitive; spaces and hyphens are ignored. A
+recreated group keeps its codes when the leader's client sends the signed
+codes blob and every code is still free; otherwise it gets a full new set.
+
+Fixed join limits (not configurable):
+
+| Limit                               | Value                                              |
+| ----------------------------------- | -------------------------------------------------- |
+| Join attempts per connection        | 10 per minute (code and QR, any outcome)           |
+| Join attempts per app               | 600 per minute, shared by its connections          |
+| Wrong door codes per app            | 60 per minute (`DOOR_FAILURES_PER_APP_PER_MINUTE`) |
+| Door-code rotation                  | every 5th wrong door code since the last change    |
+| Method A pause                      | 10 minutes after 3 door rotations in 30 minutes    |
+| `codes.rotate` (leader)             | 6 per group per minute                             |
+| `qr.issue` (leader)                 | 6 per connection per minute                        |
+| Pending approvals                   | 10 per group, 1 per connection                     |
+| Code draws before `CODES_EXHAUSTED` | 20                                                 |
+
+**Brute-force reasoning.** Only per-group and per-app limits count: the
+per-connection budgets reset when an attacker reconnects, so they reduce
+noise but are not a security bound.
+
+- _Door code, one targeted group._ The attacker knows the group code (it is
+  shown openly). Every 5th wrong door code rotates it and tells the leader,
+  with no time decay, and the 3rd rotation in 30 minutes pauses method A for
+  10 minutes. Steady state: 5 guesses per 10 minutes, about 720 a day, each
+  batch against a fresh 1-in-10^6 code: about 7 x 10^-4 per day per group,
+  about 10^-4 per 180-minute session.
+- _Door code, spread over all groups of one app._ At most 60 wrong door codes
+  per app per minute: 60 x 1440 x 10^-6 = about **0.086 expected break-ins
+  per app per day** under a nonstop attack (about 1 in 12 days). Such an
+  attack is loud: thousands of door rotations reach leaders, and the server
+  logs `door_failures_app_budget_exhausted` every minute.
+- _Alphanumeric code (C)._ 31^8 = 8.5 x 10^11 codes; with the whole 600/min
+  budget against 1000 live C groups, about 10^-3 per day.
+- _QR tickets._ 256-bit HMAC; replay is bounded by the expiry, by the leader's
+  `codes.rotate` and by a new code set on recreation (door rotations do not
+  revoke them).
+
+A 6-digit door code is a **"same room" control**: the joiner can see the
+screen or hear the leader. Apps that need stronger admission should use C,
+B (leader approval) or D.
+
+Known limits and trade-offs:
+
+- _Pause griefing._ Anyone who knows a group code can keep that group's
+  method A paused (5 wrong codes per 10 minutes). The leader's way out is
+  `codes.rotate`, which lifts the pause; at 60 wrong codes per minute one
+  attacker can keep about 120 groups per app paused.
+- _Wrong-door budget as a lever._ One client can use up an app's 60 wrong
+  door codes per minute; method A joins with a door code in that app then get
+  `RATE_LIMITED` until the minute passes (correct codes are never charged).
+- _Group-code squatting._ Group creation has no per-connection rate or
+  per-app cap yet, so one client could fill an app's 6-digit code space and
+  others would get `CODES_EXHAUSTED`. Tracked in issue #12.
+- _QR tickets are bearer credentials._ Keep `qrTicketSeconds` short; the
+  ceiling allows tickets of up to 24 hours.
+
 ### Upgrading
+
+- **Join by group ID removed (#10):** `group.join` is gone (it gets
+  `INVALID_MESSAGE`) and the client's `joinGroup()` with it. Join with
+  `group.joinByCode` / `joinByCode()` or `group.joinByQr` / `joinByQr()`.
 
 - **`MAX_BUFFERED_BYTES` minimum (since #5):** the server refuses to start
   when `MAX_BUFFERED_BYTES` is below 45056, the largest `tokens.result` reply
@@ -282,8 +372,13 @@ database.
   client deletes its token on end).
 - Leader tokens are refreshed (`token.refreshed`) after activity; member
   tokens are not.
-- The block list binds token identities only. Until join codes (item 4), a
-  blocked person can still join again **by group ID** with a new identity.
+- The block list binds token identities: a blocked participant cannot come
+  back with its old identity on any path. The only way in with a new identity
+  is a current code or QR ticket, so someone who still knows the current codes
+  can join again as a new person; the leader's mitigation is `codes.rotate`.
+- Join codes survive a restart through the leader's client: it keeps the
+  server-signed codes blob and sends it with `group.resume`. Pending approval
+  requests are lost on a restart.
 
 ### Protocol (v1) in brief
 
@@ -296,42 +391,55 @@ and the types are exported by `@sync-system/protocol`.
    `apiKey`; the server answers `hello.ok` (with the app's limits) or an
    `error` and closes (4001; 4003 when the app is at `maxConnections`; 4002 if
    no hello arrives within 5 s).
-3. `group.create` (`metadata`, optional `position`) makes the sender leader;
-   `group.join` (`groupId`) returns the metadata and current position (or
-   `hasPosition: false`); `position.update` from the leader is relayed to every
-   member as `position.updated`. `group.created` and `group.joined` carry the
-   participant's token; `hello.ok` carries the app `namespace` and
-   `limits.maxSessionMinutes`.
-4. `group.resume` (`token`, plus `metadata`, `position` and `blockList` from a
-   leader) answers `group.resumed` (leader), `group.joined` or `group.waiting`
+3. `group.create` (`metadata`, optional `position` and `joinMethods`) makes
+   the sender leader and returns its `codes`; `group.joinByCode` (`joinCode`,
+   optional `doorCode` and `displayName`) and `group.joinByQr` (`ticket`)
+   return the metadata and current position (or `hasPosition: false`), or
+   `join.pending` when the leader must approve; `position.update` from the
+   leader is relayed to every member as `position.updated`. `group.created`
+   and `group.joined` carry the participant's token; `hello.ok` carries the
+   app `namespace`, its `joinMethods` and its limits.
+4. Leader join messages: `codes.rotate` (reply `codes.updated`), `qr.issue`
+   (reply `qr.ticket`), `join.approve` / `join.deny` (reply `join.decided`);
+   events `join.requested`, `join.withdrawn`, `join.paused`, `join.resumed`
+   and unsolicited `codes.updated` after door-code failures. A joiner can
+   `join.cancel`. See [`docs/issues/10/architecture.md`](docs/issues/10/architecture.md)
+   (section 4).
+5. `group.resume` (`token`, plus `metadata`, `position`, `blockList` and the
+   `joinCodes` blob from a leader) answers `group.resumed` (leader, with its
+   codes and `codesChanged`), `group.joined` or `group.waiting`
    (member). `tokens.check` (up to 20 tokens) answers one status per token:
    `live`, `recoverable`, `waiting`, `blocked`, `ended`, `expired` or
    `invalid`. `group.end`, `group.leave` and `blocklist.set` (leader) complete
    the set. See [`docs/issues/5/architecture.md`](docs/issues/5/architecture.md)
    (section 4).
-5. `group.ended` reasons: `ended_by_leader`, `leader_timeout`, `max_session`,
+6. `group.ended` reasons: `ended_by_leader`, `leader_timeout`, `max_session`,
    `replaced` (the same participant resumed on another connection) and
    `removed` (blocked).
 
-Errors carry a stable `code` (`GROUP_NOT_FOUND`, `GROUP_FULL`, `NOT_LEADER`,
+Errors carry a stable `code` (`CODE_NOT_FOUND`, `DOOR_CODE_REQUIRED`,
+`DOOR_CODE_WRONG`, `JOIN_PAUSED`, `JOIN_DENIED`, `APPROVAL_TIMEOUT`,
+`APPROVAL_QUEUE_FULL`, `QR_INVALID`, `QR_EXPIRED`, `GROUP_FULL`, `NOT_LEADER`,
 `RATE_LIMITED`, `MESSAGE_TOO_LARGE`, `TOO_MANY_MESSAGES`, `TOKEN_INVALID`,
 `TOKEN_EXPIRED`, `GROUP_ENDED`, `PARTICIPANT_BLOCKED`, `LEADER_CANNOT_LEAVE`,
-...). Every token failure gets the same `TOKEN_INVALID`, so errors reveal
-nothing about other groups. A connection that floods messages gets
+...). Every token failure gets the same `TOKEN_INVALID`, every unknown code
+the same `CODE_NOT_FOUND` and every bad ticket the same `QR_INVALID`, so
+errors reveal nothing about other groups or apps. A connection that floods messages gets
 `TOO_MANY_MESSAGES` and close 4008, even if it is the leader (which freezes its
 group).
 
 ### Deployment security
 
 - **Use TLS.** Any deployment beyond your own machine must sit behind TLS
-  termination so clients connect with `wss://`. Without it the API key, group
-  IDs (which are join capabilities) and reading positions travel in cleartext.
+  termination so clients connect with `wss://`. Without it the API key, join
+  codes, QR tickets, tokens and reading positions travel in cleartext.
 - **Use a reverse proxy** for TLS and for **per-IP connection and request
   limits**. The server caps global, pending and per-app connections, but it
   deliberately does not look at client IPs (behind a proxy they are the
   proxy's, and IPs stay out of the app and its logs).
 - **Logs** never contain client IPs, display names, API keys, positions,
-  metadata, tokens, participant IDs, block lists, secrets or raw group IDs
+  metadata, tokens, participant IDs, block lists, secrets, join codes, door
+  codes, QR tickets, codes blobs, join request IDs or raw group IDs
   (groups appear as a hash prefix). Keep it that way at the proxy too, or keep
   proxy logs short-lived.
 - **Tokens are bearer credentials.** Whoever holds a leader token can take the

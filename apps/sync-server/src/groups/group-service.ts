@@ -1,11 +1,18 @@
 import {
   type BlockListSetMessage,
+  type CodesRotateMessage,
+  type JoinApproveMessage,
+  type JoinCancelMessage,
+  type JoinDenyMessage,
+  type GroupJoinByQrMessage,
+  type QrIssueMessage,
   ErrorCode,
-  GROUP_ID_PATTERN,
+  type ErrorMessage,
   type GroupCreateMessage,
   type GroupEndMessage,
   type GroupEndedReason,
-  type GroupJoinMessage,
+  type GroupJoinByCodeMessage,
+  type JoinMethod,
   type GroupLeaveMessage,
   type GroupResumeMessage,
   type PositionUpdateMessage,
@@ -26,6 +33,10 @@ import { SlidingWindowRateLimiter } from '../limits/rate-limiter.js';
 import { type Logger, groupRef, participantRef, safeErr } from '../logging/logger.js';
 import type { Scheduler } from '../time/scheduler.js';
 import type { TokenService } from '../tokens/token-service.js';
+import type { CodesBlobService } from '../tokens/codes-blob.js';
+import type { QrTicketService } from '../tokens/qr-tickets.js';
+import type { RandomInt } from '../joins/codes.js';
+import { JoinService, type LeaderAction } from '../joins/join-service.js';
 import { actionErrorMessage, errorMessage } from '../ws/error-messages.js';
 import { type GroupRecord, type GroupStore, connectedCount } from './group-store.js';
 import type { EndedGroups } from './ended-groups.js';
@@ -52,6 +63,12 @@ export interface GroupServiceDeps {
   refresh: RefreshPolicy;
   /** Groups that ended in this process (Q8). */
   ended: EndedGroups;
+  /** Signs and verifies QR tickets (#10). */
+  qrTickets: QrTicketService;
+  /** Signs and verifies codes blobs (#10). */
+  codesBlobs: CodesBlobService;
+  /** Join code draws; injected by tests (#10 AC9). */
+  codeRandom?: RandomInt;
 }
 
 /**
@@ -95,8 +112,29 @@ export class GroupService implements GroupActions {
   private readonly appCheckLimiter: SlidingWindowRateLimiter;
   /** When the app-budget warning was last logged, per namespace (#7 L-2). */
   private readonly appBudgetWarnedAt = new Map<string, number>();
+  /** Join codes and every join flow (#10). */
+  private readonly joins: JoinService;
 
   constructor(private readonly deps: GroupServiceDeps) {
+    this.joins = new JoinService(
+      {
+        store: deps.store,
+        logger: deps.logger,
+        scheduler: deps.scheduler,
+        qrTickets: deps.qrTickets,
+        codesBlobs: deps.codesBlobs,
+        ...(deps.codeRandom === undefined ? {} : { random: deps.codeRandom }),
+      },
+      {
+        busy: (session) => this.busy(session),
+        runLocked: (namespace, groupId, task) => this.locks.run(groupKey(namespace, groupId), task),
+        admit: (session, groupId, method) => this.admitMember(session, groupId, method),
+        leaderOf: (record) =>
+          this.deps.notifier.get(membershipKey(record.appNamespace, record.id, record.leaderId)),
+        deliverLater: (session, message) => this.deliverLater(session, message),
+        ownedLeader: (session, action) => this.ownedLeader(session, action),
+      },
+    );
     this.checkLimiter = new SlidingWindowRateLimiter(() => this.now(), TOKENS_CHECK_WINDOW_MS);
     this.appCheckLimiter = new SlidingWindowRateLimiter(() => this.now(), TOKENS_CHECK_WINDOW_MS);
     this.timers = new GroupTimers(deps.scheduler);
@@ -112,6 +150,12 @@ export class GroupService implements GroupActions {
     this.checkLimiter.clear();
     this.appCheckLimiter.clear();
     this.appBudgetWarnedAt.clear();
+    this.joins.close();
+  }
+
+  /** Number of indexed join codes in every app. For tests only. */
+  get codeCount(): number {
+    return this.joins.index.size;
   }
 
   /**
@@ -150,7 +194,11 @@ export class GroupService implements GroupActions {
 
   /** In a group or waiting for one (ALREADY_IN_GROUP). */
   private busy(session: Session): boolean {
-    return session.membership !== undefined || session.parked !== undefined;
+    return (
+      session.membership !== undefined ||
+      session.parked !== undefined ||
+      session.pendingJoin !== undefined
+    );
   }
 
   /** Number of groups with a pending timer. For tests only. */
@@ -249,10 +297,16 @@ export class GroupService implements GroupActions {
         : sizeError('position', message.position, app.maxMessageBytes));
     if (tooLarge) return tooLarge;
 
+    // Methods and codes before anything is stored: a bad method set or no
+    // free code leaves no group (#10 AC5, AC9).
+    const groupId = newGroupId();
+    const initial = this.joins.initialCodes(app, groupId, message.joinMethods);
+    if (!initial.ok) return initial.error;
+
     const participantId = newParticipantId();
     const now = this.now();
     const record: GroupRecord = {
-      id: newGroupId(),
+      id: groupId,
       appNamespace: app.namespace,
       metadata: message.metadata,
       position:
@@ -263,8 +317,15 @@ export class GroupService implements GroupActions {
       lastActivityAt: now,
       leaderOnline: true,
       blockList: [],
+      joinMethods: initial.methods,
+      codes: initial.codes,
     };
-    await this.deps.store.create(record);
+    try {
+      await this.deps.store.create(record);
+    } catch (err) {
+      this.joins.releaseCodes(app.namespace, groupId, initial.codes);
+      throw err;
+    }
     this.armMaxSession(app, record);
     this.startRefresh(app.namespace, record.id, now);
     this.attach(session, { groupId: record.id, participantId, role: 'leader' });
@@ -273,45 +334,99 @@ export class GroupService implements GroupActions {
       'group created',
     );
     const token = this.issueToken(app.namespace, record, participantId, 'leader', now);
-    return { type: 'group.created', groupId: record.id, participantId, role: 'leader', token };
+    // Codes go to the leader's connection only (#10 AC10, R13).
+    return {
+      type: 'group.created',
+      groupId: record.id,
+      participantId,
+      role: 'leader',
+      token,
+      joinMethods: [...record.joinMethods],
+      codes: this.joins.payload(record),
+    };
   }
 
-  async join(session: Session, message: GroupJoinMessage): Promise<ServerMessage> {
-    if (this.busy(session)) return errorMessage(ErrorCode.ALREADY_IN_GROUP);
+  /**
+   * The session's leader membership, authorized by ownership in the
+   * notifier, not by the cached role (M4, #10 R12). A parked or member
+   * session gets NOT_LEADER with the action's text; a groupless one
+   * NOT_IN_GROUP.
+   */
+  private ownedLeader(session: Session, action: LeaderAction): Membership | ErrorMessage {
+    if (session.parked !== undefined) return actionErrorMessage(ErrorCode.NOT_LEADER, action);
+    const membership = this.owned(session);
+    if (membership === undefined) return errorMessage(ErrorCode.NOT_IN_GROUP);
+    if (membership.role !== 'leader') return actionErrorMessage(ErrorCode.NOT_LEADER, action);
+    return membership;
+  }
 
+  /** codes.rotate (#10 AC30). */
+  rotateCodes(session: Session, _message: CodesRotateMessage): Promise<ServerMessage> {
+    return this.joins.rotate(session);
+  }
+
+  /** group.joinByQr (#10 AC24). */
+  joinByQr(session: Session, message: GroupJoinByQrMessage): Promise<ServerMessage> {
+    return this.joins.joinByQr(session, message);
+  }
+
+  /** qr.issue (#10 AC23). */
+  issueQr(session: Session, _message: QrIssueMessage): Promise<ServerMessage> {
+    return this.joins.issueQr(session);
+  }
+
+  /** join.cancel (#10 AC21). */
+  cancelJoin(session: Session, _message: JoinCancelMessage): Promise<ServerMessage> {
+    return this.joins.cancel(session);
+  }
+
+  /** join.approve (#10 AC21). */
+  approveJoin(session: Session, message: JoinApproveMessage): Promise<ServerMessage> {
+    return this.joins.decide(session, message.requestId, 'approve');
+  }
+
+  /** join.deny (#10 AC21). */
+  denyJoin(session: Session, message: JoinDenyMessage): Promise<ServerMessage> {
+    return this.joins.decide(session, message.requestId, 'deny');
+  }
+
+  /** group.joinByCode (#10): the join rules live in JoinService. */
+  joinByCode(session: Session, message: GroupJoinByCodeMessage): Promise<ServerMessage> {
+    return this.joins.joinByCode(session, message);
+  }
+
+  /**
+   * Admits a new member found by code or ticket (#10 AC14): a fresh
+   * group-scoped participant ID, the size limit, then group.joined with a
+   * member token, exactly as a join by ID did. Runs under the group lock.
+   */
+  private async admitMember(
+    session: Session,
+    groupId: string,
+    method: JoinMethod,
+  ): Promise<ServerMessage> {
     const { app } = session;
-    const { groupId } = message;
-    // A malformed ID gets the same answer as an unknown one: no oracle (L3).
-    if (!GROUP_ID_PATTERN.test(groupId)) return errorMessage(ErrorCode.GROUP_NOT_FOUND);
-
-    // Serialized with the group's teardown: the insert and the session
-    // commit happen together, either fully before the group ends (so the
-    // teardown sees and notifies this member) or after it (not found).
-    // Without this, a slow insert reply could commit the session to a
-    // group that was already deleted.
-    return this.locks.run(groupKey(app.namespace, groupId), async () => {
-      const participantId = newParticipantId();
-      const added = await this.deps.store.addParticipant(
-        app.namespace,
-        groupId,
-        participantId,
-        app.maxGroupSize,
-      );
-      if (added.status === 'not_found') return errorMessage(ErrorCode.GROUP_NOT_FOUND);
-      // A freshly minted ID is never blocked; checked for completeness.
-      if (added.status === 'blocked') return errorMessage(ErrorCode.PARTICIPANT_BLOCKED);
-      // The leader counts toward the size (AC21).
-      if (added.status === 'full') {
-        return errorMessage(ErrorCode.GROUP_FULL, { details: { maxGroupSize: app.maxGroupSize } });
-      }
-      // The snapshot comes from the same atomic insert. A second read could
-      // fail after the insert and leave the participant in the group while
-      // the session stays groupless.
-      return this.commitJoin(session, participantId, added.group);
-    });
+    const participantId = newParticipantId();
+    const added = await this.deps.store.addParticipant(
+      app.namespace,
+      groupId,
+      participantId,
+      app.maxGroupSize,
+    );
+    if (added.status === 'not_found') return errorMessage(ErrorCode.CODE_NOT_FOUND);
+    if (added.status === 'blocked') return errorMessage(ErrorCode.PARTICIPANT_BLOCKED);
+    if (added.status === 'full') {
+      return errorMessage(ErrorCode.GROUP_FULL, { details: { maxGroupSize: app.maxGroupSize } });
+    }
+    return this.commitJoin(session, participantId, added.group, method);
   }
 
-  private commitJoin(session: Session, participantId: string, record: GroupRecord): ServerMessage {
+  private commitJoin(
+    session: Session,
+    participantId: string,
+    record: GroupRecord,
+    method?: JoinMethod,
+  ): ServerMessage {
     const { app } = session;
     this.attach(session, { groupId: record.id, participantId, role: 'member' });
     this.deps.logger.info(
@@ -321,6 +436,7 @@ export class GroupService implements GroupActions {
         groupRef: groupRef(record.id),
         // The connection-scoped ref only: never the group-scoped ID (L7).
         participantRef: participantRef(session.connectionId),
+        ...(method === undefined ? {} : { method }),
       },
       'group joined',
     );
@@ -637,7 +753,7 @@ export class GroupService implements GroupActions {
           return errorMessage(ErrorCode.PARTICIPANT_BLOCKED);
         case 'live':
           return claims.role === 'leader'
-            ? this.leaderReturn(session, record!, claims, message.blockList)
+            ? this.leaderReturn(session, record!, claims, message.blockList, message.joinCodes)
             : this.memberResume(session, record!, claims);
         case 'recoverable':
           return this.recreate(session, claims, message);
@@ -685,6 +801,7 @@ export class GroupService implements GroupActions {
     record: GroupRecord,
     claims: TokenClaims,
     blockList?: readonly string[],
+    joinCodes?: string,
   ): Promise<ServerMessage> {
     const { app } = session;
     const namespace = app.namespace;
@@ -703,11 +820,16 @@ export class GroupService implements GroupActions {
       });
     }
     this.attach(session, { groupId: record.id, participantId: claims.pid, role: 'leader' });
+    // Pending approval requests and a running pause are re-sent after the
+    // reply (#10 AC21, AC29, AC34).
+    this.joins.onLeaderReturn(session, updated);
     this.deps.logger.info(
       { event: 'group_resumed', namespace, groupRef: groupRef(record.id), recreated: false },
       'leader resumed',
     );
-    return this.resumedMessage(updated, claims.pid, false, now);
+    // The blob is ignored for state: the current codes win (#10 AC34).
+    const codesChanged = this.joins.codesChangedFor(updated, joinCodes);
+    return this.resumedMessage(updated, claims.pid, false, now, codesChanged);
   }
 
   /**
@@ -725,6 +847,10 @@ export class GroupService implements GroupActions {
     const { app } = session;
     const namespace = app.namespace;
     const now = this.now();
+    // The same codes if the leader's blob is valid and every code is free,
+    // else a full new set; CODES_EXHAUSTED recreates nothing (#10 AC33).
+    const initial = this.joins.restoreCodes(app, claims.gid, message.joinCodes);
+    if (!initial.ok) return initial.error;
     const record: GroupRecord = {
       id: claims.gid,
       appNamespace: namespace,
@@ -738,13 +864,16 @@ export class GroupService implements GroupActions {
       leaderOnline: true,
       // Deduplicated; the leader's own ID is ignored.
       blockList: [...new Set(message.blockList ?? [])].filter((id) => id !== claims.pid),
+      joinMethods: initial.methods,
+      codes: initial.codes,
     };
     if ((await this.deps.store.createIfAbsent(record)) === 'exists') {
+      this.joins.releaseCodes(namespace, claims.gid, initial.codes);
       // Impossible under the in-process lock; with a shared store, the group
       // someone else just recreated is resumed instead.
       const existing = await this.deps.store.get(namespace, claims.gid);
       if (!existing) return errorMessage(ErrorCode.GROUP_NOT_FOUND);
-      return this.leaderReturn(session, existing, claims, message.blockList);
+      return this.leaderReturn(session, existing, claims, message.blockList, message.joinCodes);
     }
     this.armMaxSession(app, record);
     this.startRefresh(namespace, record.id, now);
@@ -760,7 +889,7 @@ export class GroupService implements GroupActions {
       },
       'group recreated',
     );
-    return this.resumedMessage(record, claims.pid, true, now);
+    return this.resumedMessage(record, claims.pid, true, now, initial.changed);
   }
 
   /**
@@ -860,6 +989,7 @@ export class GroupService implements GroupActions {
     participantId: string,
     recreated: boolean,
     now: number,
+    codesChanged: boolean,
   ): ServerMessage {
     const base = {
       type: 'group.resumed' as const,
@@ -869,6 +999,10 @@ export class GroupService implements GroupActions {
       metadata: record.metadata,
       token: this.issueToken(record.appNamespace, record, participantId, 'leader', now),
       recreated,
+      // Codes go to the leader's connection only (#10 AC10, R13).
+      joinMethods: [...record.joinMethods],
+      codes: this.joins.payload(record),
+      codesChanged,
     };
     return record.position.has
       ? { ...base, hasPosition: true, position: record.position.payload }
@@ -914,6 +1048,7 @@ export class GroupService implements GroupActions {
 
   async disconnect(session: Session): Promise<void> {
     this.checkLimiter.forget(session.connectionId);
+    await this.joins.onDisconnect(session);
     // A parked session just stops waiting.
     this.parking.unpark(session);
     const membership = session.membership;
@@ -995,19 +1130,22 @@ export class GroupService implements GroupActions {
    * an end: its tokens stay usable until their own limits pass.
    */
   private async dropGroup(namespace: string, groupId: string): Promise<void> {
+    const record = await this.deps.store.get(namespace, groupId);
     await this.deps.store.delete(namespace, groupId);
-    this.forgetGroup(namespace, groupId);
+    this.forgetGroup(namespace, groupId, record);
     this.deps.logger.info(
       { event: 'group_dropped', namespace, groupRef: groupRef(groupId) },
       'group dropped',
     );
   }
 
-  private forgetGroup(namespace: string, groupId: string): void {
+  /** Clears every per-group structure; frees the group's join codes (#10 AC11). */
+  private forgetGroup(namespace: string, groupId: string, record: GroupRecord | undefined): void {
     const key = groupKey(namespace, groupId);
     this.deps.rateLimiter.forget(key);
     this.timers.clear(key);
     this.refresher.clear(key);
+    this.joins.onGroupGone(namespace, groupId, record);
   }
 
   /**
@@ -1028,7 +1166,7 @@ export class GroupService implements GroupActions {
     const namespace = app.namespace;
     const record = await this.deps.store.get(namespace, groupId);
     await this.deps.store.delete(namespace, groupId);
-    this.forgetGroup(namespace, groupId);
+    this.forgetGroup(namespace, groupId, record);
     // Remembered until its max-session deadline, as a hashed ref only (Q8).
     if (record) this.deps.ended.remember(namespace, groupId, this.maxSessionEndAt(app, record));
     const keys = (record?.participantIds ?? []).map((id) => membershipKey(namespace, groupId, id));

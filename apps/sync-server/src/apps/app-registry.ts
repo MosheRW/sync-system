@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import type { JoinMethod } from '@sync-system/protocol';
 
 /** One registered client app. Immutable after load; the raw API key is not kept. */
 export interface AppConfig {
@@ -15,6 +16,12 @@ export interface AppConfig {
   readonly maxSessionMinutes: number;
   /** Recovery window after the leader's last activity (#5 AC4). */
   readonly inactivityLimitMinutes: number;
+  /** Join methods this app allows, canonical order, a subset of JOIN_METHODS_ALLOWED (#10 AC2). */
+  readonly joinMethods: readonly JoinMethod[];
+  /** QR ticket lifetime (#10 AC3). */
+  readonly qrTicketSeconds: number;
+  /** How long a method B join request waits for the leader (#10 AC3). */
+  readonly approvalTimeoutSeconds: number;
 }
 
 export function hashApiKey(apiKey: string): string {

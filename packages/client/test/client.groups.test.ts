@@ -1,7 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { isSyncClientError } from '../src/errors.js';
 import type { GroupEndedInfo, PositionUpdatedEvent } from '../src/state.js';
-import { PARTICIPANT_ID, connectedClient } from './helpers/client.js';
+import {
+  TEST_CODES,
+  joinFrame,
+  CREATED_FIELDS,
+  PARTICIPANT_ID,
+  connectedClient,
+  joinTestGroup,
+} from './helpers/client.js';
 import { FakeWebSocket } from './helpers/fake-websocket.js';
 
 const GROUP_ID = 'G'.repeat(43);
@@ -33,6 +40,7 @@ describe('createGroup (AC15)', () => {
     expect(sent).toEqual({ type: 'group.create', reqId: 'c2', metadata, position: { page: 1 } });
     socket.receive({
       type: 'group.created',
+      ...CREATED_FIELDS,
       token: 'h.p.s',
       reqId: 'c2',
       groupId: GROUP_ID,
@@ -43,6 +51,8 @@ describe('createGroup (AC15)', () => {
       groupId: GROUP_ID,
       role: 'leader',
       participantId: PARTICIPANT_ID,
+      joinMethods: ['A', 'D'],
+      codes: { generation: TEST_CODES.generation, groupCode: '123456', doorCode: '654321' },
     });
     expect(client.getSnapshot().group).toEqual({
       status: 'active',
@@ -95,11 +105,20 @@ describe('createGroup (AC15)', () => {
   });
 });
 
-describe('joinGroup (AC16)', () => {
+describe('join by group ID is gone (#10 AC41)', () => {
+  it('has no joinGroup method', async () => {
+    const { client } = await connectedClient();
+    // @ts-expect-error joinGroup was removed in #10.
+    expect(client.joinGroup).toBeUndefined();
+    client.close();
+  });
+});
+
+describe('joinByCode (AC16, #10 AC39)', () => {
   it('resolves with metadata and the current position', async () => {
     const { client, socket } = await connectedClient();
-    const joining = client.joinGroup(GROUP_ID);
-    expect(socket.lastMessage()).toEqual({ type: 'group.join', reqId: 'c2', groupId: GROUP_ID });
+    const joining = joinTestGroup(client);
+    expect(socket.lastMessage()).toEqual(joinFrame('c2'));
     const metadata = { book: 'b1' };
     socket.receive({
       type: 'group.joined',
@@ -134,7 +153,7 @@ describe('joinGroup (AC16)', () => {
 
   it('reports "no position yet" explicitly', async () => {
     const { client, socket } = await connectedClient();
-    const joining = client.joinGroup(GROUP_ID);
+    const joining = joinTestGroup(client);
     socket.receive({
       type: 'group.joined',
       token: 'h.p.s',
@@ -153,12 +172,12 @@ describe('joinGroup (AC16)', () => {
   });
 
   it.each([
-    ['GROUP_NOT_FOUND', undefined],
+    ['CODE_NOT_FOUND', undefined],
     ['GROUP_FULL', { maxGroupSize: 2 }],
     ['ALREADY_IN_GROUP', undefined],
   ] as const)('rejects with %s', async (code, details) => {
     const { client, socket } = await connectedClient();
-    const joining = client.joinGroup(GROUP_ID);
+    const joining = joinTestGroup(client);
     socket.receive({
       type: 'error',
       reqId: 'c2',
@@ -172,12 +191,12 @@ describe('joinGroup (AC16)', () => {
     client.close();
   });
 
-  it('rejects a group ID that is not a string of 1..256 characters, without sending', async () => {
+  it('rejects a code that is not 6 digits or 8 alphabet characters, without sending', async () => {
     const { client, socket } = await connectedClient();
     const sentBefore = socket.sent.length;
-    for (const bad of ['', 'x'.repeat(257), 5]) {
-      const error = await rejection(client.joinGroup(bad as never));
-      expect(isSyncClientError(error, 'INVALID_PAYLOAD')).toBe(true);
+    for (const bad of ['', '12345', 'x'.repeat(257), 5]) {
+      const error = await rejection(client.joinByCode(bad as never));
+      expect(isSyncClientError(error, 'INVALID_JOIN_CODE')).toBe(true);
     }
     expect(socket.sent).toHaveLength(sentBefore);
     client.close();
@@ -187,7 +206,7 @@ describe('joinGroup (AC16)', () => {
 describe('group events (AC19, AC20)', () => {
   async function member() {
     const { client, socket } = await connectedClient();
-    const joining = client.joinGroup(GROUP_ID);
+    const joining = joinTestGroup(client);
     socket.receive({
       type: 'group.joined',
       token: 'h.p.s',
@@ -237,8 +256,8 @@ describe('group events (AC19, AC20)', () => {
       reason: 'ended_by_leader',
     });
     // An ended group allows a new create or join.
-    void client.joinGroup(GROUP_ID).catch(() => {});
-    expect(socket.lastMessage().type).toBe('group.join');
+    void joinTestGroup(client).catch(() => {});
+    expect(socket.lastMessage().type).toBe('group.joinByCode');
     client.close();
   });
 

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { type TokenStorage, memoryStorage } from '../src/storage.js';
-import { connectedClient } from './helpers/client.js';
+import { TEST_CODES, CREATED_FIELDS, connectedClient, joinTestGroup } from './helpers/client.js';
 import { FakeWebSocket } from './helpers/fake-websocket.js';
 import { fakeToken, groupIdOf } from './helpers/tokens.js';
 
@@ -31,6 +31,7 @@ describe('token capture (#5 AC31, AC34)', () => {
     const token = fakeToken({ gid: GID });
     socket.receive({
       type: 'group.created',
+      ...CREATED_FIELDS,
       reqId: socket.lastMessage().reqId,
       groupId: GID,
       participantId: 'p',
@@ -46,6 +47,8 @@ describe('token capture (#5 AC31, AC34)', () => {
         hasPosition: true,
         position: { page: 1 },
         blockList: [],
+        joinCodes: TEST_CODES.blob,
+        joinCodesGeneration: TEST_CODES.generation,
       },
     });
     client.close();
@@ -54,7 +57,7 @@ describe('token capture (#5 AC31, AC34)', () => {
   it('stores a member token on join, without recovery data', async () => {
     const storage = memoryStorage();
     const { client, socket } = await connectedClient({ storage });
-    const joining = client.joinGroup(GID);
+    const joining = joinTestGroup(client);
     const token = fakeToken({ gid: GID, role: 'member' });
     socket.receive({
       type: 'group.joined',
@@ -79,6 +82,7 @@ describe('token capture (#5 AC31, AC34)', () => {
     const creating = client.createGroup({});
     socket.receive({
       type: 'group.created',
+      ...CREATED_FIELDS,
       reqId: socket.lastMessage().reqId,
       groupId: GID,
       participantId: 'p',
@@ -93,7 +97,14 @@ describe('token capture (#5 AC31, AC34)', () => {
     expect(stored(storage)).toEqual([
       {
         token: refreshed,
-        recovery: { metadata: {}, hasPosition: true, position: { page: 5 }, blockList: [] },
+        recovery: {
+          metadata: {},
+          hasPosition: true,
+          position: { page: 5 },
+          blockList: [],
+          joinCodes: TEST_CODES.blob,
+          joinCodesGeneration: TEST_CODES.generation,
+        },
       },
     ]);
     client.close();
@@ -105,6 +116,7 @@ describe('token capture (#5 AC31, AC34)', () => {
     const creating = client.createGroup({});
     socket.receive({
       type: 'group.created',
+      ...CREATED_FIELDS,
       reqId: socket.lastMessage().reqId,
       groupId: GID,
       participantId: 'p',
@@ -137,6 +149,7 @@ describe('token capture (#5 AC31, AC34)', () => {
       const creating = client.createGroup({});
       socket.receive({
         type: 'group.created',
+        ...CREATED_FIELDS,
         reqId: socket.lastMessage().reqId,
         groupId: GID,
         participantId: 'p',

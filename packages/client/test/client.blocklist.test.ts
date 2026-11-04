@@ -3,7 +3,7 @@ import { decodeTokenClaims } from '@sync-system/protocol';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { SyncClient } from '../src/client.js';
 import { type TokenStorage, memoryStorage } from '../src/storage.js';
-import { connectedClient } from './helpers/client.js';
+import { CREATED_FIELDS, connectedClient } from './helpers/client.js';
 import { FakeWebSocket } from './helpers/fake-websocket.js';
 import { fakeToken, groupIdOf } from './helpers/tokens.js';
 
@@ -51,6 +51,7 @@ async function liveLeader(): Promise<{
   const creating = client.createGroup({});
   socket.receive({
     type: 'group.created',
+    ...CREATED_FIELDS,
     reqId: socket.lastMessage().reqId,
     groupId: GID,
     participantId: 'p',

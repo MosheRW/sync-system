@@ -85,3 +85,64 @@ export const TOKENS_CHECK_WINDOW_MS = 60_000;
  * configurable; there is no global budget.
  */
 export const TOKENS_CHECK_PER_APP_PER_MINUTE = 600;
+
+/**
+ * Join attempts (`group.joinByCode` and `group.joinByQr`, any outcome) per
+ * connection per window (#10 AC27, Q5.2). Fixed, not an app setting.
+ */
+export const JOIN_ATTEMPTS_PER_CONNECTION_PER_MINUTE = 10;
+
+/**
+ * Join attempts per app per window, shared by all of the app's connections
+ * (#10 AC28, Q5.2). Fixed, not an app setting.
+ */
+export const JOIN_ATTEMPTS_PER_APP_PER_MINUTE = 600;
+
+/** Window of the join attempt limiters. */
+export const JOIN_WINDOW_MS = 60_000;
+
+/**
+ * Wrong door codes per app per window, over all of the app's groups (#10
+ * R1b, Gate 2 Q-E). Checked before the door code is compared and charged
+ * only when it is wrong. Fixed, not an app setting.
+ */
+export const DOOR_FAILURES_PER_APP_PER_MINUTE = 60;
+
+/** Window of the per-app wrong door code limiter. */
+export const DOOR_FAILURES_APP_WINDOW_MS = 60_000;
+
+/**
+ * Wrong door codes against one door code before it rotates (#10 AC29, R1a).
+ * Counted since the last door-code change, with no time window.
+ */
+export const DOOR_FAILURES_BEFORE_ROTATION = 5;
+
+/** Door rotations inside DOOR_ROTATION_WINDOW_MS that pause method A (#10 AC29). */
+export const DOOR_ROTATIONS_BEFORE_PAUSE = 3;
+
+/** Window of the door rotation count (30 minutes). */
+export const DOOR_ROTATION_WINDOW_MS = 1_800_000;
+
+/** How long method A joining pauses (10 minutes, #10 AC29). */
+export const DOOR_PAUSE_MS = 600_000;
+
+/** `qr.issue` requests per connection per window (#10 AC23). */
+export const QR_ISSUE_PER_CONNECTION_PER_MINUTE = 6;
+
+/** Window of the `qr.issue` limiter. */
+export const QR_ISSUE_WINDOW_MS = 60_000;
+
+/** Pending method B join requests per group (#10 AC22). */
+export const MAX_PENDING_APPROVALS_PER_GROUP = 10;
+
+/** Leader `codes.rotate` requests per group per window (#10 AC30). */
+export const CODE_ROTATIONS_PER_GROUP_PER_MINUTE = 6;
+
+/** Window of the `codes.rotate` limiter. */
+export const CODE_ROTATION_WINDOW_MS = 60_000;
+
+/**
+ * Most draws of one join code before giving up with CODES_EXHAUSTED (#10
+ * AC9). Each draw is checked against the app's live codes.
+ */
+export const MAX_CODE_DRAWS = 20;

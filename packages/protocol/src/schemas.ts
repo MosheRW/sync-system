@@ -1,12 +1,23 @@
 import { z } from 'zod';
 import { ErrorCode } from './errors.js';
 import { buildJitless } from './jitless.js';
+import {
+  ALPHA_CODE_PATTERN,
+  CODES_BLOB_PATTERN,
+  GROUP_CODE_PATTERN,
+  JOIN_METHODS,
+  JOIN_REQUEST_ID_PATTERN,
+} from './join.js';
 import type { JsonObject, JsonValue } from './json.js';
 import {
   MAX_API_KEY_LENGTH,
   MAX_APP_VERSION_INPUT_LENGTH,
   MAX_BLOCK_LIST_SIZE,
-  MAX_GROUP_ID_INPUT_LENGTH,
+  MAX_CODES_BLOB_LENGTH,
+  MAX_DISPLAY_NAME_INPUT_LENGTH,
+  MAX_JOIN_CODE_INPUT_LENGTH,
+  MAX_QR_TICKET_INPUT_LENGTH,
+  MAX_QR_TICKET_LENGTH,
   MAX_REQ_ID_LENGTH,
   MAX_TOKEN_LENGTH,
   MAX_TOKENS_PER_CHECK,
@@ -56,18 +67,39 @@ const schemas = buildJitless(() => {
     apiKey: z.string().max(MAX_API_KEY_LENGTH).optional(),
   });
 
+  /** 1 to 4 method letters; duplicates are the server's JOIN_METHOD_NOT_ALLOWED (#10 AC5). */
+  const joinMethodList = z.array(z.enum(JOIN_METHODS)).min(1).max(JOIN_METHODS.length);
+
   const groupCreateSchema = z.object({
     type: z.literal('group.create'),
     reqId,
     metadata: opaqueObject,
     position: opaqueValue.optional(),
+    joinMethods: joinMethodList.optional(),
   });
 
-  const groupJoinSchema = z.object({
-    type: z.literal('group.join'),
+  const joinCode = z.string().max(MAX_JOIN_CODE_INPUT_LENGTH);
+  const displayName = z.string().max(MAX_DISPLAY_NAME_INPUT_LENGTH);
+
+  // Lengths only: normalization and the code formats are checked by the
+  // server after the join budgets (#10 architecture 4.3).
+  const groupJoinByCodeSchema = z.object({
+    type: z.literal('group.joinByCode'),
     reqId,
-    groupId: z.string().max(MAX_GROUP_ID_INPUT_LENGTH),
+    joinCode,
+    doorCode: joinCode.optional(),
+    displayName: displayName.optional(),
   });
+
+  // The ticket shape is checked by the server, so a bad ticket gets QR_INVALID (#10 AC25).
+  const groupJoinByQrSchema = z.object({
+    type: z.literal('group.joinByQr'),
+    reqId,
+    ticket: z.string().max(MAX_QR_TICKET_INPUT_LENGTH),
+    displayName: displayName.optional(),
+  });
+
+  const qrIssueSchema = z.object({ type: z.literal('qr.issue'), reqId });
 
   const positionUpdateSchema = z.object({
     type: z.literal('position.update'),
@@ -87,6 +119,8 @@ const schemas = buildJitless(() => {
     metadata: opaqueObject.optional(),
     position: opaqueValue.optional(),
     blockList: blockList.optional(),
+    // The blob is checked by the server; a bad one only means new codes (#10 AC33).
+    joinCodes: z.string().max(MAX_CODES_BLOB_LENGTH).optional(),
   });
 
   const tokensCheckSchema = z.object({
@@ -101,16 +135,30 @@ const schemas = buildJitless(() => {
 
   const groupLeaveSchema = z.object({ type: z.literal('group.leave'), reqId });
 
+  const codesRotateSchema = z.object({ type: z.literal('codes.rotate'), reqId });
+
+  const requestId = z.string().regex(JOIN_REQUEST_ID_PATTERN);
+
+  const joinCancelSchema = z.object({ type: z.literal('join.cancel'), reqId });
+  const joinApproveSchema = z.object({ type: z.literal('join.approve'), reqId, requestId });
+  const joinDenySchema = z.object({ type: z.literal('join.deny'), reqId, requestId });
+
   const clientMessageSchema = z.discriminatedUnion('type', [
     helloSchema,
     groupCreateSchema,
-    groupJoinSchema,
+    groupJoinByCodeSchema,
+    groupJoinByQrSchema,
+    qrIssueSchema,
     positionUpdateSchema,
     groupResumeSchema,
     tokensCheckSchema,
     blockListSetSchema,
     groupEndSchema,
     groupLeaveSchema,
+    codesRotateSchema,
+    joinCancelSchema,
+    joinApproveSchema,
+    joinDenySchema,
   ]);
 
   const appLimitsSchema = z.object({
@@ -118,6 +166,18 @@ const schemas = buildJitless(() => {
     maxLeaderUpdatesPerSecond: z.number().int().positive(),
     maxMessageBytes: z.number().int().positive(),
     maxSessionMinutes: z.number().int().positive(),
+    qrTicketSeconds: z.number().int().positive(),
+    approvalTimeoutSeconds: z.number().int().positive(),
+  });
+
+  const joinMethods = joinMethodList;
+
+  const joinCodesPayload = z.object({
+    generation: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    groupCode: z.string().regex(GROUP_CODE_PATTERN).optional(),
+    doorCode: z.string().regex(GROUP_CODE_PATTERN).optional(),
+    alphaCode: z.string().regex(ALPHA_CODE_PATTERN).optional(),
+    blob: z.string().max(MAX_CODES_BLOB_LENGTH).regex(CODES_BLOB_PATTERN),
   });
 
   const token = z.string().min(1).max(MAX_TOKEN_LENGTH);
@@ -142,6 +202,9 @@ const schemas = buildJitless(() => {
     metadata: opaqueObject,
     token,
     recreated: z.boolean(),
+    joinMethods: joinMethodList,
+    codes: joinCodesPayload,
+    codesChanged: z.boolean(),
   };
 
   const serverMessageSchema = z.union([
@@ -155,6 +218,7 @@ const schemas = buildJitless(() => {
       reqId,
       participantId: z.string(),
       namespace: z.string().regex(NAMESPACE_PATTERN),
+      joinMethods,
       limits: appLimitsSchema,
     }),
     z.object({
@@ -164,6 +228,8 @@ const schemas = buildJitless(() => {
       participantId: z.string(),
       role: z.literal('leader'),
       token,
+      joinMethods,
+      codes: joinCodesPayload,
     }),
     z.object({ ...groupJoinedBase, hasPosition: z.literal(true), position: opaqueValue }),
     z.object({ ...groupJoinedBase, hasPosition: z.literal(false) }),
@@ -191,6 +257,51 @@ const schemas = buildJitless(() => {
     z.object({ type: z.literal('leader.offline'), groupId: z.string() }),
     z.object({ type: z.literal('leader.online'), groupId: z.string() }),
     z.object({
+      type: z.literal('codes.updated'),
+      reqId,
+      groupId: z.string(),
+      reason: z.enum(['rotated', 'door_failures']),
+      codes: joinCodesPayload,
+    }),
+    z.object({
+      type: z.literal('join.paused'),
+      groupId: z.string(),
+      retryAfterMs: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    }),
+    z.object({ type: z.literal('join.resumed'), groupId: z.string() }),
+    z.object({
+      type: z.literal('join.pending'),
+      reqId,
+      requestId: z.string(),
+      timeoutMs: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    }),
+    z.object({
+      type: z.literal('join.requested'),
+      groupId: z.string(),
+      requestId: z.string(),
+      expiresInMs: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+      displayName: z.string().max(MAX_DISPLAY_NAME_INPUT_LENGTH).optional(),
+    }),
+    z.object({
+      type: z.literal('join.withdrawn'),
+      groupId: z.string(),
+      requestId: z.string(),
+      reason: z.enum(['cancelled', 'disconnected', 'timeout']),
+    }),
+    z.object({
+      type: z.literal('join.decided'),
+      reqId,
+      requestId: z.string(),
+      outcome: z.enum(['admitted', 'group_full', 'denied']),
+    }),
+    z.object({ type: z.literal('join.cancelled'), reqId, requestId: z.string() }),
+    z.object({
+      type: z.literal('qr.ticket'),
+      reqId,
+      ticket: z.string().min(1).max(MAX_QR_TICKET_LENGTH),
+      expiresInMs: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    }),
+    z.object({
       type: z.literal('error'),
       reqId,
       code: z.enum(ErrorCode),
@@ -202,7 +313,6 @@ const schemas = buildJitless(() => {
   return {
     helloSchema,
     groupCreateSchema,
-    groupJoinSchema,
     positionUpdateSchema,
     groupResumeSchema,
     clientMessageSchema,
@@ -212,7 +322,6 @@ const schemas = buildJitless(() => {
 
 export const helloSchema = schemas.helloSchema;
 export const groupCreateSchema = schemas.groupCreateSchema;
-export const groupJoinSchema = schemas.groupJoinSchema;
 export const positionUpdateSchema = schemas.positionUpdateSchema;
 export const groupResumeSchema = schemas.groupResumeSchema;
 export const clientMessageSchema = schemas.clientMessageSchema;

@@ -46,7 +46,12 @@ describe('checkWelcome (AC12, Q5)', () => {
 });
 
 describe('checkHelloOk (M1, R2-L2)', () => {
-  const base = { type: 'hello.ok' as const, participantId: 'p', namespace: 'app-a' };
+  const base = {
+    type: 'hello.ok' as const,
+    participantId: 'p',
+    namespace: 'app-a',
+    joinMethods: ['A' as const],
+  };
 
   it('accepts limits in bounds', () => {
     const limits = {
@@ -54,6 +59,8 @@ describe('checkHelloOk (M1, R2-L2)', () => {
       maxLeaderUpdatesPerSecond: 5,
       maxSessionMinutes: 180,
       maxMessageBytes: 4096,
+      qrTicketSeconds: 300,
+      approvalTimeoutSeconds: 120,
     };
     expect(checkHelloOk({ ...base, limits }, welcome(1, 1))).toBeUndefined();
   });
@@ -64,6 +71,8 @@ describe('checkHelloOk (M1, R2-L2)', () => {
       maxLeaderUpdatesPerSecond: 5,
       maxSessionMinutes: 180,
       maxMessageBytes: 2 ** 53,
+      qrTicketSeconds: 300,
+      approvalTimeoutSeconds: 120,
     };
     const result = checkHelloOk({ ...base, limits }, welcome(1, 1));
     expect(result?.fatal).toBe(true);

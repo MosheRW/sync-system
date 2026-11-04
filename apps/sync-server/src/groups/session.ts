@@ -1,8 +1,14 @@
 import type {
   BlockListSetMessage,
+  CodesRotateMessage,
+  JoinApproveMessage,
+  JoinCancelMessage,
+  JoinDenyMessage,
+  GroupJoinByQrMessage,
+  QrIssueMessage,
   GroupCreateMessage,
   GroupEndMessage,
-  GroupJoinMessage,
+  GroupJoinByCodeMessage,
   GroupLeaveMessage,
   GroupResumeMessage,
   PositionUpdateMessage,
@@ -41,6 +47,15 @@ export interface Session {
   parked?:
     | { readonly groupKey: string; readonly groupId: string; readonly participantId: string }
     | undefined;
+  /**
+   * Set while this session waits for a leader to approve its method B join
+   * request (#10 AC19). Managed by the ApprovalQueue only. Counts as "in a
+   * group" for ALREADY_IN_GROUP; at most one per session (AC22).
+   */
+  pendingJoin?:
+    { readonly groupKey: string; readonly groupId: string; readonly requestId: string } | undefined;
+  /** False once the socket has closed (#10 R11: approve re-checks it). */
+  isOpen(): boolean;
   /** Sends an already serialized frame to this participant. */
   deliver(text: string): void;
   /**
@@ -62,7 +77,8 @@ export function membershipKey(namespace: string, groupId: string, participantId:
 /** Group operations a connection dispatches to. Each returns the direct reply. */
 export interface GroupActions {
   create(session: Session, message: GroupCreateMessage): Promise<ServerMessage>;
-  join(session: Session, message: GroupJoinMessage): Promise<ServerMessage>;
+  /** Join by group code (+ door code) or alphanumeric code (#10 AC12-AC18). */
+  joinByCode(session: Session, message: GroupJoinByCodeMessage): Promise<ServerMessage>;
   update(session: Session, message: PositionUpdateMessage): Promise<ServerMessage>;
   /** Rejoin or recover a group with a participant token (#5 AC17-AC28). */
   resume(session: Session, message: GroupResumeMessage): Promise<ServerMessage>;
@@ -74,6 +90,18 @@ export interface GroupActions {
   end(session: Session, message: GroupEndMessage): Promise<ServerMessage>;
   /** Member leaves the group (#5 AC30). */
   leave(session: Session, message: GroupLeaveMessage): Promise<ServerMessage>;
+  /** Leader replaces every join code of its group (#10 AC30). */
+  rotateCodes(session: Session, message: CodesRotateMessage): Promise<ServerMessage>;
+  /** Join with a QR ticket (#10 AC24). */
+  joinByQr(session: Session, message: GroupJoinByQrMessage): Promise<ServerMessage>;
+  /** Leader asks for a QR ticket (#10 AC23). */
+  issueQr(session: Session, message: QrIssueMessage): Promise<ServerMessage>;
+  /** Joiner withdraws its pending request (#10 AC21). */
+  cancelJoin(session: Session, message: JoinCancelMessage): Promise<ServerMessage>;
+  /** Leader admits a pending joiner (#10 AC21). */
+  approveJoin(session: Session, message: JoinApproveMessage): Promise<ServerMessage>;
+  /** Leader refuses a pending joiner (#10 AC21). */
+  denyJoin(session: Session, message: JoinDenyMessage): Promise<ServerMessage>;
   /** Runs the disconnect rules (member removal, group end). */
   disconnect(session: Session): Promise<void>;
 }

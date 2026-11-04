@@ -2,14 +2,15 @@ import { describe, expect, it } from 'vitest';
 import {
   MAX_API_KEY_LENGTH,
   MAX_APP_VERSION_INPUT_LENGTH,
-  MAX_GROUP_ID_INPUT_LENGTH,
   MAX_REQ_ID_LENGTH,
+  clientMessageSchema,
   parseClientMessage,
   parseServerMessage,
 } from '../src/index.js';
 
 const KEY = 'k'.repeat(40);
 const GROUP_ID = 'A'.repeat(43);
+const BLOB = `eyJ2IjoxfQ.${'B'.repeat(43)}`;
 
 function ok(value: unknown) {
   const result = parseClientMessage(value);
@@ -32,13 +33,20 @@ describe('client message schemas', () => {
     expect(ok({ type: 'group.create', metadata: { a: 1 }, position: null }).type).toBe(
       'group.create',
     );
-    expect(ok({ type: 'group.join', groupId: GROUP_ID, reqId: 'r1' }).type).toBe('group.join');
+    expect(ok({ type: 'group.joinByCode', joinCode: '123456', reqId: 'r1' }).type).toBe(
+      'group.joinByCode',
+    );
     expect(ok({ type: 'position.update', position: 'p' }).type).toBe('position.update');
   });
 
   it('ignores unknown extra fields', () => {
-    const message = ok({ type: 'group.join', groupId: GROUP_ID, displayName: 'x', extra: [1] });
-    expect(message).toEqual({ type: 'group.join', groupId: GROUP_ID });
+    const message = ok({
+      type: 'group.joinByCode',
+      joinCode: '123456',
+      groupId: GROUP_ID,
+      extra: [1],
+    });
+    expect(message).toEqual({ type: 'group.joinByCode', joinCode: '123456' });
   });
 
   it('accepts a hello without an apiKey so the handshake can report INVALID_API_KEY', () => {
@@ -48,7 +56,7 @@ describe('client message schemas', () => {
   it('rejects unknown types, missing fields and non-objects', () => {
     fails({ type: 'group.list' });
     fails({ type: 'position.update' });
-    fails({ type: 'group.join' });
+    fails({ type: 'group.joinByCode' });
     fails({ type: 'hello', appVersion: '1.0.0', apiKey: KEY });
     fails({ type: 'hello', protocolVersion: 1.5, appVersion: '1.0.0' });
     fails({});
@@ -79,10 +87,19 @@ describe('client message schemas', () => {
     fails({ ...hello, apiKey: 'k'.repeat(MAX_API_KEY_LENGTH + 1) });
     ok({ ...hello, appVersion: '1'.repeat(MAX_APP_VERSION_INPUT_LENGTH) });
     fails({ ...hello, appVersion: '1'.repeat(MAX_APP_VERSION_INPUT_LENGTH + 1) });
-    ok({ type: 'group.join', groupId: 'g'.repeat(MAX_GROUP_ID_INPUT_LENGTH) });
-    fails({ type: 'group.join', groupId: 'g'.repeat(MAX_GROUP_ID_INPUT_LENGTH + 1) });
-    ok({ type: 'group.join', groupId: GROUP_ID, reqId: 'r'.repeat(MAX_REQ_ID_LENGTH) });
-    fails({ type: 'group.join', groupId: GROUP_ID, reqId: 'r'.repeat(MAX_REQ_ID_LENGTH + 1) });
+    ok({ type: 'group.end', reqId: 'r'.repeat(MAX_REQ_ID_LENGTH) });
+    fails({ type: 'group.end', reqId: 'r'.repeat(MAX_REQ_ID_LENGTH + 1) });
+  });
+
+  it('no longer accepts group.join by group ID (#10 AC36, R15)', () => {
+    fails({ type: 'group.join', groupId: GROUP_ID });
+    fails({ type: 'group.join', groupId: GROUP_ID, reqId: 'r1' });
+  });
+
+  it('has no client message that takes a raw group ID as a field (#10 AC36, R15)', () => {
+    for (const option of clientMessageSchema.options) {
+      expect(Object.keys(option.shape), option.shape.type.value).not.toContain('groupId');
+    }
   });
 
   it('never echoes received values in issues', () => {
@@ -129,6 +146,202 @@ describe('token messages (#5)', () => {
   });
 });
 
+describe('codes across recovery (#10 AC32-AC34)', () => {
+  it('accepts a bounded joinCodes blob on group.resume', () => {
+    expect(ok({ type: 'group.resume', token: 't', joinCodes: BLOB }).type).toBe('group.resume');
+    expect(ok({ type: 'group.resume', token: 't', joinCodes: 'x' }).type).toBe('group.resume');
+    fails({ type: 'group.resume', token: 't', joinCodes: 'x'.repeat(513) });
+    fails({ type: 'group.resume', token: 't', joinCodes: 1 });
+  });
+
+  it('requires codes and codesChanged on group.resumed', () => {
+    const resumed = {
+      type: 'group.resumed',
+      groupId: GROUP_ID,
+      participantId: 'p',
+      role: 'leader',
+      metadata: {},
+      token: 't',
+      recreated: true,
+      hasPosition: false,
+      joinMethods: ['C'],
+      codes: { generation: 1, alphaCode: 'ABCDEFGH', blob: BLOB },
+      codesChanged: true,
+    };
+    expect(parseServerMessage(resumed).ok).toBe(true);
+    for (const key of ['joinMethods', 'codes', 'codesChanged']) {
+      const missing: Record<string, unknown> = { ...resumed };
+      delete missing[key];
+      expect(parseServerMessage(missing).ok, key).toBe(false);
+    }
+  });
+});
+
+describe('QR messages (#10 AC23, AC24)', () => {
+  it('parses qr.issue, group.joinByQr and qr.ticket', () => {
+    expect(ok({ type: 'qr.issue' }).type).toBe('qr.issue');
+    expect(ok({ type: 'group.joinByQr', ticket: 'x', displayName: 'Dana' }).type).toBe(
+      'group.joinByQr',
+    );
+    expect(ok({ type: 'group.joinByQr', ticket: 'a'.repeat(512) }).type).toBe('group.joinByQr');
+    fails({ type: 'group.joinByQr', ticket: 'a'.repeat(513) });
+    fails({ type: 'group.joinByQr' });
+    fails({ type: 'group.joinByQr', ticket: 'x', displayName: 'x'.repeat(129) });
+    const ticket = { type: 'qr.ticket', reqId: 'r', ticket: 't.x', expiresInMs: 300_000 };
+    expect(parseServerMessage(ticket).ok).toBe(true);
+    expect(parseServerMessage({ ...ticket, ticket: 'a'.repeat(257) }).ok).toBe(false);
+    expect(parseServerMessage({ ...ticket, expiresInMs: 0 }).ok).toBe(false);
+  });
+});
+
+describe('approval messages (#10 AC19-AC22)', () => {
+  const RID = 'R'.repeat(22);
+
+  it('parses join.cancel, join.approve and join.deny with a request ID', () => {
+    expect(ok({ type: 'join.cancel' }).type).toBe('join.cancel');
+    expect(ok({ type: 'join.approve', requestId: RID }).type).toBe('join.approve');
+    expect(ok({ type: 'join.deny', reqId: 'r', requestId: RID }).type).toBe('join.deny');
+    for (const requestId of [undefined, '', 'R'.repeat(21), 'R'.repeat(23), `${'R'.repeat(21)}=`]) {
+      fails({ type: 'join.approve', requestId });
+      fails({ type: 'join.deny', requestId });
+    }
+  });
+
+  it('parses the approval events', () => {
+    for (const message of [
+      { type: 'join.pending', reqId: 'r', requestId: RID, timeoutMs: 120_000 },
+      { type: 'join.requested', groupId: GROUP_ID, requestId: RID, expiresInMs: 5 },
+      {
+        type: 'join.requested',
+        groupId: GROUP_ID,
+        requestId: RID,
+        expiresInMs: 5,
+        displayName: 'Dana',
+      },
+      { type: 'join.withdrawn', groupId: GROUP_ID, requestId: RID, reason: 'cancelled' },
+      { type: 'join.withdrawn', groupId: GROUP_ID, requestId: RID, reason: 'disconnected' },
+      { type: 'join.withdrawn', groupId: GROUP_ID, requestId: RID, reason: 'timeout' },
+      { type: 'join.decided', reqId: 'r', requestId: RID, outcome: 'admitted' },
+      { type: 'join.decided', requestId: RID, outcome: 'group_full' },
+      { type: 'join.decided', requestId: RID, outcome: 'denied' },
+      { type: 'join.cancelled', requestId: RID },
+    ]) {
+      expect(parseServerMessage(message).ok, message.type).toBe(true);
+    }
+    expect(
+      parseServerMessage({ type: 'join.withdrawn', groupId: GROUP_ID, requestId: RID, reason: 'x' })
+        .ok,
+    ).toBe(false);
+    expect(parseServerMessage({ type: 'join.pending', requestId: RID, timeoutMs: -1 }).ok).toBe(
+      false,
+    );
+  });
+});
+
+describe('codes.rotate and code events (#10 AC29, AC30)', () => {
+  it('parses codes.rotate and the leader events', () => {
+    expect(ok({ type: 'codes.rotate', reqId: 'r' }).type).toBe('codes.rotate');
+    for (const message of [
+      {
+        type: 'codes.updated',
+        reqId: 'r',
+        groupId: GROUP_ID,
+        reason: 'rotated',
+        codes: { generation: 2, alphaCode: 'ABCDEFGH', blob: BLOB },
+      },
+      {
+        type: 'codes.updated',
+        groupId: GROUP_ID,
+        reason: 'door_failures',
+        codes: { generation: 3, groupCode: '123456', doorCode: '654321', blob: BLOB },
+      },
+      { type: 'join.paused', groupId: GROUP_ID, retryAfterMs: 600_000 },
+      { type: 'join.resumed', groupId: GROUP_ID },
+    ]) {
+      expect(parseServerMessage(message).ok, message.type).toBe(true);
+    }
+    expect(
+      parseServerMessage({
+        type: 'codes.updated',
+        groupId: GROUP_ID,
+        reason: 'other',
+        codes: { generation: 1, blob: BLOB },
+      }).ok,
+    ).toBe(false);
+    expect(parseServerMessage({ type: 'join.paused', groupId: GROUP_ID }).ok).toBe(false);
+  });
+});
+
+describe('group.joinByCode (#10 AC12)', () => {
+  it('accepts a code with an optional door code and display name, length-capped only', () => {
+    expect(ok({ type: 'group.joinByCode', joinCode: '123456' }).type).toBe('group.joinByCode');
+    expect(
+      ok({
+        type: 'group.joinByCode',
+        reqId: 'r',
+        joinCode: 'not a code yet',
+        doorCode: 'x',
+        displayName: ' ',
+      }).type,
+    ).toBe('group.joinByCode');
+    fails({ type: 'group.joinByCode' });
+    fails({ type: 'group.joinByCode', joinCode: 1 });
+    fails({ type: 'group.joinByCode', joinCode: '1'.repeat(33) });
+    fails({ type: 'group.joinByCode', joinCode: '123456', doorCode: '1'.repeat(33) });
+    fails({ type: 'group.joinByCode', joinCode: '123456', displayName: 'x'.repeat(129) });
+    expect(ok({ type: 'group.joinByCode', joinCode: '1'.repeat(32) }).type).toBe(
+      'group.joinByCode',
+    );
+  });
+});
+
+describe('group.create join methods and group.created codes (#10 AC5, AC6)', () => {
+  it('accepts 1 to 4 method letters on group.create', () => {
+    expect(ok({ type: 'group.create', metadata: {}, joinMethods: ['A', 'D'] }).type).toBe(
+      'group.create',
+    );
+    expect(ok({ type: 'group.create', metadata: {}, joinMethods: ['A', 'A'] }).type).toBe(
+      'group.create',
+    );
+    for (const joinMethods of [[], ['E'], ['a'], 'A', ['A', 'B', 'C', 'D', 'A']]) {
+      fails({ type: 'group.create', metadata: {}, joinMethods });
+    }
+  });
+
+  it('validates the codes payload of group.created', () => {
+    const created = {
+      type: 'group.created',
+      groupId: GROUP_ID,
+      participantId: 'p',
+      role: 'leader',
+      token: 't',
+      joinMethods: ['A', 'C', 'D'],
+      codes: {
+        generation: 1_767_225_600_000,
+        groupCode: '000000',
+        doorCode: '999999',
+        alphaCode: 'ABCDEFGH',
+        blob: BLOB,
+      },
+    };
+    expect(parseServerMessage(created).ok).toBe(true);
+    for (const codes of [
+      { ...created.codes, groupCode: '12345' },
+      { ...created.codes, doorCode: 'ABCDEF' },
+      { ...created.codes, alphaCode: 'ABCDEFG0' },
+      { ...created.codes, generation: -1 },
+      { ...created.codes, blob: 'x' },
+      { ...created.codes, blob: `${'a'.repeat(470)}.${'B'.repeat(43)}` },
+      { generation: 1 },
+    ]) {
+      expect(parseServerMessage({ ...created, codes }).ok).toBe(false);
+    }
+    const noCodes: Record<string, unknown> = { ...created };
+    delete noCodes.codes;
+    expect(parseServerMessage(noCodes).ok).toBe(false);
+  });
+});
+
 describe('server message schemas', () => {
   it('parses every server message type', () => {
     const messages = [
@@ -137,14 +350,25 @@ describe('server message schemas', () => {
         type: 'hello.ok',
         participantId: 'p',
         namespace: 'app-a',
+        joinMethods: ['A', 'D'],
         limits: {
           maxGroupSize: 30,
           maxLeaderUpdatesPerSecond: 5,
           maxMessageBytes: 4096,
           maxSessionMinutes: 180,
+          qrTicketSeconds: 300,
+          approvalTimeoutSeconds: 120,
         },
       },
-      { type: 'group.created', groupId: GROUP_ID, participantId: 'p', role: 'leader', token: 't' },
+      {
+        type: 'group.created',
+        groupId: GROUP_ID,
+        participantId: 'p',
+        role: 'leader',
+        token: 't',
+        joinMethods: ['A', 'D'],
+        codes: { generation: 1, groupCode: '012345', doorCode: '543210', blob: BLOB },
+      },
       {
         type: 'group.joined',
         groupId: GROUP_ID,
@@ -193,6 +417,8 @@ describe('server message schemas', () => {
       groupId: GROUP_ID,
       participantId: 'p',
       role: 'leader',
+      joinMethods: ['D'],
+      codes: { generation: 1, blob: BLOB },
     };
     expect(parseServerMessage(created).ok).toBe(false);
     expect(parseServerMessage({ ...created, token: '' }).ok).toBe(false);
@@ -202,15 +428,44 @@ describe('server message schemas', () => {
       type: 'hello.ok',
       participantId: 'p',
       namespace: 'app-a',
+      joinMethods: ['C'],
       limits: {
         maxGroupSize: 3,
         maxLeaderUpdatesPerSecond: 1,
         maxMessageBytes: 1,
         maxSessionMinutes: 1,
+        qrTicketSeconds: 30,
+        approvalTimeoutSeconds: 15,
       },
     };
     expect(parseServerMessage(helloOk).ok).toBe(true);
     expect(parseServerMessage({ ...helloOk, namespace: 'Bad App' }).ok).toBe(false);
     expect(parseServerMessage({ ...helloOk, namespace: undefined }).ok).toBe(false);
+  });
+
+  it('requires the join methods and join timers in hello.ok (#10 AC4)', () => {
+    const helloOk = {
+      type: 'hello.ok',
+      participantId: 'p',
+      namespace: 'app-a',
+      joinMethods: ['A', 'B', 'C', 'D'],
+      limits: {
+        maxGroupSize: 3,
+        maxLeaderUpdatesPerSecond: 1,
+        maxMessageBytes: 1,
+        maxSessionMinutes: 1,
+        qrTicketSeconds: 300,
+        approvalTimeoutSeconds: 120,
+      },
+    };
+    expect(parseServerMessage(helloOk).ok).toBe(true);
+    for (const joinMethods of [undefined, [], ['E'], ['a'], 'A', ['A', 'B', 'C', 'D', 'A']]) {
+      expect(parseServerMessage({ ...helloOk, joinMethods }).ok).toBe(false);
+    }
+    for (const key of ['qrTicketSeconds', 'approvalTimeoutSeconds']) {
+      const limits: Record<string, number> = { ...helloOk.limits };
+      delete limits[key];
+      expect(parseServerMessage({ ...helloOk, limits }).ok).toBe(false);
+    }
   });
 });

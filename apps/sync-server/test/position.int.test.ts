@@ -29,13 +29,15 @@ describe('position relay (AC13)', () => {
   });
 
   it('gives a later joiner the latest payload', async () => {
-    const { groupId, leader } = await createGroupWithMembers(ts, 0, { position: { page: 1 } });
+    const { join, leader } = await createGroupWithMembers(ts, 0, {
+      position: { page: 1 },
+    });
     for (const page of [2, 3, 4]) {
       leader.send({ type: 'position.update', position: { page } });
       await leader.next('position.ack');
     }
     const late = await ts.connectReady();
-    late.send({ type: 'group.join', groupId });
+    late.send({ type: 'group.joinByCode', ...join });
     expect(await late.next('group.joined')).toMatchObject({
       hasPosition: true,
       position: { page: 4 },
@@ -43,11 +45,11 @@ describe('position relay (AC13)', () => {
   });
 
   it('turns hasPosition true after the first update', async () => {
-    const { groupId, leader } = await createGroupWithMembers(ts, 0);
+    const { join, leader } = await createGroupWithMembers(ts, 0);
     leader.send({ type: 'position.update', position: 'first' });
     await leader.next('position.ack');
     const member = await ts.connectReady();
-    member.send({ type: 'group.join', groupId });
+    member.send({ type: 'group.joinByCode', ...join });
     expect(await member.next('group.joined')).toMatchObject({
       hasPosition: true,
       position: 'first',
@@ -63,7 +65,7 @@ describe('position relay (AC13)', () => {
 
 describe('only the leader updates (AC15)', () => {
   it('rejects a member update with NOT_LEADER and relays nothing', async () => {
-    const { groupId, leader, members } = await createGroupWithMembers(ts, 2, {
+    const { join, leader, members } = await createGroupWithMembers(ts, 2, {
       position: { page: 1 },
     });
     const [sender, other] = members as [(typeof members)[0], (typeof members)[0]];
@@ -78,7 +80,7 @@ describe('only the leader updates (AC15)', () => {
     await leader.expectNoMessage();
 
     const late = await ts.connectReady();
-    late.send({ type: 'group.join', groupId });
+    late.send({ type: 'group.joinByCode', ...join });
     expect(await late.next('group.joined')).toMatchObject({ position: { page: 1 } });
   });
 });

@@ -31,6 +31,15 @@ const KNOWN_TYPES: ReadonlySet<string> = new Set<ServerMessage['type']>([
   'leader.offline',
   'leader.online',
   'token.refreshed',
+  'join.pending',
+  'join.cancelled',
+  'join.requested',
+  'join.withdrawn',
+  'join.decided',
+  'join.paused',
+  'join.resumed',
+  'codes.updated',
+  'qr.ticket',
   'error',
 ]);
 

@@ -18,6 +18,8 @@ const NUMERIC = [
   'TOKEN_REFRESH_ACTIVITIES',
   'TOKEN_REFRESH_MIN_SECONDS',
   'TOKEN_REFRESH_MAX_SECONDS',
+  'QR_TICKET_SECONDS_CEILING',
+  'APPROVAL_TIMEOUT_SECONDS_CEILING',
 ];
 
 function errorOf(env: Record<string, string>): ConfigError {
@@ -52,6 +54,9 @@ describe('parseEnv', () => {
       tokenRefreshActivities: 10,
       tokenRefreshMinSeconds: 60,
       tokenRefreshMaxSeconds: 300,
+      joinMethodsAllowed: ['A', 'B', 'C', 'D'],
+      qrTicketSecondsCeiling: 3600,
+      approvalTimeoutSecondsCeiling: 600,
     });
   });
 
@@ -109,6 +114,48 @@ describe('parseEnv', () => {
       });
     }
   }
+
+  it('reads JOIN_METHODS_ALLOWED in canonical order, trimming whitespace (#10 AC1)', () => {
+    expect(parseEnv({ JOIN_METHODS_ALLOWED: ' D , A ' }).joinMethodsAllowed).toEqual(['A', 'D']);
+    expect(parseEnv({ JOIN_METHODS_ALLOWED: 'C' }).joinMethodsAllowed).toEqual(['C']);
+    expect(parseEnv({ JOIN_METHODS_ALLOWED: 'B,C,D,A' }).joinMethodsAllowed).toEqual([
+      'A',
+      'B',
+      'C',
+      'D',
+    ]);
+  });
+
+  it.each(['', ' ', 'A,,B', 'E', 'a', 'A,A', 'A;B', 'AB', 'A,B,'])(
+    'rejects JOIN_METHODS_ALLOWED=%j naming the variable without the value (#10 AC1)',
+    (bad) => {
+      const err = errorOf({ JOIN_METHODS_ALLOWED: bad });
+      expect(err.message).toBe(
+        'JOIN_METHODS_ALLOWED must be a non-empty comma-separated list of distinct methods A, B, C, D',
+      );
+    },
+  );
+
+  it('bounds the join timer ceilings (#10 AC3)', () => {
+    expect(errorOf({ QR_TICKET_SECONDS_CEILING: '29' }).message).toBe(
+      'QR_TICKET_SECONDS_CEILING must be between 30 and 86400',
+    );
+    expect(errorOf({ QR_TICKET_SECONDS_CEILING: '86401' }).message).toBe(
+      'QR_TICKET_SECONDS_CEILING must be between 30 and 86400',
+    );
+    expect(errorOf({ APPROVAL_TIMEOUT_SECONDS_CEILING: '14' }).message).toBe(
+      'APPROVAL_TIMEOUT_SECONDS_CEILING must be between 15 and 3600',
+    );
+    expect(errorOf({ APPROVAL_TIMEOUT_SECONDS_CEILING: '3601' }).message).toBe(
+      'APPROVAL_TIMEOUT_SECONDS_CEILING must be between 15 and 3600',
+    );
+    const env = parseEnv({
+      QR_TICKET_SECONDS_CEILING: '30',
+      APPROVAL_TIMEOUT_SECONDS_CEILING: '3600',
+    });
+    expect(env.qrTicketSecondsCeiling).toBe(30);
+    expect(env.approvalTimeoutSecondsCeiling).toBe(3600);
+  });
 
   it('rejects TOKEN_REFRESH_MAX_SECONDS above 3600 (#5)', () => {
     expect(errorOf({ TOKEN_REFRESH_MAX_SECONDS: '3601' }).message).toBe(

@@ -1,3 +1,4 @@
+import { JOIN_METHODS, type JoinMethod } from '@sync-system/protocol';
 import { z } from 'zod';
 import { ConfigError } from './config-error.js';
 import { TOKENS_CHECK_MAX_FRAME_BYTES } from '../limits/constants.js';
@@ -39,6 +40,12 @@ export interface ServerEnv {
   tokenRefreshMinSeconds: number;
   /** Maximum seconds between leader token refreshes; also the recovery slack (#5 AC12, Q10). */
   tokenRefreshMaxSeconds: number;
+  /** Join methods any app may use, in canonical order (#10 AC1). */
+  joinMethodsAllowed: readonly JoinMethod[];
+  /** Ceiling for app `qrTicketSeconds` (#10 AC3). */
+  qrTicketSecondsCeiling: number;
+  /** Ceiling for app `approvalTimeoutSeconds` (#10 AC3). */
+  approvalTimeoutSecondsCeiling: number;
 }
 
 export type EnvSource = Readonly<Record<string, string | undefined>>;
@@ -47,6 +54,8 @@ interface NumericVar {
   key: keyof ServerEnv;
   name: string;
   defaultValue: number;
+  /** Lower bound; defaults to 1. */
+  min?: number;
   max?: number;
 }
 
@@ -79,7 +88,39 @@ const NUMERIC_VARS: readonly NumericVar[] = [
     defaultValue: 300,
     max: 3600,
   },
+  // The bounds keep min(app default, ceiling) above each app field's minimum,
+  // and match the client's hello.ok bounds (#10 architecture 5.1).
+  {
+    key: 'qrTicketSecondsCeiling',
+    name: 'QR_TICKET_SECONDS_CEILING',
+    defaultValue: 3600,
+    min: 30,
+    max: 86_400,
+  },
+  {
+    key: 'approvalTimeoutSecondsCeiling',
+    name: 'APPROVAL_TIMEOUT_SECONDS_CEILING',
+    defaultValue: 600,
+    min: 15,
+    max: 3600,
+  },
 ];
+
+const JOIN_METHODS_ERROR =
+  'JOIN_METHODS_ALLOWED must be a non-empty comma-separated list of distinct methods A, B, C, D';
+
+/**
+ * Parses JOIN_METHODS_ALLOWED (#10 AC1): comma-separated uppercase letters
+ * A-D, whitespace around items trimmed. Returns the canonical order, or
+ * undefined for an empty list, an unknown letter or a duplicate.
+ */
+export function parseJoinMethodsAllowed(raw: string): JoinMethod[] | undefined {
+  const items = raw.split(',').map((item) => item.trim());
+  const known: readonly string[] = JOIN_METHODS;
+  if (items.some((item) => !known.includes(item))) return undefined;
+  if (new Set(items).size !== items.length) return undefined;
+  return JOIN_METHODS.filter((method) => items.includes(method));
+}
 
 /** Digits only, no sign, no leading zero, no decimal point. */
 const positiveIntegerText = z
@@ -110,8 +151,10 @@ export function parseEnv(env: EnvSource): ServerEnv {
       errors.push(`${variable.name} must be a positive integer`);
       continue;
     }
-    if (variable.max !== undefined && parsed.data > variable.max) {
-      errors.push(`${variable.name} must be between 1 and ${variable.max}`);
+    const min = variable.min ?? 1;
+    const max = variable.max ?? Number.MAX_SAFE_INTEGER;
+    if (parsed.data < min || parsed.data > max) {
+      errors.push(`${variable.name} must be between ${min} and ${max}`);
       continue;
     }
     numbers[variable.key] = parsed.data;
@@ -129,6 +172,17 @@ export function parseEnv(env: EnvSource): ServerEnv {
 
   const host = env.HOST ?? '0.0.0.0';
   if (host.trim() === '') errors.push('HOST must not be empty');
+
+  let joinMethodsAllowed: readonly JoinMethod[] = JOIN_METHODS;
+  if (env.JOIN_METHODS_ALLOWED !== undefined) {
+    const parsed = parseJoinMethodsAllowed(env.JOIN_METHODS_ALLOWED);
+    if (parsed === undefined) {
+      // The value is never echoed.
+      errors.push(JOIN_METHODS_ERROR);
+    } else {
+      joinMethodsAllowed = parsed;
+    }
+  }
 
   const configPath = env.SYNC_CONFIG_PATH ?? './config/apps.json';
   if (configPath.trim() === '') errors.push('SYNC_CONFIG_PATH must not be empty');
@@ -195,5 +249,8 @@ export function parseEnv(env: EnvSource): ServerEnv {
     tokenRefreshActivities: n.tokenRefreshActivities,
     tokenRefreshMinSeconds: n.tokenRefreshMinSeconds,
     tokenRefreshMaxSeconds: n.tokenRefreshMaxSeconds,
+    joinMethodsAllowed: Object.freeze([...joinMethodsAllowed]),
+    qrTicketSecondsCeiling: n.qrTicketSecondsCeiling,
+    approvalTimeoutSecondsCeiling: n.approvalTimeoutSecondsCeiling,
   };
 }

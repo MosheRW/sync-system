@@ -17,11 +17,19 @@ export const ACTION_ERROR_TEXT = {
   RATE_LIMITED: {
     'position.update': 'Too many position updates',
     'tokens.check': 'Too many token checks',
+    'group.joinByCode': 'Too many join attempts',
+    'codes.rotate': 'Too many code rotations',
+    'group.joinByQr': 'Too many join attempts',
+    'qr.issue': 'Too many QR code requests',
   },
   NOT_LEADER: {
     'position.update': 'Only the leader can update the position',
     'group.end': 'Only the leader can end the group',
     'blocklist.set': 'Only the leader can set the block list',
+    'codes.rotate': 'Only the leader can rotate the codes',
+    'join.approve': 'Only the leader can approve join requests',
+    'join.deny': 'Only the leader can deny join requests',
+    'qr.issue': 'Only the leader can issue QR codes',
   },
 } as const satisfies Record<ActionErrorCode, Record<string, string>>;
 
@@ -54,6 +62,18 @@ export const ERROR_TEXT: Record<GenericErrorCode, string> = {
   TOKEN_EXPIRED: 'Token expired',
   GROUP_ENDED: 'Group has ended',
   PARTICIPANT_BLOCKED: 'Participant is blocked',
+  JOIN_METHOD_NOT_ALLOWED: 'Join method not allowed',
+  CODES_EXHAUSTED: 'No free join code; try again',
+  CODE_NOT_FOUND: 'Join code not found',
+  DOOR_CODE_REQUIRED: 'Door code required',
+  DOOR_CODE_WRONG: 'Wrong door code',
+  JOIN_PAUSED: 'Joining with the door code is paused; try again later',
+  JOIN_DENIED: 'The leader denied the join request',
+  APPROVAL_TIMEOUT: 'The join request was not approved in time',
+  APPROVAL_QUEUE_FULL: 'Too many pending join requests for this group',
+  JOIN_REQUEST_NOT_FOUND: 'Join request not found',
+  QR_INVALID: 'Invalid QR code',
+  QR_EXPIRED: 'QR code expired',
 };
 
 interface ErrorOptions {
