@@ -1,4 +1,5 @@
 {
+  "includeCoAuthoredBy": false,
   "permissions": {
     "allow": [
       "Bash(gh issue view:*)",
@@ -43,21 +44,28 @@
       "Bash(npx tsc:*)",
       "Bash(npx prisma validate:*)",
       "Bash(npx prisma generate:*)",
-      "Bash(pnpm test:*)",
-      "Bash(pnpm run test:*)",
-      "Bash(pnpm lint:*)",
-      "Bash(pnpm run lint:*)",
-      "Bash(pnpm typecheck:*)",
-      "Bash(pnpm run typecheck:*)",
-      "Bash(pnpm build:*)",
-      "Bash(pnpm run build:*)",
-      "Bash(pnpm exec tsc:*)"
+      "Bash(npm audit:*)",
+      "Bash(semgrep scan:*)",
+      "Bash(gitleaks git:*)",
+      "Bash(gitleaks detect:*)",
+      "Bash(command -v:*)",
+      "Bash(git branch --show-current)",
+      "Bash(git submodule status:*)",
+      "Bash(git submodule update --init:*)",
+      "Bash(git stash:*)",
+      "Bash(cd:*)",
+      "Bash(docker compose config:*)",
+      "Bash(docker compose ps:*)"
     ],
     "ask": [
       "Bash(npm install:*)",
-      "Bash(pnpm install:*)",
-      "Bash(pnpm add:*)",
-      "Bash(npx prisma migrate:*)"
+      "Bash(npx prisma migrate:*)",
+      "Bash(npm audit fix:*)",
+      "Bash(pip install:*)",
+      "Bash(brew install:*)",
+      "Bash(docker compose build:*)",
+      "Bash(docker compose up:*)",
+      "Bash(docker compose down:*)"
     ],
     "deny": [
       "Bash(gh pr merge:*)",
