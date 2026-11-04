@@ -68,6 +68,8 @@ describe('resumeGroup (#5 AC38)', () => {
     });
     socket.receive({
       type: 'group.resumed',
+      displayName: 'Guest 1',
+      generated: true,
       reqId: sent.reqId,
       groupId: GID,
       participantId: 'pid',
@@ -130,6 +132,9 @@ describe('resumeGroup (#5 AC38)', () => {
     void c.createGroup({});
     socket.receive({
       type: 'group.created',
+      handoff: 'auto',
+      displayName: 'Guest 1',
+      generated: true,
       ...CREATED_FIELDS,
       reqId: socket.lastMessage().reqId,
       groupId: GID,
@@ -169,6 +174,9 @@ describe('endGroup and leaveGroup (#5 AC29, AC30, AC31)', () => {
     const creating = c.createGroup({});
     socket.receive({
       type: 'group.created',
+      handoff: 'auto',
+      displayName: 'Guest 1',
+      generated: true,
       ...CREATED_FIELDS,
       reqId: socket.lastMessage().reqId,
       groupId: GID,
@@ -187,6 +195,8 @@ describe('endGroup and leaveGroup (#5 AC29, AC30, AC31)', () => {
     const joining = joinTestGroup(c);
     socket.receive({
       type: 'group.joined',
+      displayName: 'Guest 1',
+      generated: true,
       reqId: socket.lastMessage().reqId,
       groupId: GID,
       participantId: 'p',

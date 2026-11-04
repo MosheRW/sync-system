@@ -31,6 +31,9 @@ describe('token capture (#5 AC31, AC34)', () => {
     const token = fakeToken({ gid: GID });
     socket.receive({
       type: 'group.created',
+      handoff: 'auto',
+      displayName: 'Guest 1',
+      generated: true,
       ...CREATED_FIELDS,
       reqId: socket.lastMessage().reqId,
       groupId: GID,
@@ -61,6 +64,8 @@ describe('token capture (#5 AC31, AC34)', () => {
     const token = fakeToken({ gid: GID, role: 'member' });
     socket.receive({
       type: 'group.joined',
+      displayName: 'Guest 1',
+      generated: true,
       reqId: socket.lastMessage().reqId,
       groupId: GID,
       participantId: 'p',
@@ -82,6 +87,9 @@ describe('token capture (#5 AC31, AC34)', () => {
     const creating = client.createGroup({});
     socket.receive({
       type: 'group.created',
+      handoff: 'auto',
+      displayName: 'Guest 1',
+      generated: true,
       ...CREATED_FIELDS,
       reqId: socket.lastMessage().reqId,
       groupId: GID,
@@ -116,6 +124,9 @@ describe('token capture (#5 AC31, AC34)', () => {
     const creating = client.createGroup({});
     socket.receive({
       type: 'group.created',
+      handoff: 'auto',
+      displayName: 'Guest 1',
+      generated: true,
       ...CREATED_FIELDS,
       reqId: socket.lastMessage().reqId,
       groupId: GID,
@@ -149,6 +160,9 @@ describe('token capture (#5 AC31, AC34)', () => {
       const creating = client.createGroup({});
       socket.receive({
         type: 'group.created',
+        handoff: 'auto',
+        displayName: 'Guest 1',
+        generated: true,
         ...CREATED_FIELDS,
         reqId: socket.lastMessage().reqId,
         groupId: GID,

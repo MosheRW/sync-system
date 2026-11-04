@@ -49,6 +49,8 @@ describe('recreation after a restart (#5 AC23)', () => {
       groupId: group.groupId,
       participantId: group.leaderId,
       role: 'leader',
+      displayName: expect.any(String) as string,
+      generated: true,
       metadata: { book: 1 },
       hasPosition: true,
       position: { page: 7 },

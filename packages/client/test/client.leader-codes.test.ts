@@ -35,6 +35,9 @@ async function leader(joinMethods: string[] = ['A', 'D']) {
   const creating = client.createGroup({ m: 1 });
   socket.receive({
     type: 'group.created',
+    handoff: 'auto',
+    displayName: 'Guest 1',
+    generated: true,
     ...CREATED_FIELDS,
     joinMethods,
     reqId: socket.lastMessage().reqId,
@@ -135,6 +138,8 @@ describe('leader API (#10 AC40)', () => {
     const joining = joinTestGroup(client);
     socket.receive({
       type: 'group.joined',
+      displayName: 'Guest 1',
+      generated: true,
       reqId: socket.lastMessage().reqId,
       groupId: GROUP_ID,
       participantId: 'm',
@@ -293,6 +298,9 @@ describe('the codes blob in storage (#10 AC32, N1)', () => {
     const creating = client.createGroup({});
     socket.receive({
       type: 'group.created',
+      handoff: 'auto',
+      displayName: 'Guest 1',
+      generated: true,
       ...CREATED_FIELDS,
       reqId: socket.lastMessage().reqId,
       groupId: GROUP_ID,

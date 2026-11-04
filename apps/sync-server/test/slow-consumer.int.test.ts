@@ -17,6 +17,8 @@ describe('slow consumers (H2)', () => {
       env: {
         // Smallest allowed buffer limit: 4 * MAX_MESSAGE_SIZE_CEILING.
         MAX_BUFFERED_BYTES: String(4 * 16384),
+        // A roster snapshot of the largest group must fit it too (#13 5.5).
+        MAX_GROUP_SIZE_CEILING: '40',
         // High update rates so the loop below is bounded by the buffer only.
         MAX_LEADER_UPDATE_RATE_CEILING: '100000',
         MAX_INBOUND_MESSAGES_PER_SECOND: '200000',

@@ -52,6 +52,8 @@ async function member(storage: TokenStorage = memoryStorage()): Promise<Setup> {
   const token = fakeToken({ gid: GROUP_ID, role: 'member' });
   socket.receive({
     type: 'group.joined',
+    displayName: 'Guest 1',
+    generated: true,
     reqId: socket.lastMessage().reqId,
     groupId: GROUP_ID,
     participantId: 'member-pid',
@@ -73,6 +75,9 @@ async function leader(storage: TokenStorage = memoryStorage()): Promise<Setup> {
   const token = fakeToken({ gid: GROUP_ID });
   socket.receive({
     type: 'group.created',
+    handoff: 'auto',
+    displayName: 'Guest 1',
+    generated: true,
     ...CREATED_FIELDS,
     reqId: socket.lastMessage().reqId,
     groupId: GROUP_ID,
@@ -137,6 +142,8 @@ describe('token rejoin after an unexpected drop (#5 AC35, AC36)', () => {
     const fresh = fakeToken({ gid: GROUP_ID, role: 'member' });
     next.receive({
       type: 'group.joined',
+      displayName: 'Guest 1',
+      generated: true,
       reqId: resume.reqId,
       groupId: GROUP_ID,
       participantId: 'member-pid',
@@ -189,6 +196,8 @@ describe('token rejoin after an unexpected drop (#5 AC35, AC36)', () => {
     });
     next.receive({
       type: 'group.resumed',
+      displayName: 'Guest 1',
+      generated: true,
       reqId: resume.reqId,
       groupId: GROUP_ID,
       participantId: 'leader-pid',
@@ -245,6 +254,8 @@ describe('token rejoin after an unexpected drop (#5 AC35, AC36)', () => {
     expect(rejoined).toEqual([]);
     next.receive({
       type: 'group.joined',
+      displayName: 'Guest 1',
+      generated: true,
       groupId: GROUP_ID,
       participantId: 'member-pid',
       role: 'member',

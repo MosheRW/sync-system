@@ -46,6 +46,9 @@ async function leader(limits = LIMITS): Promise<{ client: SyncClient; socket: Fa
   const reqId = socket.lastMessage().reqId;
   socket.receive({
     type: 'group.created',
+    handoff: 'auto',
+    displayName: 'Guest 1',
+    generated: true,
     ...CREATED_FIELDS,
     token: 'h.p.s',
     reqId,
@@ -239,6 +242,8 @@ describe('updatePosition rules (AC18)', () => {
     const joining = joinTestGroup(client);
     socket.receive({
       type: 'group.joined',
+      displayName: 'Guest 1',
+      generated: true,
       token: 'h.p.s',
       leaderOnline: true,
       reqId: 'c2',

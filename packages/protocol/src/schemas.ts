@@ -32,6 +32,12 @@ import {
   TOKEN_STATUSES,
 } from './messages.js';
 
+/**
+ * Most entries a `roster.snapshot` may carry: twice the largest group size a
+ * client accepts (10 000), plus the protected entries (#13 D10).
+ */
+const MAX_ROSTER_WIRE_ENTRIES = 20_002;
+
 // Every schema below is built with zod's `jitless` option on. Without it,
 // building the first z.object runs zod's eval probe at import time: it reads
 // the browser global `navigator` and calls `new Function("")`, which a strict
@@ -78,6 +84,7 @@ const schemas = buildJitless(() => {
     position: opaqueValue.optional(),
     joinMethods: joinMethodList.optional(),
     handoff: z.enum(HANDOFF_MODES).optional(),
+    displayName: z.string().max(MAX_DISPLAY_NAME_INPUT_LENGTH).optional(),
   });
 
   const joinCode = z.string().max(MAX_JOIN_CODE_INPUT_LENGTH);
@@ -125,6 +132,7 @@ const schemas = buildJitless(() => {
     joinCodes: z.string().max(MAX_CODES_BLOB_LENGTH).optional(),
     // Leader recovery state (#13 D13); used only for a recreation.
     handoff: z.enum(HANDOFF_MODES).optional(),
+    displayName: displayName.optional(),
   });
 
   const tokensCheckSchema = z.object({
@@ -189,7 +197,27 @@ const schemas = buildJitless(() => {
 
   const token = z.string().min(1).max(MAX_TOKEN_LENGTH);
 
+  /** The receiver's own name (#13 AC36). */
+  const ownName = {
+    displayName: z.string().max(MAX_DISPLAY_NAME_INPUT_LENGTH),
+    generated: z.boolean(),
+  };
+
+  const role = z.enum(['leader', 'vice-leader', 'member']);
+  const count = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+  const rosterEntry = z.object({
+    participantId: z.string().regex(PARTICIPANT_ID_PATTERN),
+    displayName: z.string().max(MAX_DISPLAY_NAME_INPUT_LENGTH),
+    generated: z.boolean(),
+    guestNumber: count.optional(),
+    role,
+    connected: z.boolean(),
+    joinedAgoMs: count,
+    admittedSinceRecovery: z.literal(true).optional(),
+  });
+
   const groupJoinedBase = {
+    ...ownName,
     type: z.literal('group.joined'),
     reqId,
     groupId: z.string(),
@@ -201,6 +229,7 @@ const schemas = buildJitless(() => {
   };
 
   const groupResumedBase = {
+    ...ownName,
     type: z.literal('group.resumed'),
     reqId,
     groupId: z.string(),
@@ -235,6 +264,8 @@ const schemas = buildJitless(() => {
       groupId: z.string(),
       participantId: z.string(),
       role: z.literal('leader'),
+      handoff: z.enum(HANDOFF_MODES),
+      ...ownName,
       token,
       joinMethods,
       codes: joinCodesPayload,
@@ -308,6 +339,18 @@ const schemas = buildJitless(() => {
       reqId,
       ticket: z.string().min(1).max(MAX_QR_TICKET_LENGTH),
       expiresInMs: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    }),
+    z.object({
+      type: z.literal('roster.snapshot'),
+      groupId: z.string(),
+      // Bounded by the group size ceiling of any server (MAX_ROSTER_ENTRIES_FACTOR).
+      participants: z.array(rosterEntry).max(MAX_ROSTER_WIRE_ENTRIES),
+    }),
+    z.object({ type: z.literal('roster.updated'), groupId: z.string(), participant: rosterEntry }),
+    z.object({
+      type: z.literal('roster.removed'),
+      groupId: z.string(),
+      participantId: z.string().regex(PARTICIPANT_ID_PATTERN),
     }),
     z.object({
       type: z.literal('error'),

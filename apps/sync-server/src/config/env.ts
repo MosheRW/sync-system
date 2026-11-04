@@ -1,7 +1,11 @@
 import { JOIN_METHODS, type JoinMethod } from '@sync-system/protocol';
 import { z } from 'zod';
 import { ConfigError } from './config-error.js';
-import { TOKENS_CHECK_MAX_FRAME_BYTES } from '../limits/constants.js';
+import {
+  ROSTER_SNAPSHOT_HEADROOM_BYTES,
+  TOKENS_CHECK_MAX_FRAME_BYTES,
+  rosterSnapshotMaxBytes,
+} from '../limits/constants.js';
 
 export const LOG_LEVELS = ['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'] as const;
 export type LogLevel = (typeof LOG_LEVELS)[number];
@@ -234,6 +238,14 @@ export function parseEnv(env: EnvSource): ServerEnv {
     rule(
       n.maxBufferedBytes >= TOKENS_CHECK_MAX_FRAME_BYTES,
       `MAX_BUFFERED_BYTES (${n.maxBufferedBytes}) must be >= the largest tokens.result frame (${TOKENS_CHECK_MAX_FRAME_BYTES})`,
+    );
+    // A roster snapshot of the largest group, with the frames right behind
+    // it, must fit an empty outbound buffer (#13 5.5).
+    const rosterBytes =
+      rosterSnapshotMaxBytes(n.maxGroupSizeCeiling) + ROSTER_SNAPSHOT_HEADROOM_BYTES;
+    rule(
+      n.maxBufferedBytes >= rosterBytes,
+      `MAX_BUFFERED_BYTES (${n.maxBufferedBytes}) must be >= the largest roster snapshot plus headroom (${rosterBytes}) for MAX_GROUP_SIZE_CEILING (${n.maxGroupSizeCeiling})`,
     );
     rule(
       n.tokenRefreshMinSeconds <= n.tokenRefreshMaxSeconds,

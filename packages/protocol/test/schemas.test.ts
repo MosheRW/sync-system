@@ -157,6 +157,8 @@ describe('codes across recovery (#10 AC32-AC34)', () => {
   it('requires codes and codesChanged on group.resumed', () => {
     const resumed = {
       type: 'group.resumed',
+      displayName: 'Guest 1',
+      generated: true,
       groupId: GROUP_ID,
       participantId: 'p',
       role: 'leader',
@@ -311,6 +313,9 @@ describe('group.create join methods and group.created codes (#10 AC5, AC6)', () 
   it('validates the codes payload of group.created', () => {
     const created = {
       type: 'group.created',
+      handoff: 'auto',
+      displayName: 'Guest 1',
+      generated: true,
       groupId: GROUP_ID,
       participantId: 'p',
       role: 'leader',
@@ -366,6 +371,9 @@ describe('server message schemas', () => {
       },
       {
         type: 'group.created',
+        handoff: 'auto',
+        displayName: 'Guest 1',
+        generated: true,
         groupId: GROUP_ID,
         participantId: 'p',
         role: 'leader',
@@ -375,6 +383,8 @@ describe('server message schemas', () => {
       },
       {
         type: 'group.joined',
+        displayName: 'Guest 1',
+        generated: true,
         groupId: GROUP_ID,
         participantId: 'p',
         role: 'member',
@@ -386,6 +396,8 @@ describe('server message schemas', () => {
       },
       {
         type: 'group.joined',
+        displayName: 'Guest 1',
+        generated: true,
         groupId: GROUP_ID,
         participantId: 'p',
         role: 'member',
@@ -418,6 +430,9 @@ describe('server message schemas', () => {
   it('requires a bounded token and a valid namespace (#5)', () => {
     const created = {
       type: 'group.created',
+      handoff: 'auto',
+      displayName: 'Guest 1',
+      generated: true,
       groupId: GROUP_ID,
       participantId: 'p',
       role: 'leader',

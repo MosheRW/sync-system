@@ -17,6 +17,9 @@ function record(overrides: Partial<GroupRecord> = {}): GroupRecord {
     term: 1,
     recoveredAt: undefined,
     handoff: 'auto',
+    roster: [],
+    nextAdmissionSeq: 0,
+    nextGuestNumber: 1,
     leaderOnline: true,
     blockList: [],
     joinMethods: ['A', 'D'],
@@ -165,6 +168,26 @@ describe('InMemoryGroupStore', () => {
     expect(await store.setBlockList('app-b', ID, [])).toBeUndefined();
   });
 
+  it('patches fields atomically and keeps no reference to the caller (#13)', async () => {
+    const store = new InMemoryGroupStore();
+    await store.create(record());
+    const entry = {
+      pid: 'leader',
+      name: 'Dana',
+      generated: false,
+      admittedSeq: 0,
+      admittedAt: 1,
+      connected: true,
+      admittedSinceRecovery: false,
+    };
+    const roster = [entry];
+    const updated = await store.patch('app-a', ID, { roster, nextAdmissionSeq: 1, term: 9 });
+    expect(updated).toMatchObject({ roster: [entry], nextAdmissionSeq: 1, term: 9 });
+    roster.push({ ...entry, pid: 'x' });
+    expect((await store.get('app-a', ID))?.roster).toHaveLength(1);
+    expect(await store.patch('app-b', ID, { term: 1 })).toBeUndefined();
+  });
+
   it('has no way to list groups (AC20)', () => {
     expectTypeOf<keyof GroupStore>().toEqualTypeOf<
       | 'create'
@@ -176,6 +199,7 @@ describe('InMemoryGroupStore', () => {
       | 'setPosition'
       | 'setBlockList'
       | 'setCodes'
+      | 'patch'
       | 'delete'
     >();
   });

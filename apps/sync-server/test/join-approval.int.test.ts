@@ -90,9 +90,8 @@ describe('method B requests (#10 AC19, AC20)', () => {
   it('rejects bad display names with INVALID_MESSAGE (AC20, R9, B2)', async () => {
     const { server } = await start();
     const { join } = await bGroup(server);
+    // A blank name is not refused any more: it gets a generated name (#13 AC36).
     const bad = [
-      '',
-      '   ',
       'x'.repeat(33),
       `a${String.fromCharCode(0)}b`,
       `a${String.fromCharCode(0x202e)}b`,

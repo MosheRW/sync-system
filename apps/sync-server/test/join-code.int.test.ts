@@ -223,6 +223,8 @@ describe('join by group code and door code (#10 AC14, AC15)', () => {
       groupId: created.groupId,
       participantId: expect.stringMatching(PARTICIPANT_ID_PATTERN) as string,
       role: 'member',
+      displayName: expect.any(String) as string,
+      generated: true,
       metadata: { c: 1 },
       token: expect.any(String) as string,
       leaderOnline: true,
@@ -281,15 +283,14 @@ describe('join by alphanumeric code (#10 AC16)', () => {
     expect(reply).toMatchObject({ type: 'group.joined', groupId: created.groupId });
   });
 
-  it('accepts a valid display name on a direct join and ignores it', async () => {
+  it('uses the display name of a direct join as the member name (#13 AC35)', async () => {
     const server = await start();
     const { created } = await leaderOf(server, ['C']);
     const { reply } = await joinWith(server, {
       joinCode: created.codes.alphaCode,
-      displayName: 'Dana',
+      displayName: ' Dana ',
     });
-    expect(reply.type).toBe('group.joined');
-    expect(JSON.stringify(reply)).not.toContain('Dana');
+    expect(reply).toMatchObject({ type: 'group.joined', displayName: 'Dana', generated: false });
   });
 });
 
@@ -324,8 +325,6 @@ describe('normalization and validation (#10 AC12, AC20)', () => {
       { joinCode: '123456', doorCode: '12345' },
       { joinCode: '123456', doorCode: 'ABCDEF' },
       { joinCode: '123456', doorCode: '1'.repeat(33) },
-      { joinCode: '123456', displayName: '' },
-      { joinCode: '123456', displayName: '   ' },
       { joinCode: '123456', displayName: 'x'.repeat(33) },
       { joinCode: '123456', displayName: `a${bell}b` },
       { joinCode: '123456', displayName: `a${override}b` },

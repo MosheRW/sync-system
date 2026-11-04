@@ -48,6 +48,13 @@ export const MAX_DISPLAY_NAME_INPUT_LENGTH = 128;
 /** Longest display name after trimming, in code points (#10 AC20). */
 export const MAX_DISPLAY_NAME_LENGTH = 32;
 
+/**
+ * Most roster entries per `maxGroupSize` (#13 D10): connected entries plus
+ * at most as many disconnected ones (the leader, the vice-leader and the
+ * take-back holder are never evicted, so a roster may hold 2 more).
+ */
+export const MAX_ROSTER_ENTRIES_FACTOR = 2;
+
 /** Longest QR ticket (#10 AC23). */
 export const MAX_QR_TICKET_LENGTH = 256;
 

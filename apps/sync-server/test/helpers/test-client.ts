@@ -12,12 +12,25 @@ export interface HelloOptions {
 
 type MessageOf<T extends ServerMessageType> = Extract<ServerMessage, { type: T }>;
 
+/** Leader-only roster frames (#13 AC31), kept apart from the other frames. */
+function isRosterFrame(message: ServerMessage): boolean {
+  return message.type.startsWith('roster.');
+}
+
 /**
  * A `ws` client wrapper for integration tests. It buffers every message from
  * the moment the socket opens, so `welcome` is never missed.
+ *
+ * Roster frames (`roster.*`, #13) go to their own queue: `next()` and
+ * `expectNoMessage()` never see them, so flows written before the roster
+ * read the same frames as before. `next('roster.snapshot')` and the other
+ * roster types read the roster queue; `rosterFrames` holds every one.
  */
 export class TestClient {
   private readonly queue: ServerMessage[] = [];
+  private readonly rosterQueue: ServerMessage[] = [];
+  /** Every roster frame received, in order. */
+  readonly rosterFrames: ServerMessage[] = [];
   private waiters: Array<() => void> = [];
   private readonly closePromise: Promise<{ code: number; reason: string }>;
   isClosed = false;
@@ -25,7 +38,13 @@ export class TestClient {
   private constructor(readonly ws: WebSocket) {
     ws.on('message', (data, isBinary) => {
       const text = isBinary ? '' : (data as Buffer).toString('utf8');
-      this.queue.push(JSON.parse(text) as ServerMessage);
+      const message = JSON.parse(text) as ServerMessage;
+      if (isRosterFrame(message)) {
+        this.rosterQueue.push(message);
+        this.rosterFrames.push(message);
+      } else {
+        this.queue.push(message);
+      }
       this.notify();
     });
     ws.on('error', () => {
@@ -65,7 +84,8 @@ export class TestClient {
   async next(type?: undefined, timeoutMs?: number): Promise<ServerMessage>;
   async next(type?: ServerMessageType, timeoutMs = 2000): Promise<ServerMessage> {
     const deadline = Date.now() + timeoutMs;
-    while (this.queue.length === 0) {
+    const queue = type !== undefined && type.startsWith('roster.') ? this.rosterQueue : this.queue;
+    while (queue.length === 0) {
       if (this.isClosed) throw new Error(`socket closed while waiting for ${type ?? 'a message'}`);
       const remaining = deadline - Date.now();
       if (remaining <= 0) throw new Error(`timed out waiting for ${type ?? 'a message'}`);
@@ -77,7 +97,7 @@ export class TestClient {
         });
       });
     }
-    const message = this.queue.shift()!;
+    const message = queue.shift()!;
     if (type !== undefined && message.type !== type) {
       throw new Error(`expected ${type}, got ${JSON.stringify(message)}`);
     }

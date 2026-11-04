@@ -9,13 +9,14 @@ import {
   type ServerMessage,
   classifyJoinCode,
   isDoorCode,
-  normalizeDisplayName,
   normalizeJoinCode,
+  resolveDisplayName,
 } from '@sync-system/protocol';
 import type { AppConfig } from '../apps/app-registry.js';
 import type { GroupRecord, GroupStore } from '../groups/group-store.js';
 import type { Membership, Session } from '../groups/session.js';
 import type { LeaderAction } from '../lifecycle/leader-guard.js';
+import type { NameChoice } from '../lifecycle/roster.js';
 import {
   QR_ISSUE_PER_CONNECTION_PER_MINUTE,
   QR_ISSUE_WINDOW_MS,
@@ -72,7 +73,12 @@ export interface JoinHost {
    * Adds `session` as a new member with a fresh participant ID and returns
    * group.joined with a token, or GROUP_FULL (#10 AC14). Under the lock.
    */
-  admit(session: Session, groupId: string, method: JoinMethod): Promise<ServerMessage>;
+  admit(
+    session: Session,
+    groupId: string,
+    method: JoinMethod,
+    name: NameChoice,
+  ): Promise<ServerMessage>;
   /**
    * The session that owns the leader's membership (ownership-checked through
    * the notifier, M4), if the leader is attached.
@@ -130,7 +136,18 @@ interface ParsedCodeJoin {
   kind: JoinCodeKind;
   joinCode: string;
   doorCode: string | undefined;
-  displayName: string | undefined;
+  name: NameChoice;
+}
+
+/**
+ * The joiner's name (#13 D11, AC35, AC36): missing or blank means a
+ * generated one; anything else follows the strict #10 rule. Undefined when
+ * the name is invalid.
+ */
+function nameOf(raw: string | undefined): NameChoice | undefined {
+  const resolved = resolveDisplayName(raw);
+  if (!resolved.ok) return undefined;
+  return resolved.generated ? { generated: true } : { generated: false, name: resolved.name };
 }
 
 /** Normalizes and validates the code fields (#10 AC12, AC20); undefined when invalid. */
@@ -143,12 +160,9 @@ function parseCodeJoin(message: GroupJoinByCodeMessage): ParsedCodeJoin | undefi
     doorCode = normalizeJoinCode(message.doorCode);
     if (!isDoorCode(doorCode)) return undefined;
   }
-  let displayName: string | undefined;
-  if (message.displayName !== undefined) {
-    displayName = normalizeDisplayName(message.displayName);
-    if (displayName === undefined) return undefined;
-  }
-  return { kind, joinCode, doorCode, displayName };
+  const name = nameOf(message.displayName);
+  if (name === undefined) return undefined;
+  return { kind, joinCode, doorCode, name };
 }
 
 export type InitialCodesResult =
@@ -257,11 +271,8 @@ export class JoinService {
     const limited = this.spendJoinAttempt(session, 'group.joinByQr');
     if (limited !== undefined) return limited;
     const namespace = session.app.namespace;
-    let displayName: string | undefined;
-    if (message.displayName !== undefined) {
-      displayName = normalizeDisplayName(message.displayName);
-      if (displayName === undefined) return INVALID_MESSAGE;
-    }
+    const name = nameOf(message.displayName);
+    if (name === undefined) return INVALID_MESSAGE;
     const verified = this.deps.qrTickets.verify(message.ticket, namespace, this.now());
     if (!verified.ok) {
       this.rejected(namespace, verified.expired ? 'qr_expired' : 'qr_invalid');
@@ -279,9 +290,8 @@ export class JoinService {
         this.rejected(namespace, 'qr_invalid');
         return QR_INVALID;
       }
-      if (record.joinMethods.includes('B'))
-        return this.requestApproval(session, record, displayName);
-      return this.host.admit(session, groupId, 'D');
+      if (record.joinMethods.includes('B')) return this.requestApproval(session, record, name);
+      return this.host.admit(session, groupId, 'D', name);
     });
   }
 
@@ -312,11 +322,10 @@ export class JoinService {
    * `join.requested` after its pending replies. A frozen group's request
    * waits for the leader (Q6.2).
    */
-  private requestApproval(
-    session: Session,
-    record: GroupRecord,
-    displayName: string | undefined,
-  ): ServerMessage {
+  private requestApproval(session: Session, record: GroupRecord, name: NameChoice): ServerMessage {
+    // Only a chosen name is shown in join.requested; a generated one is
+    // drawn at admission (#13 AC36).
+    const displayName = name.generated ? undefined : name.name;
     const namespace = record.appNamespace;
     const timeoutMs = session.app.approvalTimeoutSeconds * 1000;
     const added = this.approvals.add(
@@ -411,7 +420,11 @@ export class JoinService {
 
   /** Adds an approved joiner (#10 AC21): group.joined to it, or GROUP_FULL. Under the lock. */
   private async admitApproved(taken: TakenRequest): Promise<ServerMessage> {
-    const admitted = await this.host.admit(taken.session, taken.groupId, 'B');
+    const name: NameChoice =
+      taken.displayName === undefined
+        ? { generated: true }
+        : { generated: false, name: taken.displayName };
+    const admitted = await this.host.admit(taken.session, taken.groupId, 'B', name);
     // The joiner gets the outcome unsolicited (no reqId): its own request was join.pending.
     this.host.deliverLater(taken.session, admitted);
     const outcome = admitted.type === 'group.joined' ? 'admitted' : 'group_full';
@@ -602,11 +615,11 @@ export class JoinService {
       }
       if (parsed.kind === 'alpha') {
         if (!record.joinMethods.includes('C')) return CODE_NOT_FOUND;
-        return this.host.admit(session, groupId, 'C');
+        return this.host.admit(session, groupId, 'C', parsed.name);
       }
       if (record.joinMethods.includes('A')) return this.doorJoin(session, record, parsed);
       if (record.joinMethods.includes('B')) {
-        return this.requestApproval(session, record, parsed.displayName);
+        return this.requestApproval(session, record, parsed.name);
       }
       this.rejected(namespace, 'not_found');
       return CODE_NOT_FOUND;
@@ -660,7 +673,7 @@ export class JoinService {
     }
     const expected = record.codes.doorCode;
     if (expected !== undefined && doorCodeMatches(parsed.doorCode, expected)) {
-      return this.host.admit(session, record.id, 'A');
+      return this.host.admit(session, record.id, 'A', parsed.name);
     }
     this.wrongDoorLimiter.record(namespace);
     const outcome = this.doors.recordFailure(key);

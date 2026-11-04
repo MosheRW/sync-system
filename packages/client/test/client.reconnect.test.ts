@@ -319,6 +319,9 @@ describe('leader drop (#5 AC35, replaces #3 AC29)', () => {
     const creating = client.createGroup({});
     socket.receive({
       type: 'group.created',
+      handoff: 'auto',
+      displayName: 'Guest 1',
+      generated: true,
       ...CREATED_FIELDS,
       token: 'h.p.s',
       reqId: socket.lastMessage().reqId,
@@ -371,6 +374,8 @@ describe('resume timeouts are not stable connections (#7 L4)', () => {
     const token = fakeToken({ gid: GROUP_ID, role: 'member' });
     socket.receive({
       type: 'group.joined',
+      displayName: 'Guest 1',
+      generated: true,
       reqId: socket.lastMessage().reqId,
       groupId: GROUP_ID,
       participantId: 'member-pid',
@@ -452,6 +457,8 @@ describe('resume timeouts are not stable connections (#7 L4)', () => {
     const socket = await reconnectAndResume(client);
     socket.receive({
       type: 'group.joined',
+      displayName: 'Guest 1',
+      generated: true,
       reqId: socket.lastMessage().reqId,
       groupId: GROUP_ID,
       participantId: 'member-pid',

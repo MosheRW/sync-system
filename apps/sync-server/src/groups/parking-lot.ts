@@ -1,9 +1,12 @@
 import type { Cancel, Scheduler } from '../time/scheduler.js';
+import type { NameChoice } from '../lifecycle/roster.js';
 import type { Session } from './session.js';
 
 interface Parked {
   session: Session;
   cancel: Cancel;
+  /** The display name the member sent with its resume (#13 AC37). */
+  name: NameChoice;
 }
 
 /**
@@ -37,6 +40,7 @@ export class ParkingLot {
     participantId: string,
     until: number,
     onExpire: () => void,
+    name: NameChoice = { generated: true },
   ): Session | undefined {
     const older = this.groups.get(groupKey)?.get(participantId);
     if (older !== undefined) this.unpark(older.session);
@@ -46,7 +50,7 @@ export class ParkingLot {
       this.groups.set(groupKey, entries);
     }
     session.parked = { groupKey, groupId, participantId };
-    entries.set(participantId, { session, cancel: this.scheduler.at(until, onExpire) });
+    entries.set(participantId, { session, cancel: this.scheduler.at(until, onExpire), name });
     return older?.session;
   }
 
@@ -68,12 +72,13 @@ export class ParkingLot {
    * Unparks and returns every session parked for `groupKey` with the
    * participant ID it was parked as, in arrival order.
    */
-  drain(groupKey: string): Array<{ session: Session; participantId: string }> {
+  drain(groupKey: string): Array<{ session: Session; participantId: string; name: NameChoice }> {
     const entries = this.groups.get(groupKey);
     if (entries === undefined) return [];
     const drained = [...entries].map(([participantId, entry]) => ({
       session: entry.session,
       participantId,
+      name: entry.name,
     }));
     for (const { session } of drained) this.unpark(session);
     return drained;

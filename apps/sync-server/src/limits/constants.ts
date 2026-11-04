@@ -81,6 +81,24 @@ export const RECREATIONS_PER_CONNECTION_PER_MINUTE = 10;
 /** Window of the recreation limiter. */
 export const RECREATION_WINDOW_MS = 60_000;
 
+/**
+ * Largest serialized roster entry (#13 5.5): a participant ID, a name of 32
+ * code points of up to 4 UTF-8 bytes each, the flags, a guest number and the
+ * keys, with slack.
+ */
+export const ROSTER_ENTRY_MAX_BYTES = 320;
+
+/**
+ * Largest `roster.snapshot` for a group size ceiling (#13 5.5): twice the
+ * group size plus the two protected entries (D10), plus the envelope.
+ */
+export function rosterSnapshotMaxBytes(maxGroupSizeCeiling: number): number {
+  return 256 + (2 * maxGroupSizeCeiling + 2) * ROSTER_ENTRY_MAX_BYTES;
+}
+
+/** Room next to a roster snapshot in an empty outbound buffer (#13 5.5). */
+export const ROSTER_SNAPSHOT_HEADROOM_BYTES = 32_768;
+
 /** How often expired ended-group refs are swept. */
 export const ENDED_SWEEP_MS = 60_000;
 

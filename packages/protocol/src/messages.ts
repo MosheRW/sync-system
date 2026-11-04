@@ -3,8 +3,11 @@ import type { JoinMethod } from './join.js';
 import type { JsonObject, JsonValue } from './json.js';
 import type { HandoffMode } from './limits.js';
 
-/** Role of a participant in a group. Later issues add more roles. */
-export type Role = 'leader' | 'member';
+/**
+ * Role of a participant in a group (#13 AC5). At most one vice-leader; it has
+ * no leader powers until it leads (AC7) and holds a member token (Q3.1).
+ */
+export type Role = 'leader' | 'vice-leader' | 'member';
 
 /**
  * Why a group ended for the receiver (#5):
@@ -54,6 +57,8 @@ export interface GroupCreateMessage {
   joinMethods?: JoinMethod[];
   /** The group's handoff mode (#13 AC3); omitted: the app's `defaultHandoff`. */
   handoff?: HandoffMode;
+  /** The creator's display name (#13 AC35); missing or blank: a generated one. */
+  displayName?: string;
 }
 
 /**
@@ -102,6 +107,13 @@ export interface GroupResumeMessage {
   joinCodes?: string;
   /** Leader recovery state (#13 D13): the group's handoff mode, used for a recreation. */
   handoff?: HandoffMode;
+  /**
+   * The participant's display name, sent again on every resume (#13 AC37,
+   * Q5.4). Used when the participant gets a new roster entry (after a
+   * restart or an eviction); missing or blank: a generated one. An existing
+   * entry keeps its name (no renaming, Q5.3).
+   */
+  displayName?: string;
 }
 
 /**
@@ -257,12 +269,22 @@ export interface JoinCodesPayload {
   blob: string;
 }
 
-export interface GroupCreatedMessage {
+/** The receiver's own name in the group (#13 AC36). */
+interface OwnName {
+  /** Chosen (strict #10 rule) or generated `Guest N`. Render as text only. */
+  displayName: string;
+  /** True for a generated name, so apps can localize it (Q5.1). */
+  generated: boolean;
+}
+
+export interface GroupCreatedMessage extends OwnName {
   type: 'group.created';
   reqId?: string;
   groupId: string;
   participantId: string;
   role: 'leader';
+  /** The group's handoff mode (#13 AC3). */
+  handoff: HandoffMode;
   /** The leader's participant token for this group (#5 AC5). */
   token: string;
   /** The group's join methods, canonical order (#10 AC5). */
@@ -271,7 +293,7 @@ export interface GroupCreatedMessage {
   codes: JoinCodesPayload;
 }
 
-interface GroupJoinedBase {
+interface GroupJoinedBase extends OwnName {
   type: 'group.joined';
   reqId?: string;
   groupId: string;
@@ -290,7 +312,7 @@ export type GroupJoinedMessage =
   | (GroupJoinedBase & { hasPosition: false });
 
 /** Reply to a leader's group.resume (#5 AC19, AC23). */
-interface GroupResumedBase {
+interface GroupResumedBase extends OwnName {
   type: 'group.resumed';
   reqId?: string;
   groupId: string;
@@ -497,6 +519,48 @@ export interface JoinCancelledMessage {
   requestId: string;
 }
 
+/**
+ * One roster entry, sent to the leader only (#13 AC31, Q4.4). Durations,
+ * never clock times (D12). Names are plain text: render, never interpret.
+ */
+export interface RosterEntryWire {
+  participantId: string;
+  displayName: string;
+  generated: boolean;
+  /** The N of a generated `Guest N`. */
+  guestNumber?: number;
+  role: Role;
+  connected: boolean;
+  /** Time since admission, ms. */
+  joinedAgoMs: number;
+  /**
+   * Admitted by code, QR or approval after a restart, before the real
+   * leader superseded a stale one (#13 6.6.4); shown only after a supersede.
+   */
+  admittedSinceRecovery?: true;
+}
+
+/** To the leader: the whole roster, after created, resumed or granted (#13 AC31). */
+export interface RosterSnapshotMessage {
+  type: 'roster.snapshot';
+  groupId: string;
+  participants: RosterEntryWire[];
+}
+
+/** To the leader: one entry joined, reconnected, disconnected or changed role (#13 AC31). */
+export interface RosterUpdatedMessage {
+  type: 'roster.updated';
+  groupId: string;
+  participant: RosterEntryWire;
+}
+
+/** To the leader: an entry left the roster (leave, removal, eviction; #13 AC31). */
+export interface RosterRemovedMessage {
+  type: 'roster.removed';
+  groupId: string;
+  participantId: string;
+}
+
 export interface ErrorMessage {
   type: 'error';
   reqId?: string;
@@ -530,6 +594,9 @@ export type ServerMessage =
   | JoinDecidedMessage
   | JoinCancelledMessage
   | QrTicketMessage
+  | RosterSnapshotMessage
+  | RosterUpdatedMessage
+  | RosterRemovedMessage
   | ErrorMessage;
 
 export type ServerMessageType = ServerMessage['type'];

@@ -23,6 +23,7 @@ export {
   MAX_QR_TICKET_INPUT_LENGTH,
   MAX_CODES_BLOB_LENGTH,
   HANDOFF_MODES,
+  MAX_ROSTER_ENTRIES_FACTOR,
 } from './limits.js';
 export type { HandoffMode } from './limits.js';
 export {
@@ -41,8 +42,9 @@ export {
   isQrTicketShape,
   isCodesBlobShape,
   normalizeDisplayName,
+  resolveDisplayName,
 } from './join.js';
-export type { JoinMethod, JoinCodeKind } from './join.js';
+export type { JoinMethod, JoinCodeKind, ResolvedDisplayName } from './join.js';
 export {
   TOKEN_FORMAT_VERSION,
   TOKEN_SEGMENT_PATTERN,
@@ -104,6 +106,10 @@ export type {
   JoinPausedMessage,
   JoinResumedMessage,
   ErrorMessage,
+  RosterEntryWire,
+  RosterSnapshotMessage,
+  RosterUpdatedMessage,
+  RosterRemovedMessage,
   ServerMessage,
   ServerMessageType,
 } from './messages.js';

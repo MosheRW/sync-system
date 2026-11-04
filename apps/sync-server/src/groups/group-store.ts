@@ -1,5 +1,6 @@
 import type { HandoffMode, JoinMethod, JsonObject, JsonValue } from '@sync-system/protocol';
 import type { GroupCodes } from '../joins/codes.js';
+import type { RosterEntry } from '../lifecycle/roster.js';
 
 /** `has: false` is the explicit "no position yet", so `null` stays a real payload. */
 export type StoredPosition = { has: false } | { has: true; payload: JsonValue };
@@ -46,7 +47,19 @@ export interface GroupRecord {
   joinMethods: readonly JoinMethod[];
   /** The group's join codes and generations (#10 AC6). Never logged. */
   codes: GroupCodes;
+  /**
+   * Every admitted participant in admission order, connected or not (#13
+   * D10). Names and IDs: leader-only on the wire, never logged.
+   */
+  roster: readonly RosterEntry[];
+  /** Admission order of the next roster entry. */
+  nextAdmissionSeq: number;
+  /** N of the next generated `Guest N` name. */
+  nextGuestNumber: number;
 }
+
+/** Record fields `patch` may set in one atomic step (#13 3.2). */
+export type GroupPatch = Partial<Omit<GroupRecord, 'id' | 'appNamespace' | 'createdAt'>>;
 
 /**
  * `ok` carries a snapshot of the group taken in the same atomic step as the
@@ -116,6 +129,12 @@ export interface GroupStore {
     id: string,
     blockList: readonly string[],
   ): Promise<{ removed: string[] } | undefined>;
+  /**
+   * Sets the given fields in one atomic step (#13: roster, leadership,
+   * pause, lock, vice). Returns the updated snapshot, or undefined when the
+   * group is not in memory.
+   */
+  patch(namespace: string, id: string, patch: GroupPatch): Promise<GroupRecord | undefined>;
   /** Replaces the group's join codes (#10 AC29, AC30). Returns the updated snapshot. */
   setCodes(namespace: string, id: string, codes: GroupCodes): Promise<GroupRecord | undefined>;
   delete(namespace: string, id: string): Promise<void>;

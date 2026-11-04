@@ -51,6 +51,9 @@ async function liveLeader(): Promise<{
   const creating = client.createGroup({});
   socket.receive({
     type: 'group.created',
+    handoff: 'auto',
+    displayName: 'Guest 1',
+    generated: true,
     ...CREATED_FIELDS,
     reqId: socket.lastMessage().reqId,
     groupId: GID,
