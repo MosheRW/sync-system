@@ -1,4 +1,9 @@
-import { type CodesChangedReason, type QrTicket, SyncClientError } from '@sync-system/client';
+import {
+  type CodesChangedReason,
+  type ConnectionState,
+  type QrTicket,
+  SyncClientError,
+} from '@sync-system/client';
 import { act } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -302,6 +307,63 @@ describe('QR re-issue (AC18)', () => {
     await advance(1);
     expect(client.count('issueQrTicket')).toBe(3);
     expect(ticketOf(values.at(-1))).toBe('tk-again');
+  });
+
+  const RECONNECTING: ConnectionState = Object.freeze({
+    status: 'reconnecting' as const,
+    attempt: 1,
+    delayMs: 500,
+    retryAt: 0,
+    attempting: true,
+  });
+
+  /** Drops the connection and opens a new one, still leading g-1. */
+  function reconnect(client: FakeSyncClient): void {
+    act(() => {
+      client.setConnection(RECONNECTING);
+      client.lead('g-1');
+    });
+  }
+
+  it('a reconnect during a RATE_LIMITED wait ends the wait; the 10 s floor stays', async () => {
+    const { client, values } = await rateLimited();
+    // 5 s into the 40 s wait; the last issue was 5 s ago.
+    await advance(5_000);
+    reconnect(client);
+    await advance(4_999);
+    expect(client.count('issueQrTicket')).toBe(2);
+    await advance(1);
+    expect(client.count('issueQrTicket')).toBe(3);
+    expect(ticketOf(values.at(-1))).toBe('tk-2');
+  });
+
+  it('a reconnect storm issues at most once per 10 s', async () => {
+    const { client } = await rateLimited();
+    const issuedAt: number[] = [];
+    client.impl.issueQrTicket = (): QrTicket => {
+      issuedAt.push(Date.now());
+      issued += 1;
+      return { ticket: `tk-${issued}`, expiresAt: Date.now() + 60_000 };
+    };
+    for (let i = 0; i < 120; i += 1) {
+      reconnect(client);
+      await advance(500);
+    }
+    expect(issuedAt.length).toBeGreaterThan(0);
+    expect(issuedAt.length).toBeLessThanOrEqual(6);
+    for (let i = 1; i < issuedAt.length; i += 1) {
+      expect(issuedAt[i]! - issuedAt[i - 1]!).toBeGreaterThanOrEqual(10_000);
+    }
+  });
+
+  it('a demotion and re-promotion on the same connection keep the wait', async () => {
+    const { client } = await rateLimited();
+    act(() => client.follow('g-1'));
+    act(() => client.lead('g-1'));
+    await advance(39_999);
+    expect(client.count('issueQrTicket')).toBe(2);
+    await advance(1);
+    expect(client.count('issueQrTicket')).toBe(3);
   });
 
   it('JOIN_METHOD_UNAVAILABLE: unavailable, no timer', async () => {

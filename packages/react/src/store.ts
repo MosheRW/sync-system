@@ -397,7 +397,11 @@ export class SyncStore {
       this.#seen = snapshot;
       const connected = snapshot.connection.status === 'connected';
       // lastError is cleared when the connection (re)connects (section 6).
-      if (connected && before.connection.status !== 'connected') this.#lastError = null;
+      if (connected && before.connection.status !== 'connected') {
+        this.#lastError = null;
+        // A new connection: the server's per-connection QR budget is fresh.
+        this.qr.connectionOpened();
+      }
       if (!connected) this.#sessionChecked = false;
       if (snapshot.group?.status === 'awaiting_approval' && this.#flow.state.status === 'joining') {
         this.#flow.sawWaiting = true;

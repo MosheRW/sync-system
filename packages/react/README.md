@@ -324,7 +324,10 @@ It resets on group change or end.
   so the old one is dropped first (`loading` with `ticket: null`). Not after
   `door_failures` or `created`;
 - `RATE_LIMITED`: the current ticket stays; one retry after the server's
-  delay (10 s to 60 s). `JOIN_METHOD_UNAVAILABLE` (no method D):
+  delay (10 s to 60 s). The wait survives a demotion, a group switch and
+  hiding the QR; a new connection ends it (the server's limit is per
+  connection), but the 10 s floor still holds across reconnects.
+  `JOIN_METHOD_UNAVAILABLE` (no method D):
   `unavailable`. Other errors: `error`, no automatic retry;
 - an expired ticket is never shown as `ready`;
 - the timer stops and the ticket is dropped when the last consumer unmounts

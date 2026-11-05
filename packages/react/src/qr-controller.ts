@@ -45,7 +45,10 @@ export interface QrHost {
  * - Issues on start, re-issues at 80 % of the lifetime (never sooner than
  *   10 s apart), and at once after a revoking code change (R1). A revoking
  *   change drops the ticket at once but never cuts a `RATE_LIMITED` wait
- *   short; nothing (stop, remount, group switch) clears that wait.
+ *   short; nothing (stop, remount, group switch) clears that wait except
+ *   a new connection, since the server's `qr.issue` budget is per
+ *   connection. The 10 s floor outlives reconnects, so a reconnect storm
+ *   still issues at most once per 10 s.
  * - `refresh()` is a no-op while a request is in flight, during a
  *   `RATE_LIMITED` wait and within 10 s of the last issue, unless the
  *   ticket expired (R2).
@@ -133,6 +136,15 @@ export class QrTicketController {
       return;
     }
     if (this.#state === IDLE_QR && !this.#inFlight) this.#schedule();
+  }
+
+  /**
+   * The client opened a new connection (a reconnect or a new session). The
+   * server forgot the old connection's `qr.issue` budget, so a pending
+   * `RATE_LIMITED` wait ends; the 10 s floor since the last issue stays.
+   */
+  connectionOpened(): void {
+    this.#rateLimitedUntil = 0;
   }
 
   /** A `codesChanged` event (R1). */
