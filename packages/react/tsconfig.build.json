@@ -1,0 +1,13 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // No DOM and no Node types: any use of window, document or node:* fails
+    // the build (AC2, AC12). Host globals go through src/host.ts.
+    "lib": ["ES2023"],
+    "types": [],
+    "customConditions": [],
+    "rootDir": "src",
+    "outDir": "dist"
+  },
+  "include": ["src"]
+}

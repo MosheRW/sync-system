@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    // DOM and Node types are for the tests only; tsconfig.build.json checks
+    // src without them, so a window/document read fails the build (AC2, AC12).
+    "lib": ["ES2023", "DOM"],
+    "types": ["node"],
+    "jsx": "react-jsx"
+  },
+  "include": ["src", "test", "vitest.config.ts"]
+}
