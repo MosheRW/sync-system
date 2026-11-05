@@ -42,6 +42,8 @@ export class TestClient {
   private readonly keepAliveQueue: ServerMessage[] = [];
   /** Every roster frame received, in order. */
   readonly rosterFrames: ServerMessage[] = [];
+  /** Every frame received, of any type, in order (frame-capture tests, #13 RC11). */
+  readonly received: ServerMessage[] = [];
   private waiters: Array<() => void> = [];
   private readonly closePromise: Promise<{ code: number; reason: string }>;
   isClosed = false;
@@ -50,6 +52,7 @@ export class TestClient {
     ws.on('message', (data, isBinary) => {
       const text = isBinary ? '' : (data as Buffer).toString('utf8');
       const message = JSON.parse(text) as ServerMessage;
+      this.received.push(message);
       if (isRosterFrame(message)) {
         (message.type.startsWith('roster.') ? this.rosterQueue : this.keepAliveQueue).push(message);
         this.rosterFrames.push(message);

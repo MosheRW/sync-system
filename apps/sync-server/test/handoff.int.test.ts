@@ -10,6 +10,7 @@ import {
   startTestServer,
 } from './helpers/test-server.js';
 import { claimsOf } from './helpers/tokens.js';
+import { waitUntil } from './helpers/wait.js';
 
 let ts: TestServer | undefined;
 
@@ -192,6 +193,8 @@ describe('automatic handoff (#13 AC20, AC23, Q2.2, Q2.3)', () => {
     const { scheduler, store } = await startAuto();
     const group = await createGroupWithMembers(ts!, 0);
     await missKeepAlive(scheduler, group.leader);
+    // The pause is applied before the clock moves on.
+    await waitUntil(async () => (await store.get('app-a', group.groupId))?.pause !== undefined);
     scheduler.advance(GRACE);
     expect((await store.get('app-a', group.groupId))?.leaderId).toBe(group.leaderId);
     scheduler.advance(300_000 - GRACE);
