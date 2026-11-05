@@ -44,6 +44,10 @@ services:
       JOIN_METHODS_ALLOWED: A,B,C,D
       QR_TICKET_SECONDS_CEILING: '3600'
       APPROVAL_TIMEOUT_SECONDS_CEILING: '600'
+      # Lifecycle timer ceilings (#13): grace after a leader disconnect or a
+      # missed keep-alive, and the keep-alive countdown.
+      DISCONNECT_GRACE_SECONDS_CEILING: '120'
+      KEEP_ALIVE_COUNTDOWN_SECONDS_CEILING: '120'
     healthcheck:
       test:
         - CMD

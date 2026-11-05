@@ -110,27 +110,27 @@ Every `*Ms` value must be a finite number up to 2^31-1 ms.
 
 ### Methods
 
-| Method                                                                                         | Returns                        | Notes                                                                                                                                                                        |
-| ---------------------------------------------------------------------------------------------- | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `connect()`                                                                                    | `Promise<ConnectedInfo>`       | Resolves on `hello.ok` with `{ participantId, limits }`. Returns the current attempt if one is running. Rejects on a fatal error, `close()` or giving up: always `catch` it. |
-| `close()`                                                                                      | `void`                         | Idempotent. Closes the socket (1000), rejects pending requests and `connect()` with `CLOSED`, stops every timer. Never reconnects by itself.                                 |
-| `createGroup(metadata, initialPosition?, options?)`                                            | `Promise<CreatedGroup>`        | `{ groupId, role: 'leader', participantId, joinMethods, codes }`. `options.joinMethods`: see "Joining a group".                                                              |
-| `joinByCode(code, { doorCode?, displayName? })`                                                | `Promise<JoinedGroup>`         | Join with a 6-digit or 8-character code. See "Joining a group".                                                                                                              |
-| `joinByQr(ticket, { displayName? })`                                                           | `Promise<JoinedGroup>`         | Join with a QR ticket. See "QR tickets and deep links".                                                                                                                      |
-| `cancelJoin()`                                                                                 | `Promise<void>`                | Withdraw a request that waits for approval.                                                                                                                                  |
-| `getJoinCodes()` / `rotateCodes()` / `issueQrTicket()`                                         | codes / `Promise`              | Leader only. See "Leader API".                                                                                                                                               |
-| `getJoinRequests()` / `approveJoin(requestId)` / `denyJoin(requestId)`                         | requests / `Promise`           | Leader only. See "Leader API".                                                                                                                                               |
-| `updatePosition(position)`                                                                     | `void`                         | Leader only. Throws local errors synchronously; server rejections arrive as `error` events.                                                                                  |
-| `getState()`                                                                                   | `ConnectionState`              | Same as `getSnapshot().connection`.                                                                                                                                          |
-| `getSnapshot()`                                                                                | `SyncClientSnapshot`           | `{ connection, group }`, frozen, same object until something changes.                                                                                                        |
-| `subscribe(listener)`                                                                          | unsubscribe function           | Called after every snapshot change. Fits `useSyncExternalStore`.                                                                                                             |
-| `on(event, listener)` / `off(event, listener)`                                                 | unsubscribe function / `void`  | Typed events, below.                                                                                                                                                         |
-| `checkTokens()`                                                                                | `Promise<StoredGroupStatus[]>` | See "Stored groups and recovery".                                                                                                                                            |
-| `resumeGroup(groupId, options?)`                                                               | `Promise<ResumedGroup>`        | See "Stored groups and recovery".                                                                                                                                            |
-| `endGroup()`                                                                                   | `Promise<void>`                | Leader ends the group for everyone.                                                                                                                                          |
-| `leaveGroup()`                                                                                 | `Promise<void>`                | Member leaves (or stops waiting).                                                                                                                                            |
-| `getBlockList(groupId)` / `addToBlockList(groupId, ids)` / `removeFromBlockList(groupId, ids)` | `Promise<string[]>`            | See "Block list".                                                                                                                                                            |
-| `forgetGroup(groupId, namespace?)` / `forgetAllGroups(namespace?)`                             | `Promise<void>`                | Delete stored tokens locally, no server call.                                                                                                                                |
+| Method                                                                 | Returns                        | Notes                                                                                                                                                                        |
+| ---------------------------------------------------------------------- | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `connect()`                                                            | `Promise<ConnectedInfo>`       | Resolves on `hello.ok` with `{ participantId, limits }`. Returns the current attempt if one is running. Rejects on a fatal error, `close()` or giving up: always `catch` it. |
+| `close()`                                                              | `void`                         | Idempotent. Closes the socket (1000), rejects pending requests and `connect()` with `CLOSED`, stops every timer. Never reconnects by itself.                                 |
+| `createGroup(metadata, initialPosition?, options?)`                    | `Promise<CreatedGroup>`        | `{ groupId, role: 'leader', participantId, joinMethods, codes }`. `options.joinMethods`: see "Joining a group".                                                              |
+| `joinByCode(code, { doorCode?, displayName? })`                        | `Promise<JoinedGroup>`         | Join with a 6-digit or 8-character code. See "Joining a group".                                                                                                              |
+| `joinByQr(ticket, { displayName? })`                                   | `Promise<JoinedGroup>`         | Join with a QR ticket. See "QR tickets and deep links".                                                                                                                      |
+| `cancelJoin()`                                                         | `Promise<void>`                | Withdraw a request that waits for approval.                                                                                                                                  |
+| `getJoinCodes()` / `rotateCodes()` / `issueQrTicket()`                 | codes / `Promise`              | Leader only. See "Leader API".                                                                                                                                               |
+| `getJoinRequests()` / `approveJoin(requestId)` / `denyJoin(requestId)` | requests / `Promise`           | Leader only. See "Leader API".                                                                                                                                               |
+| `updatePosition(position)`                                             | `void`                         | Leader only. Throws local errors synchronously; server rejections arrive as `error` events.                                                                                  |
+| `getState()`                                                           | `ConnectionState`              | Same as `getSnapshot().connection`.                                                                                                                                          |
+| `getSnapshot()`                                                        | `SyncClientSnapshot`           | `{ connection, group }`, frozen, same object until something changes.                                                                                                        |
+| `subscribe(listener)`                                                  | unsubscribe function           | Called after every snapshot change. Fits `useSyncExternalStore`.                                                                                                             |
+| `on(event, listener)` / `off(event, listener)`                         | unsubscribe function / `void`  | Typed events, below.                                                                                                                                                         |
+| `checkTokens()`                                                        | `Promise<StoredGroupStatus[]>` | See "Stored groups and recovery".                                                                                                                                            |
+| `resumeGroup(groupId, options?)`                                       | `Promise<ResumedGroup>`        | See "Stored groups and recovery".                                                                                                                                            |
+| `endGroup()`                                                           | `Promise<void>`                | Leader ends the group for everyone.                                                                                                                                          |
+| `leaveGroup()`                                                         | `Promise<void>`                | Member leaves (or stops waiting).                                                                                                                                            |
+| `getBlockList(groupId)` / `addToBlockList(groupId, ids)`               | `Promise<string[]>`            | See "Block list". The list only grows: there is no `removeFromBlockList` (#13).                                                                                              |
+| `forgetGroup(groupId, namespace?)` / `forgetAllGroups(namespace?)`     | `Promise<void>`                | Delete stored tokens locally, no server call.                                                                                                                                |
 
 Group calls made while not `connected` fail at once with `NOT_CONNECTED`;
 nothing is queued, and nothing is ever sent before `hello.ok`. Only one
@@ -142,19 +142,29 @@ fields, and passes the received objects through as they are.
 
 ### Events
 
-| Event             | Payload                                           | When                                                                                                                                               |
-| ----------------- | ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `state`           | `ConnectionState`                                 | Every connection-state change.                                                                                                                     |
-| `positionUpdated` | `{ groupId, position }`                           | A member receives the leader's position.                                                                                                           |
-| `groupEnded`      | `{ groupId, reason, code? }`                      | `ended_by_leader`, `leader_timeout`, `max_session`, `removed`, `replaced`, `left`, `rejoin_failed` or `closed` (see "Stored groups and recovery"). |
-| `rejoined`        | `ResumedGroup`                                    | Leader or member got back into its group after a reconnect, or a waiting member was admitted.                                                      |
-| `leaderStatus`    | `{ groupId, online }`                             | A member's leader went offline (group frozen) or came back.                                                                                        |
-| `codesChanged`    | `{ groupId, codes, reason }`                      | Leader: codes `created`, `resumed` (only when they changed), `rotated` or `door_failures`.                                                         |
-| `joinRequested`   | `{ groupId, requestId, displayName?, expiresAt }` | Leader: someone asks to join (method B).                                                                                                           |
-| `joinWithdrawn`   | `{ groupId, requestId, reason }`                  | Leader: a request ended without a decision (`cancelled`, `disconnected`, `timeout`).                                                               |
-| `joinPaused`      | `{ groupId, retryAfterMs }`                       | Leader: door-code joining paused after repeated wrong door codes.                                                                                  |
-| `joinResumed`     | `{ groupId }`                                     | Leader: door-code joining works again.                                                                                                             |
-| `error`           | `SyncClientError`                                 | Errors not tied to a promise: each failed connection attempt, server rejections of position updates, invalid server frames.                        |
+| Event              | Payload                                           | When                                                                                                                                               |
+| ------------------ | ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `state`            | `ConnectionState`                                 | Every connection-state change.                                                                                                                     |
+| `positionUpdated`  | `{ groupId, position }`                           | A member receives the leader's position.                                                                                                           |
+| `groupEnded`       | `{ groupId, reason, code? }`                      | `ended_by_leader`, `leader_timeout`, `max_session`, `removed`, `replaced`, `left`, `rejoin_failed` or `closed` (see "Stored groups and recovery"). |
+| `rejoined`         | `ResumedGroup`                                    | Leader or member got back into its group after a reconnect, or a waiting member was admitted.                                                      |
+| `leaderStatus`     | `{ groupId, online, cause?, graceEndsAt? }`       | A member's group paused (`cause`: `disconnected` or `inactive`; `graceEndsAt` when a handoff may follow) or is live again.                         |
+| `codesChanged`     | `{ groupId, codes, reason }`                      | Leader: codes `created`, `resumed` (only when they changed), `rotated` or `door_failures`.                                                         |
+| `joinRequested`    | `{ groupId, requestId, displayName?, expiresAt }` | Leader: someone asks to join (method B).                                                                                                           |
+| `joinWithdrawn`    | `{ groupId, requestId, reason }`                  | Leader: a request ended without a decision (`cancelled`, `disconnected`, `timeout`).                                                               |
+| `joinPaused`       | `{ groupId, retryAfterMs }`                       | Leader: door-code joining paused after repeated wrong door codes.                                                                                  |
+| `joinResumed`      | `{ groupId }`                                     | Leader: door-code joining works again.                                                                                                             |
+| `rosterChanged`    | `{ groupId, roster }`                             | Leader: the roster changed (see "Roles and lifecycle").                                                                                            |
+| `viceChanged`      | `{ groupId, isVice }`                             | This participant became, or is no longer, the vice-leader.                                                                                         |
+| `lockChanged`      | `{ groupId, locked }`                             | The group was locked or unlocked.                                                                                                                  |
+| `keepAlive`        | `{ groupId, countdownMs, deadlineAt }`            | Leader: answer before `deadlineAt` (local time) or the group pauses.                                                                               |
+| `keepAliveCleared` | `{ groupId }`                                     | Leader: an activity answered the prompt.                                                                                                           |
+| `nowLeading`       | `{ groupId, reason }`                             | "You're now leading": `handoff_disconnect`, `handoff_inactivity` or `take_back`. A new leader token is stored.                                     |
+| `leadershipLost`   | `{ groupId, reason, takeBackAvailable }`          | This client leads no more; the roster, codes and recovery state are dropped.                                                                       |
+| `leaderChanged`    | `{ groupId, reason }`                             | Someone else leads now (no ID).                                                                                                                    |
+| `takeBackOffered`  | `{ groupId }`                                     | The displaced leader may call `takeBackLeadership()`.                                                                                              |
+| `removed`          | `{ groupId }`                                     | The leader removed this participant: the client is `closed` (reason `removed`), the token deleted, no reconnect.                                   |
+| `error`            | `SyncClientError`                                 | Errors not tied to a promise: each failed connection attempt, server rejections of position updates, invalid server frames.                        |
 
 A listener that throws does not affect other listeners or the client. A
 listener removed during an emit is not called.
@@ -205,13 +215,15 @@ closed client.
 | connection `connecting`/`reconnecting`, group `active`, `rejoining` or `waiting` | `reconnecting`      |
 | connection `connected`, group `rejoining`                                        | `reconnecting`      |
 | connection `connected`, group `waiting`                                          | `leader_offline`    |
+| connection `connected`, group `active`, role `member`, paused with `graceEndsAt` | `leader_grace`      |
 | connection `connected`, group `active`, role `member`, `leaderOnline: false`     | `leader_offline`    |
 | connection `connected`, group `active`, role `member`, `leaderOnline: true`      | `following`         |
 | connection `connected`, group `active`, role `leader`                            | `leading`           |
 | connection `connected`, group `awaiting_approval`                                | `awaiting_approval` |
 | anything else (idle, closed)                                                     | `none`              |
 
-A leader disconnect freezes the group (`leader_offline` for members); an
+A leader disconnect or a missed keep-alive pauses the group: `leader_grace`
+while the lead may still pass on (auto mode), `leader_offline` otherwise. An
 `ended` group is really over.
 
 ## Joining a group
@@ -560,14 +572,67 @@ keeps tokens ("resume later").
 
 ### Block list
 
-`addToBlockList(groupId, ids)` and `removeFromBlockList(groupId, ids)` change a
-leader group's stored list (participant IDs, at most 256: `BLOCK_LIST_FULL`).
+`addToBlockList(groupId, ids)` adds to a leader group's stored list
+(participant IDs, at most 256: `BLOCK_LIST_FULL`). The list only grows while
+the group is live; nothing unblocks (#13).
+Prefer `removeMember(participantId)`, which also closes the person's
+connection and rotates every code.
 While the group is active and led by this client the full list is sent to
 the server, which removes blocked members (`groupEnded` reason `removed`);
 otherwise it is sent with the next resume. `getBlockList(groupId)` reads it.
 A blocked participant cannot come back with its old identity. Someone who
 still knows the current codes (or holds a valid QR ticket) can join again as
 a new person; call `rotateCodes()` after blocking to close that.
+
+## Roles and lifecycle
+
+Leader API (each rejects locally with `NOT_CONNECTED`, `NOT_IN_GROUP` or
+`NOT_LEADER`, and with the server's code otherwise):
+
+| Method                                    | Result                              | Notes                                                                                                                                |
+| ----------------------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `setViceLeader(id)` / `clearViceLeader()` | `Promise<string>` / `Promise<void>` | A connected member; `PARTICIPANT_NOT_FOUND`, `NOT_ALLOWED`.                                                                          |
+| `lockGroup()` / `unlockGroup()`           | `Promise<void>`                     | Stops all new joining; members get `lockChanged`.                                                                                    |
+| `removeMember(id)`                        | `Promise<string[]>`                 | Blocks, closes its connection, rotates the codes; resolves with the block list.                                                      |
+| `answerKeepAlive()`                       | `Promise<void>`                     | Answers `keepAlive`; any position update does too.                                                                                   |
+| `sendLeaderActivity()`                    | `Promise<void>`                     | "Still here" with no position (12 per minute); the preview helper throttles it.                                                      |
+| `getRoster()`                             | `RosterEntry[]`                     | Leader only: `participantId`, `displayName`, `generated`, `guestNumber?`, `role`, `connected`, `joinedAt`, `admittedSinceRecovery?`. |
+| `getLeaderState()`                        | `LeaderState \| null`               | `{ blockList, locked, viceId?, handoff }`: kept with the token for recovery.                                                         |
+
+A member calls `takeBackLeadership()` while its group state has
+`takeBackAvailable: true` (after `takeBackOffered`).
+
+`createGroup(metadata, position?, { joinMethods?, handoff?, displayName? })`:
+`handoff` is `auto` (the lead passes on after the grace period) or `frozen`
+(the group waits for the leader); `displayName` follows the same rule as a
+joiner's. A missing or blank name gets a server-generated `Guest N` with
+`generated: true`: localize it from `guestNumber`. The active group state has
+`displayName`, `generated`, `locked`, `leader` (`{ status: 'online' }` or
+`{ status: 'offline' | 'inactive', graceEndsAt? }`) and `takeBackAvailable`.
+
+Names are untrusted plain text: render them as text, never as HTML, and show
+`generated` (or the ID) so a chosen `Guest 3` cannot pass as a generated name.
+
+On `nowLeading` the client stores the new leader token with the recovery
+data; on `leadershipLost` and on removal it drops the roster, recovery state,
+codes and pending requests from memory and storage. A resume sends the
+stored own name and, for a leader, the lock, vice and handoff mode.
+
+### Preview
+
+`client.preview` lets the leader browse ahead without moving the group:
+`start(position?)`, `move(position)`, `end()`, `bringGroupHere()` (one
+normal position update, then ends), `returnToGroup()` and `getState()`
+(`{ active, groupPosition, previewPosition }`). While active it never sends a
+position; `start` and `move` send `leader.activity` at most every 10 s so the
+keep-alive stays quiet. The previewed position never leaves the client.
+
+### Removal
+
+A removed participant gets `groupEnded` (`removed`), then the server closes
+its socket with 4004: the client does not reconnect, deletes the group's
+token, moves to `closed` (reason `removed`) and emits `removed`. Call
+`connect()` to start again.
 
 ## Logging
 

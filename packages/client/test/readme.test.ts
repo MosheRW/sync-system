@@ -42,6 +42,7 @@ describe('README drift guard (AC31)', () => {
       'following',
       'leading',
       'leader_offline',
+      'leader_grace',
       'none',
     ]) {
       expect(readme, name).toContain(`\`${name}\``);
