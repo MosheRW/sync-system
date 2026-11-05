@@ -1,7 +1,7 @@
 # Sync System
 
 Group Reading Sync: a sync service that lets an ad-hoc group follow one
-leader's position in real time, and (later) a reading app that is its first
+leader's position in real time, and a reading app that is its first
 customer. The server syncs a **position, not a page**: it stores and relays an
 opaque payload and never reads it.
 
@@ -15,6 +15,7 @@ A pnpm workspace (Node 24, pnpm 10, TypeScript, ESM).
 | `@sync-system/server`   | `apps/sync-server`  | The sync server (HTTP `/health` + WebSocket).  |
 | `@sync-system/client`   | `packages/client`   | Framework-free client for browsers and Node.   |
 | `@sync-system/react`    | `packages/react`    | React/Next provider and hooks over the client. |
+| `@sync-system/reader`   | `apps/reader`       | The reading app (React + Vite, Node server).   |
 
 `packages/*` holds libraries and `apps/*` holds deployables.
 
@@ -23,6 +24,8 @@ reconnect behavior are documented in
 [`packages/client/README.md`](packages/client/README.md).
 The React and Next.js provider, hooks and SSR rules are documented in
 [`packages/react/README.md`](packages/react/README.md).
+The reading app (content schema, fingerprint, direction rules, configuration)
+is documented in [`apps/reader/README.md`](apps/reader/README.md).
 
 ```sh
 corepack enable          # uses the pnpm version pinned in package.json
@@ -66,10 +69,13 @@ default).
 ### Run with Docker Compose
 
 ```sh
-docker compose up --build
+docker compose up --build sync-server
 docker compose ps                     # STATUS shows (healthy)
 curl http://127.0.0.1:8080/health
 ```
+
+`docker compose up --build` with no service name also starts the reading app
+(see [Reading app](#reading-app)).
 
 `compose.yaml` builds `apps/sync-server/Dockerfile`, mounts
 `config/apps.dev.json` read-only at `/config/apps.json`, sets every ceiling and
@@ -627,3 +633,21 @@ server {
   }
 }
 ```
+
+## Reading app
+
+A JSON-driven reading app with right-to-left, left-to-right and mixed-direction
+text, and a content fingerprint for group sync (item 8 adds the sync itself).
+Full documentation: [`apps/reader/README.md`](apps/reader/README.md).
+
+```sh
+pnpm --filter @sync-system/reader dev           # http://localhost:5173
+docker compose up --build reader                # http://127.0.0.1:8081
+```
+
+The `reader` service in `compose.yaml` builds `apps/reader/Dockerfile`, binds
+port 8081 to `127.0.0.1` only, runs read-only as a non-root user, and sets
+every `READER_*` variable to its default: the library is the entry page and
+`?src` links are disabled. A bad value makes the container exit 1 with
+`Config error: ...`. Serve it over HTTPS beyond `localhost`: the fingerprint
+needs Web Crypto, which browsers offer only in secure contexts.

@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "contentId": "samples/mixed-en-he",
+  "title": "מדריך קצר: English with Hebrew",
+  "lang": "en",
+  "dir": "ltr",
+  "pages": [
+    {
+      "blocks": [
+        {
+          "type": "heading",
+          "text": "Mixed-direction text"
+        },
+        {
+          "text": "This English paragraph mentions the word שלום, which means peace, and the year 2024."
+        },
+        {
+          "dir": "rtl",
+          "lang": "he",
+          "text": "זוהי פסקה בעברית בתוך מסמך באנגלית. היא מיושרת לימין, והנקודה בסופה בצד שמאל."
+        },
+        {
+          "dir": "auto",
+          "lang": "he",
+          "text": "שלום! הבלוק האוטומטי הזה מתחיל בעברית, ולכן הוא נקרא מימין לשמאל."
+        },
+        {
+          "dir": "auto",
+          "text": "- 42 -"
+        },
+        {
+          "text": "A first line of a short poem,\na second line that follows,\nand a third to close it."
+        }
+      ]
+    },
+    {
+      "blocks": [
+        {
+          "type": "heading",
+          "text": "Second page"
+        },
+        {
+          "text": "The end."
+        }
+      ]
+    }
+  ]
+}

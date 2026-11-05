@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "contentId": "acme/other",
+  "pages": [
+    {
+      "blocks": [
+        {
+          "text": "x"
+        }
+      ]
+    }
+  ]
+}

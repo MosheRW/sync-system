@@ -1,0 +1,91 @@
+/*
+ * Design tokens (design.md section 10, ADR 0002). Components use var(--token)
+ * only, never raw colour or spacing values. Changing a token is a design
+ * decision. Theme follows prefers-color-scheme (no toggle in v1).
+ */
+:root {
+  color-scheme: light dark;
+
+  --color-bg: #ffffff;
+  --color-surface: #f6f7f9;
+  --color-surface-2: #eceef1;
+  --color-text: #1a1c1e;
+  --color-text-muted: #5b6168;
+  --color-border: #d0d4da;
+  --color-accent: #1f5fbf;
+  --color-accent-hover: #194e9e;
+  --color-on-accent: #ffffff;
+  --color-danger: #b3261e;
+  --color-focus: #1f5fbf;
+
+  --font-ui:
+    system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans', 'Noto Sans Hebrew',
+    'Noto Naskh Arabic', Arial, sans-serif;
+
+  --text-sm: 0.875rem;
+  --text-sm-lh: 1.4;
+  --text-md: 1rem;
+  --text-md-lh: 1.5;
+  --text-body: 1.125rem;
+  --text-body-lh: 1.65;
+  --text-body-ar-lh: 1.85;
+  --text-lg: 1.25rem;
+  --text-lg-lh: 1.4;
+  --text-xl: 1.5rem;
+  --text-xl-lh: 1.3;
+  --weight-regular: 400;
+  --weight-strong: 600;
+
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-12: 3rem;
+
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --hairline: 1px;
+  --focus-ring: 2px;
+
+  --size-header: 3rem;
+  --size-nav: 3.5rem;
+  --size-progress: 4px;
+  --size-target: 2.75rem;
+  --size-icon: 2rem;
+  --size-row: 3.5rem;
+  --size-row-with-line: 4rem;
+  --measure-text: 66ch;
+  --measure-status: 40ch;
+  --measure-library: 40rem;
+  --nudge: 8px;
+
+  --duration-fast: 120ms;
+  --duration-page: 200ms;
+  --easing: cubic-bezier(0.2, 0, 0, 1);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-bg: #121416;
+    --color-surface: #1c1f22;
+    --color-surface-2: #262a2e;
+    --color-text: #e8eaed;
+    --color-text-muted: #a3a9b1;
+    --color-border: #33383d;
+    --color-accent: #8ab4f8;
+    --color-accent-hover: #a8c7fa;
+    --color-on-accent: #121416;
+    --color-danger: #f28b82;
+    --color-focus: #8ab4f8;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-fast: 0ms;
+    --duration-page: 0ms;
+    --nudge: 0px;
+  }
+}

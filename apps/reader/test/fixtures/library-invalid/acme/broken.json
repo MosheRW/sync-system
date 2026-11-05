@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "contentId": "acme/broken",
+  "pages": [
+    {
+      "blocks": [
+        {
+          "text": "x"
+        }
+      ]
+    },
+    {
+      "blocks": []
+    }
+  ]
+}

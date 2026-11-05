@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "contentId": "acme/fingerprint-vector",
+  "title": "שיר",
+  "dir": "rtl",
+  "lang": "he",
+  "pages": [
+    {
+      "blocks": [
+        { "text": "שלום, world.\nשורה שנייה", "type": "heading" },
+        { "text": "English \"quoted\" text", "dir": "ltr", "lang": "en" }
+      ]
+    },
+    { "blocks": [{ "text": "1948 - 2024.", "dir": "auto" }] }
+  ]
+}

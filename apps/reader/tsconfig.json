@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    // The browser app is bundled by Vite; server/ is also built for Node by
+    // tsconfig.server.json, which has no DOM types.
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "types": ["node", "vite/client"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx"
+  },
+  "include": ["src", "test", "plugins", "server", "vite.config.ts", "vitest.config.ts"]
+}

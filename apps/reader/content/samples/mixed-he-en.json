@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 1,
+  "contentId": "samples/mixed-he-en",
+  "title": "דוגמה: עברית עם אנגלית",
+  "lang": "he",
+  "dir": "rtl",
+  "pages": [
+    {
+      "blocks": [
+        {
+          "type": "heading",
+          "text": "טקסט מעורב בכיוונים"
+        },
+        {
+          "text": "זהו משפט בעברית שמסתיים בנקודה. האם סימן השאלה מופיע בצד הנכון?"
+        },
+        {
+          "text": "הספר Pride and Prejudice יצא לאור בשנת 1813, לפני יותר מ-200 שנה."
+        },
+        {
+          "dir": "ltr",
+          "lang": "en",
+          "text": "This English paragraph sits inside a Hebrew document. It is aligned to the left, and its period is at the right end."
+        },
+        {
+          "dir": "auto",
+          "lang": "en",
+          "text": "Hello, עולם! This automatic block starts with English, so it reads left to right."
+        },
+        {
+          "dir": "auto",
+          "text": "1948 - 2024."
+        },
+        {
+          "lang": "ar",
+          "text": "هذه فقرة قصيرة باللغة العربية داخل مستند عبري. هل تظهر بشكل صحيح؟"
+        },
+        {
+          "text": "שורה ראשונה של שיר קצר,\nשורה שנייה, ממשיכה בשקט,\nושורה שלישית שמסיימת אותו."
+        }
+      ]
+    },
+    {
+      "dir": "ltr",
+      "lang": "en",
+      "blocks": [
+        {
+          "type": "heading",
+          "text": "A page set left to right"
+        },
+        {
+          "text": "This page is left to right, but page turns still follow the Hebrew document: next is on the left."
+        },
+        {
+          "dir": "rtl",
+          "lang": "he",
+          "text": "ובלוק עברי בתוך עמוד באנגלית."
+        }
+      ]
+    }
+  ]
+}

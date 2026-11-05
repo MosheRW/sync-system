@@ -1,0 +1,246 @@
+.screen {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-block-size: 100vh;
+  min-block-size: 100dvh;
+}
+
+/* Header and nav bar stay visible; the document scrolls (design.md 4). */
+.header {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 2;
+  background: var(--color-surface);
+  border-block-end: var(--hairline) solid var(--color-border);
+}
+
+.headerInner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-block-size: var(--size-header);
+  max-inline-size: calc(var(--measure-text) + 2 * var(--space-8));
+  margin-inline: auto;
+  padding-inline: var(--space-4);
+}
+
+.title {
+  flex: 1;
+  min-inline-size: 0;
+  margin: 0;
+  font-size: var(--text-lg);
+  line-height: var(--text-lg-lh);
+  font-weight: var(--weight-strong);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.counter {
+  margin: 0;
+  flex: none;
+  font-size: var(--text-sm);
+  line-height: var(--text-sm-lh);
+  color: var(--color-text-muted);
+}
+
+.slot:empty {
+  display: none;
+}
+
+.main {
+  position: relative;
+  flex: 1;
+  /* The swipe area: horizontal gestures are ours, vertical scroll and
+     pinch-zoom stay with the browser. */
+  touch-action: pan-y pinch-zoom;
+}
+
+.article {
+  max-inline-size: calc(var(--measure-text) + 2 * var(--space-4));
+  margin-inline: auto;
+  padding: var(--space-6) var(--space-4);
+}
+
+.article:focus {
+  outline: none;
+}
+
+.article:focus-visible {
+  outline: var(--focus-ring) solid var(--color-focus);
+}
+
+.overlay:empty {
+  display: none;
+}
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+/* One element per block: alignment follows the block's own direction;
+   line breaks in the text are kept (AC14, AC33). */
+.block {
+  margin: 0;
+  text-align: start;
+  white-space: pre-line;
+  overflow-wrap: break-word;
+  font-size: var(--text-body);
+  line-height: var(--text-body-lh);
+}
+
+.block:lang(ar) {
+  line-height: var(--text-body-ar-lh);
+}
+
+.heading {
+  font-size: var(--text-xl);
+  line-height: var(--text-xl-lh);
+  font-weight: var(--weight-strong);
+}
+
+.pageFrame {
+  animation-duration: var(--duration-page);
+  animation-timing-function: var(--easing);
+}
+
+.fromRight {
+  animation-name: from-right;
+}
+
+.fromLeft {
+  animation-name: from-left;
+}
+
+.nudgeLeft {
+  animation-name: nudge-left;
+}
+
+.nudgeRight {
+  animation-name: nudge-right;
+}
+
+@keyframes from-right {
+  from {
+    transform: translateX(var(--space-8));
+    opacity: 0;
+  }
+}
+
+@keyframes from-left {
+  from {
+    transform: translateX(calc(-1 * var(--space-8)));
+    opacity: 0;
+  }
+}
+
+@keyframes nudge-left {
+  50% {
+    transform: translateX(calc(-1 * var(--nudge)));
+  }
+}
+
+@keyframes nudge-right {
+  50% {
+    transform: translateX(var(--nudge));
+  }
+}
+
+.nav {
+  position: sticky;
+  inset-block-end: 0;
+  z-index: 2;
+  background: var(--color-surface);
+  border-block-start: var(--hairline) solid var(--color-border);
+  padding-block-end: env(safe-area-inset-bottom);
+}
+
+.progress {
+  display: block;
+  inline-size: 100%;
+  block-size: var(--size-progress);
+  border: 0;
+  background: var(--color-surface-2);
+  appearance: none;
+}
+
+.progress::-webkit-progress-bar {
+  background: var(--color-surface-2);
+}
+
+.progress::-webkit-progress-value {
+  background: var(--color-accent);
+}
+
+.progress::-moz-progress-bar {
+  background: var(--color-accent);
+}
+
+/* Physical layout on purpose: "next" sits on the document's end side. */
+.navButtons {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  min-block-size: var(--size-nav);
+  max-inline-size: calc(var(--measure-text) + 2 * var(--space-8));
+  margin-inline: auto;
+  padding-inline: var(--space-2);
+}
+
+.navButton {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-block-size: var(--size-target);
+  min-inline-size: var(--size-target);
+  padding-inline: var(--space-3);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  font-weight: var(--weight-strong);
+  cursor: pointer;
+  transition: background-color var(--duration-fast) var(--easing);
+}
+
+.navButton:hover:not([aria-disabled='true']) {
+  background: var(--color-surface-2);
+}
+
+.navButton:active:not([aria-disabled='true']) {
+  background: var(--color-surface-2);
+}
+
+.navButton[aria-disabled='true'] {
+  color: var(--color-text-muted);
+  cursor: default;
+}
+
+.navLeft {
+  margin-right: auto;
+}
+
+.navRight {
+  margin-left: auto;
+}
+
+.chevron {
+  inline-size: var(--space-6);
+  block-size: var(--space-6);
+}
+
+@media (min-width: 640px) {
+  .headerInner,
+  .navButtons {
+    padding-inline: var(--space-8);
+  }
+
+  .article {
+    max-inline-size: calc(var(--measure-text) + 2 * var(--space-8));
+    padding-inline: var(--space-8);
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "contentId": "acme/arabic",
+  "title": "كتاب عربي",
+  "lang": "ar",
+  "dir": "rtl",
+  "pages": [
+    {
+      "blocks": [
+        {
+          "text": "x"
+        }
+      ]
+    }
+  ]
+}

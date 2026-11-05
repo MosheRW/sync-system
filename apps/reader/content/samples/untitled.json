@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "contentId": "samples/untitled",
+  "pages": [
+    {
+      "blocks": [
+        {
+          "text": "A text with no title and no language. The library shows its content ID instead."
+        }
+      ]
+    }
+  ]
+}
