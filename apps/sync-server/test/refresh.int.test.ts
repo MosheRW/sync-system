@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { TOKEN_TTL_SECONDS } from '../src/limits/constants.js';
 import { createGroupWithMembers, resumeWith } from './helpers/groups.js';
 import { ManualScheduler } from './helpers/manual-scheduler.js';
-import { type TestServer, startTestServer } from './helpers/test-server.js';
+import { KEY_A, type TestServer, startTestServer } from './helpers/test-server.js';
 import { claimsOf } from './helpers/tokens.js';
 
 let ts: TestServer | undefined;
@@ -90,7 +90,12 @@ describe('leader token refresh (#5 AC12)', () => {
 
   it('a returned leader starts counting again from its fresh token', async () => {
     const scheduler = new ManualScheduler();
-    ts = await startTestServer({ scheduler, env: ENV });
+    // Frozen mode (#13 AC21): the leader keeps the lead while away, as in #5.
+    ts = await startTestServer({
+      scheduler,
+      env: ENV,
+      apps: [{ namespace: 'app-a', apiKey: KEY_A, defaultHandoff: 'frozen' }],
+    });
     const group = await createGroupWithMembers(ts, 1);
     group.leader.send({ type: 'position.update', position: 1 });
     await group.leader.next('position.ack');

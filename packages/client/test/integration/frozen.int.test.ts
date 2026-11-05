@@ -34,9 +34,10 @@ describe('leader offline and back, client side (#5 AC18, AC19, AC36)', () => {
     const online = nextEvent(member, 'leaderStatus', (e) => e.online, 10_000);
     const leaderBack = nextEvent(leader, 'rejoined', undefined, 10_000);
     proxy.cutAll();
-    expect(await offline).toEqual({ groupId, online: false });
+    // A pause with a grace period: the lead may pass on (#13 AC28).
+    expect(await offline).toMatchObject({ groupId, online: false, cause: 'disconnected' });
     expect(member.getSnapshot().group).toMatchObject({ status: 'active', leaderOnline: false });
-    expect(indicatorOf(member.getSnapshot())).toBe('leader_offline');
+    expect(indicatorOf(member.getSnapshot())).toBe('leader_grace');
 
     expect(await leaderBack).toMatchObject({
       role: 'leader',

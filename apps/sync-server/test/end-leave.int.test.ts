@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { InMemoryGroupStore } from '../src/groups/in-memory-group-store.js';
 import { createGroupWithMembers } from './helpers/groups.js';
 import { ManualScheduler } from './helpers/manual-scheduler.js';
-import { type TestServer, startTestServer } from './helpers/test-server.js';
+import { KEY_A, type TestServer, startTestServer } from './helpers/test-server.js';
 import { waitUntil } from './helpers/wait.js';
 
 let ts: TestServer | undefined;
@@ -113,14 +113,19 @@ describe('group.leave (#5 AC30)', () => {
     expect(await client.next('error')).toMatchObject({ code: 'NOT_IN_GROUP' });
   });
 
-  it('drops a frozen group when its last member leaves', async () => {
+  it('ends a frozen group after the hold once its last member leaves (#13 Q-G)', async () => {
     const store = new InMemoryGroupStore();
-    ts = await startTestServer({ store });
+    // A 1 s grace keeps the real-clock hold short.
+    ts = await startTestServer({
+      store,
+      apps: [{ namespace: 'app-a', apiKey: KEY_A, disconnectGraceSeconds: 1 }],
+    });
     const { leader, members } = await createGroupWithMembers(ts, 1);
     await leader.close();
     await members[0]!.next('leader.offline');
     members[0]!.send({ type: 'group.leave' });
     await members[0]!.next('group.left');
-    await waitUntil(() => store.size === 0);
+    expect(store.size).toBe(1);
+    await waitUntil(() => store.size === 0, 3000);
   });
 });

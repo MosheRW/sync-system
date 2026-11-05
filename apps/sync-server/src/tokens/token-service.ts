@@ -1,7 +1,7 @@
 import {
-  type Role,
   TOKEN_FORMAT_VERSION,
   type TokenClaims,
+  type TokenRole,
   parseClaimsSegment,
 } from '@sync-system/protocol';
 import { MAX_CLOCK_SKEW_MS, TOKEN_TTL_SECONDS } from '../limits/constants.js';
@@ -12,11 +12,13 @@ export interface IssueInput {
   namespace: string;
   groupId: string;
   participantId: string;
-  role: Role;
+  role: TokenRole;
   /** Group creation time, epoch ms. */
   groupCreatedAt: number;
   /** The leader's last activity, epoch ms. */
   lastActivityAt: number;
+  /** The group's current leadership term (#13 D3); always `record.term`. */
+  term: number;
   /** Issue time, epoch ms. */
   now: number;
 }
@@ -29,8 +31,9 @@ export type VerifyResult =
 const INVALID: VerifyResult = Object.freeze({ ok: false });
 
 /**
- * Serializes exactly the nine known claims in a fixed order (L3), so a
- * re-signed token never carries forward a claim this server did not write.
+ * Serializes exactly the ten known claims in a fixed order (L3), so a
+ * re-signed token never carries forward a claim this server did not write,
+ * and `resign` keeps the leadership term (#13 RC5).
  */
 function payloadJson(claims: TokenClaims): string {
   return JSON.stringify({
@@ -41,6 +44,7 @@ function payloadJson(claims: TokenClaims): string {
     role: claims.role,
     gct: claims.gct,
     lat: claims.lat,
+    term: claims.term,
     iat: claims.iat,
     exp: claims.exp,
   });
@@ -59,7 +63,10 @@ function plausible(claims: TokenClaims, now: number): boolean {
     claims.gct <= latest &&
     claims.lat <= latest &&
     claims.lat <= claims.iat * 1000 + 1000 &&
-    claims.lat >= claims.gct
+    claims.lat >= claims.gct &&
+    // #13 RC5: a term is a time-based grant, never ahead of the clock.
+    claims.term >= claims.gct &&
+    claims.term <= latest
   );
 }
 
@@ -68,10 +75,25 @@ function plausible(claims: TokenClaims, now: number): boolean {
  * and never throws or returns anything that contains token content.
  */
 export class TokenService {
-  constructor(private readonly keyring: TokenKeyring) {}
+  /** `iat` floor in epoch seconds: the second this process started (#13 RC18). */
+  private readonly minIat: number;
+
+  /**
+   * `processStartedAt` (epoch ms) floors every issued `iat` (#13 RC18): a
+   * clock that steps back below the process start can never make a token
+   * issued here look like one from an earlier process to the recreation
+   * fence (6.9 layer 2). If the step is larger than the clock skew, such a
+   * token fails plausibility, which fails closed.
+   */
+  constructor(
+    private readonly keyring: TokenKeyring,
+    processStartedAt = 0,
+  ) {
+    this.minIat = Math.floor(processStartedAt / 1000);
+  }
 
   issue(input: IssueInput): string {
-    const iat = Math.floor(input.now / 1000);
+    const iat = Math.max(Math.floor(input.now / 1000), this.minIat);
     return this.sign(
       {
         v: TOKEN_FORMAT_VERSION,
@@ -81,6 +103,7 @@ export class TokenService {
         role: input.role,
         gct: input.groupCreatedAt,
         lat: input.lastActivityAt,
+        term: input.term,
         iat,
         exp: iat + TOKEN_TTL_SECONDS,
       },

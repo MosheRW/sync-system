@@ -30,13 +30,14 @@ describe('tokens on create and join (#5 AC5, AC6)', () => {
     expect(result).toMatchObject({ ok: true, viaPrevious: false });
     const claims = claimsOf(created.token);
     expect(claims).toEqual({
-      v: 1,
+      v: 2,
       aud: 'app-a',
       gid: created.groupId,
       pid: created.participantId,
       role: 'leader',
       gct: scheduler.now(),
       lat: scheduler.now(),
+      term: scheduler.now(),
       iat: Math.floor(scheduler.now() / 1000),
       exp: Math.floor(scheduler.now() / 1000) + TOKEN_TTL_SECONDS,
     });

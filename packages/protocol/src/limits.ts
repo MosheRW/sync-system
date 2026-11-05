@@ -48,6 +48,13 @@ export const MAX_DISPLAY_NAME_INPUT_LENGTH = 128;
 /** Longest display name after trimming, in code points (#10 AC20). */
 export const MAX_DISPLAY_NAME_LENGTH = 32;
 
+/**
+ * Most roster entries per `maxGroupSize` (#13 D10): connected entries plus
+ * at most as many disconnected ones (the leader, the vice-leader and the
+ * take-back holder are never evicted, so a roster may hold 2 more).
+ */
+export const MAX_ROSTER_ENTRIES_FACTOR = 2;
+
 /** Longest QR ticket (#10 AC23). */
 export const MAX_QR_TICKET_LENGTH = 256;
 
@@ -60,6 +67,16 @@ export const MAX_QR_TICKET_INPUT_LENGTH = 512;
 
 /** Longest signed codes blob (#10 AC32). */
 export const MAX_CODES_BLOB_LENGTH = 512;
+
+/**
+ * Handoff modes (#13 AC3, Q2.1): `auto` hands the lead to the vice-leader or
+ * the longest-connected member after the grace period; `frozen` never hands
+ * off and waits for the leader.
+ */
+export const HANDOFF_MODES = ['auto', 'frozen'] as const;
+
+/** A group's handoff mode. */
+export type HandoffMode = (typeof HANDOFF_MODES)[number];
 
 /** An app namespace (also the token audience and part of the client storage key). */
 export const NAMESPACE_PATTERN = /^[a-z0-9][a-z0-9_-]{0,62}$/;

@@ -31,6 +31,10 @@ describe('token capture (#5 AC31, AC34)', () => {
     const token = fakeToken({ gid: GID });
     socket.receive({
       type: 'group.created',
+      handoff: 'auto',
+      displayName: 'Guest 1',
+      generated: true,
+      state: { blockList: [], locked: false, handoff: 'auto' },
       ...CREATED_FIELDS,
       reqId: socket.lastMessage().reqId,
       groupId: GID,
@@ -49,6 +53,8 @@ describe('token capture (#5 AC31, AC34)', () => {
         blockList: [],
         joinCodes: TEST_CODES.blob,
         joinCodesGeneration: TEST_CODES.generation,
+        locked: false,
+        handoff: 'auto',
       },
     });
     client.close();
@@ -61,6 +67,9 @@ describe('token capture (#5 AC31, AC34)', () => {
     const token = fakeToken({ gid: GID, role: 'member' });
     socket.receive({
       type: 'group.joined',
+      displayName: 'Guest 1',
+      generated: true,
+      locked: false,
       reqId: socket.lastMessage().reqId,
       groupId: GID,
       participantId: 'p',
@@ -82,6 +91,10 @@ describe('token capture (#5 AC31, AC34)', () => {
     const creating = client.createGroup({});
     socket.receive({
       type: 'group.created',
+      handoff: 'auto',
+      displayName: 'Guest 1',
+      generated: true,
+      state: { blockList: [], locked: false, handoff: 'auto' },
       ...CREATED_FIELDS,
       reqId: socket.lastMessage().reqId,
       groupId: GID,
@@ -104,6 +117,8 @@ describe('token capture (#5 AC31, AC34)', () => {
           blockList: [],
           joinCodes: TEST_CODES.blob,
           joinCodesGeneration: TEST_CODES.generation,
+          locked: false,
+          handoff: 'auto',
         },
       },
     ]);
@@ -116,6 +131,10 @@ describe('token capture (#5 AC31, AC34)', () => {
     const creating = client.createGroup({});
     socket.receive({
       type: 'group.created',
+      handoff: 'auto',
+      displayName: 'Guest 1',
+      generated: true,
+      state: { blockList: [], locked: false, handoff: 'auto' },
       ...CREATED_FIELDS,
       reqId: socket.lastMessage().reqId,
       groupId: GID,
@@ -149,6 +168,10 @@ describe('token capture (#5 AC31, AC34)', () => {
       const creating = client.createGroup({});
       socket.receive({
         type: 'group.created',
+        handoff: 'auto',
+        displayName: 'Guest 1',
+        generated: true,
+        state: { blockList: [], locked: false, handoff: 'auto' },
         ...CREATED_FIELDS,
         reqId: socket.lastMessage().reqId,
         groupId: GID,

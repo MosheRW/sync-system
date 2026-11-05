@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import semver from 'semver';
 import { z } from 'zod';
 import {
+  HANDOFF_MODES,
   JOIN_METHODS,
   type JoinMethod,
   MAX_API_KEY_LENGTH,
@@ -27,7 +28,12 @@ export const APP_DEFAULTS = {
   inactivityLimitMinutes: 20,
   qrTicketSeconds: 300,
   approvalTimeoutSeconds: 120,
+  disconnectGraceSeconds: 30,
+  keepAliveCountdownSeconds: 60,
 } as const;
+
+/** Handoff mode of an app that does not set one (#13 AC3, Q2.1). */
+export const DEFAULT_HANDOFF = 'auto';
 
 type Ceilings = Pick<
   ServerEnv,
@@ -39,6 +45,8 @@ type Ceilings = Pick<
   | 'inactivityLimitMinutesCeiling'
   | 'qrTicketSecondsCeiling'
   | 'approvalTimeoutSecondsCeiling'
+  | 'disconnectGraceSecondsCeiling'
+  | 'keepAliveCountdownSecondsCeiling'
   | 'joinMethodsAllowed'
 >;
 
@@ -98,6 +106,18 @@ const LIMIT_FIELDS: readonly LimitField[] = [
     ceilingName: 'APPROVAL_TIMEOUT_SECONDS_CEILING',
     ceiling: (env) => env.approvalTimeoutSecondsCeiling,
   },
+  {
+    field: 'disconnectGraceSeconds',
+    min: 1,
+    ceilingName: 'DISCONNECT_GRACE_SECONDS_CEILING',
+    ceiling: (env) => env.disconnectGraceSecondsCeiling,
+  },
+  {
+    field: 'keepAliveCountdownSeconds',
+    min: 1,
+    ceilingName: 'KEEP_ALIVE_COUNTDOWN_SECONDS_CEILING',
+    ceiling: (env) => env.keepAliveCountdownSecondsCeiling,
+  },
 ];
 
 const limitSchema = z.number().int();
@@ -114,6 +134,9 @@ const appEntrySchema = z.strictObject({
   inactivityLimitMinutes: limitSchema.optional(),
   qrTicketSeconds: limitSchema.optional(),
   approvalTimeoutSeconds: limitSchema.optional(),
+  disconnectGraceSeconds: limitSchema.optional(),
+  keepAliveCountdownSeconds: limitSchema.optional(),
+  defaultHandoff: z.enum(HANDOFF_MODES).optional(),
   joinMethods: z.array(z.enum(JOIN_METHODS)).min(1).max(JOIN_METHODS.length).optional(),
 });
 
@@ -122,6 +145,7 @@ const FIELD_RULES: Record<string, string> = {
   apiKey: `must be a string of ${MIN_API_KEY_LENGTH}-${MAX_API_KEY_LENGTH} characters`,
   minAppVersion: `must be a semver string of at most ${MAX_APP_VERSION_LENGTH} characters`,
   joinMethods: 'must be a non-empty array of distinct methods "A", "B", "C", "D"',
+  defaultHandoff: 'must be "auto" or "frozen"',
 };
 
 /**
@@ -237,6 +261,21 @@ export function parseAppsConfig(text: string, env: Ceilings, source = 'apps conf
       limits[spec.field] = value;
     }
 
+    // #13 AC2: the keep-alive countdown must end before the inactivity
+    // limit. An omitted countdown takes min(default, ceiling, half the limit).
+    const inactivitySeconds = limits.inactivityLimitMinutes * 60;
+    if (app.keepAliveCountdownSeconds === undefined) {
+      limits.keepAliveCountdownSeconds = Math.max(
+        1,
+        Math.min(limits.keepAliveCountdownSeconds, Math.floor(inactivitySeconds / 2)),
+      );
+    } else if (entryOk && limits.keepAliveCountdownSeconds >= inactivitySeconds) {
+      errors.push(
+        `${where}: keepAliveCountdownSeconds ${limits.keepAliveCountdownSeconds} must be less than inactivityLimitMinutes in seconds (${inactivitySeconds})`,
+      );
+      entryOk = false;
+    }
+
     const joinMethods = resolveAppJoinMethods(app.joinMethods, env.joinMethodsAllowed);
     if (!joinMethods.ok) {
       errors.push(...joinMethods.errors.map((error) => `${where}: ${error}`));
@@ -271,6 +310,7 @@ export function parseAppsConfig(text: string, env: Ceilings, source = 'apps conf
         minAppVersion: app.minAppVersion,
         ...limits,
         joinMethods: joinMethods.ok ? joinMethods.methods : [],
+        defaultHandoff: app.defaultHandoff ?? DEFAULT_HANDOFF,
       });
     }
   });

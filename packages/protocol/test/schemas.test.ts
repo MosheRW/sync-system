@@ -157,6 +157,10 @@ describe('codes across recovery (#10 AC32-AC34)', () => {
   it('requires codes and codesChanged on group.resumed', () => {
     const resumed = {
       type: 'group.resumed',
+      displayName: 'Guest 1',
+      generated: true,
+      state: { blockList: [], locked: false, handoff: 'auto' },
+      superseded: false,
       groupId: GROUP_ID,
       participantId: 'p',
       role: 'leader',
@@ -311,6 +315,10 @@ describe('group.create join methods and group.created codes (#10 AC5, AC6)', () 
   it('validates the codes payload of group.created', () => {
     const created = {
       type: 'group.created',
+      handoff: 'auto',
+      displayName: 'Guest 1',
+      generated: true,
+      state: { blockList: [], locked: false, handoff: 'auto' },
       groupId: GROUP_ID,
       participantId: 'p',
       role: 'leader',
@@ -358,10 +366,18 @@ describe('server message schemas', () => {
           maxSessionMinutes: 180,
           qrTicketSeconds: 300,
           approvalTimeoutSeconds: 120,
+          inactivityLimitMinutes: 20,
+          disconnectGraceSeconds: 30,
+          keepAliveCountdownSeconds: 60,
         },
+        defaultHandoff: 'auto',
       },
       {
         type: 'group.created',
+        handoff: 'auto',
+        displayName: 'Guest 1',
+        generated: true,
+        state: { blockList: [], locked: false, handoff: 'auto' },
         groupId: GROUP_ID,
         participantId: 'p',
         role: 'leader',
@@ -371,6 +387,9 @@ describe('server message schemas', () => {
       },
       {
         type: 'group.joined',
+        displayName: 'Guest 1',
+        generated: true,
+        locked: false,
         groupId: GROUP_ID,
         participantId: 'p',
         role: 'member',
@@ -382,6 +401,9 @@ describe('server message schemas', () => {
       },
       {
         type: 'group.joined',
+        displayName: 'Guest 1',
+        generated: true,
+        locked: false,
         groupId: GROUP_ID,
         participantId: 'p',
         role: 'member',
@@ -414,6 +436,10 @@ describe('server message schemas', () => {
   it('requires a bounded token and a valid namespace (#5)', () => {
     const created = {
       type: 'group.created',
+      handoff: 'auto',
+      displayName: 'Guest 1',
+      generated: true,
+      state: { blockList: [], locked: false, handoff: 'auto' },
       groupId: GROUP_ID,
       participantId: 'p',
       role: 'leader',
@@ -436,7 +462,11 @@ describe('server message schemas', () => {
         maxSessionMinutes: 1,
         qrTicketSeconds: 30,
         approvalTimeoutSeconds: 15,
+        inactivityLimitMinutes: 20,
+        disconnectGraceSeconds: 30,
+        keepAliveCountdownSeconds: 60,
       },
+      defaultHandoff: 'auto',
     };
     expect(parseServerMessage(helloOk).ok).toBe(true);
     expect(parseServerMessage({ ...helloOk, namespace: 'Bad App' }).ok).toBe(false);
@@ -456,9 +486,26 @@ describe('server message schemas', () => {
         maxSessionMinutes: 1,
         qrTicketSeconds: 300,
         approvalTimeoutSeconds: 120,
+        inactivityLimitMinutes: 20,
+        disconnectGraceSeconds: 30,
+        keepAliveCountdownSeconds: 60,
       },
+      defaultHandoff: 'auto',
     };
     expect(parseServerMessage(helloOk).ok).toBe(true);
+    // #13 AC1, AC3: the lifecycle timers and the default handoff mode.
+    for (const defaultHandoff of [undefined, 'manual']) {
+      expect(parseServerMessage({ ...helloOk, defaultHandoff }).ok).toBe(false);
+    }
+    for (const key of [
+      'inactivityLimitMinutes',
+      'disconnectGraceSeconds',
+      'keepAliveCountdownSeconds',
+    ]) {
+      expect(parseServerMessage({ ...helloOk, limits: { ...helloOk.limits, [key]: 0 } }).ok).toBe(
+        false,
+      );
+    }
     for (const joinMethods of [undefined, [], ['E'], ['a'], 'A', ['A', 'B', 'C', 'D', 'A']]) {
       expect(parseServerMessage({ ...helloOk, joinMethods }).ok).toBe(false);
     }

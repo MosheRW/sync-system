@@ -44,6 +44,9 @@ describe('parseAppsConfig', () => {
           joinMethods: ['D', 'B'],
           qrTicketSeconds: 600,
           approvalTimeoutSeconds: 60,
+          disconnectGraceSeconds: 45,
+          keepAliveCountdownSeconds: 90,
+          defaultHandoff: 'frozen',
         }),
       ),
       env,
@@ -61,6 +64,9 @@ describe('parseAppsConfig', () => {
       joinMethods: ['B', 'D'],
       qrTicketSeconds: 600,
       approvalTimeoutSeconds: 60,
+      disconnectGraceSeconds: 45,
+      keepAliveCountdownSeconds: 90,
+      defaultHandoff: 'frozen',
     });
     expect(JSON.stringify(loaded)).not.toContain(KEY_A);
   });
@@ -77,6 +83,9 @@ describe('parseAppsConfig', () => {
       joinMethods: ['A', 'D'],
       qrTicketSeconds: 300,
       approvalTimeoutSeconds: 120,
+      disconnectGraceSeconds: 30,
+      keepAliveCountdownSeconds: 60,
+      defaultHandoff: 'auto',
     });
   });
 
@@ -119,6 +128,8 @@ describe('parseAppsConfig', () => {
     ['inactivityLimitMinutes', 60, 'INACTIVITY_LIMIT_MINUTES_CEILING'],
     ['qrTicketSeconds', 3600, 'QR_TICKET_SECONDS_CEILING'],
     ['approvalTimeoutSeconds', 600, 'APPROVAL_TIMEOUT_SECONDS_CEILING'],
+    ['disconnectGraceSeconds', 120, 'DISCONNECT_GRACE_SECONDS_CEILING'],
+    ['keepAliveCountdownSeconds', 120, 'KEEP_ALIVE_COUNTDOWN_SECONDS_CEILING'],
   ] as const;
 
   for (const [field, ceiling, ceilingName] of ceilingCases) {
@@ -139,6 +150,51 @@ describe('parseAppsConfig', () => {
     expect(errorOf(config(app({ maxLeaderUpdatesPerSecond: 1.5 }))).message).toContain(
       'maxLeaderUpdatesPerSecond',
     );
+  });
+
+  describe('lifecycle timers and handoff mode (#13 AC1-AC3)', () => {
+    const where = 'apps.json: apps[0] (namespace "reading-app")';
+
+    it('rejects a countdown not below the inactivity limit, naming the field (AC2)', () => {
+      expect(
+        errorOf(config(app({ inactivityLimitMinutes: 1, keepAliveCountdownSeconds: 60 }))).message,
+      ).toBe(
+        `${where}: keepAliveCountdownSeconds 60 must be less than inactivityLimitMinutes in seconds (60)`,
+      );
+      const [loaded] = parseAppsConfig(
+        config(app({ inactivityLimitMinutes: 1, keepAliveCountdownSeconds: 59 })),
+        env,
+      );
+      expect(loaded?.keepAliveCountdownSeconds).toBe(59);
+    });
+
+    it('rejects non-positive or fractional timers, naming the field (AC2)', () => {
+      for (const field of ['disconnectGraceSeconds', 'keepAliveCountdownSeconds']) {
+        expect(errorOf(config(app({ [field]: 0 }))).message).toBe(
+          `${where}: ${field} must be an integer >= 1`,
+        );
+        expect(errorOf(config(app({ [field]: 1.5 }))).message).toBe(
+          `${where}: ${field} must be an integer`,
+        );
+      }
+    });
+
+    it('takes min(default, ceiling, half the limit) for an omitted countdown', () => {
+      const [short] = parseAppsConfig(config(app({ inactivityLimitMinutes: 1 })), env);
+      expect(short?.keepAliveCountdownSeconds).toBe(30);
+      const low = parseEnv({
+        DISCONNECT_GRACE_SECONDS_CEILING: '10',
+        KEEP_ALIVE_COUNTDOWN_SECONDS_CEILING: '20',
+      });
+      const [capped] = parseAppsConfig(config(app()), low);
+      expect(capped).toMatchObject({ disconnectGraceSeconds: 10, keepAliveCountdownSeconds: 20 });
+    });
+
+    it('accepts auto or frozen as the default handoff mode and nothing else (AC3)', () => {
+      expect(errorOf(config(app({ defaultHandoff: 'manual' }))).message).toBe(
+        `${where}: defaultHandoff must be "auto" or "frozen"`,
+      );
+    });
   });
 
   it('enforces the join timer minimums (#10 AC3)', () => {

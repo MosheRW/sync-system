@@ -12,7 +12,10 @@
       "inactivityLimitMinutes": 20,
       "joinMethods": ["A", "D"],
       "qrTicketSeconds": 300,
-      "approvalTimeoutSeconds": 120
+      "approvalTimeoutSeconds": 120,
+      "disconnectGraceSeconds": 30,
+      "keepAliveCountdownSeconds": 60,
+      "defaultHandoff": "auto"
     },
     {
       "namespace": "another-app",

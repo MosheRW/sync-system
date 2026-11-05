@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { JoinMethod } from '@sync-system/protocol';
+import type { HandoffMode, JoinMethod } from '@sync-system/protocol';
 
 /** One registered client app. Immutable after load; the raw API key is not kept. */
 export interface AppConfig {
@@ -22,6 +22,12 @@ export interface AppConfig {
   readonly qrTicketSeconds: number;
   /** How long a method B join request waits for the leader (#10 AC3). */
   readonly approvalTimeoutSeconds: number;
+  /** Grace period after the leader disconnects or misses a keep-alive (#13 AC1). */
+  readonly disconnectGraceSeconds: number;
+  /** Keep-alive countdown before the inactivity limit (#13 AC1, AC16). */
+  readonly keepAliveCountdownSeconds: number;
+  /** Handoff mode of a group created without one (#13 AC3). */
+  readonly defaultHandoff: HandoffMode;
 }
 
 export function hashApiKey(apiKey: string): string {

@@ -1,6 +1,8 @@
 // Public API of @sync-system/client.
 export { SyncClient, createSyncClient } from './client.js';
 export { indicatorOf } from './state.js';
+export { LeaderPreview, LEADER_ACTIVITY_MIN_INTERVAL_MS } from './preview.js';
+export type { PreviewState } from './preview.js';
 export { ClientErrorCode, SyncClientError, isSyncClientError } from './errors.js';
 export type { ErrorDetailsMap, RequestKind } from './errors.js';
 export type { WebSocketConstructorLike, WebSocketLike } from './host.js';
@@ -37,6 +39,19 @@ export type {
   SyncClientEvents,
   SyncClientSnapshot,
   SyncIndicator,
+  RosterEntry,
+  RosterChangedEvent,
+  ViceChangedEvent,
+  LockChangedEvent,
+  RemovedEvent,
+  LeaderLifecycle,
+  LeadershipReason,
+  NowLeadingEvent,
+  LeadershipLostEvent,
+  LeaderChangedEvent,
+  KeepAliveEvent,
+  GroupIdEvent,
+  LeaderState,
 } from './state.js';
 export { CLIENT_PROTOCOL_VERSION, MIN_SERVER_PROTOCOL_VERSION } from './version.js';
 export type {
@@ -46,4 +61,5 @@ export type {
   JsonValue,
   Role,
   TokenStatus,
+  HandoffMode,
 } from '@sync-system/protocol';

@@ -12,6 +12,7 @@ function session(): Session {
     deliver: () => undefined,
     afterPending: (task) => task(),
     isOpen: () => true,
+    close: () => undefined,
   };
 }
 
@@ -25,8 +26,8 @@ describe('ParkingLot (Q7, M5)', () => {
     expect(a.parked).toEqual({ groupKey: 'k', groupId: 'g', participantId: 'p1' });
     expect(lot.size).toBe(3);
     expect(lot.drain('k')).toEqual([
-      { session: a, participantId: 'p1' },
-      { session: b, participantId: 'p2' },
+      { session: a, participantId: 'p1', name: { generated: true } },
+      { session: b, participantId: 'p2', name: { generated: true } },
     ]);
     expect(a.parked).toBeUndefined();
     expect(lot.size).toBe(1);

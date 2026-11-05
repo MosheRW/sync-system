@@ -149,6 +149,7 @@ describe('tickets, tokens and blobs never verify as each other (#10 AC26, R4)', 
       role: 'leader',
       groupCreatedAt: NOW,
       lastActivityAt: NOW,
+      term: NOW,
       now: NOW,
     });
     expect(qr().verify(token, 'app-a', NOW).ok).toBe(false);

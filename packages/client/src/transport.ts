@@ -40,6 +40,21 @@ const KNOWN_TYPES: ReadonlySet<string> = new Set<ServerMessage['type']>([
   'join.resumed',
   'codes.updated',
   'qr.ticket',
+  // #13: the leader-only roster.
+  'roster.snapshot',
+  'roster.updated',
+  'roster.removed',
+  'vice.updated',
+  'vice.changed',
+  'lock.changed',
+  'member.removed',
+  'activity.ack',
+  'keepalive.prompt',
+  'keepalive.cleared',
+  'leader.granted',
+  'leader.lost',
+  'leader.changed',
+  'takeback.offered',
   'error',
 ]);
 

@@ -57,7 +57,25 @@ describe('parseEnv', () => {
       joinMethodsAllowed: ['A', 'B', 'C', 'D'],
       qrTicketSecondsCeiling: 3600,
       approvalTimeoutSecondsCeiling: 600,
+      disconnectGraceSecondsCeiling: 120,
+      keepAliveCountdownSecondsCeiling: 120,
     });
+  });
+
+  it('reads the lifecycle timer ceilings within 1-3600 (#13 AC1)', () => {
+    expect(
+      parseEnv({
+        DISCONNECT_GRACE_SECONDS_CEILING: '60',
+        KEEP_ALIVE_COUNTDOWN_SECONDS_CEILING: '3600',
+      }),
+    ).toMatchObject({ disconnectGraceSecondsCeiling: 60, keepAliveCountdownSecondsCeiling: 3600 });
+    for (const name of [
+      'DISCONNECT_GRACE_SECONDS_CEILING',
+      'KEEP_ALIVE_COUNTDOWN_SECONDS_CEILING',
+    ]) {
+      expect(() => parseEnv({ [name]: '3601' })).toThrow(`${name} must be between 1 and 3600`);
+      expect(() => parseEnv({ [name]: '0' })).toThrow(`${name} must be a positive integer`);
+    }
   });
 
   it('reads every variable', () => {
@@ -75,7 +93,7 @@ describe('parseEnv', () => {
       MAX_PENDING_HANDSHAKES: '100',
       MAX_INBOUND_MESSAGES_PER_SECOND: '9',
       MAX_INBOUND_BURST: '9',
-      MAX_BUFFERED_BYTES: '49152',
+      MAX_BUFFERED_BYTES: '98304',
       MAX_SESSION_MINUTES_CEILING: '600',
       INACTIVITY_LIMIT_MINUTES_CEILING: '30',
       TOKEN_REFRESH_ACTIVITIES: '4',
@@ -96,7 +114,7 @@ describe('parseEnv', () => {
       maxPendingHandshakes: 100,
       maxInboundMessagesPerSecond: 9,
       maxInboundBurst: 9,
-      maxBufferedBytes: 49152,
+      maxBufferedBytes: 98304,
       maxSessionMinutesCeiling: 600,
       inactivityLimitMinutesCeiling: 30,
       tokenRefreshActivities: 4,
@@ -225,12 +243,22 @@ describe('parseEnv', () => {
       const err = errorOf({ MAX_BUFFERED_BYTES: '65535' });
       expect(err.message).toContain('MAX_BUFFERED_BYTES');
       expect(err.message).toContain('MAX_MESSAGE_SIZE_CEILING');
-      expect(() => parseEnv({ MAX_BUFFERED_BYTES: '65536' })).not.toThrow();
+      expect(() =>
+        parseEnv({ MAX_BUFFERED_BYTES: '65536', MAX_GROUP_SIZE_CEILING: '40' }),
+      ).not.toThrow();
+    });
+
+    it('MAX_BUFFERED_BYTES fits the largest roster snapshot plus headroom (#13 5.5)', () => {
+      // 100 x 2 + 2 entries of 320 bytes, a 256-byte envelope and 32 KiB headroom.
+      expect(errorOf({ MAX_BUFFERED_BYTES: '97663' }).message).toBe(
+        'MAX_BUFFERED_BYTES (97663) must be >= the largest roster snapshot plus headroom (97664) for MAX_GROUP_SIZE_CEILING (100)',
+      );
+      expect(() => parseEnv({ MAX_BUFFERED_BYTES: '97664' })).not.toThrow();
     });
 
     it('MAX_BUFFERED_BYTES fits the largest tokens.result frame (#5)', () => {
-      const small = { MAX_MESSAGE_SIZE_CEILING: '1024' };
-      expect(errorOf({ ...small, MAX_BUFFERED_BYTES: '4096' }).message).toBe(
+      const small = { MAX_MESSAGE_SIZE_CEILING: '1024', MAX_GROUP_SIZE_CEILING: '10' };
+      expect(errorOf({ ...small, MAX_BUFFERED_BYTES: '4096' }).message).toContain(
         'MAX_BUFFERED_BYTES (4096) must be >= the largest tokens.result frame (45056)',
       );
       expect(errorOf({ ...small, MAX_BUFFERED_BYTES: '45055' }).message).toContain('tokens.result');

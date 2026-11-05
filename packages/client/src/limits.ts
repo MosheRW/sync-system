@@ -13,6 +13,10 @@ export const CLIENT_LIMIT_BOUNDS: Readonly<AppLimits> = Object.freeze({
   // Match the server's env ceiling bounds (#10 architecture 5.1).
   qrTicketSeconds: 86_400,
   approvalTimeoutSeconds: 3_600,
+  // Match the server's env ceiling bounds (#13 architecture 8.1).
+  inactivityLimitMinutes: 10_080,
+  disconnectGraceSeconds: 3_600,
+  keepAliveCountdownSeconds: 3_600,
 });
 
 /** Longest inbound frame (UTF-16 units) before `hello.ok`. */
@@ -31,6 +35,9 @@ const LIMIT_KEYS = [
   'maxSessionMinutes',
   'qrTicketSeconds',
   'approvalTimeoutSeconds',
+  'inactivityLimitMinutes',
+  'disconnectGraceSeconds',
+  'keepAliveCountdownSeconds',
 ] as const;
 
 /** The first limit that is not a positive safe integer within the client bounds, if any. */

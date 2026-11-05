@@ -160,6 +160,22 @@ const EMOJI_SEQUENCE_PARTS = new RegExp(
  */
 const VISIBLE_CHARACTER = /[\p{L}\p{N}\p{S}\p{P}]/u;
 
+/** A display name after `resolveDisplayName` (#13 D11). */
+export type ResolvedDisplayName =
+  { ok: true; generated: false; name: string } | { ok: true; generated: true } | { ok: false };
+
+/**
+ * The display name rule of a create, join or resume (#13 D11, AC35, AC36):
+ * missing, or blank after trimming, means "generate one" (the server picks
+ * `Guest N`); otherwise the strict #10 rule (`normalizeDisplayName`), and a
+ * name it refuses is invalid input.
+ */
+export function resolveDisplayName(raw: string | undefined): ResolvedDisplayName {
+  if (raw === undefined || raw.trim() === '') return { ok: true, generated: true };
+  const name = normalizeDisplayName(raw);
+  return name === undefined ? { ok: false } : { ok: true, generated: false, name };
+}
+
 /**
  * Validates and trims an optional display name (AC20). Returns the trimmed
  * name, or undefined when it is not acceptable: over the raw input cap,

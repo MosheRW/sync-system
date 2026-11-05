@@ -13,16 +13,26 @@ import type {
   GroupResumeMessage,
   PositionUpdateMessage,
   TokensCheckMessage,
-  Role,
   ServerMessage,
+  ViceClearMessage,
+  ViceSetMessage,
+  GroupLockMessage,
+  GroupUnlockMessage,
+  MemberRemoveMessage,
+  LeaderActivityMessage,
+  KeepAliveAckMessage,
+  LeaderTakeBackMessage,
 } from '@sync-system/protocol';
 import type { AppConfig } from '../apps/app-registry.js';
 
-/** A session's place in a group. The participant ID is group-scoped. */
+/**
+ * A session's place in a group. The participant ID is group-scoped. There is
+ * deliberately no role here (#13 D1): who leads is `GroupRecord.leaderId`,
+ * read under the group lock, so no code can authorize from a cached role.
+ */
 export interface Membership {
   readonly groupId: string;
   readonly participantId: string;
-  readonly role: Role;
 }
 
 /**
@@ -58,6 +68,11 @@ export interface Session {
   isOpen(): boolean;
   /** Sends an already serialized frame to this participant. */
   deliver(text: string): void;
+  /**
+   * Closes the WebSocket with `code` (#13 Q-A: `CloseCode.REMOVED`). Call it
+   * from `afterPending`, right after the last frame for the session.
+   */
+  close(code: number, reason: string): void;
   /**
    * Runs `task` after every message this participant has already sent has
    * been handled and answered, so events it triggers arrive after those
@@ -102,6 +117,21 @@ export interface GroupActions {
   approveJoin(session: Session, message: JoinApproveMessage): Promise<ServerMessage>;
   /** Leader refuses a pending joiner (#10 AC21). */
   denyJoin(session: Session, message: JoinDenyMessage): Promise<ServerMessage>;
+  /** Leader designates the vice-leader (#13 AC10). */
+  setVice(session: Session, message: ViceSetMessage): Promise<ServerMessage>;
+  /** Leader clears the vice-leader (#13 AC10). */
+  clearVice(session: Session, message: ViceClearMessage): Promise<ServerMessage>;
+  /** Leader locks or unlocks joining (#13 AC29). */
+  setLock(session: Session, message: GroupLockMessage | GroupUnlockMessage): Promise<ServerMessage>;
+  /** Leader removes a participant (#13 AC32). */
+  removeMember(session: Session, message: MemberRemoveMessage): Promise<ServerMessage>;
+  /** The leader is active without moving the group (#13 AC30), or answers the keep-alive (AC16). */
+  leaderActivity(
+    session: Session,
+    message: LeaderActivityMessage | KeepAliveAckMessage,
+  ): Promise<ServerMessage>;
+  /** The most recent displaced leader takes the lead back (#13 AC24). */
+  takeBack(session: Session, message: LeaderTakeBackMessage): Promise<ServerMessage>;
   /** Runs the disconnect rules (member removal, group end). */
   disconnect(session: Session): Promise<void>;
 }

@@ -90,6 +90,29 @@ export const ErrorCode = {
   QR_INVALID: 'QR_INVALID',
   /** A well-formed, correctly signed QR ticket whose time has passed (#10 AC25). */
   QR_EXPIRED: 'QR_EXPIRED',
+  /**
+   * The participant may not be the target of this action: the leader
+   * itself, an offline participant for vice.set, or a take-back by anyone
+   * but the displaced leader (#13 5.3).
+   */
+  NOT_ALLOWED: 'NOT_ALLOWED',
+  /**
+   * The participant ID is not on this group's roster: unknown, of another
+   * group or app, pending, parked or already removed. One answer for every
+   * cause (#13 AC10, AC44).
+   */
+  PARTICIPANT_NOT_FOUND: 'PARTICIPANT_NOT_FOUND',
+  /**
+   * The group admits nobody new right now: the leader locked it, or nobody
+   * is connected to it (#13 AC29, Q-G). The same bytes for every join
+   * method and for join.approve, never with details.
+   */
+  GROUP_LOCKED: 'GROUP_LOCKED',
+  /**
+   * The block list would exceed 256 IDs; nothing changed (#13 AC34, Q-C).
+   * Entries are never evicted or truncated. `details.maxBlockList`.
+   */
+  BLOCK_LIST_FULL: 'BLOCK_LIST_FULL',
 } as const;
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];

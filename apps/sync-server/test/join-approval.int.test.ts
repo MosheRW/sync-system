@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { InMemoryGroupStore } from '../src/groups/in-memory-group-store.js';
 import { codesOf } from './helpers/groups.js';
 import { ManualScheduler } from './helpers/manual-scheduler.js';
+import { expireHold } from './helpers/lifecycle.js';
 import type { TestClient } from './helpers/test-client.js';
 import {
   KEY_A,
@@ -90,9 +91,8 @@ describe('method B requests (#10 AC19, AC20)', () => {
   it('rejects bad display names with INVALID_MESSAGE (AC20, R9, B2)', async () => {
     const { server } = await start();
     const { join } = await bGroup(server);
+    // A blank name is not refused any more: it gets a generated name (#13 AC36).
     const bad = [
-      '',
-      '   ',
       'x'.repeat(33),
       `a${String.fromCharCode(0)}b`,
       `a${String.fromCharCode(0x202e)}b`,
@@ -363,10 +363,12 @@ describe('limits and group end (#10 AC22, D9)', () => {
   });
 
   it('tells pending joiners GROUP_ENDED when the group leaves memory', async () => {
-    const { server, store } = await start();
-    const { leader, join } = await bGroup(server);
+    const { server, store, scheduler } = await start();
+    const { leader, join, created } = await bGroup(server);
     const { joiner } = await ask(server, join.joinCode);
     await leader.close();
+    // Held for the grace period, then gone (#13 Q-G).
+    await expireHold(scheduler, store, created.groupId);
     expect(await joiner.next('error')).toEqual({
       type: 'error',
       code: 'GROUP_ENDED',

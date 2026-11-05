@@ -17,13 +17,14 @@ export function fakeToken(overrides: Partial<TokenClaims> = {}): string {
   const nowMs = Date.now();
   const iat = overrides.iat ?? Math.floor(nowMs / 1000);
   const claims: TokenClaims = {
-    v: 1,
+    v: 2,
     aud: 'app-a',
     gid: groupIdOf('G'),
     pid: randomUUID(),
     role: 'leader',
     gct: nowMs,
     lat: nowMs,
+    term: overrides.gct ?? nowMs,
     iat,
     exp: iat + TTL_SECONDS,
     ...overrides,

@@ -9,12 +9,14 @@ import {
   type ServerMessage,
   classifyJoinCode,
   isDoorCode,
-  normalizeDisplayName,
   normalizeJoinCode,
+  resolveDisplayName,
 } from '@sync-system/protocol';
 import type { AppConfig } from '../apps/app-registry.js';
 import type { GroupRecord, GroupStore } from '../groups/group-store.js';
 import type { Membership, Session } from '../groups/session.js';
+import type { LeaderAction } from '../lifecycle/leader-guard.js';
+import type { NameChoice } from '../lifecycle/roster.js';
 import {
   QR_ISSUE_PER_CONNECTION_PER_MINUTE,
   QR_ISSUE_WINDOW_MS,
@@ -71,7 +73,12 @@ export interface JoinHost {
    * Adds `session` as a new member with a fresh participant ID and returns
    * group.joined with a token, or GROUP_FULL (#10 AC14). Under the lock.
    */
-  admit(session: Session, groupId: string, method: JoinMethod): Promise<ServerMessage>;
+  admit(
+    session: Session,
+    groupId: string,
+    method: JoinMethod,
+    name: NameChoice,
+  ): Promise<ServerMessage>;
   /**
    * The session that owns the leader's membership (ownership-checked through
    * the notifier, M4), if the leader is attached.
@@ -80,17 +87,21 @@ export interface JoinHost {
   /** Sends `message` to `session` after the replies it is already owed. */
   deliverLater(session: Session, message: ServerMessage): void;
   /**
-   * The session's leader membership, ownership-checked (M4, R12), or the
-   * error to reply (NOT_LEADER with the action's text, NOT_IN_GROUP).
+   * True while the group admits nobody new: the leader locked it (#13
+   * AC29). Read under the group lock.
    */
-  ownedLeader(session: Session, action: LeaderAction): Membership | ErrorMessage;
-}
-
-/** The leader-only actions of JoinService, each with its own NOT_LEADER text (R12). */
-export type LeaderAction = 'codes.rotate' | 'join.approve' | 'join.deny' | 'qr.issue';
-
-function isError(value: Membership | ErrorMessage): value is ErrorMessage {
-  return 'type' in value && value.type === 'error';
+  admissionClosed(record: GroupRecord): boolean;
+  /**
+   * Runs `task` under the group lock of the session's group, after
+   * `authorizeLeader` passed against the record read under that lock
+   * (#13 D1, RC1). Otherwise answers its error (NOT_LEADER with the action's
+   * text, NOT_IN_GROUP) and runs nothing.
+   */
+  asLeader(
+    session: Session,
+    action: LeaderAction,
+    task: (record: GroupRecord, membership: Membership) => Promise<ServerMessage>,
+  ): Promise<ServerMessage>;
 }
 
 /** Why a join attempt was refused, for the debug log (never a code or group ref for not_found). */
@@ -101,7 +112,8 @@ type RejectCause =
   | 'door_budget'
   | 'paused'
   | 'qr_invalid'
-  | 'qr_expired';
+  | 'qr_expired'
+  | 'locked';
 
 function groupKey(namespace: string, groupId: string): string {
   return `${namespace}:${groupId}`;
@@ -117,6 +129,12 @@ const INVALID_MESSAGE: ErrorMessage = Object.freeze(errorMessage(ErrorCode.INVAL
 /** One frozen answer for every invalid ticket (#10 AC25, R7); never echoes the ticket. */
 const QR_INVALID: ErrorMessage = Object.freeze(errorMessage(ErrorCode.QR_INVALID));
 const QR_EXPIRED: ErrorMessage = Object.freeze(errorMessage(ErrorCode.QR_EXPIRED));
+/**
+ * One frozen answer for every join method and for join.approve while the
+ * group admits nobody (#13 AC29, D14): no details, so the lock is the same
+ * for every method and tells nothing about a code.
+ */
+export const GROUP_LOCKED: ErrorMessage = Object.freeze(errorMessage(ErrorCode.GROUP_LOCKED));
 const REQUEST_NOT_FOUND: ErrorMessage = Object.freeze(
   errorMessage(ErrorCode.JOIN_REQUEST_NOT_FOUND),
 );
@@ -130,7 +148,18 @@ interface ParsedCodeJoin {
   kind: JoinCodeKind;
   joinCode: string;
   doorCode: string | undefined;
-  displayName: string | undefined;
+  name: NameChoice;
+}
+
+/**
+ * The joiner's name (#13 D11, AC35, AC36): missing or blank means a
+ * generated one; anything else follows the strict #10 rule. Undefined when
+ * the name is invalid.
+ */
+function nameOf(raw: string | undefined): NameChoice | undefined {
+  const resolved = resolveDisplayName(raw);
+  if (!resolved.ok) return undefined;
+  return resolved.generated ? { generated: true } : { generated: false, name: resolved.name };
 }
 
 /** Normalizes and validates the code fields (#10 AC12, AC20); undefined when invalid. */
@@ -143,12 +172,9 @@ function parseCodeJoin(message: GroupJoinByCodeMessage): ParsedCodeJoin | undefi
     doorCode = normalizeJoinCode(message.doorCode);
     if (!isDoorCode(doorCode)) return undefined;
   }
-  let displayName: string | undefined;
-  if (message.displayName !== undefined) {
-    displayName = normalizeDisplayName(message.displayName);
-    if (displayName === undefined) return undefined;
-  }
-  return { kind, joinCode, doorCode, displayName };
+  const name = nameOf(message.displayName);
+  if (name === undefined) return undefined;
+  return { kind, joinCode, doorCode, name };
 }
 
 export type InitialCodesResult =
@@ -206,28 +232,23 @@ export class JoinService {
    * group gets a ticket bound to the group's current **ticket** generation,
    * read under the group lock. Limited to 6 per connection per minute.
    */
-  async issueQr(session: Session): Promise<ServerMessage> {
-    const membership = this.host.ownedLeader(session, 'qr.issue');
-    if (isError(membership)) return membership;
+  issueQr(session: Session): Promise<ServerMessage> {
     const namespace = session.app.namespace;
-    const { groupId } = membership;
-    return this.host.runLocked(namespace, groupId, async () => {
-      const again = this.host.ownedLeader(session, 'qr.issue');
-      if (isError(again)) return again;
-      if (again.groupId !== groupId) return errorMessage(ErrorCode.NOT_IN_GROUP);
-      const record = await this.deps.store.get(namespace, groupId);
-      if (record === undefined) return errorMessage(ErrorCode.NOT_IN_GROUP);
+    return this.host.asLeader(session, 'qr.issue', (record) => {
+      const groupId = record.id;
       if (!record.joinMethods.includes('D')) {
-        return errorMessage(ErrorCode.JOIN_METHOD_NOT_ALLOWED);
+        return Promise.resolve(errorMessage(ErrorCode.JOIN_METHOD_NOT_ALLOWED));
       }
       const rate = this.qrLimiter.tryAcquire(
         session.connectionId,
         QR_ISSUE_PER_CONNECTION_PER_MINUTE,
       );
       if (!rate.ok) {
-        return actionErrorMessage(ErrorCode.RATE_LIMITED, 'qr.issue', {
-          details: { retryAfterMs: rate.retryAfterMs },
-        });
+        return Promise.resolve(
+          actionErrorMessage(ErrorCode.RATE_LIMITED, 'qr.issue', {
+            details: { retryAfterMs: rate.retryAfterMs },
+          }),
+        );
       }
       const issued = this.deps.qrTickets.issue(
         namespace,
@@ -240,7 +261,11 @@ export class JoinService {
         { event: 'qr_issued', namespace, groupRef: groupRef(groupId) },
         'qr ticket issued',
       );
-      return { type: 'qr.ticket', ticket: issued.ticket, expiresInMs: issued.expiresInMs };
+      return Promise.resolve({
+        type: 'qr.ticket',
+        ticket: issued.ticket,
+        expiresInMs: issued.expiresInMs,
+      });
     });
   }
 
@@ -258,11 +283,8 @@ export class JoinService {
     const limited = this.spendJoinAttempt(session, 'group.joinByQr');
     if (limited !== undefined) return limited;
     const namespace = session.app.namespace;
-    let displayName: string | undefined;
-    if (message.displayName !== undefined) {
-      displayName = normalizeDisplayName(message.displayName);
-      if (displayName === undefined) return INVALID_MESSAGE;
-    }
+    const name = nameOf(message.displayName);
+    if (name === undefined) return INVALID_MESSAGE;
     const verified = this.deps.qrTickets.verify(message.ticket, namespace, this.now());
     if (!verified.ok) {
       this.rejected(namespace, verified.expired ? 'qr_expired' : 'qr_invalid');
@@ -280,9 +302,13 @@ export class JoinService {
         this.rejected(namespace, 'qr_invalid');
         return QR_INVALID;
       }
-      if (record.joinMethods.includes('B'))
-        return this.requestApproval(session, record, displayName);
-      return this.host.admit(session, groupId, 'D');
+      // #13 D14: after the full ticket check, before approval or admission.
+      if (this.host.admissionClosed(record)) {
+        this.rejected(namespace, 'locked', groupId);
+        return GROUP_LOCKED;
+      }
+      if (record.joinMethods.includes('B')) return this.requestApproval(session, record, name);
+      return this.host.admit(session, groupId, 'D', name);
     });
   }
 
@@ -313,11 +339,10 @@ export class JoinService {
    * `join.requested` after its pending replies. A frozen group's request
    * waits for the leader (Q6.2).
    */
-  private requestApproval(
-    session: Session,
-    record: GroupRecord,
-    displayName: string | undefined,
-  ): ServerMessage {
+  private requestApproval(session: Session, record: GroupRecord, name: NameChoice): ServerMessage {
+    // Only a chosen name is shown in join.requested; a generated one is
+    // drawn at admission (#13 AC36).
+    const displayName = name.generated ? undefined : name.name;
     const namespace = record.appNamespace;
     const timeoutMs = session.app.approvalTimeoutSeconds * 1000;
     const added = this.approvals.add(
@@ -392,14 +417,16 @@ export class JoinService {
     decision: 'approve' | 'deny',
   ): Promise<ServerMessage> {
     const action = decision === 'approve' ? 'join.approve' : 'join.deny';
-    const membership = this.host.ownedLeader(session, action);
-    if (isError(membership)) return membership;
     const namespace = session.app.namespace;
-    const { groupId } = membership;
-    return this.host.runLocked(namespace, groupId, async () => {
-      const again = this.host.ownedLeader(session, action);
-      if (isError(again)) return again;
-      if (again.groupId !== groupId) return errorMessage(ErrorCode.NOT_IN_GROUP);
+    return this.host.asLeader(session, action, async (record) => {
+      const groupId = record.id;
+      // #13 Q4.2: while locked a request stays pending and cannot be approved.
+      if (decision === 'approve' && this.host.admissionClosed(record)) {
+        const pending = this.approvals
+          .list(groupKey(namespace, groupId))
+          .some((request) => request.requestId === requestId);
+        return pending ? GROUP_LOCKED : REQUEST_NOT_FOUND;
+      }
       const taken = this.approvals.take(groupKey(namespace, groupId), requestId);
       if (taken === undefined) return REQUEST_NOT_FOUND;
       if (decision === 'deny') {
@@ -417,7 +444,11 @@ export class JoinService {
 
   /** Adds an approved joiner (#10 AC21): group.joined to it, or GROUP_FULL. Under the lock. */
   private async admitApproved(taken: TakenRequest): Promise<ServerMessage> {
-    const admitted = await this.host.admit(taken.session, taken.groupId, 'B');
+    const name: NameChoice =
+      taken.displayName === undefined
+        ? { generated: true }
+        : { generated: false, name: taken.displayName };
+    const admitted = await this.host.admit(taken.session, taken.groupId, 'B', name);
     // The joiner gets the outcome unsolicited (no reqId): its own request was join.pending.
     this.host.deliverLater(taken.session, admitted);
     const outcome = admitted.type === 'group.joined' ? 'admitted' : 'group_full';
@@ -465,18 +496,10 @@ export class JoinService {
    * cleared; a lifted pause is announced with `join.resumed` after the
    * reply. Limited to 6 per group per minute.
    */
-  async rotate(session: Session): Promise<ServerMessage> {
-    const membership = this.host.ownedLeader(session, 'codes.rotate');
-    if (isError(membership)) return membership;
+  rotate(session: Session): Promise<ServerMessage> {
     const namespace = session.app.namespace;
-    const { groupId } = membership;
-    return this.host.runLocked(namespace, groupId, async () => {
-      // Replaced while waiting for the lock (M4).
-      const again = this.host.ownedLeader(session, 'codes.rotate');
-      if (isError(again)) return again;
-      if (again.groupId !== groupId) return errorMessage(ErrorCode.NOT_IN_GROUP);
-      const record = await this.deps.store.get(namespace, groupId);
-      if (record === undefined) return errorMessage(ErrorCode.NOT_IN_GROUP);
+    return this.host.asLeader(session, 'codes.rotate', async (record) => {
+      const groupId = record.id;
       const key = groupKey(namespace, groupId);
       const rate = this.rotateLimiter.tryAcquire(key, CODE_ROTATIONS_PER_GROUP_PER_MINUTE);
       if (!rate.ok) {
@@ -484,36 +507,10 @@ export class JoinService {
           details: { retryAfterMs: rate.retryAfterMs },
         });
       }
-      const now = this.now();
-      const next = issueCodeSet(
-        this.index,
-        namespace,
-        groupId,
-        record.joinMethods,
-        record.codes.generation,
-        now,
-        this.random,
-      );
+      const next = this.claimFullSet(record);
       if (next === 'exhausted') return errorMessage(ErrorCode.CODES_EXHAUSTED);
-      const updated = await this.deps.store.setCodes(namespace, groupId, next);
-      if (updated === undefined) {
-        this.index.release(namespace, groupId, next);
-        return errorMessage(ErrorCode.NOT_IN_GROUP);
-      }
-      // The new codes differ from the old ones, which are freed now.
-      this.index.release(namespace, groupId, record.codes);
-      const lifted = this.doors.reset(key, now);
-      this.deps.logger.info(
-        { event: 'codes_rotated', namespace, groupRef: groupRef(groupId), cause: 'leader' },
-        'codes rotated',
-      );
-      if (lifted) {
-        this.deps.logger.info(
-          { event: 'join_resumed', namespace, groupRef: groupRef(groupId) },
-          'door code joining resumed',
-        );
-        this.host.deliverLater(session, { type: 'join.resumed', groupId });
-      }
+      const updated = await this.commitFullSet(record, next, 'leader', session);
+      if (updated === undefined) return errorMessage(ErrorCode.NOT_IN_GROUP);
       return {
         type: 'codes.updated',
         groupId,
@@ -521,6 +518,116 @@ export class JoinService {
         codes: this.payload(updated),
       };
     });
+  }
+
+  /**
+   * Claims a full new code set for the group (#10 AC30, #13 RC4): new
+   * codes, and the ticket generation moves with the code generation, so
+   * every older QR ticket stops working (D12). Nothing changes until
+   * `commitFullSet`; on `exhausted` nothing was claimed.
+   */
+  claimFullSet(record: GroupRecord): GroupCodes | 'exhausted' {
+    return issueCodeSet(
+      this.index,
+      record.appNamespace,
+      record.id,
+      record.joinMethods,
+      record.codes.generation,
+      this.now(),
+      this.random,
+    );
+  }
+
+  /**
+   * Stores a claimed full set and frees the old codes; door-code failures,
+   * rotation history and any pause are cleared, and a lifted pause is told
+   * to `leader` (`join.resumed`). Returns the updated record, or undefined
+   * when the group is gone (the claim is released). Under the group lock.
+   */
+  async commitFullSet(
+    record: GroupRecord,
+    next: GroupCodes,
+    cause: 'leader' | 'member_removed' | 'superseded',
+    leader: Session | undefined,
+  ): Promise<GroupRecord | undefined> {
+    const namespace = record.appNamespace;
+    const groupId = record.id;
+    const updated = await this.deps.store.setCodes(namespace, groupId, next);
+    if (updated === undefined) {
+      this.index.release(namespace, groupId, next);
+      return undefined;
+    }
+    // The new codes differ from the old ones, which are freed now.
+    this.index.release(namespace, groupId, record.codes);
+    const lifted = this.doors.reset(groupKey(namespace, groupId), this.now());
+    this.deps.logger.info(
+      { event: 'codes_rotated', namespace, groupRef: groupRef(groupId), cause },
+      'codes rotated',
+    );
+    if (lifted) {
+      this.deps.logger.info(
+        { event: 'join_resumed', namespace, groupRef: groupRef(groupId) },
+        'door code joining resumed',
+      );
+      if (leader !== undefined) this.host.deliverLater(leader, { type: 'join.resumed', groupId });
+    }
+    return updated;
+  }
+
+  /**
+   * Supersede codes (#13 6.6.2 step 5, M1): the requester's blob is adopted
+   * (codes and ticket generation) if it verifies for this group, has the
+   * group's methods, shares nothing with the stale line (another code
+   * generation, another ticket generation, no equal code), and its codes
+   * are free; otherwise a full new set is claimed. Either way no code or
+   * ticket of the stale line survives: a blob from after a door-only
+   * rotation keeps the stale ticket generation and group code, so it is
+   * rotated (#13 security L-2). Returns the codes to store, or `exhausted`.
+   */
+  supersedeCodes(
+    record: GroupRecord,
+    blob: string | undefined,
+  ): { codes: GroupCodes; rotated: boolean } | 'exhausted' {
+    const namespace = record.appNamespace;
+    const verified =
+      blob === undefined ? undefined : this.deps.codesBlobs.verify(blob, namespace, record.id);
+    if (
+      verified !== undefined &&
+      sharesNothing(verified.codes, record.codes) &&
+      verified.methods.length === record.joinMethods.length &&
+      verified.methods.every((m) => record.joinMethods.includes(m)) &&
+      this.index.claim(namespace, record.id, verified.codes)
+    ) {
+      return { codes: { ...verified.codes }, rotated: false };
+    }
+    const next = this.claimFullSet(record);
+    return next === 'exhausted' ? next : { codes: next, rotated: true };
+  }
+
+  /** Stores supersede codes and frees the old ones that are not reused. */
+  async commitSupersedeCodes(record: GroupRecord, codes: GroupCodes): Promise<GroupRecord> {
+    const namespace = record.appNamespace;
+    const updated = (await this.deps.store.setCodes(namespace, record.id, codes)) ?? record;
+    const old = record.codes;
+    this.index.release(namespace, record.id, {
+      ...(old.groupCode !== undefined && old.groupCode !== codes.groupCode
+        ? { groupCode: old.groupCode }
+        : {}),
+      ...(old.alphaCode !== undefined && old.alphaCode !== codes.alphaCode
+        ? { alphaCode: old.alphaCode }
+        : {}),
+    });
+    this.doors.reset(groupKey(namespace, record.id), this.now());
+    this.deps.logger.info(
+      { event: 'codes_rotated', namespace, groupRef: groupRef(record.id), cause: 'superseded' },
+      'codes replaced on supersede',
+    );
+    return updated;
+  }
+
+  /** Releases a claimed set that was never committed. */
+  releaseClaim(record: GroupRecord, claimed: GroupCodes): void {
+    this.index.release(record.appNamespace, record.id, claimed);
   }
 
   /**
@@ -614,16 +721,23 @@ export class JoinService {
         this.rejected(namespace, 'not_found');
         return CODE_NOT_FOUND;
       }
-      if (parsed.kind === 'alpha') {
-        if (!record.joinMethods.includes('C')) return CODE_NOT_FOUND;
-        return this.host.admit(session, groupId, 'C');
+      const usable =
+        parsed.kind === 'alpha'
+          ? record.joinMethods.includes('C')
+          : record.joinMethods.includes('A') || record.joinMethods.includes('B');
+      if (!usable) {
+        this.rejected(namespace, 'not_found');
+        return CODE_NOT_FOUND;
       }
+      // #13 D14: the code is resolved; the lock comes before the door-code
+      // compare, the approval queue and admission (no door failure counted).
+      if (this.host.admissionClosed(record)) {
+        this.rejected(namespace, 'locked', groupId);
+        return GROUP_LOCKED;
+      }
+      if (parsed.kind === 'alpha') return this.host.admit(session, groupId, 'C', parsed.name);
       if (record.joinMethods.includes('A')) return this.doorJoin(session, record, parsed);
-      if (record.joinMethods.includes('B')) {
-        return this.requestApproval(session, record, parsed.displayName);
-      }
-      this.rejected(namespace, 'not_found');
-      return CODE_NOT_FOUND;
+      return this.requestApproval(session, record, parsed.name);
     });
   }
 
@@ -674,7 +788,7 @@ export class JoinService {
     }
     const expected = record.codes.doorCode;
     if (expected !== undefined && doorCodeMatches(parsed.doorCode, expected)) {
-      return this.host.admit(session, record.id, 'A');
+      return this.host.admit(session, record.id, 'A', parsed.name);
     }
     this.wrongDoorLimiter.record(namespace);
     const outcome = this.doors.recordFailure(key);
@@ -931,4 +1045,20 @@ export class JoinService {
       this.qrLimiter.size
     );
   }
+}
+
+/**
+ * Whether `next` keeps nothing of `stale` (#13 M1, security L-2): another
+ * code generation and ticket generation, and no code equal to a stale one.
+ */
+function sharesNothing(next: GroupCodes, stale: GroupCodes): boolean {
+  const same = (a: string | undefined, b: string | undefined): boolean =>
+    a !== undefined && a === b;
+  return (
+    next.generation !== stale.generation &&
+    next.ticketGeneration !== stale.ticketGeneration &&
+    !same(next.groupCode, stale.groupCode) &&
+    !same(next.doorCode, stale.doorCode) &&
+    !same(next.alphaCode, stale.alphaCode)
+  );
 }

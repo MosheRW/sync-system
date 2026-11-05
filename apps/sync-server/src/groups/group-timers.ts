@@ -1,6 +1,11 @@
 import type { Cancel, Scheduler } from '../time/scheduler.js';
 
-type TimerKind = 'maxSession' | 'frozenEnd';
+/**
+ * Timer kinds (#13 D7): max session, the frozen bound, the keep-alive
+ * prompt and its deadline, and the grace end of a pause.
+ */
+export type TimerKind =
+  'maxSession' | 'frozenEnd' | 'keepAlivePrompt' | 'keepAliveDeadline' | 'grace';
 
 /**
  * Per-group timers (architecture 6.3). Each group has at most one timer of
@@ -29,6 +34,21 @@ export class GroupTimers {
 
   clearFrozenEnd(key: string): void {
     this.cancel(key, 'frozenEnd');
+  }
+
+  /** Arms one timer of `kind`, replacing the previous one of that kind (#13). */
+  armKind(key: string, kind: TimerKind, at: number, task: () => void): void {
+    this.arm(key, kind, at, task);
+  }
+
+  /** Cancels the timer of `kind` only (#13). */
+  clearKind(key: string, kind: TimerKind): void {
+    this.cancel(key, kind);
+  }
+
+  /** Whether a timer of `kind` is armed. For tests and stale checks. */
+  has(key: string, kind: TimerKind): boolean {
+    return this.timers.get(key)?.[kind] !== undefined;
   }
 
   /** Cancels every timer of the group (end, drop). */

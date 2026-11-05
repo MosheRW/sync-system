@@ -64,6 +64,17 @@ export const SENSITIVE_LOG_KEYS: ReadonlySet<string> = new Set([
   // Client-chosen free text the server echoes.
   'reqid',
   'appversion',
+  // #13 M2, RC9: group-scoped IDs and names under the role and roster keys.
+  'pid',
+  'pids',
+  'successor',
+  'target',
+  'targetid',
+  'roster',
+  'participants',
+  'participant',
+  'guestnumber',
+  'names',
 ]);
 
 /**
@@ -96,6 +107,9 @@ export const SENSITIVE_LOG_KEY_PARTS: readonly string[] = [
   'blob',
   'ticket',
   'requestid',
+  // #13 M2, RC9: `leaderId`, `displacedLeaderId`, `viceId` and their kin.
+  'leaderid',
+  'viceid',
 ];
 
 /** True when a log field with this name must never be written. */

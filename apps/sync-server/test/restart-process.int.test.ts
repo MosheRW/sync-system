@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { TestClient } from './helpers/test-client.js';
+import { claimsOf } from './helpers/tokens.js';
 
 /** Test-only values, never real ones. */
 const API_KEY = 'restart-test-key-0123456789-0123456789-abc';
@@ -18,6 +19,12 @@ const children: ChildProcess[] = [];
 afterEach(() => {
   for (const child of children.splice(0)) child.kill();
 });
+
+/** Resolves once the wall clock is past the end of epoch second `second`. */
+async function untilAfterSecond(second: number): Promise<void> {
+  const wait = (second + 1) * 1000 + 50 - Date.now();
+  if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+}
 
 function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -110,6 +117,11 @@ describe('recovery across a real process restart (#5 AC23, #10 AC35)', () => {
     await stopProcess(first);
     leader.terminate();
     member.terminate();
+    // A token issued in the second the new process starts counts as issued
+    // by it, and its group is then ended, not recovered (#13 6.9 layer 2,
+    // fail closed). A real restart takes longer; here, wait for the next
+    // second so the test does not depend on how fast the process starts.
+    await untilAfterSecond(Math.max(claimsOf(created.token).iat, claimsOf(joined.token).iat));
 
     await startProcess(env);
     const newLeader = await connect(url);

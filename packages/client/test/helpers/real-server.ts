@@ -25,6 +25,9 @@ export interface TestApp {
   joinMethods?: string[];
   qrTicketSeconds?: number;
   approvalTimeoutSeconds?: number;
+  disconnectGraceSeconds?: number;
+  keepAliveCountdownSeconds?: number;
+  defaultHandoff?: string;
 }
 
 export interface RealServerOptions {
@@ -66,6 +69,22 @@ async function listenWithRetry(server: SyncServer, port: number): Promise<number
   }
 }
 
+/**
+ * A restart is a new instance on the same secrets object. Each such instance
+ * runs its clock 1.5 s further ahead, so tokens of the earlier instance have
+ * an `iat` before the second the new one started and are not taken for its
+ * own (server #13 6.9 layer 2).
+ */
+const RESTART_CLOCK_STEP_MS = 1_500;
+const startsBySecrets = new WeakMap<object, number>();
+
+function restartOffset(tokenSecrets: TokenSecrets | undefined): number {
+  if (tokenSecrets === undefined) return 0;
+  const starts = startsBySecrets.get(tokenSecrets) ?? 0;
+  startsBySecrets.set(tokenSecrets, starts + 1);
+  return starts * RESTART_CLOCK_STEP_MS;
+}
+
 /** Starts the real sync server in-process on 127.0.0.1. */
 export async function startRealServer(options: RealServerOptions = {}): Promise<RealServer> {
   const env = parseEnv({ LOG_LEVEL: 'info', ...options.env });
@@ -76,7 +95,9 @@ export async function startRealServer(options: RealServerOptions = {}): Promise<
   const registry = new AppRegistry(parseAppsConfig(JSON.stringify({ apps }), env));
   const sink = new LogSink();
   const logger = createLogger({ level: env.logLevel, destination: sink });
+  const offset = restartOffset(options.tokenSecrets);
   const server = createSyncServer({
+    ...(offset > 0 ? { now: () => Date.now() + offset } : {}),
     env,
     registry,
     logger,

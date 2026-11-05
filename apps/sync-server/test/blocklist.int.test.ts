@@ -49,15 +49,42 @@ describe('blocklist.set while live (#5 AC26)', () => {
     expect((await store.get('app-a', group.groupId))?.blockList).toEqual([other]);
   });
 
-  it('unblocks when the list no longer holds the ID (leaving never blocks)', async () => {
-    ts = await startTestServer();
+  it('never unblocks: the list only grows while the group is live (#13 D5, Q-C)', async () => {
+    const store = new InMemoryGroupStore();
+    ts = await startTestServer({ store });
     const group = await createGroupWithMembers(ts, 1);
     group.leader.send({ type: 'blocklist.set', blockList: [group.memberIds[0]] });
     await group.leader.next('blocklist.ack');
     await group.members[0]!.next('group.ended');
+    // The removed socket is closed with the dedicated code (#13 Q-A).
+    expect((await group.members[0]!.closed()).code).toBe(4004);
     group.leader.send({ type: 'blocklist.set', blockList: [] });
     await group.leader.next('blocklist.ack');
-    expect((await resumeWith(ts, group.memberTokens[0])).reply.type).toBe('group.joined');
+    expect((await resumeWith(ts, group.memberTokens[0])).reply).toMatchObject({
+      code: 'PARTICIPANT_BLOCKED',
+    });
+    expect((await store.get('app-a', group.groupId))?.blockList).toEqual([group.memberIds[0]]);
+  });
+
+  it('refuses a union past 256 IDs with BLOCK_LIST_FULL and changes nothing (#13 Q-C)', async () => {
+    const store = new InMemoryGroupStore();
+    ts = await startTestServer({ store });
+    const group = await createGroupWithMembers(ts, 1);
+    const first = Array.from({ length: 200 }, () => randomUUID());
+    group.leader.send({ type: 'blocklist.set', blockList: first });
+    await group.leader.next('blocklist.ack');
+    const more = [...Array.from({ length: 57 }, () => randomUUID()), group.memberIds[0]];
+    group.leader.send({ type: 'blocklist.set', reqId: 'f', blockList: more });
+    expect(await group.leader.next('error')).toEqual({
+      type: 'error',
+      reqId: 'f',
+      code: 'BLOCK_LIST_FULL',
+      message: 'Block list is full',
+      details: { maxBlockList: 256 },
+    });
+    expect((await store.get('app-a', group.groupId))?.blockList).toEqual(first);
+    // Nobody was removed by the refused request.
+    await group.members[0]!.expectNoMessage(30);
   });
 
   it('is leader only', async () => {

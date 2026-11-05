@@ -22,7 +22,10 @@ export {
   MAX_QR_TICKET_LENGTH,
   MAX_QR_TICKET_INPUT_LENGTH,
   MAX_CODES_BLOB_LENGTH,
+  HANDOFF_MODES,
+  MAX_ROSTER_ENTRIES_FACTOR,
 } from './limits.js';
+export type { HandoffMode } from './limits.js';
 export {
   JOIN_METHODS,
   ALPHA_CODE_ALPHABET,
@@ -39,8 +42,9 @@ export {
   isQrTicketShape,
   isCodesBlobShape,
   normalizeDisplayName,
+  resolveDisplayName,
 } from './join.js';
-export type { JoinMethod, JoinCodeKind } from './join.js';
+export type { JoinMethod, JoinCodeKind, ResolvedDisplayName } from './join.js';
 export {
   TOKEN_FORMAT_VERSION,
   TOKEN_SEGMENT_PATTERN,
@@ -50,7 +54,7 @@ export {
   parseClaimsSegment,
   decodeTokenClaims,
 } from './tokens.js';
-export type { TokenClaims } from './tokens.js';
+export type { TokenClaims, TokenRole } from './tokens.js';
 export type {
   Role,
   GroupEndedReason,
@@ -70,6 +74,27 @@ export type {
   JoinCancelMessage,
   JoinApproveMessage,
   JoinDenyMessage,
+  ViceSetMessage,
+  ViceClearMessage,
+  ViceUpdatedMessage,
+  ViceChangedMessage,
+  GroupLockMessage,
+  GroupUnlockMessage,
+  LockChangedMessage,
+  LeaderState,
+  MemberRemoveMessage,
+  MemberRemovedMessage,
+  LeaderActivityMessage,
+  KeepAliveAckMessage,
+  ActivityAckMessage,
+  KeepAlivePromptMessage,
+  KeepAliveClearedMessage,
+  LeadershipReason,
+  LeaderGrantedMessage,
+  LeaderLostMessage,
+  LeaderChangedMessage,
+  LeaderTakeBackMessage,
+  TakeBackOfferedMessage,
   JoinPendingMessage,
   JoinRequestedMessage,
   JoinWithdrawnMessage,
@@ -96,12 +121,18 @@ export type {
   BlockListAckMessage,
   TokenRefreshedMessage,
   LeaderOfflineMessage,
+  LeaderPause,
+  LeaderPauseCause,
   LeaderOnlineMessage,
   CodesUpdatedMessage,
   CodesUpdatedReason,
   JoinPausedMessage,
   JoinResumedMessage,
   ErrorMessage,
+  RosterEntryWire,
+  RosterSnapshotMessage,
+  RosterUpdatedMessage,
+  RosterRemovedMessage,
   ServerMessage,
   ServerMessageType,
 } from './messages.js';

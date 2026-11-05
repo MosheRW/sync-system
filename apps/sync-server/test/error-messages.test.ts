@@ -19,6 +19,15 @@ const NAMES: Record<string, RegExp> = {
   'join.deny': /deny join/i,
   'group.joinByQr': /join attempts/i,
   'qr.issue': /QR code/i,
+  'group.resume': /recover/i,
+  'vice.set': /vice-leader/i,
+  'vice.clear': /vice-leader/i,
+  'group.lock': /lock/i,
+  'group.unlock': /unlock/i,
+  'member.remove': /remov/i,
+  'leader.activity': /leader activity/i,
+  'keepalive.ack': /keep-alive/i,
+  'leader.takeBack': /take.?back/i,
 };
 
 describe('per-action error texts (#7 A1)', () => {
@@ -44,6 +53,15 @@ describe('per-action error texts (#7 A1)', () => {
         'codes.rotate': 'Too many code rotations',
         'group.joinByQr': 'Too many join attempts',
         'qr.issue': 'Too many QR code requests',
+        'group.resume': 'Too many group recoveries',
+        'vice.set': 'Too many vice-leader changes',
+        'vice.clear': 'Too many vice-leader clears',
+        'group.lock': 'Too many group locks',
+        'group.unlock': 'Too many group unlocks',
+        'member.remove': 'Too many member removals',
+        'leader.activity': 'Too many leader activity signals',
+        'keepalive.ack': 'Too many keep-alive answers',
+        'leader.takeBack': 'Too many take-backs',
       },
       NOT_LEADER: {
         'position.update': 'Only the leader can update the position',
@@ -53,6 +71,18 @@ describe('per-action error texts (#7 A1)', () => {
         'join.approve': 'Only the leader can approve join requests',
         'join.deny': 'Only the leader can deny join requests',
         'qr.issue': 'Only the leader can issue QR codes',
+        'vice.set': 'Only the leader can choose the vice-leader',
+        'vice.clear': 'Only the leader can clear the vice-leader',
+        'group.lock': 'Only the leader can lock the group',
+        'group.unlock': 'Only the leader can unlock the group',
+        'member.remove': 'Only the leader can remove members',
+        'leader.activity': 'Only the leader can send leader activity',
+        'keepalive.ack': 'Only the leader can answer the keep-alive',
+      },
+      NOT_ALLOWED: {
+        'vice.set': 'This participant cannot be the vice-leader now',
+        'member.remove': 'This participant cannot be removed',
+        'leader.takeBack': 'Only the displaced leader can take back the lead',
       },
     });
   });
@@ -68,6 +98,7 @@ describe('per-action error texts (#7 A1)', () => {
   it('has no generic text for the shared codes', () => {
     expect(Object.keys(ERROR_TEXT)).not.toContain(ErrorCode.RATE_LIMITED);
     expect(Object.keys(ERROR_TEXT)).not.toContain(ErrorCode.NOT_LEADER);
+    expect(Object.keys(ERROR_TEXT)).not.toContain(ErrorCode.NOT_ALLOWED);
   });
 
   it('keeps the code, reqId and details unchanged', () => {

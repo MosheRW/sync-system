@@ -63,6 +63,10 @@ describe('close() (AC28)', () => {
     const creating = client.createGroup({});
     socket.receive({
       type: 'group.created',
+      handoff: 'auto',
+      displayName: 'Guest 1',
+      generated: true,
+      state: { blockList: [], locked: false, handoff: 'auto' },
       ...CREATED_FIELDS,
       token: 'h.p.s',
       reqId: socket.lastMessage().reqId,
@@ -106,6 +110,10 @@ describe('close() from a listener inside an internal flow (AC28)', () => {
     const creating = client.createGroup({});
     socket.receive({
       type: 'group.created',
+      handoff: 'auto',
+      displayName: 'Guest 1',
+      generated: true,
+      state: { blockList: [], locked: false, handoff: 'auto' },
       ...CREATED_FIELDS,
       token: 'h.p.s',
       reqId: socket.lastMessage().reqId,
@@ -122,6 +130,9 @@ describe('close() from a listener inside an internal flow (AC28)', () => {
     const joining = joinTestGroup(client);
     socket.receive({
       type: 'group.joined',
+      displayName: 'Guest 1',
+      generated: true,
+      locked: false,
       token: 'h.p.s',
       leaderOnline: true,
       reqId: socket.lastMessage().reqId,
@@ -408,6 +419,9 @@ describe('no unhandled rejections inside the client (L6)', () => {
       const joining = joinTestGroup(client).catch(() => undefined);
       FakeWebSocket.last.receive({
         type: 'group.joined',
+        displayName: 'Guest 1',
+        generated: true,
+        locked: false,
         token: 'h.p.s',
         leaderOnline: true,
         reqId: FakeWebSocket.last.lastMessage().reqId,

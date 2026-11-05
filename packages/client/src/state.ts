@@ -1,6 +1,8 @@
 import type {
   AppLimits,
+  HandoffMode,
   JoinMethod,
+  LeaderState,
   JsonObject,
   JsonValue,
   Role,
@@ -8,8 +10,11 @@ import type {
 } from '@sync-system/protocol';
 import type { ClientErrorCode, SyncClientError } from './errors.js';
 
-/** Why the client is closed (AC24). */
-export type ClosedReason = 'client' | 'fatal' | 'gave_up';
+/**
+ * Why the client is closed (AC24): `removed` when the leader removed this
+ * participant (close 4004, #13 Gate 2 Q-A); `connect()` starts again.
+ */
+export type ClosedReason = 'client' | 'fatal' | 'gave_up' | 'removed';
 
 /**
  * Connection state (AC24), a discriminated union on `status`:
@@ -43,8 +48,9 @@ export type ConnectionState =
 
 /**
  * Why a group ended for this client (#5):
- * - `ended_by_leader`, `leader_timeout`, `max_session`, `removed`: the
- *   server's `group.ended` reasons (the token is deleted);
+ * - `ended_by_leader`, `leader_timeout`, `max_session`, `removed`,
+ *   `inactivity`: the server's `group.ended` reasons (the token is
+ *   deleted; `inactivity`: #13 AC22);
  * - `replaced`: the same participant resumed on another connection (another
  *   tab or device). The token is kept and nothing is resumed automatically;
  * - `left`: `leaveGroup()` or `endGroup()` succeeded;
@@ -57,6 +63,7 @@ export type GroupEndedReason =
   | 'max_session'
   | 'replaced'
   | 'removed'
+  | 'inactivity'
   | 'left'
   | 'rejoin_failed'
   | 'closed';
@@ -79,6 +86,16 @@ export type GroupState =
       readonly position: JsonValue | undefined;
       /** False while the leader is offline (members only; always true for a leader). */
       readonly leaderOnline: boolean;
+      /** This user's name in the group (#13 AC36). Plain text: never render as HTML. */
+      readonly displayName: string;
+      /** True for a server-generated `Guest N` name; localize it (#13 Q5.1). */
+      readonly generated: boolean;
+      /** The leader locked the group: nobody new joins (#13 AC29). */
+      readonly locked: boolean;
+      /** The leader's lifecycle as this client sees it (#13 AC28, D8). */
+      readonly leader: LeaderLifecycle;
+      /** This member is the displaced leader and may take the lead back (#13 AC24). */
+      readonly takeBackAvailable: boolean;
     }
   | {
       /** Dropped; resuming with the stored token after the reconnect. */
@@ -200,10 +217,58 @@ export interface PositionUpdatedEvent {
   readonly position: JsonValue;
 }
 
-/** A member's group: the leader went offline or came back (#5 AC36). */
+/** A member's group: the leader went offline or came back (#5 AC36, #13 AC28). */
 export interface LeaderStatusEvent {
   readonly groupId: string;
   readonly online: boolean;
+  /** Why the group paused (#13 D8). */
+  readonly cause?: 'disconnected' | 'inactive';
+  /** Local epoch ms when the lead may pass on, if a handoff can follow. */
+  readonly graceEndsAt?: number;
+}
+
+/**
+ * The leader's lifecycle (#13 AC28, D8): live, or paused because the leader
+ * disconnected or missed the keep-alive. `graceEndsAt` (local epoch ms,
+ * from the server's duration, D12) is set only while a handoff can follow.
+ */
+export type LeaderLifecycle =
+  | { readonly status: 'online' }
+  | { readonly status: 'offline' | 'inactive'; readonly graceEndsAt?: number };
+
+/** Why the lead moved (#13 AC23). */
+export type LeadershipReason =
+  'handoff_disconnect' | 'handoff_inactivity' | 'take_back' | 'superseded';
+
+/** "You're now leading" (#13 AC23). */
+export interface NowLeadingEvent {
+  readonly groupId: string;
+  readonly reason: 'handoff_disconnect' | 'handoff_inactivity' | 'take_back';
+}
+
+/** This client leads no more (#13 AC23). */
+export interface LeadershipLostEvent {
+  readonly groupId: string;
+  readonly reason: LeadershipReason;
+  readonly takeBackAvailable: boolean;
+}
+
+/** Someone else leads now; no participant ID (#13 AC23). */
+export interface LeaderChangedEvent {
+  readonly groupId: string;
+  readonly reason: LeadershipReason;
+}
+
+/** Leader: answer within `countdownMs` or the group pauses (#13 AC16). */
+export interface KeepAliveEvent {
+  readonly groupId: string;
+  readonly countdownMs: number;
+  /** Local epoch ms when the countdown ends (D12). */
+  readonly deadlineAt: number;
+}
+
+export interface GroupIdEvent {
+  readonly groupId: string;
 }
 
 /** Typed events (AC19). */
@@ -223,7 +288,70 @@ export interface SyncClientEvents {
   joinPaused: JoinPausedEvent;
   /** Leader: door-code joining works again (#10 AC29, AC30). */
   joinResumed: JoinResumedEvent;
+  /** Leader: the roster changed (#13 AC31). */
+  rosterChanged: RosterChangedEvent;
+  /** This participant became, or is no longer, the vice-leader (#13 AC11). */
+  viceChanged: ViceChangedEvent;
+  /** The group was locked or unlocked (#13 AC29). */
+  lockChanged: LockChangedEvent;
+  /** Leader: the keep-alive prompt (#13 AC16). */
+  keepAlive: KeepAliveEvent;
+  /** Leader: an activity answered the prompt (#13 AC16). */
+  keepAliveCleared: GroupIdEvent;
+  /** "You're now leading" (#13 AC23): a new leader token was stored. */
+  nowLeading: NowLeadingEvent;
+  /** This client leads no more (#13 AC23): a member token was stored. */
+  leadershipLost: LeadershipLostEvent;
+  /** Another participant leads now (#13 AC23). */
+  leaderChanged: LeaderChangedEvent;
+  /** The displaced leader may take the lead back (#13 AC24). */
+  takeBackOffered: GroupIdEvent;
+  /**
+   * The leader removed this participant (#13 AC32, Gate 2 Q-A): the token
+   * is deleted and the client is closed; it does not reconnect.
+   */
+  removed: RemovedEvent;
   error: SyncClientError;
+}
+
+/**
+ * One admitted participant, for the leader only (#13 AC31). Names are
+ * untrusted plain text: render as text, never as HTML, and show `generated`
+ * (or the ID) so a chosen `Guest 3` cannot pass as a generated name (L8).
+ */
+export interface RosterEntry {
+  readonly participantId: string;
+  readonly displayName: string;
+  readonly generated: boolean;
+  readonly guestNumber?: number;
+  readonly role: Role;
+  readonly connected: boolean;
+  /** Local epoch ms of the admission (from the server's duration, #13 D12). */
+  readonly joinedAt: number;
+  /** Admitted by a stale leader after a restart; review it (#13 6.6.4). */
+  readonly admittedSinceRecovery?: true;
+}
+
+/** Leader: the roster changed (#13 AC31). */
+export interface RosterChangedEvent {
+  readonly groupId: string;
+  readonly roster: readonly RosterEntry[];
+}
+
+export type { LeaderState };
+
+export interface ViceChangedEvent {
+  readonly groupId: string;
+  readonly isVice: boolean;
+}
+
+export interface LockChangedEvent {
+  readonly groupId: string;
+  readonly locked: boolean;
+}
+
+export interface RemovedEvent {
+  readonly groupId: string;
 }
 
 /** Options of `createGroup()` (#10 AC38). */
@@ -233,6 +361,10 @@ export interface CreateGroupOptions {
    * never both A and B. Omitted: the app's methods minus B when A is allowed.
    */
   readonly joinMethods?: readonly JoinMethod[];
+  /** `auto` hands off after the grace period, `frozen` never (#13 AC3). Default: the app's. */
+  readonly handoff?: HandoffMode;
+  /** The leader's own name (#13 AC35); missing or blank: a generated `Guest N`. */
+  readonly displayName?: string;
 }
 
 /** A QR ticket for the leader to show (#10 AC23, AC40). A bearer credential: never log or persist it. */
@@ -253,7 +385,8 @@ export interface JoinRequest {
 }
 
 /** Why the group's codes changed (#10 AC40). */
-export type CodesChangedReason = 'created' | 'resumed' | 'rotated' | 'door_failures';
+export type CodesChangedReason =
+  'created' | 'resumed' | 'rotated' | 'door_failures' | 'member_removed' | 'superseded';
 
 export interface CodesChangedEvent {
   readonly groupId: string;
@@ -296,7 +429,13 @@ export interface JoinByQrOptions {
 
 /** What an app shows for the PRD's sync indicator (AC25). */
 export type SyncIndicator =
-  'none' | 'following' | 'leading' | 'reconnecting' | 'leader_offline' | 'awaiting_approval';
+  | 'none'
+  | 'following'
+  | 'leading'
+  | 'reconnecting'
+  | 'leader_offline'
+  | 'leader_grace'
+  | 'awaiting_approval';
 
 /**
  * Maps a snapshot to the indicator (#5 AC36, Q-E; documented in the README):
@@ -305,6 +444,8 @@ export type SyncIndicator =
  *   `reconnecting`;
  * - connected with a rejoining group: `reconnecting`;
  * - connected and waiting for the leader: `leader_offline`;
+ * - connected, active member, leader paused with a grace period (a
+ *   handoff may follow, #13 AC28): `leader_grace`;
  * - connected, active member, leader offline: `leader_offline`;
  * - connected, active member, leader online: `following`;
  * - connected, active leader: `leading`;
@@ -325,5 +466,8 @@ export function indicatorOf(snapshot: SyncClientSnapshot): SyncIndicator {
   if (group.status === 'rejoining') return 'reconnecting';
   if (group.status === 'waiting') return 'leader_offline';
   if (group.role === 'leader') return 'leading';
+  if (group.leader.status !== 'online' && group.leader.graceEndsAt !== undefined) {
+    return 'leader_grace';
+  }
   return group.leaderOnline ? 'following' : 'leader_offline';
 }

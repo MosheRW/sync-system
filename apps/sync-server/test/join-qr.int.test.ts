@@ -5,6 +5,7 @@ import { QrTicketService } from '../src/tokens/qr-tickets.js';
 import { signCompact } from '../src/tokens/signed-blob.js';
 import { QR_TICKET_INFO_PREFIX, TokenKeyring, deriveAppKey } from '../src/tokens/token-keys.js';
 import { ManualScheduler } from './helpers/manual-scheduler.js';
+import { expireHold } from './helpers/lifecycle.js';
 import type { TestClient } from './helpers/test-client.js';
 import { KEY_A, KEY_B, type TestServer, startTestServer } from './helpers/test-server.js';
 
@@ -174,15 +175,17 @@ describe('invalid tickets (#10 AC25, R7)', () => {
   });
 
   it('gives byte-identical QR_INVALID for every other cause, never echoing the ticket', async () => {
-    const { server } = await start();
+    const { server, scheduler, store } = await start();
     const { leader } = await group(server, ['A', 'D']);
     const ticket = await issue(leader);
     const [payload, signature] = ticket.split('.') as [string, string];
     const { leader: otherApp } = await group(server, ['D'], KEY_B);
     const otherTicket = await issue(otherApp);
-    const { leader: dropped } = await group(server, ['D']);
+    const { leader: dropped, created: droppedGroup } = await group(server, ['D']);
     const droppedTicket = await issue(dropped);
     await dropped.close();
+    // Held for the grace period, then gone (#13 Q-G).
+    await expireHold(scheduler, store, droppedGroup.groupId);
     const { leader: rotated } = await group(server, ['D']);
     const revoked = await issue(rotated);
     rotated.send({ type: 'codes.rotate' });

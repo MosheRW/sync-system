@@ -10,7 +10,11 @@ let store: InMemoryGroupStore;
 
 beforeEach(async () => {
   store = new InMemoryGroupStore();
-  ts = await startTestServer({ store });
+  // A 1 s grace keeps the real-clock hold of an emptied group short (#13 Q-G).
+  ts = await startTestServer({
+    store,
+    apps: [{ namespace: 'app-a', apiKey: KEY_A, disconnectGraceSeconds: 1 }],
+  });
 });
 
 afterEach(async () => {
@@ -30,6 +34,10 @@ describe('group create (AC11)', () => {
       groupId: expect.stringMatching(GROUP_ID_PATTERN) as string,
       participantId: expect.any(String) as string,
       role: 'leader',
+      handoff: 'auto',
+      displayName: expect.any(String) as string,
+      generated: true,
+      state: expect.any(Object) as object,
       token: expect.any(String) as string,
       joinMethods: ['A', 'D'],
       codes: expect.any(Object) as object,
@@ -79,6 +87,9 @@ describe('group join (AC12)', () => {
       groupId,
       participantId: expect.any(String) as string,
       role: 'member',
+      displayName: expect.any(String) as string,
+      generated: true,
+      locked: false,
       metadata: METADATA,
       token: expect.any(String) as string,
       leaderOnline: true,
@@ -158,6 +169,6 @@ describe('group join (AC12)', () => {
     await leader.next('group.created');
     expect(store.size).toBe(1);
     await leader.close();
-    await waitUntil(() => store.size === 0);
+    await waitUntil(() => store.size === 0, 3000);
   });
 });

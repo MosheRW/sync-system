@@ -45,6 +45,9 @@ describe('handshake against the real server (AC8, AC9, AC30)', () => {
       maxSessionMinutes: 180,
       qrTicketSeconds: 300,
       approvalTimeoutSeconds: 120,
+      inactivityLimitMinutes: 20,
+      disconnectGraceSeconds: 30,
+      keepAliveCountdownSeconds: 60,
     });
     expect(info.joinMethods).toEqual(['A', 'D']);
     expect(client.getState()).toMatchObject({

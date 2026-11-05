@@ -70,6 +70,57 @@ export const MAX_CLOCK_SKEW_MS = 300_000;
 /** Most remembered ended-group refs; the oldest is evicted first (Q8, L4). */
 export const MAX_ENDED_GROUPS = 100_000;
 
+/**
+ * Group recreations (a `group.resume` that rebuilds a group after a restart)
+ * per connection per window (#13 RC20, M5): slows a stock-up of recreated
+ * and ended groups that would fill the ended-groups memory. Same size as the
+ * join-attempt budget.
+ */
+export const RECREATIONS_PER_CONNECTION_PER_MINUTE = 10;
+
+/** Window of the recreation limiter. */
+export const RECREATION_WINDOW_MS = 60_000;
+
+/**
+ * Largest serialized roster entry (#13 5.5): a participant ID, a name of 32
+ * code points of up to 4 UTF-8 bytes each, the flags, a guest number and the
+ * keys, with slack.
+ */
+export const ROSTER_ENTRY_MAX_BYTES = 320;
+
+/**
+ * Largest `roster.snapshot` for a group size ceiling (#13 5.5): twice the
+ * group size plus the two protected entries (D10), plus the envelope.
+ */
+export function rosterSnapshotMaxBytes(maxGroupSizeCeiling: number): number {
+  return 256 + (2 * maxGroupSizeCeiling + 2) * ROSTER_ENTRY_MAX_BYTES;
+}
+
+/** Room next to a roster snapshot in an empty outbound buffer (#13 5.5). */
+export const ROSTER_SNAPSHOT_HEADROOM_BYTES = 32_768;
+
+/** Window of the per-group leader control limiters (#13 8.2). */
+export const LEADER_CONTROL_WINDOW_MS = 60_000;
+
+/**
+ * leader.activity and keepalive.ack per group per window, shared (#13 8.2,
+ * Q-E). The first keepalive.ack of an outstanding prompt is never charged
+ * (L5), so a spent budget cannot make the real answer fail.
+ */
+export const LEADER_ACTIVITY_PER_GROUP_PER_MINUTE = 12;
+
+/** leader.takeBack per group per window (#13 8.2, Q-E): caps a take-back ping-pong. */
+export const TAKE_BACKS_PER_GROUP_PER_MINUTE = 3;
+
+/** member.remove per group per window (#13 8.2, Q-E). */
+export const MEMBER_REMOVALS_PER_GROUP_PER_MINUTE = 10;
+
+/** group.lock and group.unlock per group per window (#13 8.2, Q-E). */
+export const LOCK_CHANGES_PER_GROUP_PER_MINUTE = 10;
+
+/** vice.set and vice.clear per group per window (#13 8.2, Q-E). */
+export const VICE_CHANGES_PER_GROUP_PER_MINUTE = 10;
+
 /** How often expired ended-group refs are swept. */
 export const ENDED_SWEEP_MS = 60_000;
 

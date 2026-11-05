@@ -40,6 +40,10 @@ describe('createGroup (AC15)', () => {
     expect(sent).toEqual({ type: 'group.create', reqId: 'c2', metadata, position: { page: 1 } });
     socket.receive({
       type: 'group.created',
+      handoff: 'auto',
+      displayName: 'Guest 1',
+      generated: true,
+      state: { blockList: [], locked: false, handoff: 'auto' },
       ...CREATED_FIELDS,
       token: 'h.p.s',
       reqId: 'c2',
@@ -62,6 +66,11 @@ describe('createGroup (AC15)', () => {
       hasPosition: true,
       position: { page: 1 },
       leaderOnline: true,
+      displayName: 'Guest 1',
+      generated: true,
+      locked: false,
+      leader: { status: 'online' },
+      takeBackAvailable: false,
     });
     client.close();
   });
@@ -122,6 +131,9 @@ describe('joinByCode (AC16, #10 AC39)', () => {
     const metadata = { book: 'b1' };
     socket.receive({
       type: 'group.joined',
+      displayName: 'Guest 1',
+      generated: true,
+      locked: false,
       token: 'h.p.s',
       leaderOnline: true,
       reqId: 'c2',
@@ -156,6 +168,9 @@ describe('joinByCode (AC16, #10 AC39)', () => {
     const joining = joinTestGroup(client);
     socket.receive({
       type: 'group.joined',
+      displayName: 'Guest 1',
+      generated: true,
+      locked: false,
       token: 'h.p.s',
       leaderOnline: true,
       reqId: 'c2',
@@ -209,6 +224,9 @@ describe('group events (AC19, AC20)', () => {
     const joining = joinTestGroup(client);
     socket.receive({
       type: 'group.joined',
+      displayName: 'Guest 1',
+      generated: true,
+      locked: false,
       token: 'h.p.s',
       leaderOnline: true,
       reqId: 'c2',

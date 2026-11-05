@@ -2,6 +2,7 @@ import type { JsonValue } from '@sync-system/protocol';
 import type { GroupCodes } from '../joins/codes.js';
 import {
   type AddParticipantResult,
+  type GroupPatch,
   type GroupRecord,
   type GroupStore,
   connectedCount,
@@ -19,6 +20,8 @@ function copy(record: GroupRecord): GroupRecord {
     blockList: [...record.blockList],
     joinMethods: [...record.joinMethods],
     codes: { ...record.codes },
+    // Entries are never mutated in place, so a copy of the array is enough.
+    roster: [...record.roster],
   };
 }
 
@@ -114,6 +117,14 @@ export class InMemoryGroupStore implements GroupStore {
     const removed = record.participantIds.filter((p) => p !== record.leaderId && blocked.has(p));
     record.participantIds = record.participantIds.filter((p) => !removed.includes(p));
     return Promise.resolve({ removed });
+  }
+
+  patch(namespace: string, id: string, patch: GroupPatch): Promise<GroupRecord | undefined> {
+    const record = this.groups.get(keyOf(namespace, id));
+    if (!record) return Promise.resolve(undefined);
+    // `copy` of the patch, so the caller keeps no reference into the store.
+    Object.assign(record, copy({ ...record, ...patch }));
+    return Promise.resolve(copy(record));
   }
 
   setCodes(namespace: string, id: string, codes: GroupCodes): Promise<GroupRecord | undefined> {

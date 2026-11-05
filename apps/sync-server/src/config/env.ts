@@ -1,7 +1,11 @@
 import { JOIN_METHODS, type JoinMethod } from '@sync-system/protocol';
 import { z } from 'zod';
 import { ConfigError } from './config-error.js';
-import { TOKENS_CHECK_MAX_FRAME_BYTES } from '../limits/constants.js';
+import {
+  ROSTER_SNAPSHOT_HEADROOM_BYTES,
+  TOKENS_CHECK_MAX_FRAME_BYTES,
+  rosterSnapshotMaxBytes,
+} from '../limits/constants.js';
 
 export const LOG_LEVELS = ['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'] as const;
 export type LogLevel = (typeof LOG_LEVELS)[number];
@@ -46,6 +50,10 @@ export interface ServerEnv {
   qrTicketSecondsCeiling: number;
   /** Ceiling for app `approvalTimeoutSeconds` (#10 AC3). */
   approvalTimeoutSecondsCeiling: number;
+  /** Ceiling for app `disconnectGraceSeconds` (#13 AC1). */
+  disconnectGraceSecondsCeiling: number;
+  /** Ceiling for app `keepAliveCountdownSeconds` (#13 AC1). */
+  keepAliveCountdownSecondsCeiling: number;
 }
 
 export type EnvSource = Readonly<Record<string, string | undefined>>;
@@ -102,6 +110,19 @@ const NUMERIC_VARS: readonly NumericVar[] = [
     name: 'APPROVAL_TIMEOUT_SECONDS_CEILING',
     defaultValue: 600,
     min: 15,
+    max: 3600,
+  },
+  // #13 AC1: timers of the group lifecycle.
+  {
+    key: 'disconnectGraceSecondsCeiling',
+    name: 'DISCONNECT_GRACE_SECONDS_CEILING',
+    defaultValue: 120,
+    max: 3600,
+  },
+  {
+    key: 'keepAliveCountdownSecondsCeiling',
+    name: 'KEEP_ALIVE_COUNTDOWN_SECONDS_CEILING',
+    defaultValue: 120,
     max: 3600,
   },
 ];
@@ -218,6 +239,14 @@ export function parseEnv(env: EnvSource): ServerEnv {
       n.maxBufferedBytes >= TOKENS_CHECK_MAX_FRAME_BYTES,
       `MAX_BUFFERED_BYTES (${n.maxBufferedBytes}) must be >= the largest tokens.result frame (${TOKENS_CHECK_MAX_FRAME_BYTES})`,
     );
+    // A roster snapshot of the largest group, with the frames right behind
+    // it, must fit an empty outbound buffer (#13 5.5).
+    const rosterBytes =
+      rosterSnapshotMaxBytes(n.maxGroupSizeCeiling) + ROSTER_SNAPSHOT_HEADROOM_BYTES;
+    rule(
+      n.maxBufferedBytes >= rosterBytes,
+      `MAX_BUFFERED_BYTES (${n.maxBufferedBytes}) must be >= the largest roster snapshot plus headroom (${rosterBytes}) for MAX_GROUP_SIZE_CEILING (${n.maxGroupSizeCeiling})`,
+    );
     rule(
       n.tokenRefreshMinSeconds <= n.tokenRefreshMaxSeconds,
       `TOKEN_REFRESH_MIN_SECONDS (${n.tokenRefreshMinSeconds}) must be <= TOKEN_REFRESH_MAX_SECONDS (${n.tokenRefreshMaxSeconds})`,
@@ -252,5 +281,7 @@ export function parseEnv(env: EnvSource): ServerEnv {
     joinMethodsAllowed: Object.freeze([...joinMethodsAllowed]),
     qrTicketSecondsCeiling: n.qrTicketSecondsCeiling,
     approvalTimeoutSecondsCeiling: n.approvalTimeoutSecondsCeiling,
+    disconnectGraceSecondsCeiling: n.disconnectGraceSecondsCeiling,
+    keepAliveCountdownSecondsCeiling: n.keepAliveCountdownSecondsCeiling,
   };
 }

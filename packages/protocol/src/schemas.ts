@@ -10,6 +10,7 @@ import {
 } from './join.js';
 import type { JsonObject, JsonValue } from './json.js';
 import {
+  HANDOFF_MODES,
   MAX_API_KEY_LENGTH,
   MAX_APP_VERSION_INPUT_LENGTH,
   MAX_BLOCK_LIST_SIZE,
@@ -30,6 +31,12 @@ import {
   type ServerMessage,
   TOKEN_STATUSES,
 } from './messages.js';
+
+/**
+ * Most entries a `roster.snapshot` may carry: twice the largest group size a
+ * client accepts (10 000), plus the protected entries (#13 D10).
+ */
+const MAX_ROSTER_WIRE_ENTRIES = 20_002;
 
 // Every schema below is built with zod's `jitless` option on. Without it,
 // building the first z.object runs zod's eval probe at import time: it reads
@@ -76,6 +83,8 @@ const schemas = buildJitless(() => {
     metadata: opaqueObject,
     position: opaqueValue.optional(),
     joinMethods: joinMethodList.optional(),
+    handoff: z.enum(HANDOFF_MODES).optional(),
+    displayName: z.string().max(MAX_DISPLAY_NAME_INPUT_LENGTH).optional(),
   });
 
   const joinCode = z.string().max(MAX_JOIN_CODE_INPUT_LENGTH);
@@ -121,6 +130,11 @@ const schemas = buildJitless(() => {
     blockList: blockList.optional(),
     // The blob is checked by the server; a bad one only means new codes (#10 AC33).
     joinCodes: z.string().max(MAX_CODES_BLOB_LENGTH).optional(),
+    // Leader recovery state (#13 D13); used only for a recreation.
+    handoff: z.enum(HANDOFF_MODES).optional(),
+    viceId: z.string().regex(PARTICIPANT_ID_PATTERN).optional(),
+    locked: z.boolean().optional(),
+    displayName: displayName.optional(),
   });
 
   const tokensCheckSchema = z.object({
@@ -143,6 +157,17 @@ const schemas = buildJitless(() => {
   const joinApproveSchema = z.object({ type: z.literal('join.approve'), reqId, requestId });
   const joinDenySchema = z.object({ type: z.literal('join.deny'), reqId, requestId });
 
+  const participantId = z.string().regex(PARTICIPANT_ID_PATTERN);
+  const viceSetSchema = z.object({ type: z.literal('vice.set'), reqId, participantId });
+  const viceClearSchema = z.object({ type: z.literal('vice.clear'), reqId });
+  const groupLockSchema = z.object({ type: z.literal('group.lock'), reqId });
+  const groupUnlockSchema = z.object({ type: z.literal('group.unlock'), reqId });
+  const memberRemoveSchema = z.object({ type: z.literal('member.remove'), reqId, participantId });
+  // No payload: unknown keys are stripped, so nothing sent with it is read (#13 AC30).
+  const leaderActivitySchema = z.object({ type: z.literal('leader.activity'), reqId });
+  const keepAliveAckSchema = z.object({ type: z.literal('keepalive.ack'), reqId });
+  const takeBackSchema = z.object({ type: z.literal('leader.takeBack'), reqId });
+
   const clientMessageSchema = z.discriminatedUnion('type', [
     helloSchema,
     groupCreateSchema,
@@ -159,6 +184,14 @@ const schemas = buildJitless(() => {
     joinCancelSchema,
     joinApproveSchema,
     joinDenySchema,
+    viceSetSchema,
+    viceClearSchema,
+    groupLockSchema,
+    groupUnlockSchema,
+    memberRemoveSchema,
+    leaderActivitySchema,
+    keepAliveAckSchema,
+    takeBackSchema,
   ]);
 
   const appLimitsSchema = z.object({
@@ -168,6 +201,9 @@ const schemas = buildJitless(() => {
     maxSessionMinutes: z.number().int().positive(),
     qrTicketSeconds: z.number().int().positive(),
     approvalTimeoutSeconds: z.number().int().positive(),
+    inactivityLimitMinutes: z.number().int().positive(),
+    disconnectGraceSeconds: z.number().int().positive(),
+    keepAliveCountdownSeconds: z.number().int().positive(),
   });
 
   const joinMethods = joinMethodList;
@@ -182,7 +218,41 @@ const schemas = buildJitless(() => {
 
   const token = z.string().min(1).max(MAX_TOKEN_LENGTH);
 
+  /** The receiver's own name (#13 AC36). */
+  const ownName = {
+    displayName: z.string().max(MAX_DISPLAY_NAME_INPUT_LENGTH),
+    generated: z.boolean(),
+  };
+
+  const role = z.enum(['leader', 'vice-leader', 'member']);
+  const duration = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+  const pauseCause = z.enum(['disconnected', 'inactive']);
+  const leadershipReason = z.enum([
+    'handoff_disconnect',
+    'handoff_inactivity',
+    'take_back',
+    'superseded',
+  ]);
+  const leaderState = z.object({
+    blockList,
+    locked: z.boolean(),
+    viceId: z.string().regex(PARTICIPANT_ID_PATTERN).optional(),
+    handoff: z.enum(HANDOFF_MODES),
+  });
+  const count = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+  const rosterEntry = z.object({
+    participantId: z.string().regex(PARTICIPANT_ID_PATTERN),
+    displayName: z.string().max(MAX_DISPLAY_NAME_INPUT_LENGTH),
+    generated: z.boolean(),
+    guestNumber: count.optional(),
+    role,
+    connected: z.boolean(),
+    joinedAgoMs: count,
+    admittedSinceRecovery: z.literal(true).optional(),
+  });
+
   const groupJoinedBase = {
+    ...ownName,
     type: z.literal('group.joined'),
     reqId,
     groupId: z.string(),
@@ -191,9 +261,12 @@ const schemas = buildJitless(() => {
     metadata: opaqueObject,
     token,
     leaderOnline: z.boolean(),
+    locked: z.boolean(),
+    leaderPause: z.object({ cause: pauseCause, graceMs: duration.optional() }).optional(),
   };
 
   const groupResumedBase = {
+    ...ownName,
     type: z.literal('group.resumed'),
     reqId,
     groupId: z.string(),
@@ -205,6 +278,8 @@ const schemas = buildJitless(() => {
     joinMethods: joinMethodList,
     codes: joinCodesPayload,
     codesChanged: z.boolean(),
+    state: leaderState,
+    superseded: z.boolean(),
   };
 
   const serverMessageSchema = z.union([
@@ -220,6 +295,7 @@ const schemas = buildJitless(() => {
       namespace: z.string().regex(NAMESPACE_PATTERN),
       joinMethods,
       limits: appLimitsSchema,
+      defaultHandoff: z.enum(HANDOFF_MODES),
     }),
     z.object({
       type: z.literal('group.created'),
@@ -227,6 +303,9 @@ const schemas = buildJitless(() => {
       groupId: z.string(),
       participantId: z.string(),
       role: z.literal('leader'),
+      handoff: z.enum(HANDOFF_MODES),
+      state: leaderState,
+      ...ownName,
       token,
       joinMethods,
       codes: joinCodesPayload,
@@ -254,13 +333,18 @@ const schemas = buildJitless(() => {
     z.object({ type: z.literal('group.left'), reqId, groupId: z.string() }),
     z.object({ type: z.literal('blocklist.ack'), reqId }),
     z.object({ type: z.literal('token.refreshed'), groupId: z.string(), token }),
-    z.object({ type: z.literal('leader.offline'), groupId: z.string() }),
+    z.object({
+      type: z.literal('leader.offline'),
+      groupId: z.string(),
+      cause: pauseCause.optional(),
+      graceMs: duration.optional(),
+    }),
     z.object({ type: z.literal('leader.online'), groupId: z.string() }),
     z.object({
       type: z.literal('codes.updated'),
       reqId,
       groupId: z.string(),
-      reason: z.enum(['rotated', 'door_failures']),
+      reason: z.enum(['rotated', 'door_failures', 'member_removed', 'superseded']),
       codes: joinCodesPayload,
     }),
     z.object({
@@ -300,6 +384,59 @@ const schemas = buildJitless(() => {
       reqId,
       ticket: z.string().min(1).max(MAX_QR_TICKET_LENGTH),
       expiresInMs: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    }),
+    z.object({
+      type: z.literal('roster.snapshot'),
+      groupId: z.string(),
+      // Bounded by the group size ceiling of any server (MAX_ROSTER_ENTRIES_FACTOR).
+      participants: z.array(rosterEntry).max(MAX_ROSTER_WIRE_ENTRIES),
+    }),
+    z.object({ type: z.literal('roster.updated'), groupId: z.string(), participant: rosterEntry }),
+    z.object({
+      type: z.literal('roster.removed'),
+      groupId: z.string(),
+      participantId: z.string().regex(PARTICIPANT_ID_PATTERN),
+    }),
+    z.object({
+      type: z.literal('vice.updated'),
+      reqId,
+      groupId: z.string(),
+      viceId: z.string().regex(PARTICIPANT_ID_PATTERN).nullable(),
+    }),
+    z.object({ type: z.literal('vice.changed'), groupId: z.string(), isVice: z.boolean() }),
+    z.object({ type: z.literal('lock.changed'), reqId, groupId: z.string(), locked: z.boolean() }),
+    z.object({ type: z.literal('activity.ack'), reqId }),
+    z.object({
+      type: z.literal('keepalive.prompt'),
+      groupId: z.string(),
+      countdownMs: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    }),
+    z.object({ type: z.literal('keepalive.cleared'), groupId: z.string() }),
+    z.object({
+      type: z.literal('leader.granted'),
+      reqId,
+      groupId: z.string(),
+      reason: z.enum(['handoff_disconnect', 'handoff_inactivity', 'take_back']),
+      token,
+      state: leaderState,
+      joinMethods,
+      codes: joinCodesPayload,
+    }),
+    z.object({
+      type: z.literal('leader.lost'),
+      groupId: z.string(),
+      reason: leadershipReason,
+      token,
+      takeBackAvailable: z.boolean(),
+    }),
+    z.object({ type: z.literal('leader.changed'), groupId: z.string(), reason: leadershipReason }),
+    z.object({ type: z.literal('takeback.offered'), groupId: z.string() }),
+    z.object({
+      type: z.literal('member.removed'),
+      reqId,
+      groupId: z.string(),
+      participantId: z.string().regex(PARTICIPANT_ID_PATTERN),
+      blockList,
     }),
     z.object({
       type: z.literal('error'),

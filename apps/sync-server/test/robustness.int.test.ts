@@ -3,7 +3,7 @@ import type { AddParticipantResult, GroupRecord } from '../src/groups/group-stor
 import { InMemoryGroupStore } from '../src/groups/in-memory-group-store.js';
 import { FailingStore } from './helpers/failing-store.js';
 import { createGroupWithMembers } from './helpers/groups.js';
-import { type TestServer, httpGet, startTestServer } from './helpers/test-server.js';
+import { KEY_A, type TestServer, httpGet, startTestServer } from './helpers/test-server.js';
 import { sleep, waitUntil } from './helpers/wait.js';
 
 let ts: TestServer | undefined;
@@ -83,7 +83,11 @@ describe('join racing a leader disconnect, with a slow store', () => {
 
   it('never strands a joiner whose insert lands while the frozen group is dropped', async () => {
     const store = new DeferredStore();
-    ts = await startTestServer({ store });
+    // A 1 s grace keeps the real-clock hold of an emptied group short (#13 Q-G).
+    ts = await startTestServer({
+      store,
+      apps: [{ namespace: 'app-a', apiKey: KEY_A, disconnectGraceSeconds: 1 }],
+    });
     const { groupId, join, leader, members } = await createGroupWithMembers(ts, 1);
     leader.terminate();
     await members[0]!.next('leader.offline');
@@ -102,7 +106,7 @@ describe('join racing a leader disconnect, with a slow store', () => {
     await sleep(50);
     expect(store.size).toBe(1);
     joiner.terminate();
-    await waitUntil(() => store.size === 0);
+    await waitUntil(() => store.size === 0, 3000);
   });
 });
 

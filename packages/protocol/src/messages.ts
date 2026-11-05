@@ -1,9 +1,13 @@
 import type { ErrorCode } from './errors.js';
 import type { JoinMethod } from './join.js';
 import type { JsonObject, JsonValue } from './json.js';
+import type { HandoffMode } from './limits.js';
 
-/** Role of a participant in a group. Later issues add more roles. */
-export type Role = 'leader' | 'member';
+/**
+ * Role of a participant in a group (#13 AC5). At most one vice-leader; it has
+ * no leader powers until it leads (AC7) and holds a member token (Q3.1).
+ */
+export type Role = 'leader' | 'vice-leader' | 'member';
 
 /**
  * Why a group ended for the receiver (#5):
@@ -12,10 +16,12 @@ export type Role = 'leader' | 'member';
  * - `max_session`: the group reached its max session time;
  * - `replaced`: a newer connection resumed the same participant (only that
  *   older connection is told; the group goes on);
- * - `removed`: the participant is on the leader's block list.
+ * - `removed`: the participant is on the leader's block list;
+ * - `inactivity`: a leader who got the lead through a missed keep-alive
+ *   missed its own keep-alive too (#13 AC22).
  */
 export type GroupEndedReason =
-  'ended_by_leader' | 'leader_timeout' | 'max_session' | 'replaced' | 'removed';
+  'ended_by_leader' | 'leader_timeout' | 'max_session' | 'replaced' | 'removed' | 'inactivity';
 
 /** Every GroupEndedReason, for schemas and exhaustive checks. */
 export const GROUP_ENDED_REASONS = [
@@ -24,6 +30,7 @@ export const GROUP_ENDED_REASONS = [
   'max_session',
   'replaced',
   'removed',
+  'inactivity',
 ] as const satisfies readonly GroupEndedReason[];
 
 // ---------------------------------------------------------------------------
@@ -51,6 +58,10 @@ export interface GroupCreateMessage {
    * never both A and B. Omitted: the app's methods minus B when A is there.
    */
   joinMethods?: JoinMethod[];
+  /** The group's handoff mode (#13 AC3); omitted: the app's `defaultHandoff`. */
+  handoff?: HandoffMode;
+  /** The creator's display name (#13 AC35); missing or blank: a generated one. */
+  displayName?: string;
 }
 
 /**
@@ -97,6 +108,22 @@ export interface GroupResumeMessage {
    * codes it signed for this group.
    */
   joinCodes?: string;
+  /** Leader recovery state (#13 D13): the group's handoff mode, used for a recreation. */
+  handoff?: HandoffMode;
+  /**
+   * Leader recovery state (#13 D13, AC13): the vice-leader, used for a
+   * recreation; ignored unless that participant rejoins and is not blocked.
+   */
+  viceId?: string;
+  /** Leader recovery state (#13 D13, Q4.3): the lock flag, used for a recreation. */
+  locked?: boolean;
+  /**
+   * The participant's display name, sent again on every resume (#13 AC37,
+   * Q5.4). Used when the participant gets a new roster entry (after a
+   * restart or an eviction); missing or blank: a generated one. An existing
+   * entry keeps its name (no renaming, Q5.3).
+   */
+  displayName?: string;
 }
 
 /**
@@ -176,6 +203,67 @@ export interface JoinDenyMessage {
   requestId: string;
 }
 
+/** The leader designates a present member as vice-leader (#13 AC10). Reply: `vice.updated`. */
+export interface ViceSetMessage {
+  type: 'vice.set';
+  reqId?: string;
+  participantId: string;
+}
+
+/** The leader clears the vice-leader (#13 AC10). Reply: `vice.updated`. */
+export interface ViceClearMessage {
+  type: 'vice.clear';
+  reqId?: string;
+}
+
+/** The leader stops all new joining (#13 AC29). Idempotent. Reply: `lock.changed`. */
+export interface GroupLockMessage {
+  type: 'group.lock';
+  reqId?: string;
+}
+
+/** The leader allows joining again (#13 AC29). Idempotent. Reply: `lock.changed`. */
+export interface GroupUnlockMessage {
+  type: 'group.unlock';
+  reqId?: string;
+}
+
+/**
+ * The leader removes a participant (#13 AC32): it is blocked for the rest of
+ * the session, its connection is closed and every code rotates. Reply:
+ * `member.removed`, then `codes.updated` (reason `member_removed`).
+ */
+export interface MemberRemoveMessage {
+  type: 'member.remove';
+  reqId?: string;
+  participantId: string;
+}
+
+/**
+ * The leader is active without moving the group, e.g. while previewing
+ * (#13 AC30). No payload: a previewed position never reaches the server.
+ * Reply: `activity.ack`.
+ */
+export interface LeaderActivityMessage {
+  type: 'leader.activity';
+  reqId?: string;
+}
+
+/** The leader answers a keep-alive prompt (#13 AC16). Reply: `activity.ack`. */
+export interface KeepAliveAckMessage {
+  type: 'keepalive.ack';
+  reqId?: string;
+}
+
+/**
+ * The most recent displaced leader takes the lead back (#13 AC24, Q2.4).
+ * Reply: `leader.granted` with reason `take_back`.
+ */
+export interface LeaderTakeBackMessage {
+  type: 'leader.takeBack';
+  reqId?: string;
+}
+
 export type ClientMessage =
   | HelloMessage
   | GroupCreateMessage
@@ -191,7 +279,15 @@ export type ClientMessage =
   | CodesRotateMessage
   | JoinCancelMessage
   | JoinApproveMessage
-  | JoinDenyMessage;
+  | JoinDenyMessage
+  | ViceSetMessage
+  | ViceClearMessage
+  | GroupLockMessage
+  | GroupUnlockMessage
+  | MemberRemoveMessage
+  | LeaderActivityMessage
+  | KeepAliveAckMessage
+  | LeaderTakeBackMessage;
 
 export type ClientMessageType = ClientMessage['type'];
 
@@ -215,6 +311,12 @@ export interface AppLimits {
   qrTicketSeconds: number;
   /** How long a method B join request waits for the leader (#10 AC3, AC4). */
   approvalTimeoutSeconds: number;
+  /** Leader inactivity before the group pauses (#5 AC4, #13 AC15). */
+  inactivityLimitMinutes: number;
+  /** Grace period after the leader disconnects or misses a keep-alive (#13 AC1). */
+  disconnectGraceSeconds: number;
+  /** Keep-alive countdown before the inactivity limit (#13 AC1, AC16). */
+  keepAliveCountdownSeconds: number;
 }
 
 export interface HelloOkMessage {
@@ -226,6 +328,8 @@ export interface HelloOkMessage {
   /** The join methods this app allows, canonical order (#10 AC4). */
   joinMethods: JoinMethod[];
   limits: AppLimits;
+  /** The handoff mode of a group created without one (#13 AC3). */
+  defaultHandoff: HandoffMode;
 }
 
 /**
@@ -244,12 +348,24 @@ export interface JoinCodesPayload {
   blob: string;
 }
 
-export interface GroupCreatedMessage {
+/** The receiver's own name in the group (#13 AC36). */
+interface OwnName {
+  /** Chosen (strict #10 rule) or generated `Guest N`. Render as text only. */
+  displayName: string;
+  /** True for a generated name, so apps can localize it (Q5.1). */
+  generated: boolean;
+}
+
+export interface GroupCreatedMessage extends OwnName {
   type: 'group.created';
   reqId?: string;
   groupId: string;
   participantId: string;
   role: 'leader';
+  /** The group's handoff mode (#13 AC3). */
+  handoff: HandoffMode;
+  /** The leader recovery state (#13 D13). */
+  state: LeaderState;
   /** The leader's participant token for this group (#5 AC5). */
   token: string;
   /** The group's join methods, canonical order (#10 AC5). */
@@ -258,7 +374,7 @@ export interface GroupCreatedMessage {
   codes: JoinCodesPayload;
 }
 
-interface GroupJoinedBase {
+interface GroupJoinedBase extends OwnName {
   type: 'group.joined';
   reqId?: string;
   groupId: string;
@@ -269,6 +385,10 @@ interface GroupJoinedBase {
   token: string;
   /** False while the leader is offline (frozen group, #5 AC18). */
   leaderOnline: boolean;
+  /** The leader locked the group: nobody new joins (#13 AC29). */
+  locked: boolean;
+  /** The group is paused: why, and the grace left (#13 D8). `leaderOnline` is false. */
+  leaderPause?: LeaderPause;
 }
 
 /** `hasPosition: false` (and no `position` field) is the explicit "no position yet". */
@@ -277,7 +397,7 @@ export type GroupJoinedMessage =
   | (GroupJoinedBase & { hasPosition: false });
 
 /** Reply to a leader's group.resume (#5 AC19, AC23). */
-interface GroupResumedBase {
+interface GroupResumedBase extends OwnName {
   type: 'group.resumed';
   reqId?: string;
   groupId: string;
@@ -297,6 +417,14 @@ interface GroupResumedBase {
    * generation): the codes the leader already has still hold (#10 AC33).
    */
   codesChanged: boolean;
+  /** The leader recovery state, the server's (#13 D13). */
+  state: LeaderState;
+  /**
+   * After a restart this leader's later grant took the lead from a stale
+   * leader that recreated the group first (#13 AC26, 6.6.2). `token` is a
+   * new leader token (new term) that replaces the stored one.
+   */
+  superseded: boolean;
 }
 
 export type GroupResumedMessage =
@@ -378,10 +506,31 @@ export interface TokenRefreshedMessage {
   token: string;
 }
 
-/** To attached members: the leader's connection closed; the group is frozen (#5 AC18). */
+/**
+ * Why the group is paused (#13 D8): the leader's connection closed, or it
+ * missed the keep-alive while connected.
+ */
+export type LeaderPauseCause = 'disconnected' | 'inactive';
+
+/** A running pause as members see it (#13 D8, D12). */
+export interface LeaderPause {
+  cause: LeaderPauseCause;
+  /**
+   * Time left before the lead passes on (a duration, never a clock time).
+   * Present only when a handoff can follow (`auto` mode).
+   */
+  graceMs?: number;
+}
+
+/**
+ * To attached members: the group is paused (frozen, #5 AC18, #13 AC14,
+ * AC17). `cause` and `graceMs` are new in #13; older servers sent neither.
+ */
 export interface LeaderOfflineMessage {
   type: 'leader.offline';
   groupId: string;
+  cause?: LeaderPauseCause;
+  graceMs?: number;
 }
 
 /** To attached members: the leader is back (#5 AC19). */
@@ -403,8 +552,11 @@ export interface CodesUpdatedMessage {
   codes: JoinCodesPayload;
 }
 
-/** Why the codes changed: the leader rotated them, or the door code rotated after failures. */
-export type CodesUpdatedReason = 'rotated' | 'door_failures';
+/**
+ * Why the codes changed: the leader rotated them, the door code rotated
+ * after failures, or a removal rotated every code (#13 Q4.1).
+ */
+export type CodesUpdatedReason = 'rotated' | 'door_failures' | 'member_removed' | 'superseded';
 
 /** To the leader: door-code joining paused after repeated failures (#10 AC29). */
 export interface JoinPausedMessage {
@@ -484,6 +636,165 @@ export interface JoinCancelledMessage {
   requestId: string;
 }
 
+/**
+ * One roster entry, sent to the leader only (#13 AC31, Q4.4). Durations,
+ * never clock times (D12). Names are plain text: render, never interpret.
+ */
+export interface RosterEntryWire {
+  participantId: string;
+  displayName: string;
+  generated: boolean;
+  /** The N of a generated `Guest N`. */
+  guestNumber?: number;
+  role: Role;
+  connected: boolean;
+  /** Time since admission, ms. */
+  joinedAgoMs: number;
+  /**
+   * Admitted by code, QR or approval after a restart, before the real
+   * leader superseded a stale one (#13 6.6.4); shown only after a supersede.
+   */
+  admittedSinceRecovery?: true;
+}
+
+/** To the leader: the whole roster, after created, resumed or granted (#13 AC31). */
+export interface RosterSnapshotMessage {
+  type: 'roster.snapshot';
+  groupId: string;
+  participants: RosterEntryWire[];
+}
+
+/** To the leader: one entry joined, reconnected, disconnected or changed role (#13 AC31). */
+export interface RosterUpdatedMessage {
+  type: 'roster.updated';
+  groupId: string;
+  participant: RosterEntryWire;
+}
+
+/**
+ * What the leader's client keeps with its token to recover the group after
+ * a restart (#13 D13, decision 3): the block list, the lock flag, the
+ * vice-leader and the handoff mode. Sent to every leader.
+ */
+export interface LeaderState {
+  blockList: string[];
+  locked: boolean;
+  viceId?: string;
+  handoff: HandoffMode;
+}
+
+/** The reply to group.lock / group.unlock, and to members a change of it (#13 AC29). */
+export interface LockChangedMessage {
+  type: 'lock.changed';
+  reqId?: string;
+  groupId: string;
+  locked: boolean;
+}
+
+/** To the leader: the reply to member.remove, with the full block list to keep (#13 AC32). */
+export interface MemberRemovedMessage {
+  type: 'member.removed';
+  reqId?: string;
+  groupId: string;
+  participantId: string;
+  blockList: string[];
+}
+
+/** Why the lead moved (#13 AC23). */
+export type LeadershipReason =
+  'handoff_disconnect' | 'handoff_inactivity' | 'take_back' | 'superseded';
+
+/**
+ * To the new leader: "you're now leading" (#13 AC23). A new leader token,
+ * the recovery state, the join methods and codes; then `roster.snapshot`,
+ * pending `join.requested` and a running `join.paused` follow.
+ */
+export interface LeaderGrantedMessage {
+  type: 'leader.granted';
+  reqId?: string;
+  groupId: string;
+  reason: 'handoff_disconnect' | 'handoff_inactivity' | 'take_back';
+  token: string;
+  state: LeaderState;
+  joinMethods: JoinMethod[];
+  codes: JoinCodesPayload;
+}
+
+/**
+ * To the displaced leader, if attached: it leads no more (#13 AC23). A member
+ * token replaces its leader token; `takeBackAvailable` says whether it may
+ * send `leader.takeBack`.
+ */
+export interface LeaderLostMessage {
+  type: 'leader.lost';
+  groupId: string;
+  reason: 'handoff_disconnect' | 'handoff_inactivity' | 'take_back' | 'superseded';
+  token: string;
+  takeBackAvailable: boolean;
+}
+
+/** To the displaced leader back as a member: it may take the lead back (#13 AC24). */
+export interface TakeBackOfferedMessage {
+  type: 'takeback.offered';
+  groupId: string;
+}
+
+/** To every other member: someone else leads now. No participant ID (#13 AC23, Q3.3). */
+export interface LeaderChangedMessage {
+  type: 'leader.changed';
+  groupId: string;
+  reason: LeadershipReason;
+}
+
+/** To the leader: the reply to leader.activity and keepalive.ack (#13 AC16, AC30). */
+export interface ActivityAckMessage {
+  type: 'activity.ack';
+  reqId?: string;
+}
+
+/**
+ * To the leader: no counted activity for a while; answer within
+ * `countdownMs` (a duration, never a clock time, D12) or the group pauses
+ * (#13 AC16, AC17). Members never get it.
+ */
+export interface KeepAlivePromptMessage {
+  type: 'keepalive.prompt';
+  groupId: string;
+  countdownMs: number;
+}
+
+/** To the leader: an activity answered the prompt (#13 AC16). */
+export interface KeepAliveClearedMessage {
+  type: 'keepalive.cleared';
+  groupId: string;
+}
+
+/** To the leader: the reply to vice.set / vice.clear (#13 AC10). */
+export interface ViceUpdatedMessage {
+  type: 'vice.updated';
+  reqId?: string;
+  groupId: string;
+  /** The vice-leader now, or null. */
+  viceId: string | null;
+}
+
+/**
+ * To a participant: it became, or is no longer, the vice-leader (#13 AC11).
+ * Re-sent when the vice rejoins. Nobody else is told (Q3.3).
+ */
+export interface ViceChangedMessage {
+  type: 'vice.changed';
+  groupId: string;
+  isVice: boolean;
+}
+
+/** To the leader: an entry left the roster (leave, removal, eviction; #13 AC31). */
+export interface RosterRemovedMessage {
+  type: 'roster.removed';
+  groupId: string;
+  participantId: string;
+}
+
 export interface ErrorMessage {
   type: 'error';
   reqId?: string;
@@ -517,6 +828,20 @@ export type ServerMessage =
   | JoinDecidedMessage
   | JoinCancelledMessage
   | QrTicketMessage
+  | RosterSnapshotMessage
+  | RosterUpdatedMessage
+  | RosterRemovedMessage
+  | ViceUpdatedMessage
+  | ViceChangedMessage
+  | LockChangedMessage
+  | MemberRemovedMessage
+  | ActivityAckMessage
+  | KeepAlivePromptMessage
+  | KeepAliveClearedMessage
+  | LeaderGrantedMessage
+  | LeaderLostMessage
+  | LeaderChangedMessage
+  | TakeBackOfferedMessage
   | ErrorMessage;
 
 export type ServerMessageType = ServerMessage['type'];

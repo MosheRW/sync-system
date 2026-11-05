@@ -114,6 +114,7 @@ describe('automatic reconnect (AC26)', () => {
       participantId: 'p',
       joinMethods: ['A'],
       limits: { ...LIMITS, maxMessageBytes: 2 ** 53 },
+      defaultHandoff: 'auto',
     });
     expect(reconnecting(client).attempt).toBe(1);
     client.close();
@@ -318,6 +319,10 @@ describe('leader drop (#5 AC35, replaces #3 AC29)', () => {
     const creating = client.createGroup({});
     socket.receive({
       type: 'group.created',
+      handoff: 'auto',
+      displayName: 'Guest 1',
+      generated: true,
+      state: { blockList: [], locked: false, handoff: 'auto' },
       ...CREATED_FIELDS,
       token: 'h.p.s',
       reqId: socket.lastMessage().reqId,
@@ -370,6 +375,9 @@ describe('resume timeouts are not stable connections (#7 L4)', () => {
     const token = fakeToken({ gid: GROUP_ID, role: 'member' });
     socket.receive({
       type: 'group.joined',
+      displayName: 'Guest 1',
+      generated: true,
+      locked: false,
       reqId: socket.lastMessage().reqId,
       groupId: GROUP_ID,
       participantId: 'member-pid',
@@ -451,6 +459,9 @@ describe('resume timeouts are not stable connections (#7 L4)', () => {
     const socket = await reconnectAndResume(client);
     socket.receive({
       type: 'group.joined',
+      displayName: 'Guest 1',
+      generated: true,
+      locked: false,
       reqId: socket.lastMessage().reqId,
       groupId: GROUP_ID,
       participantId: 'member-pid',

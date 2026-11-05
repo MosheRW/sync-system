@@ -51,6 +51,10 @@ async function liveLeader(): Promise<{
   const creating = client.createGroup({});
   socket.receive({
     type: 'group.created',
+    handoff: 'auto',
+    displayName: 'Guest 1',
+    generated: true,
+    state: { blockList: [], locked: false, handoff: 'auto' },
     ...CREATED_FIELDS,
     reqId: socket.lastMessage().reqId,
     groupId: GID,
@@ -74,12 +78,8 @@ describe('block list API (#5 AC34, AC26)', () => {
     socket.receive({ type: 'blocklist.ack', reqId: sent.reqId });
     await expect(adding).resolves.toEqual([a, b]);
     await expect(client.getBlockList(GID)).resolves.toEqual([a, b]);
-
-    const removing = client.removeFromBlockList(GID, [a]);
-    await settle();
-    expect(socket.lastMessage()).toMatchObject({ type: 'blocklist.set', blockList: [b] });
-    socket.receive({ type: 'blocklist.ack', reqId: socket.lastMessage().reqId });
-    await expect(removing).resolves.toEqual([b]);
+    // The block list only grows; there is no way to unblock (#13 D5, Q-C).
+    expect('removeFromBlockList' in client).toBe(false);
     client.close();
   });
 

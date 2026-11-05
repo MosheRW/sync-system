@@ -111,7 +111,10 @@ The server loads its client apps from a JSON file at `SYNC_CONFIG_PATH`.
       "inactivityLimitMinutes": 20,
       "joinMethods": ["A", "D"],
       "qrTicketSeconds": 300,
-      "approvalTimeoutSeconds": 120
+      "approvalTimeoutSeconds": 120,
+      "disconnectGraceSeconds": 30,
+      "keepAliveCountdownSeconds": 60,
+      "defaultHandoff": "auto"
     }
   ]
 }
@@ -131,6 +134,9 @@ The server loads its client apps from a JSON file at `SYNC_CONFIG_PATH`.
 | `joinMethods`               | no       | `A`, `D` | Distinct letters `A`-`D`, each in `JOIN_METHODS_ALLOWED`. See [Joining](#joining-methods-a-to-d). |
 | `qrTicketSeconds`           | no       | 300      | Integer >= 30, <= `QR_TICKET_SECONDS_CEILING`. QR ticket life.                                    |
 | `approvalTimeoutSeconds`    | no       | 120      | Integer >= 15, <= `APPROVAL_TIMEOUT_SECONDS_CEILING`.                                             |
+| `disconnectGraceSeconds`    | no       | 30       | Integer >= 1, <= `DISCONNECT_GRACE_SECONDS_CEILING`. See [Timers](#timers).                       |
+| `keepAliveCountdownSeconds` | no       | 60       | Integer >= 1, <= `KEEP_ALIVE_COUNTDOWN_SECONDS_CEILING`, < `inactivityLimitMinutes` in seconds.   |
+| `defaultHandoff`            | no       | `auto`   | `auto` or `frozen`: the handoff mode of a group created without one.                              |
 
 - Unknown fields are rejected (catches typos).
 - `joinMethods` omitted means `["A", "D"]` intersected with
@@ -138,7 +144,9 @@ The server loads its client apps from a JSON file at `SYNC_CONFIG_PATH`.
   A listed method the env does not allow is a startup error naming the app,
   the field and the method; it is never dropped.
 - A value above its env ceiling is a startup error naming the app and field;
-  values are never clamped. An omitted value uses `min(default, ceiling)`.
+  values are never clamped. An omitted value uses `min(default, ceiling)`; an
+  omitted `keepAliveCountdownSeconds` is also at most half the inactivity
+  limit.
 - Any invalid config makes the server print `Config error: ...` and exit 1.
   Errors name the file, app index, namespace and field, and never print an API
   key (JSON syntax errors report only the line and column).
@@ -158,32 +166,39 @@ people to a group, and codes resolve only within their own app.
 Numeric variables must be positive integers; anything else (empty, `0`, `-1`,
 `1.5`, `abc`) is a startup error naming the variable. Unset means the default.
 
-| Variable                           | Default              | Purpose                                                                  |
-| ---------------------------------- | -------------------- | ------------------------------------------------------------------------ |
-| `SYNC_CONFIG_PATH`                 | `./config/apps.json` | Apps registry file (relative to the working directory).                  |
-| `PORT`                             | `8080`               | Listen port, 1-65535.                                                    |
-| `HOST`                             | `0.0.0.0`            | Bind address.                                                            |
-| `LOG_LEVEL`                        | `info`               | `fatal`, `error`, `warn`, `info`, `debug`, `trace` or `silent`.          |
-| `NODE_ENV`                         | unset                | The public dev API key is refused unless this is `development`/`test`.   |
-| `TOKEN_SECRET`                     | none                 | Token signing secret; see [Token secret](#token-secret). Never logged.   |
-| `TOKEN_SECRET_PREVIOUS`            | unset                | Old secret, verify only, during a rotation.                              |
-| `MAX_GROUP_SIZE_CEILING`           | `100`                | Ceiling for `maxGroupSize`.                                              |
-| `MAX_LEADER_UPDATE_RATE_CEILING`   | `10`                 | Ceiling for `maxLeaderUpdatesPerSecond`.                                 |
-| `MAX_MESSAGE_SIZE_CEILING`         | `16384`              | Ceiling for `maxMessageBytes` (bytes).                                   |
-| `MAX_APP_CONNECTIONS_CEILING`      | `10000`              | Ceiling for `maxConnections`. Must be <= `MAX_CONNECTIONS`.              |
-| `MAX_CONNECTIONS`                  | `10000`              | Concurrent WebSockets, pending and authenticated. Over it: HTTP 503.     |
-| `MAX_PENDING_HANDSHAKES`           | `1000`               | Sockets that have not sent hello yet. Must be <= `MAX_CONNECTIONS`.      |
-| `MAX_INBOUND_MESSAGES_PER_SECOND`  | `20`                 | Per-connection message rate. Must be > `MAX_LEADER_UPDATE_RATE_CEILING`. |
-| `MAX_INBOUND_BURST`                | `40`                 | Per-connection burst. Must be >= `MAX_INBOUND_MESSAGES_PER_SECOND`.      |
-| `MAX_BUFFERED_BYTES`               | `262144`             | Outbound buffer per socket before drop. >= 4 x msg ceiling and >= 45056. |
-| `MAX_SESSION_MINUTES_CEILING`      | `480`                | Ceiling for `maxSessionMinutes`.                                         |
-| `INACTIVITY_LIMIT_MINUTES_CEILING` | `60`                 | Ceiling for `inactivityLimitMinutes`.                                    |
-| `TOKEN_REFRESH_ACTIVITIES`         | `10`                 | Leader updates that allow a token refresh after the min interval.        |
-| `TOKEN_REFRESH_MIN_SECONDS`        | `60`                 | Min seconds between leader token refreshes. <= the max.                  |
-| `TOKEN_REFRESH_MAX_SECONDS`        | `300`                | Max seconds between refreshes (<= 3600); also the recovery slack.        |
-| `JOIN_METHODS_ALLOWED`             | `A,B,C,D`            | Join methods any app may use: distinct `A`-`D`, comma-separated.         |
-| `QR_TICKET_SECONDS_CEILING`        | `3600`               | Ceiling for `qrTicketSeconds`; 30-86400.                                 |
-| `APPROVAL_TIMEOUT_SECONDS_CEILING` | `600`                | Ceiling for `approvalTimeoutSeconds`; 15-3600.                           |
+| Variable                               | Default              | Purpose                                                                  |
+| -------------------------------------- | -------------------- | ------------------------------------------------------------------------ |
+| `SYNC_CONFIG_PATH`                     | `./config/apps.json` | Apps registry file (relative to the working directory).                  |
+| `PORT`                                 | `8080`               | Listen port, 1-65535.                                                    |
+| `HOST`                                 | `0.0.0.0`            | Bind address.                                                            |
+| `LOG_LEVEL`                            | `info`               | `fatal`, `error`, `warn`, `info`, `debug`, `trace` or `silent`.          |
+| `NODE_ENV`                             | unset                | The public dev API key is refused unless this is `development`/`test`.   |
+| `TOKEN_SECRET`                         | none                 | Token signing secret; see [Token secret](#token-secret). Never logged.   |
+| `TOKEN_SECRET_PREVIOUS`                | unset                | Old secret, verify only, during a rotation.                              |
+| `MAX_GROUP_SIZE_CEILING`               | `100`                | Ceiling for `maxGroupSize`.                                              |
+| `MAX_LEADER_UPDATE_RATE_CEILING`       | `10`                 | Ceiling for `maxLeaderUpdatesPerSecond`.                                 |
+| `MAX_MESSAGE_SIZE_CEILING`             | `16384`              | Ceiling for `maxMessageBytes` (bytes).                                   |
+| `MAX_APP_CONNECTIONS_CEILING`          | `10000`              | Ceiling for `maxConnections`. Must be <= `MAX_CONNECTIONS`.              |
+| `MAX_CONNECTIONS`                      | `10000`              | Concurrent WebSockets, pending and authenticated. Over it: HTTP 503.     |
+| `MAX_PENDING_HANDSHAKES`               | `1000`               | Sockets that have not sent hello yet. Must be <= `MAX_CONNECTIONS`.      |
+| `MAX_INBOUND_MESSAGES_PER_SECOND`      | `20`                 | Per-connection message rate. Must be > `MAX_LEADER_UPDATE_RATE_CEILING`. |
+| `MAX_INBOUND_BURST`                    | `40`                 | Per-connection burst. Must be >= `MAX_INBOUND_MESSAGES_PER_SECOND`.      |
+| `MAX_BUFFERED_BYTES`                   | `262144`             | Outbound buffer per socket before drop. See the rule below.              |
+| `MAX_SESSION_MINUTES_CEILING`          | `480`                | Ceiling for `maxSessionMinutes`.                                         |
+| `INACTIVITY_LIMIT_MINUTES_CEILING`     | `60`                 | Ceiling for `inactivityLimitMinutes`.                                    |
+| `TOKEN_REFRESH_ACTIVITIES`             | `10`                 | Leader updates that allow a token refresh after the min interval.        |
+| `TOKEN_REFRESH_MIN_SECONDS`            | `60`                 | Min seconds between leader token refreshes. <= the max.                  |
+| `TOKEN_REFRESH_MAX_SECONDS`            | `300`                | Max seconds between refreshes (<= 3600); also the recovery slack.        |
+| `JOIN_METHODS_ALLOWED`                 | `A,B,C,D`            | Join methods any app may use: distinct `A`-`D`, comma-separated.         |
+| `QR_TICKET_SECONDS_CEILING`            | `3600`               | Ceiling for `qrTicketSeconds`; 30-86400.                                 |
+| `APPROVAL_TIMEOUT_SECONDS_CEILING`     | `600`                | Ceiling for `approvalTimeoutSeconds`; 15-3600.                           |
+| `DISCONNECT_GRACE_SECONDS_CEILING`     | `120`                | Ceiling for `disconnectGraceSeconds`; 1-3600.                            |
+| `KEEP_ALIVE_COUNTDOWN_SECONDS_CEILING` | `120`                | Ceiling for `keepAliveCountdownSeconds`; 1-3600.                         |
+
+`MAX_BUFFERED_BYTES` must be at least `4 x MAX_MESSAGE_SIZE_CEILING`, at least
+45056 (the largest `tokens.result`), and at least the largest roster snapshot
+plus 32 KiB: `256 + (2 x MAX_GROUP_SIZE_CEILING + 2) x 320 + 32768` bytes
+(97 664 at the default ceiling of 100).
 
 Fixed limits: hello within 5 s, at most 32 queued messages per connection, JSON
 nesting at most 64 levels, heartbeat ping every 30 s, HTTP header timeout 10 s
@@ -292,6 +307,20 @@ Known limits and trade-offs:
 
 ### Upgrading
 
+- **Roles and lifecycle (#13):**
+  - Tokens use format 2 with a leadership `term` claim. Format 1 tokens are
+    `TOKEN_INVALID`; clients delete them and groups are created again.
+  - A group whose participants are all disconnected is **held** for
+    `disconnectGraceSeconds`, then **ends** (`empty`). It is no longer
+    dropped and recreated by the leader's token in the same server process;
+    recovery by token happens only after a server restart.
+  - `blocklist.set` and the block list sent with a leader's resume only
+    **add** IDs; nothing unblocks while the group is live. The client's
+    `removeFromBlockList` is gone.
+  - A removed participant's socket is closed with code 4004.
+  - `MAX_BUFFERED_BYTES` must fit the largest roster snapshot (see above):
+    with `MAX_GROUP_SIZE_CEILING=100`, at least 97 664.
+
 - **Join by group ID removed (#10):** `group.join` is gone (it gets
   `INVALID_MESSAGE`) and the client's `joinGroup()` with it. Join with
   `group.joinByCode` / `joinByCode()` or `group.joinByQr` / `joinByQr()`.
@@ -349,23 +378,97 @@ the price of a leak.
 Changing the HKDF label or salt in the code has the same effect as a new
 secret.
 
+### Timers
+
+| Timer        | App field                                   | Default | Env ceiling (default)                        | What happens                                                                                    |
+| ------------ | ------------------------------------------- | ------- | -------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| Grace        | `disconnectGraceSeconds`                    | 30 s    | `DISCONNECT_GRACE_SECONDS_CEILING` (120)     | After the leader disconnects or misses the keep-alive: the group pauses, then (auto) hands off. |
+| Inactivity   | `inactivityLimitMinutes`                    | 20 min  | `INACTIVITY_LIMIT_MINUTES_CEILING` (60)      | Leader inactivity before the group pauses; also the recovery window of a leader token.          |
+| Keep-alive   | `keepAliveCountdownSeconds`                 | 60 s    | `KEEP_ALIVE_COUNTDOWN_SECONDS_CEILING` (120) | The leader is prompted this long before the inactivity limit.                                   |
+| Max session  | `maxSessionMinutes`                         | 180 min | `MAX_SESSION_MINUTES_CEILING` (480)          | Every group ends with `max_session`, whoever leads and in every state.                          |
+| Handoff mode | `defaultHandoff` / `group.create` `handoff` | `auto`  | -                                            | `auto`: hand off after the grace; `frozen`: wait for the leader until the recovery bound.       |
+
+Durations go on the wire as remaining milliseconds (`graceMs`, `countdownMs`,
+`joinedAgoMs`), never as clock times, so client clocks do not matter.
+
+### Roles and group lifecycle
+
+- **Roles:** `leader`, one optional `vice-leader` (chosen by the leader from
+  the connected members with `vice.set`, cleared with `vice.clear`), and
+  `member`. Who leads is decided only by the live group record, never by a
+  token: every leader action is checked against it under the group lock, so
+  there are never two leaders. The vice has no leader powers and does not
+  see the codes; only the leader and the vice know who the vice is.
+- **Keep-alive:** any accepted leader action, position update,
+  `leader.activity` (no payload, for a private preview) or `keepalive.ack`
+  counts as activity. At the inactivity limit minus the countdown the leader
+  gets `keepalive.prompt`; activity answers it (`keepalive.cleared`).
+- **Pause and grace:** when the leader disconnects (others connected) or
+  misses the countdown, the group pauses: members get
+  `leader.offline {cause, graceMs?}`. The leader's return or next activity
+  ends the pause (`leader.online`).
+- **Handoff (`auto`):** when the grace ends with the leader still away, the
+  connected vice or else the earliest admitted connected member leads. It
+  gets `leader.granted` (a new leader token, the recovery state, the codes,
+  the roster and pending requests); the old leader, if connected, gets
+  `leader.lost` with a member token; everyone else gets `leader.changed` (no
+  IDs). With nobody eligible, and in `frozen` mode, the group stays paused
+  and ends with `leader_timeout` at the recovery bound.
+- **Escalation:** a leader that got the lead through a missed keep-alive and
+  misses its own ends the group with `inactivity` (no second handoff), unless
+  it acted once in between.
+- **Take-back:** the most recent displaced leader rejoins as a member with
+  its old token (`takeback.offered`) and may send `leader.takeBack` to swap
+  back (3 per group per minute). Leaving or being removed clears the offer.
+- **Lock:** `group.lock` / `group.unlock` stop all new joining by every method
+  and approvals with one `GROUP_LOCKED` answer; admitted members still
+  rejoin by token, and pending requests wait.
+- **Removal:** `member.remove` blocks a participant for the rest of the
+  session (connected or offline), sends it `group.ended removed`, closes its
+  socket with 4004, removes it from the roster and the vice slot, and rotates
+  every code and the QR ticket generation (`codes.updated member_removed`).
+  The block list only grows; at 256 IDs removals get `BLOCK_LIST_FULL`.
+- **Roster:** only the leader gets it (`roster.snapshot`, `roster.updated`,
+  `roster.removed`): ID, name, `generated`, role, connected flag and time
+  since joining. Members never get another participant's ID or name.
+- **Names:** `group.create`, the joins and `group.resume` take an optional
+  `displayName` under the strict #10 rule (1-32 characters after trimming;
+  no control, format, bidi, private-use or blank characters). Missing or
+  blank gets a unique `Guest N` with `generated: true` and `guestNumber`, so
+  apps can localize it. Names are plain text in memory only, never in tokens
+  or logs. **Render them as text, never as HTML, and show `generated` (or
+  the ID) so a chosen `Guest 3` cannot pass as a generated name.**
+- **Empty groups:** when nobody is connected any more, the group is held,
+  paused, for `disconnectGraceSeconds` (nobody new is admitted: the same
+  `GROUP_LOCKED` as a locked group; token resumes still work), then ends
+  (`empty`, logged only). A group that ended can't be recreated in the same
+  server process by any token: later resumes get `GROUP_ENDED` and
+  `tokens.check` says `ended`.
+- Limits per group and minute: 10 removals, 10 lock changes, 10 vice
+  changes, 3 take-backs, 12 `leader.activity` + `keepalive.ack` (the first
+  ack of a prompt is free). Refused requests spend nothing.
+
 ### Recovery and tokens
 
 The server still keeps nothing on disk; the leader's client is the group's
-database.
+database (block list, lock, vice and handoff mode travel with its token).
 
-- A leader disconnect **freezes** the group: members get `leader.offline` and
-  stay in it. The leader comes back with `group.resume` and its token (members
-  get `leader.online`; the server's position wins). A frozen group ends with
-  `leader_timeout` when `inactivityLimitMinutes` + `TOKEN_REFRESH_MAX_SECONDS`
-  have passed since the leader's last activity.
+- A leader disconnect **pauses** the group (see above). A paused group ends
+  with `leader_timeout` when `inactivityLimitMinutes` +
+  `TOKEN_REFRESH_MAX_SECONDS` have passed since the leader's last activity.
 - Every group ends with `max_session` at `maxSessionMinutes` after it was
   created, leader online or not.
-- A group nobody is connected to is dropped from memory (not ended). After a
-  restart, or later ("resume later"), the leader's `group.resume` with its
-  token **recreates** it with the same ID, creation time and leader, plus the
-  metadata, position and block list its client sends. Members that resumed
-  first wait (`group.waiting`) and are admitted automatically.
+- **After a server restart** only: the leader's `group.resume` with its
+  token **recreates** the group with the same ID, creation time and leader,
+  plus the metadata, position, block list, lock, vice and handoff mode its
+  client sends. Members that resumed first wait (`group.waiting`) and are
+  admitted automatically. If a later leader token of the same group (one
+  granted before the restart, still inside its window) arrives after a stale
+  one recreated the group, it **supersedes** it: its block list applies, no
+  code or QR ticket of the stale leader survives (the newer leader's codes
+  are kept only if they share nothing with the stale ones, else every code
+  and the ticket generation rotate), and people the stale leader admitted
+  are flagged `admittedSinceRecovery` in the roster.
 - The leader can `group.end` the group; a member can `group.leave`. Ended
   groups are remembered (as hashes) until their max-session deadline, so their
   tokens get `GROUP_ENDED`; a restart forgets that (accepted: the leader's
@@ -414,14 +517,27 @@ and the types are exported by `@sync-system/protocol`.
    the set. See [`docs/issues/5/architecture.md`](docs/issues/5/architecture.md)
    (section 4).
 6. `group.ended` reasons: `ended_by_leader`, `leader_timeout`, `max_session`,
-   `replaced` (the same participant resumed on another connection) and
-   `removed` (blocked).
+   `inactivity`, `replaced` (the same participant resumed on another
+   connection) and `removed` (blocked; the socket then closes with 4004).
+7. Roles and lifecycle (#13): leader requests `vice.set`, `vice.clear`
+   (reply `vice.updated`), `group.lock`, `group.unlock` (reply
+   `lock.changed`), `member.remove` (reply `member.removed`, then
+   `codes.updated`), `leader.activity`, `keepalive.ack` (reply
+   `activity.ack`); `leader.takeBack` (reply `leader.granted`). Events:
+   `roster.snapshot`, `roster.updated`, `roster.removed`, `vice.changed`,
+   `keepalive.prompt`, `keepalive.cleared`, `leader.granted`, `leader.lost`,
+   `leader.changed`, `takeback.offered`; `leader.offline` carries `cause`
+   and `graceMs`. `hello.ok` adds the lifecycle timers and
+   `defaultHandoff`. Tokens are format 2 (`term`). See
+   [`docs/issues/13/architecture.md`](docs/issues/13/architecture.md)
+   (section 5).
 
 Errors carry a stable `code` (`CODE_NOT_FOUND`, `DOOR_CODE_REQUIRED`,
 `DOOR_CODE_WRONG`, `JOIN_PAUSED`, `JOIN_DENIED`, `APPROVAL_TIMEOUT`,
 `APPROVAL_QUEUE_FULL`, `QR_INVALID`, `QR_EXPIRED`, `GROUP_FULL`, `NOT_LEADER`,
 `RATE_LIMITED`, `MESSAGE_TOO_LARGE`, `TOO_MANY_MESSAGES`, `TOKEN_INVALID`,
 `TOKEN_EXPIRED`, `GROUP_ENDED`, `PARTICIPANT_BLOCKED`, `LEADER_CANNOT_LEAVE`,
+`GROUP_LOCKED`, `NOT_ALLOWED`, `PARTICIPANT_NOT_FOUND`, `BLOCK_LIST_FULL`,
 ...). Every token failure gets the same `TOKEN_INVALID`, every unknown code
 the same `CODE_NOT_FOUND` and every bad ticket the same `QR_INVALID`, so
 errors reveal nothing about other groups or apps. A connection that floods messages gets
@@ -429,6 +545,35 @@ errors reveal nothing about other groups or apps. A connection that floods messa
 group).
 
 ### Deployment security
+
+- **Run one instance per token secret, and restart it as an operator
+  action.** The recovery and supersede rules assume one process at a time
+  on a keyring: stop the old instance before starting the new one; no
+  replicas or rolling deploys on one secret.
+- **Keep the clock right (NTP).** A server clock that steps back across a
+  restart can let a stale displaced leader keep the lead for good (the real
+  leader's token then looks granted after the restart), and can make the
+  server refuse recoveries (fail closed).
+- **Restart residual.** After a restart, a displaced leader whose token is
+  still inside its window (about 25 minutes by default) can recreate the
+  group before the real leader. Until the real leader returns and supersedes
+  it, it leads with its stale block list and codes: it can admit people
+  (also someone removed earlier, under a new identity, through the stale
+  codes), remove members, rotate codes, see the names of members who resume,
+  and end the group for good. People it admitted are flagged
+  `admittedSinceRecovery` after the supersede; review them.
+- **Two restarts in a row.** Two restarts within one leader's inactivity
+  limit plus `TOKEN_REFRESH_MAX_SECONDS` (about 25 minutes by default) can let
+  a stale line keep the lead for good if the real leader stays away the whole
+  time in between. Avoid restarting twice in quick succession while groups
+  are live (a deploy followed by a quick rollback is the realistic case).
+- **Recovery closure.** If the ended-groups memory (100 000 entries) fills
+  with groups recreated after a restart, recoveries of the app with the most
+  such entries are refused until their window passes (logged as
+  `ended_groups_recovery_closed`). Availability only, never control.
+- **Automatic handoff gives full control** to the successor (codes, block
+  list, removal, including of the original leader). For sensitive sessions
+  choose a vice-leader or the `frozen` mode.
 
 - **Use TLS.** Any deployment beyond your own machine must sit behind TLS
   termination so clients connect with `wss://`. Without it the API key, join
@@ -442,9 +587,14 @@ group).
   codes, QR tickets, codes blobs, join request IDs or raw group IDs
   (groups appear as a hash prefix). Keep it that way at the proxy too, or keep
   proxy logs short-lived.
-- **Tokens are bearer credentials.** Whoever holds a leader token can take the
-  lead back until the group ends. `wss://` keeps them off the wire; the
-  client README covers storing them.
+- **Tokens are bearer credentials.** Whoever holds the current leader's token
+  leads: resuming with it replaces the leader's connection. A displaced
+  leader's token only rejoins as a member; while it is the most recent
+  displaced leader (not removed, not left) it may take the lead back. After a
+  restart, a leader token still inside its window (about 25 minutes by
+  default) can recreate the group, and a later leader token of the same group
+  supersedes it (see "Recovery and tokens"). `wss://` keeps tokens off the
+  wire; the client README covers storing them.
 - **Never commit real registries or `.env` files**; mount the registry at
   runtime.
 

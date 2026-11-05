@@ -39,6 +39,9 @@ describe('member token rejoin (#5 AC17)', () => {
       groupId: group.groupId,
       participantId: group.memberIds[0],
       role: 'member',
+      displayName: expect.any(String) as string,
+      generated: true,
+      locked: false,
       metadata: { m: 1 },
       token: expect.any(String) as string,
       leaderOnline: true,
@@ -105,6 +108,10 @@ describe('leader return (#5 AC19)', () => {
       groupId: group.groupId,
       participantId: group.leaderId,
       role: 'leader',
+      displayName: expect.any(String) as string,
+      generated: true,
+      state: expect.any(Object) as object,
+      superseded: false,
       metadata: { m: 1 },
       hasPosition: true,
       position: 'server',
@@ -129,19 +136,33 @@ describe('leader return (#5 AC19)', () => {
     const group = await createGroupWithMembers(ts, 1);
     await group.leader.close();
     await group.members[0]!.next('leader.offline');
-    expect(scheduler.pending).toBe(2);
-    await resumeWith(ts, group.leaderToken);
+    // Max session, frozen end and the grace end (#13 6.4).
+    expect(scheduler.pending).toBe(3);
+    const { client: back } = await resumeWith(ts, group.leaderToken);
+    group.leader = back;
     await group.members[0]!.next('leader.online');
-    expect(scheduler.pending).toBe(1);
-    scheduler.advance(WINDOW + 1);
+    // Max session and the leader's keep-alive prompt (#13 6.3); no frozen end.
+    expect(scheduler.pending).toBe(2);
+    // The leader stays active, so no keep-alive pause comes in between (#13).
+    scheduler.advance(15 * MINUTE);
+    group.leader.send({ type: 'leader.activity' });
+    await group.leader.next('activity.ack');
+    scheduler.advance(WINDOW + 1 - 15 * MINUTE);
     await group.members[0]!.expectNoMessage(30);
   });
 
   it('records the return as leader activity (fresh lat)', async () => {
     const scheduler = new ManualScheduler();
-    ts = await startTestServer({ scheduler });
+    // Frozen mode (#13 AC21): in auto mode the lead would pass on after the
+    // 30 s grace, so a return 5 minutes later would not be a leader return.
+    ts = await startTestServer({
+      scheduler,
+      apps: [{ namespace: 'app-a', apiKey: KEY_A, defaultHandoff: 'frozen' }],
+    });
     const group = await createGroupWithMembers(ts, 1);
     await group.leader.close();
+    // The server has handled the close before the clock moves.
+    await group.members[0]!.next('leader.offline');
     scheduler.advance(5 * MINUTE);
     const { reply } = await resumeWith(ts, group.leaderToken);
     if (reply.type !== 'group.resumed') throw new Error('expected resumed');
@@ -228,7 +249,9 @@ describe('token rejections (#5 AC7, AC8, AC9, AC27)', () => {
       forge(claims, key, { header: headerSegment({ alg: 'none', typ: 'JWT' }) }),
       forge(claims, key, { algorithm: 'sha512' }),
       forge(claims, randomBytes(32)),
-      forge({ ...claims, v: 2 }, key),
+      forge({ ...claims, v: 1 }, key),
+      // #13 RC5: a format 1 token (no term) is invalid like any bad token.
+      forge({ ...claims, v: 1, term: undefined }, key),
       forge({ ...claims, role: 'admin' }, key),
       `${h}.${p}.${(s[0] === 'A' ? 'B' : 'A') + s.slice(1)}`,
       `${h}.${p}`,
@@ -265,7 +288,7 @@ describe('token rejections (#5 AC7, AC8, AC9, AC27)', () => {
     expect(cross.reply).toMatchObject({ code: 'TOKEN_INVALID' });
   });
 
-  it('refuses a leader token whose pid is not the group leader', async () => {
+  it('resumes a leader token whose pid is not the group leader as a member (#13 D4)', async () => {
     const tokenSecrets = secrets();
     ts = await startTestServer({ tokenSecrets });
     const group = await createGroupWithMembers(ts, 0);
@@ -278,15 +301,22 @@ describe('token rejections (#5 AC7, AC8, AC9, AC27)', () => {
       role: 'leader',
       groupCreatedAt: claims.gct,
       lastActivityAt: claims.lat,
+      term: claims.term,
       now: Date.now(),
     });
+    // The role comes from the live record: a leader token of someone else
+    // never leads (#13 D4, AC24); it rejoins as a member.
     const { reply } = await resumeWith(ts, impostor);
-    expect(reply).toMatchObject({ code: 'TOKEN_INVALID' });
+    expect(reply).toMatchObject({ type: 'group.joined', role: 'member' });
   });
 
   it('reports a leader token past the recovery window as TOKEN_EXPIRED (AC9)', async () => {
     const scheduler = new ManualScheduler();
-    ts = await startTestServer({ scheduler });
+    // Frozen mode (#13 AC21): the leader keeps the lead while away, as in #5.
+    ts = await startTestServer({
+      scheduler,
+      apps: [{ namespace: 'app-a', apiKey: KEY_A, defaultHandoff: 'frozen' }],
+    });
     const group = await createGroupWithMembers(ts, 1);
     // The group stays live through a member while the leader is gone; the
     // leader token itself has not been refreshed.
@@ -299,11 +329,13 @@ describe('token rejections (#5 AC7, AC8, AC9, AC27)', () => {
 
   it('reports TOKEN_EXPIRED one window after the last activity, and creates nothing', async () => {
     const scheduler = new ManualScheduler();
-    const store = new InMemoryGroupStore();
-    ts = await startTestServer({ scheduler, store });
+    const tokenSecrets = secrets();
+    ts = await startTestServer({ scheduler, tokenSecrets });
     const group = await createGroupWithMembers(ts, 0);
-    await group.leader.close();
-    await waitUntil(() => store.size === 0);
+    await ts.close();
+    // After a restart (#13 D15: in the same process the group ends instead).
+    const store = new InMemoryGroupStore();
+    ts = await startTestServer({ scheduler, tokenSecrets, store });
     scheduler.advance(WINDOW);
     const { reply } = await resumeWith(ts, group.leaderToken);
     expect(reply).toMatchObject({ code: 'TOKEN_EXPIRED', message: 'Token expired' });
@@ -312,16 +344,12 @@ describe('token rejections (#5 AC7, AC8, AC9, AC27)', () => {
 
   it('reports any token past the max session time as TOKEN_EXPIRED', async () => {
     const scheduler = new ManualScheduler();
-    const store = new InMemoryGroupStore();
-    ts = await startTestServer({
-      scheduler,
-      store,
-      apps: [{ namespace: 'app-a', apiKey: KEY_A, maxSessionMinutes: 5 }],
-    });
+    const tokenSecrets = secrets();
+    const apps = [{ namespace: 'app-a', apiKey: KEY_A, maxSessionMinutes: 5 }];
+    ts = await startTestServer({ scheduler, tokenSecrets, apps });
     const group = await createGroupWithMembers(ts, 1);
-    await group.members[0]!.close();
-    await group.leader.close();
-    await waitUntil(() => store.size === 0);
+    await ts.close();
+    ts = await startTestServer({ scheduler, tokenSecrets, apps });
     scheduler.advance(5 * MINUTE);
     expect((await resumeWith(ts, group.memberTokens[0])).reply).toMatchObject({
       code: 'TOKEN_EXPIRED',
@@ -367,6 +395,7 @@ describe('token rejections (#5 AC7, AC8, AC9, AC27)', () => {
       role: 'member',
       groupCreatedAt: claims.gct,
       lastActivityAt: claims.lat,
+      term: claims.term,
       now: Date.now(),
     });
     const { reply } = await resumeWith(ts, oldToken);

@@ -42,6 +42,7 @@ describe('README drift guard (AC31)', () => {
       'following',
       'leading',
       'leader_offline',
+      'leader_grace',
       'none',
     ]) {
       expect(readme, name).toContain(`\`${name}\``);
@@ -69,5 +70,13 @@ describe('README drift guard (AC31)', () => {
     ]) {
       expect(readme, text).toContain(text);
     }
+  });
+
+  it('states the #13 token and preview rules', () => {
+    const flat = readme.replace(/\s+/g, ' ');
+    // Before #13 a leader token could take the lead until the group ended.
+    expect(flat).not.toContain('take the lead until the group ends');
+    expect(flat).toContain("a displaced leader's token only rejoins as a member");
+    expect(flat).toContain('The preview ends by itself when the client stops leading');
   });
 });

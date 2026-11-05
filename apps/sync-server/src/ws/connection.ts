@@ -276,6 +276,11 @@ export class Connection implements HeartbeatTarget {
       deliver: (text) => {
         this.transmit(text);
       },
+      close: (code, reason) => {
+        if (this.closed || this.state === 'closing') return;
+        this.state = 'closing';
+        this.ws.close(code, reason);
+      },
       afterPending: (task) => {
         this.enqueue(() => {
           task();
@@ -306,7 +311,11 @@ export class Connection implements HeartbeatTarget {
         maxSessionMinutes: app.maxSessionMinutes,
         qrTicketSeconds: app.qrTicketSeconds,
         approvalTimeoutSeconds: app.approvalTimeoutSeconds,
+        inactivityLimitMinutes: app.inactivityLimitMinutes,
+        disconnectGraceSeconds: app.disconnectGraceSeconds,
+        keepAliveCountdownSeconds: app.keepAliveCountdownSeconds,
       },
+      defaultHandoff: app.defaultHandoff,
     });
   }
 
@@ -360,6 +369,26 @@ export class Connection implements HeartbeatTarget {
         break;
       case 'join.deny':
         response = await groups.denyJoin(session, message);
+        break;
+      case 'vice.set':
+        response = await groups.setVice(session, message);
+        break;
+      case 'vice.clear':
+        response = await groups.clearVice(session, message);
+        break;
+      case 'group.lock':
+      case 'group.unlock':
+        response = await groups.setLock(session, message);
+        break;
+      case 'member.remove':
+        response = await groups.removeMember(session, message);
+        break;
+      case 'leader.activity':
+      case 'keepalive.ack':
+        response = await groups.leaderActivity(session, message);
+        break;
+      case 'leader.takeBack':
+        response = await groups.takeBack(session, message);
         break;
     }
     this.reply(withReqId(response, message.reqId));
@@ -434,6 +463,11 @@ function canCarryReqId(message: ServerMessage): boolean {
     message.type === 'join.pending' ||
     message.type === 'join.decided' ||
     message.type === 'join.cancelled' ||
-    message.type === 'qr.ticket'
+    message.type === 'qr.ticket' ||
+    message.type === 'vice.updated' ||
+    message.type === 'lock.changed' ||
+    message.type === 'member.removed' ||
+    message.type === 'activity.ack' ||
+    message.type === 'leader.granted'
   );
 }

@@ -13,7 +13,12 @@ import {
 import { createGroupWithMembers } from './helpers/groups.js';
 import { ManualScheduler } from './helpers/manual-scheduler.js';
 import type { TestClient } from './helpers/test-client.js';
-import { KEY_B, type TestServer, startTestServer } from './helpers/test-server.js';
+import {
+  KEY_B,
+  RESTART_CLOCK_STEP_MS,
+  type TestServer,
+  startTestServer,
+} from './helpers/test-server.js';
 import { claimsOf, forge } from './helpers/tokens.js';
 import { waitUntil } from './helpers/wait.js';
 
@@ -47,22 +52,22 @@ async function check(client: TestClient, tokens: unknown[], reqId = 'c') {
 describe('tokens.check (#5 AC14)', () => {
   it('reports every status, one result per token, in order', async () => {
     const scheduler = new ManualScheduler();
-    const store = new InMemoryGroupStore();
-    ts = await startTestServer({ scheduler, store });
+    const tokenSecrets = secrets();
+    ts = await startTestServer({ scheduler, tokenSecrets });
 
-    // Expired: a dropped group whose leader window has passed.
+    // Expired: a group of the earlier process whose leader window has passed.
     const old = await createGroupWithMembers(ts, 0);
-    await old.leader.close();
-    await waitUntil(() => store.size === 0);
     scheduler.advance(WINDOW);
+    // Recoverable and waiting: a group of the earlier process (#13 D15:
+    // only a restart leaves a group recoverable).
+    const dropped = await createGroupWithMembers(ts, 1);
+    await ts.close();
 
+    const store = new InMemoryGroupStore();
+    ts = await startTestServer({ scheduler, tokenSecrets, store });
     const live = await createGroupWithMembers(ts, 2);
     live.leader.send({ type: 'blocklist.set', blockList: [live.memberIds[1]] });
     await live.leader.next('blocklist.ack');
-
-    const dropped = await createGroupWithMembers(ts, 1);
-    await dropped.members[0]!.close();
-    await dropped.leader.close();
 
     const ended = await createGroupWithMembers(ts, 0);
     ended.leader.send({ type: 'group.end' });
@@ -314,6 +319,8 @@ describe('secret rotation (#5 AC2)', () => {
     await ts.close();
     ts = await startTestServer({
       tokenSecrets: { current: fresh.current, previous: old.current, source: 'env' },
+      // A restart (#13 6.9 layer 2): a later second than the old tokens.
+      now: () => Date.now() + RESTART_CLOCK_STEP_MS,
     });
     const client = await ts.connectReady();
     const reply = await check(client, tokens);

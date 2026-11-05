@@ -128,3 +128,49 @@ describe('CI workflow (AC28, L1, L8)', () => {
     }
   });
 });
+
+describe('README documents the lifecycle (#13 AC4, AC38, RC14)', () => {
+  it('has one timers table with every timer, default and env ceiling', () => {
+    const readme = read('README.md');
+    const table = readme.slice(readme.indexOf('### Timers'), readme.indexOf('### Roles and'));
+    for (const text of [
+      'disconnectGraceSeconds',
+      'inactivityLimitMinutes',
+      'keepAliveCountdownSeconds',
+      'maxSessionMinutes',
+      'defaultHandoff',
+      'DISCONNECT_GRACE_SECONDS_CEILING',
+      'KEEP_ALIVE_COUNTDOWN_SECONDS_CEILING',
+    ]) {
+      expect(table, text).toContain(text);
+    }
+  });
+
+  it('states the name rule, the restart residuals and the operating assumptions', () => {
+    const readme = read('README.md');
+    for (const text of [
+      'Render them as text, never as HTML',
+      'One instance per token secret',
+      'NTP',
+      'Two restarts in a row',
+      'Restart residual',
+      'Recovery closure',
+      'Automatic handoff gives full control',
+    ]) {
+      expect(readme.toLowerCase(), text).toContain(text.toLowerCase());
+    }
+  });
+
+  it('states the token rules after #13: no lifelong take-back, supersede kills stale codes', () => {
+    const readme = read('README.md').replace(/\s+/g, ' ');
+    // Before #13 any leader token could take the lead back until the end.
+    expect(readme).not.toContain('can take the lead back until the group ends');
+    for (const text of [
+      "A displaced leader's token only rejoins as a member",
+      'most recent displaced leader',
+      'no code or QR ticket of the stale leader survives',
+    ]) {
+      expect(readme, text).toContain(text);
+    }
+  });
+});

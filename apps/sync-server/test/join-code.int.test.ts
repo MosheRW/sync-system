@@ -12,6 +12,8 @@ import { CodesBlobService } from '../src/tokens/codes-blob.js';
 import { CODES_BLOB_INFO_PREFIX, TokenKeyring } from '../src/tokens/token-keys.js';
 import { ScriptedRandom } from './helpers/codes.js';
 import { createGroupWithMembers } from './helpers/groups.js';
+import { expireHold } from './helpers/lifecycle.js';
+import { ManualScheduler } from './helpers/manual-scheduler.js';
 import type { TestClient } from './helpers/test-client.js';
 import {
   KEY_A,
@@ -20,7 +22,6 @@ import {
   type TestServer,
   startTestServer,
 } from './helpers/test-server.js';
-import { waitUntil } from './helpers/wait.js';
 
 const SECRET = Buffer.from('q9Zt2Lx7Vb4Nm1Rt6Yw0Ue5Io3AaKd8Fj2Hs7Gp1Wc=');
 const ALL: JoinMethod[] = ['A', 'B', 'C', 'D'];
@@ -167,7 +168,8 @@ describe('code uniqueness and release (#10 AC9, AC11)', () => {
   ] as const)('frees the codes of a group %s', async (_label, how) => {
     const random = new ScriptedRandom();
     const store = new InMemoryGroupStore();
-    const server = await start({ codeRandom: random.next, store });
+    const scheduler = new ManualScheduler();
+    const server = await start({ codeRandom: random.next, store, scheduler });
     const scripted = [7, 0, 0, 0, 0, 0, 0, 0, 0];
     random.queue(...scripted);
     const leader = await server.connectReady();
@@ -177,7 +179,8 @@ describe('code uniqueness and release (#10 AC9, AC11)', () => {
       await leader.next('group.ended');
     } else {
       await leader.close();
-      await waitUntil(() => store.size === 0);
+      // Held for the grace period, then gone (#13 Q-G).
+      await expireHold(scheduler, store, first.groupId);
     }
     random.queue(...scripted);
     const second = await create(await server.connectReady(), ['B', 'C']);
@@ -223,6 +226,9 @@ describe('join by group code and door code (#10 AC14, AC15)', () => {
       groupId: created.groupId,
       participantId: expect.stringMatching(PARTICIPANT_ID_PATTERN) as string,
       role: 'member',
+      displayName: expect.any(String) as string,
+      generated: true,
+      locked: false,
       metadata: { c: 1 },
       token: expect.any(String) as string,
       leaderOnline: true,
@@ -281,15 +287,14 @@ describe('join by alphanumeric code (#10 AC16)', () => {
     expect(reply).toMatchObject({ type: 'group.joined', groupId: created.groupId });
   });
 
-  it('accepts a valid display name on a direct join and ignores it', async () => {
+  it('uses the display name of a direct join as the member name (#13 AC35)', async () => {
     const server = await start();
     const { created } = await leaderOf(server, ['C']);
     const { reply } = await joinWith(server, {
       joinCode: created.codes.alphaCode,
-      displayName: 'Dana',
+      displayName: ' Dana ',
     });
-    expect(reply.type).toBe('group.joined');
-    expect(JSON.stringify(reply)).not.toContain('Dana');
+    expect(reply).toMatchObject({ type: 'group.joined', displayName: 'Dana', generated: false });
   });
 });
 
@@ -324,8 +329,6 @@ describe('normalization and validation (#10 AC12, AC20)', () => {
       { joinCode: '123456', doorCode: '12345' },
       { joinCode: '123456', doorCode: 'ABCDEF' },
       { joinCode: '123456', doorCode: '1'.repeat(33) },
-      { joinCode: '123456', displayName: '' },
-      { joinCode: '123456', displayName: '   ' },
       { joinCode: '123456', displayName: 'x'.repeat(33) },
       { joinCode: '123456', displayName: `a${bell}b` },
       { joinCode: '123456', displayName: `a${override}b` },

@@ -67,6 +67,8 @@ export interface SyncServerOptions {
    * tests inject one to force code collisions.
    */
   codeRandom?: RandomInt;
+  /** Cap of the ended-groups memory; defaults to MAX_ENDED_GROUPS. Tests lower it. */
+  endedGroupsCap?: number;
 }
 
 export interface SyncServer {
@@ -155,9 +157,11 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
   });
 
   const store = options.store ?? new InMemoryGroupStore();
-  const ended = new EndedGroups(now, logger);
+  const ended = new EndedGroups(now, logger, options.endedGroupsCap);
   let sweepTimer: NodeJS.Timeout | undefined;
-  const tokens = new TokenService(new TokenKeyring(tokenSecrets));
+  // Read once, before any token is issued (#13 6.9 layer 2, RC18).
+  const processStartedAt = scheduler.now();
+  const tokens = new TokenService(new TokenKeyring(tokenSecrets), processStartedAt);
   // One keyring per purpose, so the keys can never be mixed up (#10 R4).
   const qrTickets = new QrTicketService(
     new TokenKeyring(tokenSecrets, QR_TICKET_INFO_PREFIX),
@@ -177,6 +181,7 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
       maxMs: env.tokenRefreshMaxSeconds * 1000,
     },
     ended,
+    processStartedAt,
     qrTickets,
     codesBlobs,
     ...(options.codeRandom === undefined ? {} : { codeRandom: options.codeRandom }),

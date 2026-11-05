@@ -13,6 +13,7 @@ function session(id: string): Session & { received: string[] } {
     deliver: (text) => received.push(text),
     afterPending: (task) => task(),
     isOpen: () => true,
+    close: () => undefined,
   };
 }
 

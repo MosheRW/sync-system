@@ -27,6 +27,15 @@ export class FailingStore implements GroupStore {
     }
   }
 
+  async patch(
+    namespace: string,
+    id: string,
+    patch: Parameters<GroupStore['patch']>[2],
+  ): Promise<GroupRecord | undefined> {
+    this.check('patch');
+    return this.inner.patch(namespace, id, patch);
+  }
+
   async setCodes(
     namespace: string,
     id: string,

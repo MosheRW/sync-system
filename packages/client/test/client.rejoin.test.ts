@@ -52,6 +52,9 @@ async function member(storage: TokenStorage = memoryStorage()): Promise<Setup> {
   const token = fakeToken({ gid: GROUP_ID, role: 'member' });
   socket.receive({
     type: 'group.joined',
+    displayName: 'Guest 1',
+    generated: true,
+    locked: false,
     reqId: socket.lastMessage().reqId,
     groupId: GROUP_ID,
     participantId: 'member-pid',
@@ -73,6 +76,10 @@ async function leader(storage: TokenStorage = memoryStorage()): Promise<Setup> {
   const token = fakeToken({ gid: GROUP_ID });
   socket.receive({
     type: 'group.created',
+    handoff: 'auto',
+    displayName: 'Guest 1',
+    generated: true,
+    state: { blockList: [], locked: false, handoff: 'auto' },
     ...CREATED_FIELDS,
     reqId: socket.lastMessage().reqId,
     groupId: GROUP_ID,
@@ -137,6 +144,9 @@ describe('token rejoin after an unexpected drop (#5 AC35, AC36)', () => {
     const fresh = fakeToken({ gid: GROUP_ID, role: 'member' });
     next.receive({
       type: 'group.joined',
+      displayName: 'Guest 1',
+      generated: true,
+      locked: false,
       reqId: resume.reqId,
       groupId: GROUP_ID,
       participantId: 'member-pid',
@@ -186,9 +196,16 @@ describe('token rejoin after an unexpected drop (#5 AC35, AC36)', () => {
       blockList: [],
       // The codes blob from group.created goes back with the resume (#10 AC32).
       joinCodes: TEST_CODES.blob,
+      // The rest of the recovery state (#13 D13).
+      locked: false,
+      handoff: 'auto',
     });
     next.receive({
       type: 'group.resumed',
+      displayName: 'Guest 1',
+      generated: true,
+      state: { blockList: [], locked: false, handoff: 'auto' },
+      superseded: false,
       reqId: resume.reqId,
       groupId: GROUP_ID,
       participantId: 'leader-pid',
@@ -245,6 +262,9 @@ describe('token rejoin after an unexpected drop (#5 AC35, AC36)', () => {
     expect(rejoined).toEqual([]);
     next.receive({
       type: 'group.joined',
+      displayName: 'Guest 1',
+      generated: true,
+      locked: false,
       groupId: GROUP_ID,
       participantId: 'member-pid',
       role: 'member',
