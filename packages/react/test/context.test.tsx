@@ -36,6 +36,9 @@ const PUBLIC_HOOKS: Record<string, () => unknown> = {
   useViceLeader: () => api.useViceLeader(),
   useGroupLock: () => api.useGroupLock(),
   useMemberRemoval: () => api.useMemberRemoval(),
+  useKeepAlive: () => api.useKeepAlive(),
+  useLeadership: () => api.useLeadership(),
+  usePreview: () => api.usePreview(),
 };
 
 function Call({ use }: { use: () => unknown }): ReactNode {

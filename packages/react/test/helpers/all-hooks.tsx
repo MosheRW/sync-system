@@ -34,6 +34,9 @@ export function AllHooks(): ReactNode {
   const vice = api.useViceLeader();
   const lock = api.useGroupLock();
   const removal = api.useMemberRemoval();
+  const keepAlive = api.useKeepAlive();
+  const leadership = api.useLeadership();
+  const preview = api.usePreview();
   const summary = {
     status,
     group: snapshot.group === null ? 'none' : snapshot.group.status,
@@ -58,6 +61,9 @@ export function AllHooks(): ReactNode {
     vice: vice.isVice,
     locked: lock.locked,
     blocked: removal.blockList.length,
+    prompt: keepAlive.prompt !== null,
+    role: leadership.role,
+    previewing: preview.active,
   };
   return (
     <div>

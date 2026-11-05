@@ -29,6 +29,7 @@ export type { StoredGroups, StoredGroupsOptions } from './hooks/stored-groups.js
 export {
   useGroupLock,
   useJoinRequests,
+  useKeepAlive,
   useLeaderCodes,
   useMemberRemoval,
   useQrTicket,
@@ -38,12 +39,17 @@ export {
 export type {
   GroupLock,
   JoinRequests,
+  KeepAlive,
   LeaderCodes,
   MemberRemoval,
   QrTicketHook,
   QrTicketOptions,
   ViceLeader,
 } from './hooks/leader.js';
+export { useLeadership } from './hooks/leadership.js';
+export type { Leadership } from './hooks/leadership.js';
+export { usePreview } from './hooks/preview.js';
+export type { Preview } from './hooks/preview.js';
 export { QrTicket } from './components/qr-ticket.js';
 export type { QrTicketProps } from './components/qr-ticket.js';
 export { ConnectionIndicator } from './components/connection-indicator.js';

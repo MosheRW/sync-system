@@ -1,5 +1,11 @@
 'use client';
-import type { JoinCodes, JoinRequest, LeaderState, RosterEntry } from '@sync-system/client';
+import type {
+  JoinCodes,
+  JoinRequest,
+  KeepAliveEvent,
+  LeaderState,
+  RosterEntry,
+} from '@sync-system/client';
 import { useCallback, useEffect, useMemo } from 'react';
 import { useStoreAction } from '../action.js';
 import { useSyncStore } from '../context.js';
@@ -252,4 +258,26 @@ export function useMemberRemoval(): MemberRemoval {
     () => Object.freeze({ blockList, remove, addToBlockList }),
     [blockList, remove, addToBlockList],
   );
+}
+
+const pickKeepAlive = (state: SyncState): KeepAliveEvent | null => state.keepAlive;
+
+export interface KeepAlive {
+  /**
+   * The keep-alive prompt while leading (answer before `deadlineAt`, local
+   * epoch ms), or null. Cleared by an answer, any counted activity, or when
+   * this client stops leading.
+   */
+  readonly prompt: KeepAliveEvent | null;
+  /** Answers the prompt (core `answerKeepAlive`). */
+  readonly answer: ActionState<[], void>;
+}
+
+/** The leader's keep-alive prompt and its answer (AC21). */
+export function useKeepAlive(): KeepAlive {
+  const store = useSyncStore('useKeepAlive');
+  const lead = useStoreSelector(store, pickLead, same);
+  const prompt = useStoreSelector(store, pickKeepAlive, same);
+  const answer = useLeaderAction(store, lead, (client) => client.answerKeepAlive());
+  return useMemo(() => Object.freeze({ prompt, answer }), [prompt, answer]);
 }
