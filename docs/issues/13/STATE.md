@@ -1,6 +1,6 @@
 # State: #13 feat: roles, timers and group lifecycle (PRD item 5)
 - Path: full
-- Phase: implementation
+- Phase: implementation (done; PR ready for review)
 - Branch: feat/13-roles-lifecycle
 - PR: #14 (draft)
 - Plan approved by user: yes (Gate 2, 2026-11-04)
@@ -35,11 +35,13 @@
 - RC18 (L11): `iat` floor at process start in 2a (it needs
   `processStartedAt`); `recoveredAt = max(now, claims.term + 1)` in 2a, where
   `recoveredAt` is introduced; tests in 2a and 13.
-- RC19 (L12): 2a (the re-check guards every pause and end on a socket close).
+- RC19 (L12): 2 (the re-check in `disconnect`) and 2a (the empty end refuses
+  with anyone attached; race test with a gated store).
 - RC20 (M5): 2a (namespace with most guarded entries; recreating-resume
   budget per connection).
 - RC21 (Q-G): new chunk 10a after the handoff chunk (it needs the grace
-  config of 3, `GROUP_LOCKED` of 6, the pause of 9 and the handoff of 10).
+  config of 3, `GROUP_LOCKED` of 6, the pause of 9 and the handoff of 10);
+  the "supersede inside the hold" test is in 13 (`restart-handoff.int`).
 - 5.4 wording fix (refresh issues a new `iat`; only `resign` keeps it):
   architecture 5.4 corrected; the code keeps the refresher on `issue`
   (`sendRefreshedToken`).
@@ -67,6 +69,30 @@
   (AC14, AC19, AC21, AC26, AC27, AC37, AC45, decision 6); rescope decision
   recorded 2026-11-04.
 ## Deviations from plan
+- Implementation (engineer):
+  - Commits carry `Refs: #13` and no Co-Authored-By trailers, as the
+    orchestrator instructed for this run.
+  - An omitted `keepAliveCountdownSeconds` takes min(60, ceiling, half the
+    app's inactivity limit), so apps with a short inactivity limit still
+    start; a configured value not below the limit is a startup error (AC2).
+  - Q-A applied to every removal path, not only `member.remove`: a
+    `blocklist.set` or leader-return union and supersede step 1 also detach
+    with `group.ended removed` and close 4004 (one `detachRemoved`).
+  - `position.update`: the size check runs under the lock after the leader
+    check (same error order as before); a parked or pending session now gets
+    NOT_LEADER for it, like every leader action (D1, section 7).
+  - A leader-return block list whose union passes 256 makes the resume answer
+    BLOCK_LIST_FULL (Q-C: never truncate).
+  - Supersede: a requester's codes blob is adopted only with the group's
+    exact method set; otherwise codes and ticket generation rotate.
+  - Client: the preview state is read with `client.preview.getState()`, not
+    in the snapshot; `ConnectedInfo` does not expose `defaultHandoff`.
+  - Tests: `TestClient` keeps roster and keep-alive frames in side queues;
+    simulated restarts step the clock 1.5 s; #5 tests of frozen behaviour run
+    in `frozen` mode; tests of emptied groups let the hold run out
+    (`expireHold`, or a 1 s grace on a real clock).
+  - Extra commits fixing CI-only test timing (3facc00, 98c11e5, 8919655) and
+    a failing pushed chunk (3af0075, `client.preview` as a getter).
 - Board: `.claude/github-project.env` had an empty `GH_PROJECT_NUMBER`; the card was added to project 8 ("sync system") with a temporary config copy. Restored to 8 on this branch in 8880f2d.
 - Plan revision 1 (after security round 1): H1 closed in architecture.md 6.6
   with `processStartedAt`, `record.recoveredTerm` and a new token claim `rt`
