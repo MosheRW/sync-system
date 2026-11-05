@@ -2,7 +2,7 @@
 - Path: full
 - Phase: architecture
 - Branch: feat/19-reading-app-content
-- PR: none
+- PR: #20
 - Plan approved by user: no
 - Security-sensitive: yes
 - Review rounds: 0
