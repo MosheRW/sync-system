@@ -7,7 +7,7 @@
 - Security-sensitive: yes
 - Review rounds: 1
 - Spec approved at Gate 1: yes
-- Last updated by: qa
+- Last updated by: engineer
 ## Model log
 - pm groom: sonnet (default) → DONE
 - pm update-spec: sonnet (default) → DONE
@@ -19,6 +19,8 @@
 - security plan: opus (rule) → PASS
 - engineer implement: opus (Implementer model line) → DONE
 - qa validate: opus (NEXT_MODEL) → FAIL
+- security code (round 1): opus (rule) → PASS
+- engineer fix (round 1): opus (rule) → DONE
 ## Gate 2 decisions (2026-11-05)
 - ADRs 0001-0006: recommended option accepted for each (0005 E1 escaping wording fixed per security.md F5).
 - Q2: AC32-AC35 kept. Q3: `different-content` -> block. Q4: malformed leader metadata -> `unsupported-schema` / block.
@@ -43,12 +45,21 @@
 - Swipes are recognised for touch and pen pointers only (a mouse drag selects text).
 - Test file names differ slightly from section 8.1 (`app.test.tsx`, `status-screens.test.tsx`, `boundaries.node.test.ts`, `readme.node.test.ts`, `build-output.node.test.ts`); coverage is as listed.
 - Chunk 4 was pushed with a lint error (unneeded type assertions in a test); fixed in the follow-up commit `fix(reader): drop unneeded type assertions in fingerprint test`.
+- File layout differs slightly from architecture.md section 4 (QA N6, no behaviour impact): `PageView` lives in `ContentBlock.tsx`, `PageProgress` in `PageNav.tsx`, `LibraryItem` in `LibraryScreen.tsx`, and `boot()` doesn't set `document.title` (each screen sets it).
+- Fix round 1 (QA N5): the `mixed-en-he` auto block was English apart from its first word, so instead of only tagging it `he` its text is now Hebrew (it still starts with Hebrew and resolves rtl). Both mixed samples have new fingerprints; no test pinned them.
+- Fix round 1 (QA N3): the 1-second timeout uses a separate message `reasonTimeoutOne` rather than a plural helper.
 - Low advisories: F7 (length check before regex), F8 (lone surrogates refused + README note), F9 (production warning + README), F11 (compose `read_only`, `cap_drop`, `no-new-privileges`, `restart`), F12 (README note) done. F10: HSTS documented for the proxy; Trusted Types not added (still open).
 ## QA verdict (round 1): FAIL
 - 1 blocking finding: swipes are only detected over the article text, not the whole content region, so a swipe below the text on short pages does nothing (see the PR #20 QA comment).
 - Checks: lint, typecheck, test (reader 500), build, audit, compose config/build/up: pass. CI: pass. AC1-AC41 (AC9 removed): all met; AC13 met with finding 1.
 - Headless Chrome (production server, preview, dev, container): 0 CSP violations, proven with a positive control. Not verified: real phone, Safari/Firefox, screen readers, visual bidi by eye, native-speaker review of `he.ts`.
 - Non-blocking notes N1-N6 in the comment (favicon 404, stale PR body, Hebrew plural for seconds, library h1 outside main, sample auto-block lang, file layout).
+## Fix round 1
+- QA 1 (blocking): swipe listeners and `touch-action: pan-y pinch-zoom` moved from `<article>` to `<main>`; tests for a swipe outside the text and for a mouse drag there.
+- QA N1: `public/favicon.svg` plus `<link rel="icon">` (same origin, CSP `img-src 'self'`).
+- QA N3: Hebrew singular for a 1-second timeout. QA N4: library `<h1>` inside `<main>`. QA N5: sample auto blocks carry their own `lang`.
+- Security A2: `**/dist-server` in `.dockerignore`. Security A1 (Trusted Types) left for the user at Gate 3.
+- Checks after the fixes: `pnpm lint` (eslint + prettier), `pnpm typecheck`, `pnpm test` (reader: 504 tests), `pnpm build`: pass.
 ## Verification notes
 - `pnpm audit --audit-level=high`, `pnpm lint`, `pnpm typecheck`, `pnpm test` (reader: 500 tests), `pnpm build`: pass.
 - `docker compose config`, `docker compose build reader` and `sync-server`: pass. `docker compose up reader`: healthy, `/`, `/library`, `/health` 200; `READER_ENTRY=x` exits 1 with `Config error: ...`. Runtime image: `/app` root-owned, `USER node`, `node_modules` = zod only, no source maps.
