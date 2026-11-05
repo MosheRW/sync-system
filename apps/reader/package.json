@@ -6,9 +6,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "vite build && tsc -p tsconfig.server.json",
     "preview": "vite preview",
-    "typecheck": "tsc -p tsconfig.json",
+    "start": "node dist-server/server/main.js",
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.server.json --noEmit",
     "test": "vitest run"
   },
   "dependencies": {

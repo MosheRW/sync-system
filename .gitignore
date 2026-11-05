@@ -9,3 +9,4 @@ coverage
 config/*.json
 !config/apps.example.json
 !config/apps.dev.json
+dist-server

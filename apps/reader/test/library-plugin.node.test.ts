@@ -124,8 +124,10 @@ describe('dev and preview servers check the config (AC30)', () => {
       contentDir: join(fixtures, 'library-valid'),
       env: { READER_ENTRY: 'nope' },
     });
-    const hook = plugin.configurePreviewServer as () => void;
-    expect(() => hook()).toThrow(/READER_ENTRY "nope"/);
+    const hook = plugin.configurePreviewServer as (server: unknown) => void;
+    expect(() => hook({ config: { root: '.', build: { outDir: 'dist' } } })).toThrow(
+      /READER_ENTRY "nope"/,
+    );
   });
 });
 

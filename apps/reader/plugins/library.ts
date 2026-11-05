@@ -1,8 +1,11 @@
 import { readFileSync, readdirSync } from 'node:fs';
+import type { ServerResponse } from 'node:http';
 import { join, relative, sep } from 'node:path';
 import type { Plugin } from 'vite';
 import { ConfigError } from '../src/config/config-error.js';
 import { type EnvSource, type ReaderConfig, parseReaderConfig } from '../src/config/schema.js';
+import { securityHeaders } from '../server/headers.js';
+import { renderIndexHtml } from '../server/html.js';
 import type { ContentError } from '../src/content/errors.js';
 import { parseContentText } from '../src/content/parse.js';
 import { documentDir } from '../src/direction/effective.js';
@@ -168,8 +171,35 @@ export function readerLibrary(options: ReaderLibraryOptions): Plugin {
         source: `${JSON.stringify(getIndex().entries, null, 2)}\n`,
       });
     },
-    configurePreviewServer() {
-      loadDevConfig(options.env ?? process.env, getIndex());
+    // Dev only (ctx.server is unset in a build): the built index.html keeps
+    // the placeholder for the production server to fill in.
+    transformIndexHtml: {
+      order: 'pre',
+      handler(html, ctx) {
+        if (!ctx.server) return html;
+        return renderIndexHtml(html, loadDevConfig(options.env ?? process.env, getIndex()));
+      },
+    },
+    // `vite preview` serves the built files; inject the config and send the
+    // production headers for the two HTML routes, like the reader server.
+    configurePreviewServer(server) {
+      const config = loadDevConfig(options.env ?? process.env, getIndex());
+      const outDir = join(server.config.root, server.config.build.outDir);
+      server.middlewares.use((req, res: ServerResponse, next) => {
+        const path = (req.url ?? '/').split('?')[0];
+        const isIndex = path === '/' || (path === '/library' && config.library === 'on');
+        if (req.method !== 'GET' || !isIndex) {
+          next();
+          return;
+        }
+        const html = renderIndexHtml(readFileSync(join(outDir, 'index.html'), 'utf8'), config);
+        for (const [name, value] of Object.entries(securityHeaders(config.srcOrigins))) {
+          res.setHeader(name, value);
+        }
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.end(html);
+      });
     },
     configureServer(server) {
       loadDevConfig(options.env ?? process.env, getIndex());

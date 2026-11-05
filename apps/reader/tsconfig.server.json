@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // Node only: no DOM types, so a browser global in the server or in the
+    // shared src/ modules it imports fails the build.
+    "lib": ["ES2023"],
+    "types": ["node"],
+    "customConditions": [],
+    "rootDir": ".",
+    "outDir": "dist-server",
+    "declaration": false,
+    "sourceMap": false
+  },
+  "include": ["server"]
+}
