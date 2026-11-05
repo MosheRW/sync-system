@@ -3,6 +3,19 @@
 
 export { SyncProvider } from './provider.js';
 export type { SyncProviderProps } from './provider.js';
+export { useSyncSelector, useSyncSnapshot } from './selector.js';
+export {
+  useConnection,
+  useSyncClient,
+  useSyncIndicator,
+  useUpdateRequired,
+} from './hooks/connection.js';
+export type { Connection } from './hooks/connection.js';
+export { ConnectionIndicator } from './components/connection-indicator.js';
+export type {
+  ConnectionIndicatorProps,
+  ConnectionIndicatorRenderProps,
+} from './components/connection-indicator.js';
 export type {
   ActionResult,
   ActionState,

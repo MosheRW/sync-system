@@ -9,7 +9,14 @@ afterEach(() => {
 });
 
 /** Every public hook: name -> a call with valid arguments. Extended with each chunk. */
-const PUBLIC_HOOKS: Record<string, () => unknown> = {};
+const PUBLIC_HOOKS: Record<string, () => unknown> = {
+  useSyncSnapshot: () => api.useSyncSnapshot(),
+  useSyncSelector: () => api.useSyncSelector((s) => s.connection),
+  useConnection: () => api.useConnection(),
+  useSyncIndicator: () => api.useSyncIndicator(),
+  useUpdateRequired: () => api.useUpdateRequired(),
+  useSyncClient: () => api.useSyncClient(),
+};
 
 function Call({ use }: { use: () => unknown }): ReactNode {
   use();
