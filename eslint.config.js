@@ -6,7 +6,7 @@ export default tseslint.config(
   { ignores: ['**/dist/**', '**/coverage/**', '**/node_modules/**', '.claude/**'] },
   js.configs.recommended,
   {
-    files: ['apps/*/**/*.ts', 'packages/*/**/*.ts'],
+    files: ['apps/*/**/*.{ts,tsx}', 'packages/*/**/*.{ts,tsx}'],
     extends: [...tseslint.configs.recommendedTypeChecked],
     languageOptions: {
       parserOptions: {
@@ -25,7 +25,7 @@ export default tseslint.config(
   {
     // The client runs in browsers, Node and SSR: no console (AC32), no Node or
     // framework modules (AC1), no browser globals read directly (AC7).
-    files: ['packages/client/src/**/*.ts'],
+    files: ['packages/client/src/**/*.{ts,tsx}'],
     rules: {
       'no-console': 'error',
       'no-restricted-imports': [
@@ -36,6 +36,38 @@ export default tseslint.config(
         },
       ],
       'no-restricted-globals': ['error', 'window', 'document', 'navigator', 'localStorage'],
+    },
+  },
+  {
+    // The React package (#15): no console or logger (AC27), no Node, ws, Next,
+    // react-dom or server modules (AC2, Q3), no browser globals read directly
+    // and no own connections or URL handling (L3, R10). host.ts is the only
+    // globalThis reader.
+    files: ['packages/react/src/**/*.{ts,tsx}'],
+    rules: {
+      'no-console': 'error',
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: ['ws', 'next', 'react-dom', '@sync-system/server'],
+          patterns: ['node:*', 'next/*', 'react-dom/*', '@sync-system/server/*'],
+        },
+      ],
+      'no-restricted-globals': [
+        'error',
+        'window',
+        'document',
+        'navigator',
+        'localStorage',
+        'sessionStorage',
+        'indexedDB',
+        'location',
+        'history',
+        'console',
+        'WebSocket',
+        'fetch',
+        'XMLHttpRequest',
+      ],
     },
   },
   prettier,
