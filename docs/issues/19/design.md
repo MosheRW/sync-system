@@ -1,8 +1,10 @@
 # Design: #19 reading app content, text direction (RTL) and content fingerprint
 
 Scope: item 7 only. This covers the reading screen, page navigation and its
-mirroring, interface vs content direction, mixed-direction blocks, and the
-loading / error / blocked states that item 7 itself produces.
+mirroring, interface vs content direction, mixed-direction blocks, the
+loading / error / blocked states that item 7 itself produces, and (added
+after the post-design decisions, AC24-AC35) the library page, the "book not
+found" and "no book selected" screens, and single-book mode (section 8a).
 Not designed here (item 8): join flow, code/QR, approval, connection indicator,
 leader views, follower "jump" prompt, late-joiner countdown, and the
 content-mismatch warn/block screens. The layout reserves slots for them (see
@@ -32,8 +34,9 @@ text dominates.
 ## 2. Flows
 
 ### Flow A: open content and read (happy path)
-1. App starts with a content source (bundled sample or URL; how the source is
-   chosen is the architect's call, see Open questions).
+1. The URL picks the content (AC25): `?book=<contentId>` for a bundled book,
+   `?src=<url>` for fetched content; or the reader arrives from the library
+   (Flow F). Single-book mode ignores the URL (Flow E).
 2. Loader runs. Bundled content: no visible loading state in practice.
    Fetched content: loading state (see state table; shown only after 300 ms).
 3. Validation and schema-version check pass; fingerprint is computed.
@@ -54,14 +57,37 @@ text dominates.
    not a valid version / outside the supported range.
 4. Blocked state for the specific reason. Nothing from the file renders
    (no partial pages, no title from the file).
-5. Only exit: **Go back** if the app has a previous screen (for example a
-   content list or item 8's join flow); otherwise no action.
+5. Only exit: **Back to library** (AC31) when the library is enabled; it is a
+   real link to the library page, not browser history. Otherwise no action is
+   shown (single-book mode, or library not enabled).
 
 ### Flow D: mismatch (logic only in item 7)
 Item 7 returns `match | different-content | different-version |
 unsupported-schema` and the outcome `warn | block`. Item 8 designs the screens.
 The only item-7 UI rule: when the outcome is `block` for the *local* file's own
 schema, Flow C's "unsupported schema" state applies (AC16 = AC3).
+
+### Flow E: entry resolution (AC25, AC27-AC29)
+Config (env, validated at startup, AC30) decides what happens when the URL
+does not name a book. Full table in section 8a. In short:
+1. Single-book mode: URL parameters are ignored without any message; the one
+   configured book opens (Flow A). No library, no back links, no not-found
+   screens.
+2. `?book=<id>` known: reading screen (bundled, so no loading state).
+3. `?book=<id>` unknown: "Book not found" screen (AC28), with **Go to
+   library** only when the library is enabled.
+4. `?src=<url>`: loader (Flow A, B or C).
+5. No parameter: per config, library page, "No book selected" error page, or
+   the default book.
+
+### Flow F: library (AC26)
+1. Reader opens the library page (entry per Flow E, or from a Back to library
+   link).
+2. Sees a list of bundled books; each shows its title and, if known, language.
+3. Activates a book: opens its own reading page (`?book=<contentId>`), Flow A.
+4. The reading page has no way to switch books (AC24). To pick another book the
+   reader uses the browser back button or the URL. No library link in the
+   reading header (see Open questions 1).
 
 ## 3. Screens and components
 
@@ -75,6 +101,12 @@ schema, Flow C's "unsupported schema" state applies (AC16 = AC3).
 | `PageProgress` | new | Thin bar inside `PageNav` |
 | `StatusScreen` | new | Shared layout for loading, fetch failure, blocked states |
 | `LiveAnnouncer` | new | Single polite live region for page announcements |
+| `LibraryScreen` | new | Heading and list of books (section 8a) |
+| `LibraryItem` | new | One link row: isolated title, language line, end chevron |
+| `NoticeBar` | new | Dismissible `role="status"` message under the header (only for "unknown book, opening default", section 8a) |
+
+The "book not found", "no book selected" and "empty library" screens reuse
+`StatusScreen`; no new layout.
 
 Nothing to reuse: `apps/` has only `sync-server`; `packages/react` has hooks,
 no visual components.
@@ -123,6 +155,13 @@ The same screen for an **RTL document** (nav mirrored, text right-aligned):
 - Header and nav bar are fixed (always visible). Auto-hiding chrome is **not**
   used in v1: item 8 will put the connection indicator in the header, and the
   PRD wants sync status visible at a glance.
+- **No book switcher (AC24).** `ReaderHeader` holds only: the document title
+  (plain text, not a link, button or menu), the page counter, and the reserved
+  item-8 slot. There is no book picker, dropdown, tab bar or library link on
+  the reading screen. Each reading page behaves as if that book were the only
+  one.
+- Reload returns to page 1 (AC35): no position is stored and the URL carries
+  no page number. No "resume" prompt.
 - Turning a page resets the content region's scroll to the top.
 - Text is selectable. Text size follows the browser / OS setting (rem units);
   layout must survive 200 % zoom with no horizontal scrolling of the text
@@ -218,16 +257,25 @@ direction. They never show text from the file.
   Unicode bidi algorithm; authors who need fine control use Unicode isolates
   (FSI/PDI) or marks (LRM/RLM) in the text. There are no inline spans in schema
   v1. The README (AC22) should say this.
-- **Whitespace**: block text is rendered as plain text (AC4) with
-  `white-space: pre-line` (**proposal**) so authored line breaks inside a
-  block show, while runs of spaces collapse. The architect confirms whether
-  `\n` inside a block is meaningful in schema v1.
+- **Whitespace and line breaks (AC33, decided)**: block text is rendered as
+  plain text (AC4) with `white-space: pre-line`. Each `\n` in the text is a
+  visible line break (poetry, addresses); `\r\n` is treated as `\n`; runs of
+  spaces collapse; spaces at line starts and ends are dropped. Consecutive
+  `\n\n` shows a blank line, as authored. Every line follows the block's own
+  direction and alignment (no hanging indent). The line break stays inside one
+  block element, so it is not a new block gap (`--space-4` applies between
+  blocks only) and a screen reader reads it as one block. Titles (header,
+  library) are *not* pre-line: line breaks in a `title` collapse to spaces.
 - **Sample content for tests (AC14, AC20)** should include: Hebrew paragraph
   ending in `.` and `?`; Hebrew paragraph with an embedded English phrase and a
   number; an English block (`dir: ltr`) inside the Hebrew document; an `auto`
   block starting with English inside an RTL page; an `auto` block of only
   digits and punctuation (`"1948 - 2024."`) to prove the fallback; an Arabic
-  block; the reverse set in the English document.
+  block; the reverse set in the English document; a multi-line poem block (`\n`
+  inside the text) in each direction. For the library (AC26): a Hebrew-titled
+  RTL book, an English-titled LTR book, an Arabic-titled book, a book with no
+  `title` (falls back to its content ID), and an English-document book with a
+  Hebrew title to check isolation.
 
 ## 8. States
 
@@ -250,15 +298,15 @@ file content beyond the typed reason and numbers.
 
 | State | Trigger | Heading | Body | Action | Details (collapsed) |
 |---|---|---|---|---|---|
-| Loading | loader running; shown after 300 ms | (none, spinner + text) "Loading…" | after 8 s: "Still loading. This can take a moment on a slow connection." | none | none |
+| Loading | loader running; shown after 300 ms | (none, spinner + text) "Loading…" | after 8 s: "Still loading. This can take a moment on a slow connection." (skipped if the configured timeout is 8 s or less) | none | none |
 | Fetch failure: network | network error | "Can't load this text" | "Check your connection, then try again." | **Try again** (primary) | `Reason: network error` |
 | Fetch failure: HTTP | non-2xx | "Can't load this text" | "The server didn't send it. Try again in a moment." | **Try again** | `Reason: HTTP 404` |
-| Fetch failure: timeout | loader timeout | "Loading took too long" | "Check your connection, then try again." | **Try again** | `Reason: timed out after 15 s` (architect sets value) |
+| Fetch failure: timeout | loader timeout (configurable) | "Loading took too long" | "Check your connection, then try again." | **Try again** | `Reason: timed out after 15 s` (shows the configured value; default 15 s, AC34) |
 | Retrying | Try again pressed | same screen, button shows spinner, label "Trying again…", disabled (aria-disabled) | | | |
-| Blocked: schema too new | version > max supported | "This text needs a newer app" | "Update the app to open it." | Go back (if available) | `Schema version 2. This app reads version 1.` |
-| Blocked: schema too old | version < min supported | "This text uses an old format" | "This app can no longer open it." | Go back (if available) | `Schema version N. This app reads version 1.` |
-| Blocked: schema missing / not a version | no or invalid `schemaVersion` | "This file can't be opened" | "It isn't a reading file this app understands." | Go back (if available) | `Missing schema version` / `Schema version is not valid` |
-| Blocked: invalid content | JSON parse error, wrong types, missing pages, bad direction, bad content ID | "This file can't be opened" | "Something in the file isn't valid." | Go back (if available) | first typed error, e.g. `Page 3, block 2: unknown direction "rlt"` / `Content ID must look like namespace/slug` |
+| Blocked: schema too new | version > max supported | "This text needs a newer app" | "Update the app to open it." | Back to library (only if library enabled) | `Schema version 2. This app reads version 1.` |
+| Blocked: schema too old | version < min supported | "This text uses an old format" | "This app can no longer open it." | Back to library (only if library enabled) | `Schema version N. This app reads version 1.` |
+| Blocked: schema missing / not a version | no or invalid `schemaVersion` | "This file can't be opened" | "It isn't a reading file this app understands." | Back to library (only if library enabled) | `Missing schema version` / `Schema version is not valid` |
+| Blocked: invalid content | JSON parse error, wrong types, missing pages, **a page with zero blocks (AC32)**, bad direction, bad content ID | "This file can't be opened" | "Something in the file isn't valid." | Back to library (only if library enabled) | first typed error, e.g. `Page 3, block 2: unknown direction "rlt"` / `Page 3: has no blocks` / `Content ID must look like namespace/slug` |
 | Reading | content loaded | n/a | n/a | n/a | n/a |
 | Reading, first page | page index 0 | Previous unavailable | | | |
 | Reading, last page | last index | Next unavailable | | | |
@@ -273,7 +321,18 @@ Notes:
   quoted from the file is truncated to 40 characters and rendered as plain text.
 - Single-page document: both nav buttons unavailable; progress bar full;
   counter "1 / 1".
-- Empty page (page with zero blocks): see Open questions.
+- Empty page (zero blocks) is invalid (AC32, decided): the whole file is
+  refused with the "invalid content" state above, so the reading screen never
+  has to render an empty page and needs no empty-page state.
+- "Back to library" on refused-file screens (AC31) is a secondary-style link
+  (outlined, `--color-text` label, same size as a button), not the primary
+  button, since there is nothing to retry. It appears whenever the library is
+  enabled, for both `?book=` and `?src=` entries. In single-book mode or with
+  no library it is absent and the screen has heading, body and Details only;
+  that is a dead end by design (the deployment serves one book). The
+  fetch-failure screens keep only **Try again** (AC31 covers refused files).
+- "Go back" in the spec means this action; the label is "Back to library" so
+  the destination is clear.
 
 ### PageNav button states
 
@@ -289,6 +348,155 @@ Primary button (StatusScreen): bg `--color-accent`, text `--color-on-accent`;
 hover darkens via `--color-accent-hover`; focus-visible outline; loading shows
 an inline spinner and keeps its width.
 
+## 8a. Library, entry resolution and not-found screens (AC24-AC31)
+
+### Entry resolution table
+
+| Situation | Library enabled | Config for no/unknown book | Result |
+|---|---|---|---|
+| Single-book mode (AC29) | not offered | n/a | Configured book opens; `?book`, `?src` ignored silently; no library link anywhere |
+| `?book=<known id>` | any | n/a | Reading screen |
+| `?src=<url>` | any | n/a | Loader, then reading / fetch failure / blocked |
+| No parameter | yes | library | `LibraryScreen` |
+| No parameter | any | error page | "No book selected" screen |
+| No parameter | any | default book | Default book opens, no notice |
+| `?book=<unknown id>` | yes | library | "Book not found" with **Go to library** |
+| `?book=<unknown id>` | no | error page | "Book not found", no link |
+| `?book=<unknown id>` | any | default book | Default book opens with a `NoticeBar` (proposal, Open questions 2) |
+
+"Library enabled" is the architect's definition (config). The design only
+needs: the library link and "Back to library" show if and only if the library
+page exists in this deployment and the app is not in single-book mode.
+
+### LibraryScreen
+
+Phone (< 640 px), English interface; a Hebrew-titled, an English-titled and an
+untitled book:
+```
++------------------------------------------+
+| Library                                  |  header, 48 px, interface dir
++------------------------------------------+
+|  +------------------------------------+  |
+|  | [תהילים…]                       >  |  |  row, min 64 px; title RTL-
+|  | Hebrew                             |  |  isolated, at the interface
+|  +------------------------------------+  |  START edge
+|  | Pride and Prejudice             >  |  |
+|  | English                            |  |
+|  +------------------------------------+  |
+|  | acme/untitled-sample            >  |  |  fallback title = content ID
+|  +------------------------------------+  |  (LTR, no language line)
++------------------------------------------+
+```
+Hebrew interface (rows mirror; each title keeps its own book's direction):
+```
++------------------------------------------+
+|                                  ספרייה  |
++------------------------------------------+
+|  +------------------------------------+  |
+|  | <                     [...תהילים]  |  |  Hebrew title RTL, at the right
+|  |                              עברית |  |
+|  +------------------------------------+  |
+|  | <              Pride and Prejudice |  |  English title LTR-isolated,
+|  |                            אנגלית |  |  still at the right (start) edge
+|  +------------------------------------+  |
++------------------------------------------+
+```
+- **Heading**: `<h1>` "Library" in interface language and direction; also
+  the page `<title>`. Item 8 may add entry points to this page later; nothing
+  is reserved for them here.
+- **Layout**: one-column list at every size (no grid: books are few and a grid
+  muddles RTL reading order). At >= 640 px the list is centred,
+  `max-inline-size: 40rem`, same row design. Background `--color-bg`; rows
+  separated by hairlines `--color-border`; no cards or shadows.
+- **Row (`LibraryItem`)**: the whole row is one link (`<a>`), full-row hit
+  area, minimum 56 px tall (64 px with a language line), inline padding
+  `--space-4`, gap `--space-3`.
+  - **Title**: `--text-lg` / 600, `--color-text`, wraps to at most 2 lines then
+    ellipsis. It is an isolated element (`<bdi>` or an element with `dir`)
+    carrying the *document's* `dir` and `lang` (effective document direction,
+    default `ltr`), so Hebrew and English titles each render in their own
+    direction whatever the interface direction. Same isolation rule as the
+    header title (section 6). Line breaks in a title collapse to spaces.
+  - **Alignment**: rows align to the *interface* start edge (title at the
+    start edge, language line below it), not to the title's own direction.
+    This keeps a list of mixed-direction books scannable.
+  - **Language line** (only when the document has `lang`): language name in the
+    interface language (`Intl.DisplayNames`; fall back to the raw tag),
+    `--text-sm`, `--color-text-muted`, interface direction. Omitted when
+    `lang` is missing. No "RTL"/"LTR" badge: direction is visible in the title.
+  - **Fallback title**: with no `title`, show the content ID as the title,
+    `dir="ltr"`, no `lang`, `overflow-wrap: anywhere` so long IDs wrap. The ID
+    is not shown as a second line when a real title exists (readers do not
+    need it).
+  - **End chevron**: points toward the interface *end* (right in an LTR UI,
+    left in an RTL UI; mirrored with the interface direction), `aria-hidden`.
+    Deliberately unlike `PageNav`, whose chevrons follow the document
+    direction (section 5): here the chevron means "open", not "next page".
+- **Row states**:
+
+| State | Look |
+|---|---|
+| Default | `--color-text` title, transparent bg |
+| Hover | bg `--color-surface` |
+| Focus-visible | 2 px `--color-focus` outline, inset so it is not clipped |
+| Active | bg `--color-surface-2` |
+| Visited | no change |
+
+- **Order**: stable; preferably alphabetical by title in the interface locale
+  (architect's call). No search, sort or filters in v1.
+- **Loading**: none, assuming titles are known at build time (D6). If the list
+  is async, use the `StatusScreen` loading state.
+
+### Library empty state
+Library enabled but no bundled books (reachable only through odd config; the
+architect may make it a startup error instead, Open questions 6):
+`StatusScreen`, neutral icon, heading "No books yet", body "There's nothing to
+read here yet.", no action, Details `No books are bundled with this app.`
+
+### "Book not found" screen (AC28)
+`StatusScreen`, interface direction, neutral icon (`--color-text-muted`, not
+the danger colour: the link is wrong, nothing broke).
+
+| Part | Copy |
+|---|---|
+| Heading | "Book not found" |
+| Body | "We couldn't find that book. The link may be wrong or out of date." |
+| Action (only if the library is enabled) | primary link-button **Go to library** |
+| Details | `Book ID: acme/psalms-hh` (from the URL, truncated to 40 characters, plain text, `dir="ltr"`) |
+
+With no library the screen has no action (a dead end, same as the refused-file
+screens). Focus moves to the heading on arrival, as for all status screens.
+
+### "No book selected" screen (AC27, error-page option)
+`StatusScreen`, neutral icon.
+
+| Part | Copy |
+|---|---|
+| Heading | "No book selected" |
+| Body | "Open a link to a book to start reading." |
+| Action (only if the library is enabled) | primary link-button **Go to library** |
+| Details | `No book was specified in the link.` |
+
+The copy is fixed, localised interface text in v1; config chooses *whether*
+this page shows, not its wording.
+
+### NoticeBar (unknown book, default-book option; proposal)
+Shown above the content, under the header, on the default book's reading
+screen: `We couldn't find "acme/psalms-hh". Showing Psalms instead.` (the id is
+truncated to 40 chars, plain text, `dir="ltr"` isolated; the title is the
+default book's isolated title). `role="status"` (not an alert, no focus
+steal), `--color-surface` bg, hairline border, a **Dismiss** button (44 px
+target). Dismissal is not remembered (a reload shows it again, consistent with
+AC35). Never shown in single-book mode.
+
+### Single-book mode (AC29)
+- The reading and status screens are unchanged except what is removed: no
+  library link, no "Back to library", no NoticeBar, no "Go to library".
+  `?book` and `?src` are ignored with no message (the reader sees only the one
+  book; there is nothing to explain).
+- Not-found and no-book screens cannot occur. A missing or invalid configured
+  book is a startup/config error (AC30), not a reader-facing screen.
+
 ## 9. Accessibility
 
 - **lang / dir**: interface on `<html>`; content on the content region;
@@ -302,6 +510,14 @@ an inline spinner and keeps its width.
   every page change it announces "Page 4 of 12". It does not read the page
   text (the user moves into the content to read it). Not announced on first
   load; the heading/landmark is enough.
+- **Library and status screens**: `<main>` with one `<h1>` (Library, or the
+  status heading). The list is a real `<ul>` so screen readers announce the
+  number of books. Each row is one link whose accessible name is the title,
+  then the language ("Psalms, Hebrew"); the title carries its own `lang` so
+  the right voice reads it. "Back to library" and "Go to library" are links,
+  not buttons. On in-app navigation to the library or a status screen, focus
+  moves to the `<h1>` (`tabindex="-1"`); on a full page load, normal start.
+  The page `<title>` is "Library", the book title, or the status heading.
 - **Focus**: after a page turn by button or key, focus stays where it was (on
   the button). After a swipe, focus is not moved. On a status screen, focus
   moves to its heading (`tabindex="-1"`) so screen readers hear the reason;
@@ -422,6 +638,18 @@ the architect to confirm coverage).
 
 | AC | Where it shows up in the UI |
 |---|---|
+| AC24 | Reading header has no book switcher or library link (section 4 Behaviour); one book per page |
+| AC25 | Entry resolution (Flow E, section 8a table); fetch screens for `?src` |
+| AC26 | `LibraryScreen` and `LibraryItem` (section 8a): titles with per-book `dir`/`lang`, fallback to content ID, empty state |
+| AC27 | "No book selected" screen, library page, default book: rows of the entry table (section 8a) |
+| AC28 | "Book not found" screen, link to library only when enabled (section 8a) |
+| AC29 | Single-book mode (section 8a): no library link, no back links, params ignored |
+| AC30 | No reader-facing UI: startup/config error |
+| AC31 | "Back to library" on every refused-file state (section 8 table and notes), absent when the library is not enabled |
+| AC32 | Blocked: invalid content, Details `Page N: has no blocks`; no empty-page state |
+| AC33 | `white-space: pre-line` rendering of `\n` in blocks (section 7) |
+| AC34 | Fetch timeout state shows the configured value; default 15 s (section 8 table) |
+| AC35 | Reload returns to page 1; no persistence, no resume prompt (section 4 Behaviour) |
 | AC1 | `PageView` renders pages and blocks; `title` (if adopted) in header |
 | AC2 | Same Flow A for bundled and fetched; only fetched shows Loading |
 | AC3 | Blocked states: schema too new / too old / missing / not a version; nothing partial |
@@ -450,7 +678,8 @@ the architect to confirm coverage).
   properties recommended as the framework-neutral baseline; a component library
   is not needed for item 7's handful of components).
 - **D2. Display hints in schema v1.** Recommendation: no visual hints; add
-  optional document `title`, and optional block `type: paragraph | heading`
+  optional document `title` (now also the library row's title, so adopt it
+  rather than defer it), and optional block `type: paragraph | heading`
   (the latter can be deferred).
 - **D3. `lang` field.** Optional BCP 47 `lang` at document/page/block level,
   recommended for accessibility. Independent of `dir`.
@@ -461,17 +690,34 @@ the architect to confirm coverage).
 - **D5. Fonts.** System font stack with Noto fallbacks, no bundled web fonts
   (recommended), vs bundling Hebrew/Arabic fonts for consistent rendering.
 
+- **D6. Library data and routes.** The library needs, per bundled book, its
+  content ID, optional `title`, document `lang` and effective document `dir`,
+  ideally without loading every book's pages at runtime (for example a
+  build-time index). Also decide the library page's URL (for example the root
+  with no params, or a fixed path) and what "library enabled" means in config,
+  including how it relates to the "no book" option and to single-book mode.
+
 ## 15. Open questions
 
-1. How does the app pick which content to open (fixed bundled sample, URL query
-   parameter, a simple list of bundled samples)? If a list screen is wanted in
-   item 7 it is a small extra screen not designed here; the blocked states'
-   "Go back" depends on it.
-2. Is a page with zero blocks valid? Recommendation: reject it in validation
-   (it's almost certainly an authoring mistake), so no "empty page" state is
-   needed.
-3. Is `\n` inside a block's text meaningful (line breaks, e.g. poetry)? The
-   design assumes yes (`pre-line`).
-4. Fetch timeout value (the design shows 15 s as a placeholder).
-5. Should the reader's current page survive a reload (local storage)? Not in
-   the spec; item 8's sync may make it moot. Assumed no for item 7.
+Resolved by the spec and removed from this list: how the app picks content
+(URL parameters and library, AC25-AC27); zero-block pages (invalid, AC32);
+line breaks in blocks (preserved, AC33); fetch timeout (15 s default,
+configurable, AC34); current page across reload (not kept, AC35).
+
+1. Should the reading screen have a "Library" link (a way back, not a book
+   switcher)? Designed as **no**: AC24 says each page behaves as if it were the
+   only book, and the browser back button covers it. Easy to add to the
+   header's end area if wanted (hidden in single-book mode).
+2. Unknown `?book=` with the "open a default book" option: designed as opening
+   the default book with a dismissible `NoticeBar`, so the substitution is not
+   silent. Confirm, or show "Book not found" in that case instead.
+3. If both `?book` and `?src` are present, which wins? No special screen is
+   designed; the architect picks the rule.
+4. Should fetch-failure screens also offer "Back to library"? AC31 covers only
+   refused files; designed as Try again only.
+5. A bundled book that fails validation at runtime (should be impossible if
+   tests pass): designed to be listed with its title or ID, with its reading
+   page showing the blocked state, so nothing is hidden silently. Architect
+   may prefer to omit it.
+6. Empty library (enabled, no bundled books): reader-facing empty state
+   (designed) or a startup config error (AC30)? Architect decides.
