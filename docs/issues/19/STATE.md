@@ -5,9 +5,9 @@
 - PR: #20
 - Plan approved by user: yes (Gate 2, 2026-11-05)
 - Security-sensitive: yes
-- Review rounds: 1
+- Review rounds: 2
 - Spec approved at Gate 1: yes
-- Last updated by: engineer
+- Last updated by: qa
 ## Model log
 - pm groom: sonnet (default) → DONE
 - pm update-spec: sonnet (default) → DONE
@@ -21,6 +21,7 @@
 - qa validate: opus (NEXT_MODEL) → FAIL
 - security code (round 1): opus (rule) → PASS
 - engineer fix (round 1): opus (rule) → DONE
+- qa validate (round 2): opus (rule) → PASS
 ## Gate 2 decisions (2026-11-05)
 - ADRs 0001-0006: recommended option accepted for each (0005 E1 escaping wording fixed per security.md F5).
 - Q2: AC32-AC35 kept. Q3: `different-content` -> block. Q4: malformed leader metadata -> `unsupported-schema` / block.
@@ -60,6 +61,11 @@
 - QA N3: Hebrew singular for a 1-second timeout. QA N4: library `<h1>` inside `<main>`. QA N5: sample auto blocks carry their own `lang`.
 - Security A2: `**/dist-server` in `.dockerignore`. Security A1 (Trusted Types) left for the user at Gate 3.
 - Checks after the fixes: `pnpm lint` (eslint + prettier), `pnpm typecheck`, `pnpm test` (reader: 504 tests), `pnpm build`: pass.
+## QA verdict (round 2): PASS
+- Round-1 finding 1 fixed: touch swipes below the text on short pages turn the page at 390x800 in LTR and RTL documents, en and he UI, and in the container; mouse drag still excluded.
+- N1 (favicon, 0 CSP violations across 38 loads incl. `/favicon.svg`), N2 (PR body), N3, N4, N5 verified. N5 deviation (Hebrew `mixed-en-he` auto block) accepted: AC14 and AC20 still hold.
+- Checks: lint, typecheck, test (reader 504), build, audit, compose config/build/up: pass. CI 2/2 pass. AC1-AC41 (AC9 removed): all met.
+- Non-blocking N7: `server/run.ts` clientError handler answers idle-connection request timeouts with 400 (Node default is 408, which browsers retry); seen once as a Chrome 400 error page. Suggested fix: 408 or silent close for `ERR_HTTP_REQUEST_TIMEOUT`.
 ## Verification notes
 - `pnpm audit --audit-level=high`, `pnpm lint`, `pnpm typecheck`, `pnpm test` (reader: 500 tests), `pnpm build`: pass.
 - `docker compose config`, `docker compose build reader` and `sync-server`: pass. `docker compose up reader`: healthy, `/`, `/library`, `/health` 200; `READER_ENTRY=x` exits 1 with `Config error: ...`. Runtime image: `/app` root-owned, `USER node`, `node_modules` = zod only, no source maps.
