@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { ServerMessage } from '@sync-system/protocol';
 import { afterEach, describe, expect, it } from 'vitest';
+import type { GroupRecord } from '../src/groups/group-store.js';
 import { InMemoryGroupStore } from '../src/groups/in-memory-group-store.js';
 import {
   LOCK_CHANGES_PER_GROUP_PER_MINUTE,
@@ -11,6 +12,7 @@ import { GRACE_MS } from './helpers/lifecycle.js';
 import { ManualScheduler } from './helpers/manual-scheduler.js';
 import type { TestClient } from './helpers/test-client.js';
 import { KEY_A, type TestServer, startTestServer } from './helpers/test-server.js';
+import { sleep, waitUntil } from './helpers/wait.js';
 
 let ts: TestServer | undefined;
 
@@ -141,33 +143,140 @@ describe('role matrix (#13 AC6, AC7, section 7, RC1, RC2)', () => {
   });
 });
 
-describe('leader races (#13 AC8, D2)', () => {
-  it('an action in the same tick as the handoff gets its full effect or NOT_LEADER, never both', async () => {
-    const { scheduler } = await start();
-    const group = await createGroupWithMembers(ts!, 2);
-    const [next, other] = group.members as [TestClient, TestClient];
-    scheduler.advance(19 * 60_000);
-    await group.leader.next('keepalive.prompt');
-    scheduler.advance(60_000);
-    await next.next('leader.offline');
-    await other.next('leader.offline');
-    // The old leader's update races the grace end.
-    group.leader.send({ type: 'position.update', position: 'race' });
-    scheduler.advance(GRACE_MS);
-    const reply = await frameOf(group.leader, 'position.ack').catch(() => undefined);
-    const frames: string[] = [];
-    for (;;) {
-      const message = await other.next(undefined, 200).catch(() => undefined);
-      if (message === undefined) break;
-      frames.push(message.type);
-    }
-    // Never a relay after leader.changed.
-    const changed = frames.indexOf('leader.changed');
-    const relayed = frames.indexOf('position.updated');
-    if (relayed >= 0) expect(relayed).toBeLessThan(changed);
-    expect(changed).toBeGreaterThanOrEqual(0);
-    expect(reply === undefined || relayed >= 0).toBe(true);
+/** What a raced action changes in the record, if it ran as the leader's. */
+type Effect = (record: GroupRecord | undefined, other: string) => boolean;
+
+/**
+ * Every leader action raced against a handoff (#13 AC8): the frame, and
+ * the effect in the record when it is applied (none for actions with no
+ * visible state change). `other` is the member that is not first in line.
+ */
+const RACED: Array<[string, (other: string) => Record<string, unknown>, Effect | undefined]> = [
+  [
+    'position.update',
+    () => ({ type: 'position.update', position: 'race' }),
+    (r) => r?.position.has === true && r.position.payload === 'race',
+  ],
+  ['group.end', () => ({ type: 'group.end' }), (r) => r === undefined],
+  [
+    'blocklist.set',
+    () => ({ type: 'blocklist.set', blockList: [PID] }),
+    (r) => r?.blockList.includes(PID) === true,
+  ],
+  ['codes.rotate', () => ({ type: 'codes.rotate' }), undefined],
+  ['qr.issue', () => ({ type: 'qr.issue' }), undefined],
+  ['join.approve', () => ({ type: 'join.approve', requestId: 'A'.repeat(22) }), undefined],
+  ['join.deny', () => ({ type: 'join.deny', requestId: 'A'.repeat(22) }), undefined],
+  [
+    'vice.set',
+    (other) => ({ type: 'vice.set', participantId: other }),
+    // A vice set before the handoff is first in line, and stops being vice.
+    (r, other) => r?.viceId === other || r?.leaderId === other,
+  ],
+  ['vice.clear', () => ({ type: 'vice.clear' }), undefined],
+  ['group.lock', () => ({ type: 'group.lock' }), (r) => r?.locked === true],
+  ['group.unlock', () => ({ type: 'group.unlock' }), undefined],
+  [
+    'member.remove',
+    (other) => ({ type: 'member.remove', participantId: other }),
+    (r, other) => r?.blockList.includes(other) === true,
+  ],
+  ['leader.activity', () => ({ type: 'leader.activity' }), undefined],
+  ['keepalive.ack', () => ({ type: 'keepalive.ack' }), undefined],
+];
+
+/**
+ * A group of the leader and two members, the leader inactive and paused,
+ * so the next grace end hands the lead to the first member.
+ */
+async function pausedGroup() {
+  const { scheduler, store } = await start();
+  const group = await createGroupWithMembers(ts!, 2);
+  const [next, other] = group.members as [TestClient, TestClient];
+  scheduler.advance(19 * 60_000);
+  await group.leader.next('keepalive.prompt');
+  scheduler.advance(60_000);
+  await next.next('leader.offline');
+  await other.next('leader.offline');
+  return { scheduler, store, group, otherId: group.memberIds[1]! };
+}
+
+/** The old leader's reply to the raced frame (every reply here echoes `reqId`). */
+async function raceReply(leader: TestClient): Promise<ServerMessage> {
+  let reply: ServerMessage | undefined;
+  await waitUntil(() => {
+    reply = leader.received.find((m) => (m as { reqId?: string }).reqId === 'race');
+    return reply !== undefined;
   });
+  return reply!;
+}
+
+describe('leader races (#13 AC8, D2)', () => {
+  it.each(RACED)(
+    '%s in the same tick as the handoff: its full effect or NOT_LEADER, never both leaders',
+    async (_action, frame, effect) => {
+      const { scheduler, store, group, otherId } = await pausedGroup();
+      const oldLeader = group.leaderId;
+      group.leader.send({ ...frame(otherId), reqId: 'race' });
+      scheduler.advance(GRACE_MS);
+      const reply = await raceReply(group.leader);
+      // Let whichever came second settle.
+      await sleep(50);
+      const record = await store.get('app-a', group.groupId);
+      const refused = reply.type === 'error' && reply.code === 'NOT_LEADER';
+      if (refused) {
+        // The handoff ran first: the action changed nothing.
+        expect(record?.leaderId).not.toBe(oldLeader);
+        if (effect !== undefined) expect(effect(record, otherId)).toBe(false);
+      } else {
+        // The action ran first, as the leader's: its effect is in, and a
+        // later handoff is told only after the reply.
+        if (effect !== undefined) expect(effect(record, otherId)).toBe(true);
+        const replyAt = group.leader.received.indexOf(reply);
+        const lostAt = group.leader.received.findIndex((m) => m.type === 'leader.lost');
+        if (lostAt >= 0) expect(lostAt).toBeGreaterThan(replyAt);
+      }
+    },
+  );
+
+  it.each(RACED)(
+    '%s settled just before the grace end runs as the leader, and the handoff respects it',
+    async (_action, frame, effect) => {
+      const { scheduler, store, group, otherId } = await pausedGroup();
+      const oldLeader = group.leaderId;
+      group.leader.send({ ...frame(otherId), reqId: 'race' });
+      const reply = await raceReply(group.leader);
+      expect(reply.type === 'error' && reply.code === 'NOT_LEADER').toBe(false);
+      const settled = await store.get('app-a', group.groupId);
+      if (effect !== undefined) expect(effect(settled, otherId)).toBe(true);
+      scheduler.advance(GRACE_MS);
+      await sleep(50);
+      const record = await store.get('app-a', group.groupId);
+      if (effect !== undefined) expect(effect(record, otherId)).toBe(true);
+      // An accepted action is a leader activity: the pause ended, so the
+      // grace end hands nothing over. (A refusal, like an unknown request
+      // ID, is no activity.)
+      if (record !== undefined && reply.type !== 'error') {
+        expect(record.leaderId).toBe(oldLeader);
+      }
+    },
+  );
+
+  it.each(RACED)(
+    '%s after the handoff gets NOT_LEADER and changes nothing',
+    async (_action, frame, effect) => {
+      const { scheduler, store, group, otherId } = await pausedGroup();
+      scheduler.advance(GRACE_MS);
+      await frameOf(group.members[0]!, 'leader.granted');
+      await frameOf(group.leader, 'leader.lost');
+      const before = await store.get('app-a', group.groupId);
+      group.leader.send({ ...frame(otherId), reqId: 'race' });
+      expect(await raceReply(group.leader)).toMatchObject({ type: 'error', code: 'NOT_LEADER' });
+      const after = await store.get('app-a', group.groupId);
+      expect(after).toEqual(before);
+      if (effect !== undefined) expect(effect(after, otherId)).toBe(false);
+    },
+  );
 });
 
 describe('members never learn other IDs or names (#13 RC11, AC31, Q3.3)', () => {
