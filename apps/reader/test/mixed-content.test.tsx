@@ -18,7 +18,8 @@ describe('mixed-direction samples (AC14, AC20)', () => {
       [/^זהו משפט בעברית/, 'rtl', null],
       [/^הספר Pride and Prejudice/, 'rtl', null],
       [/^This English paragraph/, 'ltr', 'en'],
-      [/^Hello, עולם!/, 'ltr', null],
+      // An English auto block names its language so it isn't read with a Hebrew voice.
+      [/^Hello, עולם!/, 'ltr', 'en'],
       [/^1948 - 2024\.$/, 'rtl', null],
       [/^هذه فقرة/, 'rtl', 'ar'],
       [/^שורה ראשונה/, 'rtl', null],
@@ -44,7 +45,8 @@ describe('mixed-direction samples (AC14, AC20)', () => {
     renderReading(loaded(sampleText('mixed-en-he')));
     expect(screen.getByRole('article').getAttribute('dir')).toBe('ltr');
     expect(blockFor(/^זוהי פסקה בעברית/).getAttribute('dir')).toBe('rtl');
-    expect(blockFor(/^שלום! This automatic/).getAttribute('dir')).toBe('rtl');
+    expect(blockFor(/^שלום! הבלוק האוטומטי/).getAttribute('dir')).toBe('rtl');
+    expect(blockFor(/^שלום! הבלוק האוטומטי/).getAttribute('lang')).toBe('he');
     expect(blockFor(/^- 42 -$/).getAttribute('dir')).toBe('ltr');
     expect(blockFor(/^A first line/).getAttribute('dir')).toBe('ltr');
     expect(screen.getByRole('banner').querySelector('bdi')!.getAttribute('dir')).toBe('ltr');

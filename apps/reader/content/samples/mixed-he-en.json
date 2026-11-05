@@ -24,6 +24,7 @@
         },
         {
           "dir": "auto",
+          "lang": "en",
           "text": "Hello, עולם! This automatic block starts with English, so it reads left to right."
         },
         {

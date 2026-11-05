@@ -21,7 +21,8 @@
         },
         {
           "dir": "auto",
-          "text": "שלום! This automatic block starts with Hebrew, so it reads right to left."
+          "lang": "he",
+          "text": "שלום! הבלוק האוטומטי הזה מתחיל בעברית, ולכן הוא נקרא מימין לשמאל."
         },
         {
           "dir": "auto",
