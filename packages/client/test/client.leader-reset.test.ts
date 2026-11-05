@@ -8,7 +8,8 @@ import { fakeToken, groupIdOf } from './helpers/tokens.js';
 /**
  * Every way a client stops leading drops all leader-only data (#13 RC12,
  * security L-3) and ends the private preview (#13 AC41):
- * leadership lost, demoted on a resume, removed (4004), group ended.
+ * leadership lost, demoted on a resume (joined or waiting), removed
+ * (4004), group ended.
  */
 
 const GROUP_ID = groupIdOf('G');
@@ -136,6 +137,24 @@ describe('leader-only data and the preview on every demotion (#13 RC12, AC41)', 
     });
     await settle();
     expect(client.getSnapshot().group).toMatchObject({ status: 'active', role: 'member' });
+    expectNoLeaderData(client);
+    client.close();
+  });
+
+  it('demoted on a resume (group.waiting for a leader token): dropped', async () => {
+    const { client, socket } = await previewingLeader();
+    socket.serverClose(1006);
+    const state = client.getState();
+    if (state.status !== 'reconnecting') throw new Error('expected reconnecting');
+    vi.advanceTimersByTime(state.delayMs);
+    const next = FakeWebSocket.last;
+    serverHandshake(next, { participantId: 'participant-2' });
+    await settle();
+    const resume = next.lastMessage();
+    expect(resume).toMatchObject({ type: 'group.resume' });
+    next.receive({ type: 'group.waiting', reqId: resume.reqId, groupId: GROUP_ID });
+    await settle();
+    expect(client.getSnapshot().group).toMatchObject({ status: 'waiting', role: 'member' });
     expectNoLeaderData(client);
     client.close();
   });
