@@ -341,13 +341,16 @@ SyncProvider({ options | client, autoConnect = true })
   - anything else (`NOT_CONNECTED`, `CONNECTION_LOST`, `NOT_LEADER`, ...):
     `error`, **no automatic retry**; the next eligibility change (reconnect +
     `codesChanged resumed`) or `refresh()` issues again.
-- `codesChanged` with reason `rotated` or `resumed`: if eligible, clear the
+- `codesChanged` with reason `rotated`, `resumed`, `member_removed` or
+  `superseded` (security R1: each revokes every outstanding ticket): if eligible, clear the
   timer, bump the generation (an in-flight result issued before the rotation is
   discarded), set `loading` with `ticket: null` (the old ticket is revoked) and
-  issue now. Other reasons (`door_failures`, `member_removed`, ...) do nothing.
+  issue now. `door_failures` and `created` do nothing (same ticket generation).
 - `stop()`: clear the timer, bump the generation, drop the ticket (the
   credential leaves memory when nothing shows it).
-- `refresh()`: manual issue (same single flight).
+- `refresh()`: manual issue (same single flight). Security R2: a no-op while a
+  request is in flight, during a `RATE_LIMITED` wait, and within 10 s of the
+  last issue unless the ticket was revoked or is missing/expired.
 
 ## 9. No auto-retry after fatal (AC7, AC22)
 
@@ -446,6 +449,15 @@ unless a test needs otherwise. Fake timers where timers matter.
   care render a placeholder while `status === 'idle'`.
 
 ## 13. Gate 2 questions (recommendation first)
+
+**Decided at Gate 2 (user, 2026-11-05): all four recommendations accepted.**
+Q-A: `setJoiningEnabled` = lock/unlock of all joining; "expiry" = the QR
+ticket's `expiresAt` and the codes' generation; the README states codes and
+tickets work again after unlock, so a leaked code needs `rotate`. Q-B: `paused`
+= `JOIN_PAUSED`. Q-C: the member vice flag is tracked from provider mount,
+event-only, reset on group change or end. Q-D: `useStoredGroups` auto-check is
+opt-in `checkOnConnect`, default off. Every security control R1-R14 of
+[`security.md`](security.md) is required and part of this plan.
 
 - **Q-A (AC18 "enable/disable join methods", "code expiry").** The core has no
   API to change a group's join methods after creation, and join codes do not
