@@ -226,8 +226,12 @@ export class FakeSyncClient implements SyncClientLike {
       : Object.freeze({ ...this.leaderState, blockList: [...this.leaderState.blockList] });
   }
 
+  /** Like the core: `connecting` at once, unless already connecting or connected. */
   connect(): Promise<ConnectedInfo> {
-    return this.#call('connect', []);
+    const status = this.snapshot.connection.status;
+    const result = this.#call<ConnectedInfo>('connect', []);
+    if (status === 'idle' || status === 'closed') this.setConnection({ status: 'connecting' });
+    return result;
   }
   close(): void {
     this.#record('close', []);

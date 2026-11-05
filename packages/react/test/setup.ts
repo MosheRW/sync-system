@@ -1,4 +1,4 @@
-import { afterAll, expect } from 'vitest';
+import { afterAll, afterEach, expect } from 'vitest';
 
 /**
  * No unhandled rejection or uncaught exception may fire anywhere in the
@@ -21,3 +21,10 @@ afterAll(() => {
   process.off('uncaughtException', onException);
   expect(failures).toEqual([]);
 });
+
+// jsdom files: unmount every rendered tree after each test (no Vitest
+// globals, so Testing Library cannot register this itself).
+if (typeof document !== 'undefined') {
+  const { cleanup } = await import('@testing-library/react');
+  afterEach(cleanup);
+}
