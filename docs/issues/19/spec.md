@@ -55,15 +55,21 @@ Content selection and library (post-design)
 - [ ] AC24. Each reading page shows exactly one book and behaves as if it were the only book that exists. There is no in-app switching between books.
 - [ ] AC25. The URL picks the content: `?book=<contentId>` loads bundled content (e.g. `?book=acme/psalms-he`) and `?src=<url>` loads fetched content. Tests cover each entry mode.
 - [ ] AC26. A library page lists the available bundled books, each linking to its own reading page (`?book=<contentId>`). Tested.
-- [ ] AC27. Environment variables configure what the app does with no parameter or an unknown book, with three options: show the library page, show an error page, or open a default book. The default book is also set by config. Tests cover all three options for both "no parameter" and "unknown book".
-- [ ] AC28. An unknown `?book=` id shows a "book not found" error page, with a link to the library when the library is enabled. Tested.
-- [ ] AC29. A deployment can be configured to serve one specific book only (single-book mode). In that mode URL parameters (`?book`, `?src`) are ignored, and the library is not offered. Tested, including that a `?book=` or `?src=` value is ignored.
-- [ ] AC30. Invalid configuration (invalid option value, or "open a default book" without a valid default book) is a startup/config error with a clear message, not a runtime surprise. Tested. Exact env variable names and validation rules are for the architect.
-- [ ] AC31. The "Go back" action on refused-file screens leads to the library when it is enabled, and is not shown otherwise (architect/designer to confirm). Tested.
+- [ ] AC27. Environment variables configure what the app does when no parameter is given, with three options: show the library page, show an error page, or open a default book. The default book is also set by config and applies only when no parameter is given. Tests cover all three options for "no parameter". (Adjusted post-design: unknown books are no longer governed by this setting, see AC28.)
+- [ ] AC28. An unknown `?book=` id always shows the "Book not found" page, in every fallback mode including "open a default book"; it never falls back to the default book. The page links to the library only when the library is enabled. Tested for each of the three modes, with the library enabled and disabled.
+- [ ] AC29. A deployment can be configured to serve one specific book only (single-book mode). In that mode URL parameters (`?book`, `?src`) are ignored (including the invalid-combination check of AC37), and the library is not offered. Tested, including that a `?book=` or `?src=` value is ignored.
+- [ ] AC30. Invalid configuration (invalid option value, "open a default book" without a valid default book, or the library enabled with zero books, see AC41) is a startup/config error with a clear message, not a runtime surprise. Tested. Exact env variable names and validation rules are for the architect.
+- [ ] AC31. The "Go back" action on refused-file screens leads to the library when it is enabled, and is not shown otherwise. Fetch-failure screens (AC5) also offer "Back to library" next to "Try again" when the library is enabled, and only "Try again" otherwise. Tested for both screen types, library enabled and disabled.
 - [ ] AC32. (Orchestrator recommendation, user can override at Gate 2.) A page with zero blocks is invalid and rejected by validation with a typed error. Tested.
 - [ ] AC33. (Orchestrator recommendation, user can override at Gate 2.) Line breaks inside a block's text are significant and preserved when rendering (poetry). Tested.
 - [ ] AC34. (Orchestrator recommendation, user can override at Gate 2.) The fetch timeout defaults to 15 s and is configurable. Tested (default value and override), consistent with AC5.
 - [ ] AC35. (Orchestrator recommendation, user can override at Gate 2.) The current page does not survive a reload in item 7; persisting position belongs to the sync work in item 8.
+- [ ] AC36. The reading page has no link to the library, in any mode (consistent with AC24). Tested that the reading screen renders no library link.
+- [ ] AC37. A URL carrying both `?book` and `?src` is an invalid link: the app shows an error page and loads neither (no guessing which wins). Tested. Not applicable in single-book mode (AC29).
+- [ ] AC38. Bundled books are validated when the library index is built. A bundled book that fails validation fails the build, so it is never shipped or listed. Tested with a deliberately invalid fixture that makes the index build fail.
+- [ ] AC39. The library lists only books that passed AC38, so there is no runtime "listed but blocked" bundled book.
+- [ ] AC40. When no parameter is given, the library is shown only if the mode is "library"; the "error page" and "default book" modes show their own page and never the library. Tested.
+- [ ] AC41. The library enabled with zero bundled books is a startup/config error with a clear message (see AC30); there is no reader-facing empty library state. Tested.
 
 ## Out of scope
 - Item 8: code entry, QR display and scanning, approval prompt, connection indicator, keep-alive, "you're now leading", roster/counter/list and preview banner views, the follower "jump to group's page" prompt and late-joiner countdown, the joining flow in the UI.
@@ -98,7 +104,20 @@ Made by the user after the design phase, in answer to the designer's question on
 6. **Config validation** (invalid value, missing default book) is a startup/config error (AC30). Env variable names are for the architect.
 7. **"Go back"** on refused-file screens leads to the library when enabled, otherwise it is not shown (AC31). Architect/designer to confirm.
 
-Designer questions 2-5 were decided by the orchestrator's recommendations. The user can override these at Gate 2:
+### Design-question decisions
+
+Made by the user in answer to the designer's open questions 1-6 (`design.md` section 15 and D6):
+
+1. **No library link on the reading page.** Each book page behaves as the only book (AC24, AC36).
+2. **Unknown `?book=` always shows "Book not found"**, in every fallback mode including "default book". The default book applies only when no parameter is given. The library link appears only when the library is enabled (AC27, AC28, AC40).
+3. **`?book` plus `?src` is an invalid link** and shows an error, not a guess (AC37).
+4. **Fetch-failure screens also offer "Back to library"** when the library is enabled, next to "Try again". This extends AC31.
+5. **Bundled books are validated when the library index is built.** A book that fails validation fails the build and is never shipped or listed (AC38, AC39).
+6. **Library enabled with zero books is a config error at startup**, consistent with AC30 (AC41).
+
+Still for the architect: the library data source (build-time index), the library URL, and what "library enabled" means in config.
+
+Designer questions 2-5 of the earlier round were decided by the orchestrator's recommendations. The user can override these at Gate 2:
 
 - A page with zero blocks is invalid (AC32).
 - Line breaks inside a block are preserved (AC33).
@@ -110,3 +129,4 @@ Designer questions 2-5 were decided by the orchestrator's recommendations. The u
 - None remaining from Gate 1. The architect confirms the points listed in Q4 and may tighten the AC23 pattern.
 - For the architect and the security plan review: `?src=<url>` loads arbitrary URLs. Should it be restricted (for example an allow-list of origins via config), or disabled in some deployments? This is a security decision (SSRF-like fetching, tracking, hostile content), not decided here.
 - For the architect: exact env variable names, and whether single-book mode is a fourth value of the same setting or a separate setting.
+- For the architect: the library data source (build-time index), the library URL, and what "library enabled" means in config.

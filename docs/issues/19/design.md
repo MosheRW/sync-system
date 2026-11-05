@@ -699,6 +699,8 @@ the architect to confirm coverage).
 
 ## 15. Open questions
 
+> Questions 1-6 below are decided by the user; see "Design-question decisions" in `spec.md` (AC27-AC31, AC36-AC41). D6 is partly decided (build-time validation, empty library is a config error); the data source, library URL and "library enabled" remain for the architect.
+
 Resolved by the spec and removed from this list: how the app picks content
 (URL parameters and library, AC25-AC27); zero-block pages (invalid, AC32);
 line breaks in blocks (preserved, AC33); fetch timeout (15 s default,
