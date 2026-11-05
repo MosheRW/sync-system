@@ -73,6 +73,7 @@ import type {
   LeaderLifecycle,
 } from './state.js';
 import { LeaderData } from './leader-state.js';
+import { LeaderPreview } from './preview.js';
 import type { Recovery } from './token-store.js';
 import { PositionThrottle } from './throttle.js';
 import { type InboundFrame, Transport } from './transport.js';
@@ -327,6 +328,23 @@ export class SyncClient {
   #approval: PendingApproval | undefined;
   /** Roster and recovery state of the group this client leads (#13 AC31, D13). */
   readonly #leaderData = new LeaderData();
+
+  /**
+   * The leader's private preview (#13 AC41): browse ahead without moving
+   * the group; see `LeaderPreview`.
+   */
+  readonly preview: LeaderPreview = new LeaderPreview({
+    isLeader: () => {
+      const group = this.#snapshot.group;
+      return group?.status === 'active' && group.role === 'leader';
+    },
+    groupPosition: () => {
+      const group = this.#snapshot.group;
+      return group?.status === 'active' && group.hasPosition ? group.position : undefined;
+    },
+    updatePosition: (position) => this.updatePosition(position),
+    sendActivity: () => this.sendLeaderActivity(),
+  });
   /** The leader's codes for its group (#10 AC40). */
   #leaderCodes: LeaderCodes | undefined;
   /** Pending join requests the leader was told about, by request ID (#10 AC40). */

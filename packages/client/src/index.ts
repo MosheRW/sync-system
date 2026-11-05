@@ -1,6 +1,8 @@
 // Public API of @sync-system/client.
 export { SyncClient, createSyncClient } from './client.js';
 export { indicatorOf } from './state.js';
+export { LeaderPreview, LEADER_ACTIVITY_MIN_INTERVAL_MS } from './preview.js';
+export type { PreviewState } from './preview.js';
 export { ClientErrorCode, SyncClientError, isSyncClientError } from './errors.js';
 export type { ErrorDetailsMap, RequestKind } from './errors.js';
 export type { WebSocketConstructorLike, WebSocketLike } from './host.js';
