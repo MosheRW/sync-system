@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { ConfigError } from '../src/config/config-error.js';
 import { type EnvSource, parseReaderConfig } from '../src/config/schema.js';
 import type { LibraryEntry } from '../src/library/types.js';
+import { createClientErrorHandler } from './client-error.js';
 import { createHandler } from './handler.js';
 import { securityHeaders } from './headers.js';
 import { renderIndexHtml } from './html.js';
@@ -18,7 +19,22 @@ export interface RunIO {
   stdout?: (text: string) => void;
   /** The Vite build output; defaults to `dist/` next to `dist-server/`. */
   distDir?: string;
+  /** Server timeouts in ms; tests shorten them. Defaults: 15 s headers, 30 s request, 30 s check interval. */
+  timeouts?: Partial<ServerTimeouts>;
 }
+
+export interface ServerTimeouts {
+  headersMs: number;
+  requestMs: number;
+  /** How often Node checks connections for the two timeouts above. */
+  checkIntervalMs: number;
+}
+
+const DEFAULT_TIMEOUTS: ServerTimeouts = {
+  headersMs: 15_000,
+  requestMs: 30_000,
+  checkIntervalMs: 30_000,
+};
 
 export type RunResult =
   | { ok: true; server: Server; port: number; close: () => Promise<void> }
@@ -77,7 +93,9 @@ export async function run(env: EnvSource, io: RunIO = {}): Promise<RunResult> {
   }
 
   const headers = securityHeaders(config.srcOrigins);
+  const timeouts = { ...DEFAULT_TIMEOUTS, ...io.timeouts };
   const server = createServer(
+    { connectionsCheckingInterval: timeouts.checkIntervalMs },
     createHandler({
       files: loadStaticFiles(distDir),
       indexHtml,
@@ -85,21 +103,10 @@ export async function run(env: EnvSource, io: RunIO = {}): Promise<RunResult> {
       headers,
     }),
   );
-  server.requestTimeout = 30_000;
-  server.headersTimeout = 15_000;
-  // Unparseable requests never reach the handler: answer 400 and close (C1).
-  server.on('clientError', (_err, socket) => {
-    if (!socket.writable) {
-      socket.destroy();
-      return;
-    }
-    const lines = Object.entries(headers).map(([name, value]) => `${name}: ${value}`);
-    socket.end(
-      ['HTTP/1.1 400 Bad Request', 'Connection: close', 'Content-Length: 0', ...lines, '', ''].join(
-        '\r\n',
-      ),
-    );
-  });
+  server.requestTimeout = timeouts.requestMs;
+  server.headersTimeout = timeouts.headersMs;
+  // Requests that never reach the handler: unparseable -> 400 (C1), timed out -> 408 or a silent close.
+  server.on('clientError', createClientErrorHandler(headers));
 
   try {
     await new Promise<void>((resolve, reject) => {
