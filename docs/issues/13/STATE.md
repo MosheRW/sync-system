@@ -1,12 +1,13 @@
 # State: #13 feat: roles, timers and group lifecycle (PRD item 5)
 - Path: full
-- Phase: implementation (done; PR ready for review)
+- Phase: validation
 - Branch: feat/13-roles-lifecycle
-- PR: #14 (draft)
+- PR: #14 (ready for review)
 - Plan approved by user: yes (Gate 2, 2026-11-04)
-- QA loops: 0
+- Review rounds: 1
+- QA verdict (round 1): PASS (46/46 ACs met; 5 non-blocking advisories in the PR comment)
 - Security-sensitive: yes
-- Last updated by: engineer
+- Last updated by: qa
 ## Gate 1 decisions
 - User accepted every recommended default Q1.1-Q7 as written in `spec.md`,
   with one change: Q5.5 display names use the existing strict #10 rule
@@ -138,3 +139,4 @@
 - pm spec update (rescope): sonnet (default) → DONE
 - security plan (round 4): opus (rule) → PASS
 - engineer implement: opus (Implementer model: opus; security-sensitive)
+- qa review (round 1): opus (NEXT_MODEL) → PASS
