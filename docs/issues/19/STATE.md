@@ -1,6 +1,6 @@
 # State: #19 feat: reading app content, text direction (RTL) and content fingerprint (PRD item 7)
 - Path: full
-- Phase: implementation
+- Phase: validation
 - Branch: feat/19-reading-app-content
 - PR: #20
 - Plan approved by user: yes (Gate 2, 2026-11-05)
@@ -17,6 +17,7 @@
 - pm update-spec-3: sonnet (default) → DONE
 - architect plan: opus (NEXT_MODEL) → DONE
 - security plan: opus (rule) → PASS
+- engineer implement: opus (Implementer model line) → DONE
 ## Gate 2 decisions (2026-11-05)
 - ADRs 0001-0006: recommended option accepted for each (0005 E1 escaping wording fixed per security.md F5).
 - Q2: AC32-AC35 kept. Q3: `different-content` -> block. Q4: malformed leader metadata -> `unsupported-schema` / block.
@@ -29,4 +30,20 @@
 - Gate 2: ADRs 0001-0006 (each needs a decision) and architecture.md section 12 Q1-Q6 (AC32-AC35 overrides, different-content outcome, malformed leader metadata, new status-screen copy, sample texts).
 - Security plan review: PASS (0 critical, 0 high, 6 medium, 6 low); required controls C1-C11 in security.md are part of the plan.
 ## Deviations from plan
-- none
+- zod `jitless` is set in `src/content/zod.ts`, which every schema module imports `z` from, instead of in `main.tsx` (P7): ES module order would build the schemas before `main.tsx`'s body runs.
+- `react`, `react-dom` and `@sync-system/react` are devDependencies of the app (Vite bundles them), so `pnpm deploy --prod` leaves only zod in the runtime image, as section 4 intends.
+- The reader Dockerfile also copies `apps/sync-server/package.json` (manifest only): `pnpm deploy` resolves the whole workspace graph (the client dev-depends on the server).
+- `tsconfig.server.json` and the `build`/`typecheck`/`start` script additions land in chunk 13 (with the server), not chunk 2: before that it had no inputs.
+- Extra small modules: `src/content/origin.ts` (canonical-origin rules shared by config and `?src`), `src/content/quote.ts` (40-char truncation), `src/content/zod.ts`; `src/i18n/index.tsx` (holds the provider, so `.tsx`).
+- `fetchText` times out with its own `setTimeout` + `AbortController` (one signal for headers and body, caller signal forwarded) instead of `AbortSignal.timeout`, so the timeout is testable with fake timers.
+- Origin check also rejects `*` in a host (WHATWG `URL` accepts it; in a CSP it is a wildcard).
+- A malformed `?book` value is not echoed: "Book not found" with Details "The book ID in the link is not valid." (security C6). Non-http(s) schemes and URLs with credentials in `?src` are `src-invalid`.
+- `vite preview` also sends the production security headers and injects config for `/` and `/library`.
+- Swipes are recognised for touch and pen pointers only (a mouse drag selects text).
+- Test file names differ slightly from section 8.1 (`app.test.tsx`, `status-screens.test.tsx`, `boundaries.node.test.ts`, `readme.node.test.ts`, `build-output.node.test.ts`); coverage is as listed.
+- Chunk 4 was pushed with a lint error (unneeded type assertions in a test); fixed in the follow-up commit `fix(reader): drop unneeded type assertions in fingerprint test`.
+- Low advisories: F7 (length check before regex), F8 (lone surrogates refused + README note), F9 (production warning + README), F11 (compose `read_only`, `cap_drop`, `no-new-privileges`, `restart`), F12 (README note) done. F10: HSTS documented for the proxy; Trusted Types not added (still open).
+## Verification notes
+- `pnpm audit --audit-level=high`, `pnpm lint`, `pnpm typecheck`, `pnpm test` (reader: 500 tests), `pnpm build`: pass.
+- `docker compose config`, `docker compose build reader` and `sync-server`: pass. `docker compose up reader`: healthy, `/`, `/library`, `/health` 200; `READER_ENTRY=x` exits 1 with `Config error: ...`. Runtime image: `/app` root-owned, `USER node`, `node_modules` = zod only, no source maps.
+- Headless Chrome against the production server: samples, library, "Book not found" and `src-not-allowed` render correctly under the CSP, Hebrew interface from the browser language; no console messages captured. Manual QA (section 8.2) still to do: swipe, zoom, screen readers, Safari/Firefox.
