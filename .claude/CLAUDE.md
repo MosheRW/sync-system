@@ -169,6 +169,8 @@ mode; only `qa` commits.
 **GATE 3 (always):** tell the user the PR is ready to merge, with links, and
 list the open medium/low security advisories so they can decide to fix now,
 open a follow-up issue, or accept them.
+If QA's Attribution section lists unsigned commits, mention them too, so the
+PR stays a complete record of who did what.
 With **submodules**, spell out the merge order: each submodule PR first, then
 `engineer` (fix mode) updates the parent pointer to the merged submodule
 commit, then the parent PR. With **linked issues** in other repos, list them.

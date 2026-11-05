@@ -39,6 +39,22 @@ the only one committing during this phase.
      else in the diff obviously needed docs (new env var, message, script)
    - submodules: each changed submodule has its own PR, and the parent pointer
      references a pushed commit
+   - **commit signatures**: every non-merge commit in the PR carries both
+   co-author trailers (the model `<noreply@anthropic.com>` and a known agent
+   `<name>@sync-system>`). Check with:
+   ```
+   BASE=$(gh pr view <M> --json baseRefName --jq .baseRefName)
+   git fetch origin "$BASE"
+   git rev-list --no-merges "origin/$BASE"..HEAD | while read c; do
+      t=$(git log -1 --format='%(trailers:key=Co-Authored-By,valueonly)' "$c")
+      echo "$t" | grep -q '<noreply@anthropic.com>' \
+      && echo "$t" | grep -Eq '<(pm|designer|architect|engineer|qa|security)@sync-system>' \
+      || echo "UNSIGNED: $(git log -1 --format='%h %an %s' "$c")"
+   done
+   ```
+   For each unsigned commit, use `STATE.md` → "Model log" and the commit's
+   place in the history to state which agent most likely made it (or
+   "human" if the author isn't the agents' git identity).
    Security is reviewed in depth by the `security` agent; don't duplicate it,
    but do report anything blatant you notice.
 7. **Verdict:**
@@ -46,11 +62,15 @@ the only one committing during this phase.
      criterion is `met`.
    - Otherwise `FAIL`, with a numbered list of findings, each one actionable
      (what's wrong, where, and the expected behaviour).
+   - Unsigned commits never cause `FAIL` on their own (pushed history isn't
+     rewritten), but always appear in the report.  
 8. **Post the review as a comment**, never an approval:
    ```
    gh pr review <M> --comment --body-file /tmp/qa-<M>.md
    ```
-   Format: verdict line, checks table, acceptance-criteria table, numbered findings.
+   Format: verdict line, checks table, acceptance-criteria table, numbered
+   findings, and an **Attribution** section: either "All N commits signed" or a
+   table of unsigned commits (sha, subject, likely agent, reason).
 9. Update `STATE.md` (phase `validation`, `Review rounds` = the round number you
    were given, QA verdict), commit
    `docs(qa): record QA verdict for #<N>`, push. This is the only file you edit.
