@@ -4,10 +4,10 @@
 - Branch: feat/13-roles-lifecycle
 - PR: #14 (ready for review)
 - Plan approved by user: yes (Gate 2, 2026-11-04)
-- Review rounds: 1
+- Review rounds: 1 fixed (round 1 advisories, QA 1-4 and security L-1 to L-3, fixed at the user's Gate 3 request)
 - QA verdict (round 1): PASS (46/46 ACs met; 5 non-blocking advisories in the PR comment)
 - Security-sensitive: yes
-- Last updated by: qa
+- Last updated by: engineer
 ## Gate 1 decisions
 - User accepted every recommended default Q1.1-Q7 as written in `spec.md`,
   with one change: Q5.5 display names use the existing strict #10 rule
@@ -94,6 +94,32 @@
     (`expireHold`, or a 1 s grace on a real clock).
   - Extra commits fixing CI-only test timing (3facc00, 98c11e5, 8919655) and
     a failing pushed chunk (3af0075, `client.preview` as a getter).
+- Round 1 advisory fixes (engineer, user decision at Gate 3: "fix them all
+  before the merge"):
+  - QA 1: per-group budget cleanup tested (`leader-controls.test.ts` for
+    `forgetGroup`/`close()` over all five limiters; `lifecycle-states.int`
+    for `group.end`, `empty` and `server.close()`, also asserting the join
+    budgets after close, so `JoinService.limiterSize` is used too).
+  - QA 2: every leader action raced against a handoff, settled before it,
+    and sent after it (`roles-matrix.int`, 14 actions x 3).
+  - QA 3: the client preview ends on demotion, removal, group end and a new
+    group (kept across the leader's own reconnect to the same group).
+  - QA 4: root and client README token rules corrected; supersede codes
+    wording; client `NOT_LEADER` row; drift-guard tests.
+  - QA 5: left as is (no history rewrite).
+  - L-1: refusals before mutation on resume: a leader return checks the
+    block-list union before replacing the old session, and a member resume
+    asks the store before replacing it (audit: supersede refuses
+    `CODES_EXHAUSTED` before any change; take-back has no refusal after its
+    checks).
+  - L-2: supersede adopts the requester's codes only if they share nothing
+    with the stale line (code generation, ticket generation and every code
+    differ); otherwise everything rotates.
+  - L-3: one `#dropLeaderOnly()` (roster, recovery state, codes, join
+    requests, preview) on every demotion path: `leader.lost`, a member
+    `#startGroup` (join, resume as member), `group.waiting`, group end.
+    The private codes are not readable through the public API, so the tests
+    check the public view (requests, codes, state, roster, preview).
 - Board: `.claude/github-project.env` had an empty `GH_PROJECT_NUMBER`; the card was added to project 8 ("sync system") with a temporary config copy. Restored to 8 on this branch in 8880f2d.
 - Plan revision 1 (after security round 1): H1 closed in architecture.md 6.6
   with `processStartedAt`, `record.recoveredTerm` and a new token claim `rt`
@@ -140,3 +166,4 @@
 - security plan (round 4): opus (rule) → PASS
 - engineer implement: opus (Implementer model: opus; security-sensitive)
 - qa review (round 1): opus (NEXT_MODEL) → PASS
+- engineer fix (round 1 advisories): opus (rule) → DONE
