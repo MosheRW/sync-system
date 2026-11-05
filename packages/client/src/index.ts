@@ -42,6 +42,13 @@ export type {
   ViceChangedEvent,
   LockChangedEvent,
   RemovedEvent,
+  LeaderLifecycle,
+  LeadershipReason,
+  NowLeadingEvent,
+  LeadershipLostEvent,
+  LeaderChangedEvent,
+  KeepAliveEvent,
+  GroupIdEvent,
   LeaderState,
 } from './state.js';
 export { CLIENT_PROTOCOL_VERSION, MIN_SERVER_PROTOCOL_VERSION } from './version.js';

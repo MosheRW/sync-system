@@ -69,6 +69,8 @@ describe('createGroup (AC15)', () => {
       displayName: 'Guest 1',
       generated: true,
       locked: false,
+      leader: { status: 'online' },
+      takeBackAvailable: false,
     });
     client.close();
   });

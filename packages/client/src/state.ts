@@ -92,6 +92,10 @@ export type GroupState =
       readonly generated: boolean;
       /** The leader locked the group: nobody new joins (#13 AC29). */
       readonly locked: boolean;
+      /** The leader's lifecycle as this client sees it (#13 AC28, D8). */
+      readonly leader: LeaderLifecycle;
+      /** This member is the displaced leader and may take the lead back (#13 AC24). */
+      readonly takeBackAvailable: boolean;
     }
   | {
       /** Dropped; resuming with the stored token after the reconnect. */
@@ -213,10 +217,58 @@ export interface PositionUpdatedEvent {
   readonly position: JsonValue;
 }
 
-/** A member's group: the leader went offline or came back (#5 AC36). */
+/** A member's group: the leader went offline or came back (#5 AC36, #13 AC28). */
 export interface LeaderStatusEvent {
   readonly groupId: string;
   readonly online: boolean;
+  /** Why the group paused (#13 D8). */
+  readonly cause?: 'disconnected' | 'inactive';
+  /** Local epoch ms when the lead may pass on, if a handoff can follow. */
+  readonly graceEndsAt?: number;
+}
+
+/**
+ * The leader's lifecycle (#13 AC28, D8): live, or paused because the leader
+ * disconnected or missed the keep-alive. `graceEndsAt` (local epoch ms,
+ * from the server's duration, D12) is set only while a handoff can follow.
+ */
+export type LeaderLifecycle =
+  | { readonly status: 'online' }
+  | { readonly status: 'offline' | 'inactive'; readonly graceEndsAt?: number };
+
+/** Why the lead moved (#13 AC23). */
+export type LeadershipReason =
+  'handoff_disconnect' | 'handoff_inactivity' | 'take_back' | 'superseded';
+
+/** "You're now leading" (#13 AC23). */
+export interface NowLeadingEvent {
+  readonly groupId: string;
+  readonly reason: 'handoff_disconnect' | 'handoff_inactivity' | 'take_back';
+}
+
+/** This client leads no more (#13 AC23). */
+export interface LeadershipLostEvent {
+  readonly groupId: string;
+  readonly reason: LeadershipReason;
+  readonly takeBackAvailable: boolean;
+}
+
+/** Someone else leads now; no participant ID (#13 AC23). */
+export interface LeaderChangedEvent {
+  readonly groupId: string;
+  readonly reason: LeadershipReason;
+}
+
+/** Leader: answer within `countdownMs` or the group pauses (#13 AC16). */
+export interface KeepAliveEvent {
+  readonly groupId: string;
+  readonly countdownMs: number;
+  /** Local epoch ms when the countdown ends (D12). */
+  readonly deadlineAt: number;
+}
+
+export interface GroupIdEvent {
+  readonly groupId: string;
 }
 
 /** Typed events (AC19). */
@@ -242,6 +294,18 @@ export interface SyncClientEvents {
   viceChanged: ViceChangedEvent;
   /** The group was locked or unlocked (#13 AC29). */
   lockChanged: LockChangedEvent;
+  /** Leader: the keep-alive prompt (#13 AC16). */
+  keepAlive: KeepAliveEvent;
+  /** Leader: an activity answered the prompt (#13 AC16). */
+  keepAliveCleared: GroupIdEvent;
+  /** "You're now leading" (#13 AC23): a new leader token was stored. */
+  nowLeading: NowLeadingEvent;
+  /** This client leads no more (#13 AC23): a member token was stored. */
+  leadershipLost: LeadershipLostEvent;
+  /** Another participant leads now (#13 AC23). */
+  leaderChanged: LeaderChangedEvent;
+  /** The displaced leader may take the lead back (#13 AC24). */
+  takeBackOffered: GroupIdEvent;
   /**
    * The leader removed this participant (#13 AC32, Gate 2 Q-A): the token
    * is deleted and the client is closed; it does not reconnect.
@@ -365,7 +429,13 @@ export interface JoinByQrOptions {
 
 /** What an app shows for the PRD's sync indicator (AC25). */
 export type SyncIndicator =
-  'none' | 'following' | 'leading' | 'reconnecting' | 'leader_offline' | 'awaiting_approval';
+  | 'none'
+  | 'following'
+  | 'leading'
+  | 'reconnecting'
+  | 'leader_offline'
+  | 'leader_grace'
+  | 'awaiting_approval';
 
 /**
  * Maps a snapshot to the indicator (#5 AC36, Q-E; documented in the README):
@@ -374,6 +444,8 @@ export type SyncIndicator =
  *   `reconnecting`;
  * - connected with a rejoining group: `reconnecting`;
  * - connected and waiting for the leader: `leader_offline`;
+ * - connected, active member, leader paused with a grace period (a
+ *   handoff may follow, #13 AC28): `leader_grace`;
  * - connected, active member, leader offline: `leader_offline`;
  * - connected, active member, leader online: `following`;
  * - connected, active leader: `leading`;
@@ -394,5 +466,8 @@ export function indicatorOf(snapshot: SyncClientSnapshot): SyncIndicator {
   if (group.status === 'rejoining') return 'reconnecting';
   if (group.status === 'waiting') return 'leader_offline';
   if (group.role === 'leader') return 'leading';
+  if (group.leader.status !== 'online' && group.leader.graceEndsAt !== undefined) {
+    return 'leader_grace';
+  }
   return group.leaderOnline ? 'following' : 'leader_offline';
 }

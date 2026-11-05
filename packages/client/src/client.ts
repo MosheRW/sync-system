@@ -70,6 +70,7 @@ import type {
   SyncClientEvents,
   SyncClientSnapshot,
   RosterEntry,
+  LeaderLifecycle,
 } from './state.js';
 import { LeaderData } from './leader-state.js';
 import type { Recovery } from './token-store.js';
@@ -134,6 +135,26 @@ const REPLY_TYPES: Record<RequestKind, readonly ServerMessage['type'][]> = {
   'keepalive.ack': ['activity.ack'],
   'leader.takeBack': ['leader.granted'],
 };
+
+/** A live leader (#13 D8). */
+const ONLINE: LeaderLifecycle = Object.freeze({ status: 'online' });
+
+/** The lifecycle from a pause on the wire, with a local grace end (#13 D8, D12). */
+function lifecycleOf(
+  pause: { cause: 'disconnected' | 'inactive'; graceMs?: number | undefined } | undefined,
+): LeaderLifecycle {
+  if (pause === undefined) return ONLINE;
+  const status = pause.cause === 'disconnected' ? 'offline' : 'inactive';
+  return Object.freeze(
+    pause.graceMs === undefined ? { status } : { status, graceEndsAt: now() + pause.graceMs },
+  );
+}
+
+/** Two lifecycles say the same (status and grace end). */
+function sameLifecycle(a: LeaderLifecycle, b: LeaderLifecycle): boolean {
+  if (a.status === 'online' || b.status === 'online') return a.status === b.status;
+  return a.status === b.status && a.graceEndsAt === b.graceEndsAt;
+}
 
 /** The recovery fields of a leader state, for the token store (#13 D13). */
 function recoveryState(
@@ -475,6 +496,8 @@ export class SyncClient {
           displayName: reply.displayName,
           generated: reply.generated,
           locked: reply.state.locked,
+          leader: ONLINE,
+          takeBackAvailable: false,
         });
         const codes = this.#setLeaderCodes(reply.groupId, reply.joinMethods, reply.codes);
         result.resolve(
@@ -1183,6 +1206,114 @@ export class SyncClient {
     if (state !== null) void this.#tokens?.updateRecovery(groupId, recoveryState(state));
   }
 
+  /**
+   * Leader: answers the keep-alive prompt (#13 AC16). Any counted activity
+   * (a position update, for example) answers it too. Rejects locally with
+   * NOT_CONNECTED, NOT_IN_GROUP or NOT_LEADER.
+   */
+  answerKeepAlive(): Promise<void> {
+    const invalid = localError(() => this.#checkLeader('keepalive.ack'));
+    if (invalid) return Promise.reject(invalid);
+    return this.#leaderRequest('keepalive.ack', {}, () => undefined);
+  }
+
+  /**
+   * Leader: "still here" without moving the group (#13 AC30), for example
+   * while previewing. No position is sent. Limited by the server to 12 per
+   * minute; the preview helper throttles it.
+   */
+  sendLeaderActivity(): Promise<void> {
+    const invalid = localError(() => this.#checkLeader('leader.activity'));
+    if (invalid) return Promise.reject(invalid);
+    return this.#leaderRequest('leader.activity', {}, () => undefined);
+  }
+
+  /**
+   * The displaced leader takes the lead back (#13 AC24), while
+   * `takeBackAvailable`. Resolves when this client leads again (a new
+   * leader token is stored and `nowLeading` fires). Rejects locally with
+   * NOT_CONNECTED or NOT_IN_GROUP, and from the server with NOT_ALLOWED or
+   * RATE_LIMITED.
+   */
+  takeBackLeadership(): Promise<void> {
+    const invalid = localError(() => {
+      if (this.#snapshot.connection.status !== 'connected') {
+        throw new SyncClientError('NOT_CONNECTED');
+      }
+      const group = this.#snapshot.group;
+      if (group?.status !== 'active') throw new SyncClientError('NOT_IN_GROUP');
+    });
+    if (invalid) return Promise.reject(invalid);
+    return this.#leaderRequest('leader.takeBack', {}, (reply) => {
+      if (reply.type !== 'leader.granted') {
+        throw invalidServerMessage(['type'], 'leader.takeBack');
+      }
+      this.#onGranted(reply);
+    });
+  }
+
+  /**
+   * "You're now leading" (#13 AC23): the new leader token is stored with
+   * recovery data built from the active group, the server's recovery state
+   * and the codes; the client leads from now on.
+   */
+  #onGranted(message: Extract<ServerMessage, { type: 'leader.granted' }>): void {
+    const group = this.#snapshot.group;
+    if (group?.status !== 'active' || group.groupId !== message.groupId) return;
+    void this.#tokens?.saveToken(message.token, {
+      metadata: group.metadata,
+      hasPosition: group.hasPosition,
+      ...(group.hasPosition ? { position: group.position } : {}),
+      ...recoveryState(message.state),
+      joinCodes: message.codes.blob,
+      joinCodesGeneration: message.codes.generation,
+    });
+    this.#leaderData.reset(message.groupId, message.state);
+    this.#startGroup({
+      ...group,
+      role: 'leader',
+      leaderOnline: true,
+      leader: ONLINE,
+      locked: message.state.locked,
+      takeBackAvailable: false,
+    });
+    this.#setLeaderCodes(message.groupId, message.joinMethods, message.codes);
+    this.#log('info', 'now_leading', { cause: message.reason });
+    this.#events.emit(
+      'nowLeading',
+      Object.freeze({ groupId: message.groupId, reason: message.reason }),
+    );
+    this.#emitCodesChanged('resumed');
+  }
+
+  /**
+   * This client leads no more (#13 AC23, RC12): the member token replaces
+   * the leader token (its recovery data goes), and the roster, recovery
+   * state, codes and pending requests are dropped.
+   */
+  #onLost(message: Extract<ServerMessage, { type: 'leader.lost' }>): void {
+    const group = this.#snapshot.group;
+    if (group?.status !== 'active' || group.groupId !== message.groupId) return;
+    void this.#tokens?.saveToken(message.token);
+    this.#leaderData.clear();
+    this.#leaderCodes = undefined;
+    this.#joinRequests.clear();
+    this.#startGroup({
+      ...group,
+      role: 'member',
+      takeBackAvailable: message.takeBackAvailable,
+    });
+    this.#log('info', 'leadership_lost', { cause: message.reason });
+    this.#events.emit(
+      'leadershipLost',
+      Object.freeze({
+        groupId: message.groupId,
+        reason: message.reason,
+        takeBackAvailable: message.takeBackAvailable,
+      }),
+    );
+  }
+
   /** The lock flag of the active group, and `lockChanged` (#13 AC29). */
   #applyLock(groupId: string, locked: boolean): void {
     const group = this.#snapshot.group;
@@ -1390,6 +1521,8 @@ export class SyncClient {
       displayName: reply.displayName,
       generated: reply.generated,
       locked: reply.locked,
+      leader: lifecycleOf(reply.leaderPause),
+      takeBackAvailable: false,
     });
     return joined;
   }
@@ -1935,6 +2068,8 @@ export class SyncClient {
         displayName: reply.displayName,
         generated: reply.generated,
         locked: reply.state.locked,
+        leader: ONLINE,
+        takeBackAvailable: false,
       });
       // The current codes come back with every leader resume (#10 AC33, AC34).
       this.#setLeaderCodes(groupId, reply.joinMethods, reply.codes);
@@ -1997,6 +2132,8 @@ export class SyncClient {
       displayName: reply.displayName,
       generated: reply.generated,
       locked: reply.locked,
+      leader: lifecycleOf(reply.leaderPause),
+      takeBackAvailable: false,
     });
     this.#log('info', 'group_resumed', { role: 'member', recreated });
     return Object.freeze({
@@ -2070,10 +2207,73 @@ export class SyncClient {
         const group = this.#snapshot.group;
         if (group?.status !== 'active' || group.groupId !== message.groupId) return;
         const online = message.type === 'leader.online';
-        if (group.leaderOnline === online) return;
-        this.#update({ group: { ...group, leaderOnline: online } });
+        const leader: LeaderLifecycle =
+          message.type === 'leader.online'
+            ? ONLINE
+            : lifecycleOf({ cause: message.cause ?? 'disconnected', graceMs: message.graceMs });
+        // A repeat of the same status is not news.
+        if (group.leaderOnline === online && sameLifecycle(group.leader, leader)) return;
+        this.#update({ group: { ...group, leaderOnline: online, leader } });
         this.#log('info', 'leader_status', { online });
-        this.#events.emit('leaderStatus', Object.freeze({ groupId: group.groupId, online }));
+        this.#events.emit(
+          'leaderStatus',
+          Object.freeze({
+            groupId: group.groupId,
+            online,
+            ...(message.type === 'leader.offline' && message.cause !== undefined
+              ? { cause: message.cause }
+              : {}),
+            ...(leader.status !== 'online' && leader.graceEndsAt !== undefined
+              ? { graceEndsAt: leader.graceEndsAt }
+              : {}),
+          }),
+        );
+        return;
+      }
+      case 'keepalive.prompt':
+        if (!this.#leads(message.groupId)) return;
+        this.#log('info', 'keepalive_prompt');
+        this.#events.emit(
+          'keepAlive',
+          Object.freeze({
+            groupId: message.groupId,
+            countdownMs: message.countdownMs,
+            deadlineAt: now() + message.countdownMs,
+          }),
+        );
+        return;
+      case 'keepalive.cleared':
+        if (!this.#leads(message.groupId)) return;
+        this.#events.emit('keepAliveCleared', Object.freeze({ groupId: message.groupId }));
+        return;
+      case 'activity.ack':
+        this.#onReply(message);
+        return;
+      case 'leader.granted':
+        if (message.reqId !== undefined && this.#requests.get(message.reqId) !== undefined) {
+          this.#onReply(message);
+          return;
+        }
+        this.#onGranted(message);
+        return;
+      case 'leader.lost':
+        this.#onLost(message);
+        return;
+      case 'leader.changed': {
+        const group = this.#snapshot.group;
+        if (group?.status !== 'active' || group.groupId !== message.groupId) return;
+        this.#log('info', 'leader_changed', { cause: message.reason });
+        this.#events.emit(
+          'leaderChanged',
+          Object.freeze({ groupId: message.groupId, reason: message.reason }),
+        );
+        return;
+      }
+      case 'takeback.offered': {
+        const group = this.#snapshot.group;
+        if (group?.status !== 'active' || group.groupId !== message.groupId) return;
+        this.#update({ group: { ...group, takeBackAvailable: true } });
+        this.#events.emit('takeBackOffered', Object.freeze({ groupId: message.groupId }));
         return;
       }
       case 'error':
