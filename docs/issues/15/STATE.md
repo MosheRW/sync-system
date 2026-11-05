@@ -5,8 +5,8 @@
 - PR: #16 (ready for review)
 - Plan approved by user: yes
 - Security-sensitive: yes
-- Review rounds: 1
-- Last updated by: engineer
+- Review rounds: 2
+- Last updated by: qa
 ## Model log
 - pm grooming: sonnet (default) → DONE
 - architect plan: opus (NEXT_MODEL) → DONE
@@ -14,6 +14,7 @@
 - engineer implement: opus (architect `Implementer model: opus`) → DONE (13 chunks, all checks green)
 - qa review (round 1): opus (NEXT_MODEL) → PASS (checks 10/10, ACs 29/29; 1 advisory: QR rate-limit wait reset on revoking codesChanged)
 - engineer fix (round 1 advisories): opus (rule) → DONE (3 low advisories fixed at user request: c9ecbad QR rate-limit wait kept on revoking codesChanged and on stop; 95b765e lint restrictions match {ts,tsx}; 5e8508a action values dropped during render on reset-key change)
+- qa review (round 2): opus (rule) → PASS (lint/typecheck/build pass, tests 3x green, CI success on b7e07a9; all 3 advisory fixes verified against pre-fix code; ACs 29/29; advisory: QR rate-limit wait outlives a reconnect though the server budget is per connection, up to 60 s later QR)
 ## Gate 2 decisions (user, 2026-11-05)
 - Plan approved as written.
 - Q-A accepted: `setJoiningEnabled` = lock/unlock of all joining; "expiry" =
