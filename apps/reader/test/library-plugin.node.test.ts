@@ -7,6 +7,7 @@ import {
   LibraryBuildError,
   buildLibraryIndex,
   libraryModuleSource,
+  loadDevConfig,
   readerLibrary,
 } from '../plugins/library.js';
 
@@ -95,5 +96,33 @@ describe('virtual:reader-library', () => {
     expect(resolved).toBe('\0virtual:reader-library');
     expect(load(resolved!)).toContain('export const loaders');
     expect(resolveId('other')).toBeNull();
+  });
+});
+
+describe('dev and preview servers check the config (AC30)', () => {
+  const index = buildLibraryIndex(join(fixtures, 'library-valid'));
+
+  it('accepts a valid env', () => {
+    expect(loadDevConfig({ READER_ENTRY: 'error' }, index).entry).toBe('error');
+  });
+
+  it('fails to start with a bad env, listing every problem', () => {
+    expect(() => loadDevConfig({ READER_ENTRY: 'x', READER_UI_LANG: 'fr' }, index)).toThrow(
+      /^Config error: READER_ENTRY "x"[^\n]*\nConfig error: READER_UI_LANG "fr"/,
+    );
+  });
+
+  it('fails with the library on and zero books (AC41)', () => {
+    const empty = buildLibraryIndex(join(fixtures, 'library-empty'));
+    expect(() => loadDevConfig({}, empty)).toThrow(/no books are bundled/);
+  });
+
+  it('runs when the preview server starts', () => {
+    const plugin = readerLibrary({
+      contentDir: join(fixtures, 'library-valid'),
+      env: { READER_ENTRY: 'nope' },
+    });
+    const hook = plugin.configurePreviewServer as () => void;
+    expect(() => hook()).toThrow(/READER_ENTRY "nope"/);
   });
 });

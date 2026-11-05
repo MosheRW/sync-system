@@ -1,6 +1,8 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import type { Plugin } from 'vite';
+import { ConfigError } from '../src/config/config-error.js';
+import { type EnvSource, type ReaderConfig, parseReaderConfig } from '../src/config/schema.js';
 import type { ContentError } from '../src/content/errors.js';
 import { parseContentText } from '../src/content/parse.js';
 import { documentDir } from '../src/direction/effective.js';
@@ -114,6 +116,26 @@ export interface ReaderLibraryOptions {
   contentDir: string;
   /** URL of `contentDir` relative to the Vite root, e.g. `/content`. */
   contentUrl?: string;
+  /** Environment for the dev/preview servers' config check; defaults to `process.env`. */
+  env?: EnvSource;
+}
+
+/**
+ * Validates the reader config for the dev and preview servers, so `pnpm dev`
+ * with a bad env fails to start like the production server (AC30).
+ */
+export function loadDevConfig(env: EnvSource, index: LibraryIndex): ReaderConfig {
+  try {
+    return parseReaderConfig(
+      env,
+      index.entries.map((entry) => entry.contentId),
+    );
+  } catch (err) {
+    if (err instanceof ConfigError) {
+      throw new Error(err.problems.map((problem) => `Config error: ${problem}`).join('\n'));
+    }
+    throw err;
+  }
 }
 
 /**
@@ -146,7 +168,11 @@ export function readerLibrary(options: ReaderLibraryOptions): Plugin {
         source: `${JSON.stringify(getIndex().entries, null, 2)}\n`,
       });
     },
+    configurePreviewServer() {
+      loadDevConfig(options.env ?? process.env, getIndex());
+    },
     configureServer(server) {
+      loadDevConfig(options.env ?? process.env, getIndex());
       server.watcher.add(options.contentDir);
       const onChange = (file: string) => {
         if (!file.startsWith(options.contentDir)) return;
