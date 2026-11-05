@@ -22,6 +22,11 @@ export function AllHooks(): ReactNode {
   const removed = api.useRemoved();
   const exit = api.useGroupExit();
   api.useSyncEvent('state', () => undefined);
+  const create = api.useCreateGroup();
+  const byCode = api.useJoinByCode();
+  const byQr = api.useJoinByQr();
+  const approval = api.useJoinApproval();
+  const stored = api.useStoredGroups({ checkOnConnect: true });
   const summary = {
     status,
     group: snapshot.group === null ? 'none' : snapshot.group.status,
@@ -36,6 +41,9 @@ export function AllHooks(): ReactNode {
     leaderOnline: leaderStatus?.online ?? null,
     removed,
     exit: exit.end.pending || exit.leave.pending,
+    joining: create.pending || byCode.pending || byQr.pending,
+    flow: approval.flow.status,
+    stored: stored.groups === null ? null : stored.groups.length,
   };
   return (
     <div>

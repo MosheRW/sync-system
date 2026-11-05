@@ -22,6 +22,10 @@ export {
 } from './hooks/group.js';
 export type { GroupEnded, GroupExit, LeaderStatus, Position } from './hooks/group.js';
 export { useSyncEvent } from './hooks/events.js';
+export { useCreateGroup, useJoinApproval, useJoinByCode, useJoinByQr } from './hooks/join.js';
+export type { JoinApproval } from './hooks/join.js';
+export { useStoredGroups } from './hooks/stored-groups.js';
+export type { StoredGroups, StoredGroupsOptions } from './hooks/stored-groups.js';
 export { ConnectionIndicator } from './components/connection-indicator.js';
 export type {
   ConnectionIndicatorProps,

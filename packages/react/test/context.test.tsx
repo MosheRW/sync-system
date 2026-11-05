@@ -24,6 +24,11 @@ const PUBLIC_HOOKS: Record<string, () => unknown> = {
   useRemoved: () => api.useRemoved(),
   useGroupExit: () => api.useGroupExit(),
   useSyncEvent: () => api.useSyncEvent('state', () => undefined),
+  useCreateGroup: () => api.useCreateGroup(),
+  useJoinByCode: () => api.useJoinByCode(),
+  useJoinByQr: () => api.useJoinByQr(),
+  useJoinApproval: () => api.useJoinApproval(),
+  useStoredGroups: () => api.useStoredGroups(),
 };
 
 function Call({ use }: { use: () => unknown }): ReactNode {
