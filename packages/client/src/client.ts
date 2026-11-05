@@ -1696,8 +1696,13 @@ export class SyncClient {
   #startGroup(group: Extract<GroupState, { status: 'active' }>): void {
     this.#throttle?.cancel();
     this.#throttle = undefined;
-    // A member keeps nothing of a lead (#13 RC12).
+    const previous = this.#snapshot.group;
+    // A member keeps nothing of a lead (#13 RC12), and a preview never
+    // carries over to another group (#13 AC41).
     if (group.role !== 'leader') this.#dropLeaderOnly();
+    else if (previous === null || !('groupId' in previous) || previous.groupId !== group.groupId) {
+      this.#preview.end();
+    }
     if (group.role === 'leader' && this.#info) {
       const throttle: PositionThrottle<string> = new PositionThrottle<string>(
         this.#info.limits.maxLeaderUpdatesPerSecond,
@@ -1713,14 +1718,16 @@ export class SyncClient {
   }
 
   /**
-   * Drops everything only a leader holds (#13 RC12): roster and recovery
-   * state, codes and pending join requests, so a demoted, removed or ended
-   * leader keeps none of it in memory.
+   * Drops everything only a leader holds (#13 RC12, AC41): roster and
+   * recovery state, codes, pending join requests and the private preview,
+   * so a demoted, removed or ended leader keeps none of it in memory and a
+   * later `bringGroupHere()` can never move a group to an old position.
    */
   #dropLeaderOnly(): void {
     this.#leaderData.clear();
     this.#leaderCodes = undefined;
     this.#joinRequests.clear();
+    this.#preview.end();
   }
 
   /** Ends an active or rejoining group, stops the throttle and emits `groupEnded` (AC19, AC29). */
@@ -1728,8 +1735,8 @@ export class SyncClient {
     const group = this.#snapshot.group;
     this.#throttle?.cancel();
     this.#throttle = undefined;
-    // The leader's codes, request list, roster and recovery state belong to
-    // the group (#10 AC40, #13 RC12).
+    // The leader's codes, request list, roster, recovery state and preview
+    // belong to the group (#10 AC40, #13 RC12, AC41).
     this.#dropLeaderOnly();
     if (group === null || group.status === 'ended') return;
     // Never in a group: a pending join request just goes away (#10 7.2).

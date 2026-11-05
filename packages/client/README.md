@@ -625,7 +625,10 @@ stored own name and, for a leader, the lock, vice and handoff mode.
 normal position update, then ends), `returnToGroup()` and `getState()`
 (`{ active, groupPosition, previewPosition }`). While active it never sends a
 position; `start` and `move` send `leader.activity` at most every 10 s so the
-keep-alive stays quiet. The previewed position never leaves the client.
+keep-alive stays quiet. The previewed position never leaves the client. The
+preview ends by itself when the client stops leading (`leadershipLost`, a
+resume as a member, removal) and when the group ends or another group starts,
+so `bringGroupHere()` never moves a group to a position from an earlier lead.
 
 ### Removal
 
