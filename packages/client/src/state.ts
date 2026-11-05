@@ -256,7 +256,7 @@ export interface JoinRequest {
 
 /** Why the group's codes changed (#10 AC40). */
 export type CodesChangedReason =
-  'created' | 'resumed' | 'rotated' | 'door_failures' | 'member_removed';
+  'created' | 'resumed' | 'rotated' | 'door_failures' | 'member_removed' | 'superseded';
 
 export interface CodesChangedEvent {
   readonly groupId: string;

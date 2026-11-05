@@ -547,7 +547,7 @@ export class JoinService {
   async commitFullSet(
     record: GroupRecord,
     next: GroupCodes,
-    cause: 'leader' | 'member_removed',
+    cause: 'leader' | 'member_removed' | 'superseded',
     leader: Session | undefined,
   ): Promise<GroupRecord | undefined> {
     const namespace = record.appNamespace;
@@ -571,6 +571,54 @@ export class JoinService {
       );
       if (leader !== undefined) this.host.deliverLater(leader, { type: 'join.resumed', groupId });
     }
+    return updated;
+  }
+
+  /**
+   * Supersede codes (#13 6.6.2 step 5, M1): the requester's blob is adopted
+   * (codes and ticket generation) if it verifies for this group, has the
+   * group's methods, another generation, and its codes are free; otherwise
+   * a full new set is claimed. Either way no code or ticket of the stale
+   * line survives. Returns the codes to store, or `exhausted`.
+   */
+  supersedeCodes(
+    record: GroupRecord,
+    blob: string | undefined,
+  ): { codes: GroupCodes; rotated: boolean } | 'exhausted' {
+    const namespace = record.appNamespace;
+    const verified =
+      blob === undefined ? undefined : this.deps.codesBlobs.verify(blob, namespace, record.id);
+    if (
+      verified !== undefined &&
+      verified.codes.generation !== record.codes.generation &&
+      verified.methods.length === record.joinMethods.length &&
+      verified.methods.every((m) => record.joinMethods.includes(m)) &&
+      this.index.claim(namespace, record.id, verified.codes)
+    ) {
+      return { codes: { ...verified.codes }, rotated: false };
+    }
+    const next = this.claimFullSet(record);
+    return next === 'exhausted' ? next : { codes: next, rotated: true };
+  }
+
+  /** Stores supersede codes and frees the old ones that are not reused. */
+  async commitSupersedeCodes(record: GroupRecord, codes: GroupCodes): Promise<GroupRecord> {
+    const namespace = record.appNamespace;
+    const updated = (await this.deps.store.setCodes(namespace, record.id, codes)) ?? record;
+    const old = record.codes;
+    this.index.release(namespace, record.id, {
+      ...(old.groupCode !== undefined && old.groupCode !== codes.groupCode
+        ? { groupCode: old.groupCode }
+        : {}),
+      ...(old.alphaCode !== undefined && old.alphaCode !== codes.alphaCode
+        ? { alphaCode: old.alphaCode }
+        : {}),
+    });
+    this.doors.reset(groupKey(namespace, record.id), this.now());
+    this.deps.logger.info(
+      { event: 'codes_rotated', namespace, groupRef: groupRef(record.id), cause: 'superseded' },
+      'codes replaced on supersede',
+    );
     return updated;
   }
 

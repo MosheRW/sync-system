@@ -202,6 +202,7 @@ describe('token rejoin after an unexpected drop (#5 AC35, AC36)', () => {
       displayName: 'Guest 1',
       generated: true,
       state: { blockList: [], locked: false, handoff: 'auto' },
+      superseded: false,
       reqId: resume.reqId,
       groupId: GROUP_ID,
       participantId: 'leader-pid',

@@ -25,6 +25,35 @@ export interface ClassifyInput {
   refreshMaxMs: number;
 }
 
+/**
+ * Whether a leader token takes the lead of a recreated group from the
+ * leader that recreated it (#13 6.6.1, restart only, RC6). All of:
+ * 1. the record was recreated in this process (so: after a restart);
+ * 2. a leader token of another participant than the current leader;
+ * 3. granted before the restart (`term < recoveredAt`; every grant made in
+ *    this process has `term >= recoveredAt` by the `nextTerm` floor);
+ * 4. later than the recreator or the last superseder (`term > anchorTerm`,
+ *    strict);
+ * 5. inside its `lat` window and the max session (RC8).
+ */
+export function canSupersede(
+  record: Pick<GroupRecord, 'recoveredAt' | 'anchorTerm' | 'leaderId'>,
+  claims: TokenClaims,
+  app: Pick<AppConfig, 'inactivityLimitMinutes' | 'maxSessionMinutes'>,
+  now: number,
+  refreshMaxMs: number,
+): boolean {
+  if (record.recoveredAt === undefined || record.anchorTerm === undefined) return false;
+  return (
+    claims.role === 'leader' &&
+    claims.pid !== record.leaderId &&
+    claims.term < record.recoveredAt &&
+    claims.term > record.anchorTerm &&
+    claims.lat + app.inactivityLimitMinutes * MINUTE_MS + refreshMaxMs > now &&
+    claims.gct + app.maxSessionMinutes * MINUTE_MS > now
+  );
+}
+
 /** True when the token was issued by this process (#13 6.9 layer 2, RC17). */
 export function issuedInThisProcess(claims: TokenClaims, processStartedAt: number): boolean {
   return claims.iat >= Math.floor(processStartedAt / 1000);
@@ -65,6 +94,8 @@ export function classifyToken(input: ClassifyInput): TokenStatus {
   const latExpired =
     claims.lat + app.inactivityLimitMinutes * MINUTE_MS + input.refreshMaxMs <= now;
   if (record !== undefined) {
+    // A valid supersede is the only exemption from the (stale) block list.
+    if (canSupersede(record, claims, app, now, input.refreshMaxMs)) return 'live';
     if (record.blockList.includes(claims.pid)) return 'blocked';
     if (claims.pid === record.leaderId) return latExpired ? 'expired' : 'live';
     return 'live';

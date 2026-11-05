@@ -52,6 +52,7 @@ describe('recreation after a restart (#5 AC23)', () => {
       displayName: expect.any(String) as string,
       generated: true,
       state: expect.any(Object) as object,
+      superseded: false,
       metadata: { book: 1 },
       hasPosition: true,
       position: { page: 7 },

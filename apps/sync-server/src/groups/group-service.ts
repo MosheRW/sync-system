@@ -79,7 +79,8 @@ import { newGroupId, newParticipantId } from './ids.js';
 import { KeyedLock } from './keyed-lock.js';
 import type { Notifier } from './notifier.js';
 import { ParkingLot } from './parking-lot.js';
-import { classifyToken } from './resume.js';
+import { canSupersede, classifyToken } from './resume.js';
+import { nextTerm } from '../lifecycle/succession.js';
 import { type RefreshPolicy, TokenRefresher } from './token-refresher.js';
 import { type GroupActions, type Membership, type Session, membershipKey } from './session.js';
 
@@ -452,6 +453,8 @@ export class GroupService implements GroupActions {
       pause: undefined,
       displacedLeaderId: undefined,
       escalated: false,
+      anchorTerm: undefined,
+      recoveryMarking: false,
       leaderOnline: true,
       blockList: [],
       joinMethods: initial.methods,
@@ -703,7 +706,14 @@ export class GroupService implements GroupActions {
     if (added.status === 'full') {
       return errorMessage(ErrorCode.GROUP_FULL, { details: { maxGroupSize: app.maxGroupSize } });
     }
-    const record = await this.enterRoster(added.group, participantId, name);
+    // Code, QR and approval admissions after a recreation are marked, so a
+    // superseding leader can review them (#13 6.6.4, M4).
+    const record = await this.enterRoster(
+      added.group,
+      participantId,
+      name,
+      added.group.recoveryMarking,
+    );
     return this.commitJoin(session, participantId, record, method);
   }
 
@@ -1080,10 +1090,7 @@ export class GroupService implements GroupActions {
         case 'blocked':
           return errorMessage(ErrorCode.PARTICIPANT_BLOCKED);
         case 'live':
-          // #13 D4: the role comes from the live record, not from the token.
-          return claims.pid === record!.leaderId
-            ? this.leaderReturn(session, record!, claims, message.blockList, message.joinCodes)
-            : this.memberResume(session, record!, claims, name);
+          return this.resumeLive(session, record!, claims, message, name);
         case 'recoverable': {
           // Slows a stock-up of recreations after a restart (#13 RC20, M5).
           const rate = this.recreateLimiter.tryAcquire(
@@ -1236,6 +1243,9 @@ export class GroupService implements GroupActions {
       // A recreated group starts a new line: no take-back slot (#13 6.6).
       displacedLeaderId: undefined,
       escalated: false,
+      // The recreating grant anchors the supersede rule (#13 6.6.1, RC6).
+      anchorTerm: claims.term,
+      recoveryMarking: true,
       leaderOnline: true,
       // Deduplicated; the leader's own ID is ignored.
       blockList: [...new Set(message.blockList ?? [])].filter((id) => id !== claims.pid),
@@ -1247,11 +1257,24 @@ export class GroupService implements GroupActions {
     };
     if ((await this.deps.store.createIfAbsent(record)) === 'exists') {
       this.joins.releaseCodes(namespace, claims.gid, initial.codes);
-      // Impossible under the in-process lock; with a shared store, the group
-      // someone else just recreated is resumed instead.
+      // Impossible under the in-process lock; with a shared store, the token
+      // is classified again against the group someone else just recreated
+      // (#13 L9, RC15): another pid never gets a leader return.
       const existing = await this.deps.store.get(namespace, claims.gid);
       if (!existing) return errorMessage(ErrorCode.GROUP_NOT_FOUND);
-      return this.leaderReturn(session, existing, claims, message.blockList, message.joinCodes);
+      const status = classifyToken({
+        claims,
+        app,
+        record: existing,
+        ended: false,
+        processStartedAt: this.processStartedAt,
+        recoveryClosed: false,
+        now: this.now(),
+        refreshMaxMs: this.deps.refresh.maxMs,
+      });
+      if (status === 'blocked') return errorMessage(ErrorCode.PARTICIPANT_BLOCKED);
+      if (status !== 'live') return errorMessage(ErrorCode.TOKEN_EXPIRED);
+      return this.resumeLive(session, existing, claims, message, name);
     }
     this.armMaxSession(app, record);
     this.startRefresh(namespace, record.id, now);
@@ -1270,6 +1293,160 @@ export class GroupService implements GroupActions {
       'group recreated',
     );
     return this.resumedMessage(record, claims.pid, true, now, initial.changed);
+  }
+
+  /**
+   * A token resumes a group in memory (#13 D4): a later pre-restart leader
+   * token supersedes the stale recreator (6.6), the record's leader returns,
+   * anyone else rejoins as a member. Under the group lock.
+   */
+  private resumeLive(
+    session: Session,
+    record: GroupRecord,
+    claims: TokenClaims,
+    message: GroupResumeMessage,
+    name: NameChoice,
+  ): Promise<ServerMessage> {
+    const app = session.app;
+    if (canSupersede(record, claims, app, this.now(), this.deps.refresh.maxMs)) {
+      return this.supersede(session, record, claims, message, name);
+    }
+    return claims.pid === record.leaderId
+      ? this.leaderReturn(session, record, claims, message.blockList, message.joinCodes)
+      : this.memberResume(session, record, claims, name);
+  }
+
+  /**
+   * Supersede (#13 6.6.2, RC6, RC7): after a restart, a later pre-restart
+   * leader token takes the lead from the stale leader that recreated the
+   * group first. One step under the group lock:
+   * 1. the requester's block list replaces the stale one and is applied
+   *    first (L1): listed attached participants are removed (4004), the
+   *    stale leader included, with no token;
+   * 2. leadership: the anchor moves to the requester's term, a new term
+   *    from `nextTerm` floored at `recoveredAt`, no take-back slot, no
+   *    escalation, no pause, a fresh inactivity period;
+   * 3. the stale leader, if still attached, gets `leader.lost superseded`
+   *    with a member token;
+   * 4. lock and handoff mode from the requester; its vice only if valid;
+   * 5. codes adopted from the requester's blob or rotated (M1);
+   * 6. the requester gets `group.resumed {superseded: true}` with a new
+   *    leader token, then the roster (with the recovery marker), and
+   *    `codes.updated superseded` if the codes rotated; members get
+   *    `leader.changed superseded`.
+   */
+  private async supersede(
+    session: Session,
+    record: GroupRecord,
+    claims: TokenClaims,
+    message: GroupResumeMessage,
+    name: NameChoice,
+  ): Promise<ServerMessage> {
+    const app = session.app;
+    const namespace = app.namespace;
+    const now = this.now();
+    const stale = record.leaderId;
+    const codes = this.joins.supersedeCodes(record, message.joinCodes);
+    if (codes === 'exhausted') return errorMessage(ErrorCode.CODES_EXHAUSTED);
+
+    // Step 1: the requester's list, as given (the stale list never applies to it).
+    const blockList = [...new Set(message.blockList ?? [])].filter((id) => id !== claims.pid);
+    const staleSession = this.sessionOf(record, stale);
+    const result = await this.deps.store.setBlockList(namespace, record.id, blockList);
+    for (const pid of result?.removed ?? []) this.detachRemoved(record, pid);
+    const staleBlocked = blockList.includes(stale);
+    if (staleBlocked && staleSession !== undefined) this.detachRemoved(record, stale);
+    let current = (await this.deps.store.get(namespace, record.id)) ?? record;
+    const gone = current.roster.filter((e) => blockList.includes(e.pid)).map((e) => e.pid);
+
+    // Step 2 and 4.
+    const viceId =
+      message.viceId !== undefined &&
+      message.viceId !== claims.pid &&
+      !blockList.includes(message.viceId) &&
+      findEntry(current.roster, message.viceId) !== undefined
+        ? message.viceId
+        : undefined;
+    const participantIds = current.participantIds.filter(
+      (pid) => pid !== stale || (!staleBlocked && staleSession !== undefined),
+    );
+    if (!participantIds.includes(claims.pid)) participantIds.push(claims.pid);
+    const previousVice = current.viceId;
+    current =
+      (await this.deps.store.patch(namespace, record.id, {
+        anchorTerm: claims.term,
+        term: nextTerm(Math.max(current.term, claims.term), now, current.recoveredAt ?? 0),
+        leaderId: claims.pid,
+        displacedLeaderId: undefined,
+        escalated: false,
+        pause: undefined,
+        keepAlivePending: false,
+        lastActivityAt: now,
+        leaderOnline: true,
+        recoveryMarking: false,
+        locked: message.locked ?? current.locked,
+        handoff: message.handoff ?? current.handoff,
+        viceId,
+        participantIds,
+        roster: removeFromRoster(current.roster, gone),
+      })) ?? current;
+    current = await this.enterRoster(current, claims.pid, name);
+    if (previousVice !== undefined && previousVice !== viceId) {
+      this.controls.tellVice(current, previousVice, false);
+    }
+
+    // Step 5.
+    current = await this.joins.commitSupersedeCodes(current, codes.codes);
+
+    // Timers: a fresh period for the new leader (RC13).
+    const key = groupKey(namespace, record.id);
+    this.timers.clearKind(key, 'grace');
+    this.timers.clearFrozenEnd(key);
+    this.lifecycle.stopKeepAlive(namespace, record.id);
+    this.lifecycle.armKeepAlive(app, current);
+    this.startRefresh(namespace, record.id, now);
+
+    this.replaceOwner(namespace, record.id, claims.pid, session);
+    this.attach(session, { groupId: record.id, participantId: claims.pid });
+
+    // Step 3.
+    if (!staleBlocked && staleSession !== undefined) {
+      this.deliverLater(staleSession, {
+        type: 'leader.lost',
+        groupId: record.id,
+        reason: 'superseded',
+        token: this.issueToken(namespace, current, stale, 'member', now),
+        takeBackAvailable: false,
+      });
+    }
+    // Step 6.
+    this.deliverLater(session, this.rosterSnapshot(current));
+    if (codes.rotated) {
+      this.deliverLater(session, {
+        type: 'codes.updated',
+        groupId: record.id,
+        reason: 'superseded',
+        codes: this.joins.payload(current),
+      });
+    }
+    this.joins.onLeaderReturn(session, current);
+    for (const pid of current.participantIds) {
+      if (pid === claims.pid || pid === stale) continue;
+      const member = this.sessionOf(current, pid);
+      if (member !== undefined) {
+        this.deliverLater(member, {
+          type: 'leader.changed',
+          groupId: record.id,
+          reason: 'superseded',
+        });
+      }
+    }
+    this.deps.logger.info(
+      { event: 'leader_superseded', namespace, groupRef: groupRef(record.id) },
+      'stale leader superseded',
+    );
+    const reply = this.resumedMessage(current, claims.pid, false, now, codes.rotated);
+    return reply.type === 'group.resumed' ? { ...reply, superseded: true } : reply;
   }
 
   /**
@@ -1388,11 +1565,12 @@ export class GroupService implements GroupActions {
     record: GroupRecord,
     pid: string,
     name: NameChoice,
+    marked = false,
   ): Promise<GroupRecord> {
     const now = this.now();
     const state = findEntry(record.roster, pid)
       ? { ...rosterStateOf(record), roster: setConnected(record.roster, pid, true, now) }
-      : admitToRoster(rosterStateOf(record), pid, name, now);
+      : admitToRoster(rosterStateOf(record), pid, name, now, marked);
     const updated = await this.putRoster(record, state);
     if (pid !== updated.leaderId) this.rosterUpdated(updated, pid);
     return updated;
@@ -1487,6 +1665,7 @@ export class GroupService implements GroupActions {
       codes: this.joins.payload(record),
       codesChanged,
       state: this.leaderState(record),
+      superseded: false,
     };
     return record.position.has
       ? { ...base, hasPosition: true, position: record.position.payload }

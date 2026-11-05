@@ -419,6 +419,12 @@ interface GroupResumedBase extends OwnName {
   codesChanged: boolean;
   /** The leader recovery state, the server's (#13 D13). */
   state: LeaderState;
+  /**
+   * After a restart this leader's later grant took the lead from a stale
+   * leader that recreated the group first (#13 AC26, 6.6.2). `token` is a
+   * new leader token (new term) that replaces the stored one.
+   */
+  superseded: boolean;
 }
 
 export type GroupResumedMessage =
@@ -550,7 +556,7 @@ export interface CodesUpdatedMessage {
  * Why the codes changed: the leader rotated them, the door code rotated
  * after failures, or a removal rotated every code (#13 Q4.1).
  */
-export type CodesUpdatedReason = 'rotated' | 'door_failures' | 'member_removed';
+export type CodesUpdatedReason = 'rotated' | 'door_failures' | 'member_removed' | 'superseded';
 
 /** To the leader: door-code joining paused after repeated failures (#10 AC29). */
 export interface JoinPausedMessage {

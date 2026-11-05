@@ -64,6 +64,17 @@ export interface GroupRecord {
   escalated: boolean;
   /** The leader locked the group: no new admission by any method (#13 AC29). */
   locked: boolean;
+  /**
+   * The term of the token that recreated the group, then of the latest
+   * superseding token (#13 6.6.1); undefined iff `recoveredAt` is.
+   * Invariant: `anchorTerm < recoveredAt`.
+   */
+  anchorTerm: number | undefined;
+  /**
+   * True from a recreation until the first supersede (#13 6.6.4): code, QR
+   * and approval admissions meanwhile get `admittedSinceRecovery`.
+   */
+  recoveryMarking: boolean;
   /** `auto` hands off after the grace period; `frozen` never does (#13 AC3). */
   handoff: HandoffMode;
   /** False while the leader is offline: the group is frozen (#5 AC18). */

@@ -23,6 +23,8 @@ function record(overrides: Partial<GroupRecord> = {}): GroupRecord {
     pause: undefined,
     displacedLeaderId: undefined,
     escalated: false,
+    anchorTerm: undefined,
+    recoveryMarking: false,
     roster: [],
     nextAdmissionSeq: 0,
     nextGuestNumber: 1,

@@ -279,6 +279,7 @@ const schemas = buildJitless(() => {
     codes: joinCodesPayload,
     codesChanged: z.boolean(),
     state: leaderState,
+    superseded: z.boolean(),
   };
 
   const serverMessageSchema = z.union([
@@ -343,7 +344,7 @@ const schemas = buildJitless(() => {
       type: z.literal('codes.updated'),
       reqId,
       groupId: z.string(),
-      reason: z.enum(['rotated', 'door_failures', 'member_removed']),
+      reason: z.enum(['rotated', 'door_failures', 'member_removed', 'superseded']),
       codes: joinCodesPayload,
     }),
     z.object({

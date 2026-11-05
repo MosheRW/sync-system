@@ -160,6 +160,7 @@ describe('codes across recovery (#10 AC32-AC34)', () => {
       displayName: 'Guest 1',
       generated: true,
       state: { blockList: [], locked: false, handoff: 'auto' },
+      superseded: false,
       groupId: GROUP_ID,
       participantId: 'p',
       role: 'leader',

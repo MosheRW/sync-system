@@ -71,6 +71,7 @@ describe('resumeGroup (#5 AC38)', () => {
       displayName: 'Guest 1',
       generated: true,
       state: { blockList: [], locked: false, handoff: 'auto' },
+      superseded: false,
       reqId: sent.reqId,
       groupId: GID,
       participantId: 'pid',

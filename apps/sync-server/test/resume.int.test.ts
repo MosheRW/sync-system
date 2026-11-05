@@ -111,6 +111,7 @@ describe('leader return (#5 AC19)', () => {
       displayName: expect.any(String) as string,
       generated: true,
       state: expect.any(Object) as object,
+      superseded: false,
       metadata: { m: 1 },
       hasPosition: true,
       position: 'server',
