@@ -448,7 +448,7 @@ fix the configuration.
 | `GROUP_FULL`              | server | `details.maxGroupSize`.                                                          |
 | `ALREADY_IN_GROUP`        | both   | Create/join while in a group (also checked locally).                             |
 | `NOT_IN_GROUP`            | both   | Position update outside a group.                                                 |
-| `NOT_LEADER`              | both   | Position update, `endGroup()` or block list change by a member.                  |
+| `NOT_LEADER`              | both   | Any leader request from a member, the vice or a former leader (#13).             |
 | `RATE_LIMITED`            | server | Position updates or `checkTokens()`. `details.retryAfterMs` (+ max rate).        |
 | `MESSAGE_TOO_LARGE`       | both   | `details.field`, `details.limitBytes`, `details.sizeBytes?`.                     |
 | `LEADER_CANNOT_LEAVE`     | both   | The leader called `leaveGroup()`; it ends the group with `endGroup()`.           |
@@ -502,9 +502,12 @@ dropped on load, then the oldest. Corrupt stored data is discarded. Storage
 failures never reject a call (`storage_error` is logged).
 
 **XSS caveat:** anything stored in `localStorage` can be read by any script
-on the page. A stolen leader token lets its holder take the lead until the
-group ends. Use a strict Content Security Policy, and pick `'memory'` or
-`sessionStorage` when tokens should not outlive the tab. **Shared devices:**
+on the page. A stolen token of the current leader lets its holder take over
+the lead; a displaced leader's token only rejoins as a member (and may take
+the lead back while the take-back offer stands), and after a server restart
+a leader token still inside its window can recreate the group. Use a strict
+Content Security Policy, and pick `'memory'` or `sessionStorage` when tokens
+should not outlive the tab. **Shared devices:**
 call `forgetAllGroups()` on "log out" or when the device is shared (works
 without a connection; pass the namespace if the client never connected).
 Call it with the app's other tabs closed: a tab that stays open keeps its

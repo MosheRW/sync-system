@@ -160,4 +160,17 @@ describe('README documents the lifecycle (#13 AC4, AC38, RC14)', () => {
       expect(readme.toLowerCase(), text).toContain(text.toLowerCase());
     }
   });
+
+  it('states the token rules after #13: no lifelong take-back, supersede kills stale codes', () => {
+    const readme = read('README.md').replace(/\s+/g, ' ');
+    // Before #13 any leader token could take the lead back until the end.
+    expect(readme).not.toContain('can take the lead back until the group ends');
+    for (const text of [
+      "A displaced leader's token only rejoins as a member",
+      'most recent displaced leader',
+      'no code or QR ticket of the stale leader survives',
+    ]) {
+      expect(readme, text).toContain(text);
+    }
+  });
 });

@@ -464,9 +464,11 @@ database (block list, lock, vice and handoff mode travel with its token).
   client sends. Members that resumed first wait (`group.waiting`) and are
   admitted automatically. If a later leader token of the same group (one
   granted before the restart, still inside its window) arrives after a stale
-  one recreated the group, it **supersedes** it: its block list applies, the
-  stale codes rotate, and people the stale leader admitted are flagged
-  `admittedSinceRecovery` in the roster.
+  one recreated the group, it **supersedes** it: its block list applies, no
+  code or QR ticket of the stale leader survives (the newer leader's codes
+  are kept only if they share nothing with the stale ones, else every code
+  and the ticket generation rotate), and people the stale leader admitted
+  are flagged `admittedSinceRecovery` in the roster.
 - The leader can `group.end` the group; a member can `group.leave`. Ended
   groups are remembered (as hashes) until their max-session deadline, so their
   tokens get `GROUP_ENDED`; a restart forgets that (accepted: the leader's
@@ -585,9 +587,14 @@ group).
   codes, QR tickets, codes blobs, join request IDs or raw group IDs
   (groups appear as a hash prefix). Keep it that way at the proxy too, or keep
   proxy logs short-lived.
-- **Tokens are bearer credentials.** Whoever holds a leader token can take the
-  lead back until the group ends. `wss://` keeps them off the wire; the
-  client README covers storing them.
+- **Tokens are bearer credentials.** Whoever holds the current leader's token
+  leads: resuming with it replaces the leader's connection. A displaced
+  leader's token only rejoins as a member; while it is the most recent
+  displaced leader (not removed, not left) it may take the lead back. After a
+  restart, a leader token still inside its window (about 25 minutes by
+  default) can recreate the group, and a later leader token of the same group
+  supersedes it (see "Recovery and tokens"). `wss://` keeps tokens off the
+  wire; the client README covers storing them.
 - **Never commit real registries or `.env` files**; mount the registry at
   runtime.
 
