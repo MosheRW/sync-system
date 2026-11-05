@@ -6,13 +6,14 @@
 - Plan approved by user: yes
 - Security-sensitive: yes
 - Review rounds: 1
-- Last updated by: qa
+- Last updated by: engineer
 ## Model log
 - pm grooming: sonnet (default) → DONE
 - architect plan: opus (NEXT_MODEL) → DONE
 - security plan (round 1): opus (rule) → PASS
 - engineer implement: opus (architect `Implementer model: opus`) → DONE (13 chunks, all checks green)
 - qa review (round 1): opus (NEXT_MODEL) → PASS (checks 10/10, ACs 29/29; 1 advisory: QR rate-limit wait reset on revoking codesChanged)
+- engineer fix (round 1 advisories): opus (rule) → DONE (3 low advisories fixed at user request: c9ecbad QR rate-limit wait kept on revoking codesChanged and on stop; 95b765e lint restrictions match {ts,tsx}; 5e8508a action values dropped during render on reset-key change)
 ## Gate 2 decisions (user, 2026-11-05)
 - Plan approved as written.
 - Q-A accepted: `setJoiningEnabled` = lock/unlock of all joining; "expiry" =
@@ -66,3 +67,8 @@
 - Test helpers: `test/helpers/all-hooks.tsx` (every hook, for the SSR,
   hydration and logging tests) and a jsdom-only `cleanup` in `test/setup.ts`.
   Extra tests `store.test.ts`, `action.test.tsx`, `logging.test.tsx`.
+- Round 1 advisories (user asked to fix before merge): the QR rate-limit
+  wait is now also kept when the controller stops (demotion, group switch,
+  hiding the QR), not only on a revoking code change; it is per controller
+  (per provider), so a new provider starts without it. The client package's
+  ESLint restriction block got the same {ts,tsx} glob fix as the React one.
