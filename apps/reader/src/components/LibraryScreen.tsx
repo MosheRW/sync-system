@@ -76,12 +76,13 @@ export function LibraryScreen({ entries }: { entries: readonly LibraryEntry[] })
 
   return (
     <div className={styles.screen}>
-      <header className={styles.header}>
-        <h1 className={styles.heading} tabIndex={-1}>
-          {t.libraryHeading}
-        </h1>
-      </header>
       <main className={styles.main}>
+        {/* The heading bar sits inside <main> (design.md 9: <main> holds the one <h1>). */}
+        <div className={styles.header}>
+          <h1 className={styles.heading} tabIndex={-1}>
+            {t.libraryHeading}
+          </h1>
+        </div>
         <ul className={styles.list}>
           {sorted.map((entry) => (
             <LibraryItem key={entry.contentId} entry={entry} />

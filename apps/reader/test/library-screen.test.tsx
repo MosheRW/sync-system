@@ -28,6 +28,8 @@ describe('library screen (AC26, AC39)', () => {
   it('has a Library heading and a real list', () => {
     show();
     expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Library');
+    // design.md 9: <main> holds the one <h1>, as on the status screens.
+    expect(screen.getByRole('main').contains(screen.getByRole('heading', { level: 1 }))).toBe(true);
     expect(screen.getByRole('list')).toBeDefined();
     expect(screen.getAllByRole('listitem')).toHaveLength(WITH_ARABIC.length);
     expect(document.title).toBe('Library');
