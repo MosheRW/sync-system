@@ -2,7 +2,7 @@
 import { cpSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, expectTypeOf, it } from 'vitest';
 import {
   LibraryBuildError,
   buildLibraryIndex,
@@ -10,6 +10,8 @@ import {
   loadDevConfig,
   readerLibrary,
 } from '../plugins/library.js';
+import type { LibraryEntry } from '../src/library/types.js';
+import type { entries as virtualEntries } from 'virtual:reader-library';
 
 const fixtures = join(import.meta.dirname, 'fixtures');
 const samples = join(import.meta.dirname, '..', 'content');
@@ -124,5 +126,12 @@ describe('dev and preview servers check the config (AC30)', () => {
     });
     const hook = plugin.configurePreviewServer as () => void;
     expect(() => hook()).toThrow(/READER_ENTRY "nope"/);
+  });
+});
+
+describe('virtual module typing', () => {
+  it('declares entries with exactly the LibraryEntry shape', () => {
+    type Declared = (typeof virtualEntries)[number];
+    expectTypeOf<Declared>().toEqualTypeOf<LibraryEntry>();
   });
 });
