@@ -1317,9 +1317,7 @@ export class SyncClient {
     const group = this.#snapshot.group;
     if (group?.status !== 'active' || group.groupId !== message.groupId) return;
     void this.#tokens?.saveToken(message.token);
-    this.#leaderData.clear();
-    this.#leaderCodes = undefined;
-    this.#joinRequests.clear();
+    // #startGroup as a member drops every leader-only datum.
     this.#startGroup({
       ...group,
       role: 'member',
@@ -1698,6 +1696,8 @@ export class SyncClient {
   #startGroup(group: Extract<GroupState, { status: 'active' }>): void {
     this.#throttle?.cancel();
     this.#throttle = undefined;
+    // A member keeps nothing of a lead (#13 RC12).
+    if (group.role !== 'leader') this.#dropLeaderOnly();
     if (group.role === 'leader' && this.#info) {
       const throttle: PositionThrottle<string> = new PositionThrottle<string>(
         this.#info.limits.maxLeaderUpdatesPerSecond,
@@ -1712,6 +1712,17 @@ export class SyncClient {
     this.#update({ group });
   }
 
+  /**
+   * Drops everything only a leader holds (#13 RC12): roster and recovery
+   * state, codes and pending join requests, so a demoted, removed or ended
+   * leader keeps none of it in memory.
+   */
+  #dropLeaderOnly(): void {
+    this.#leaderData.clear();
+    this.#leaderCodes = undefined;
+    this.#joinRequests.clear();
+  }
+
   /** Ends an active or rejoining group, stops the throttle and emits `groupEnded` (AC19, AC29). */
   #endGroup(reason: GroupEndedReason, code?: ClientErrorCode): void {
     const group = this.#snapshot.group;
@@ -1719,9 +1730,7 @@ export class SyncClient {
     this.#throttle = undefined;
     // The leader's codes, request list, roster and recovery state belong to
     // the group (#10 AC40, #13 RC12).
-    this.#leaderCodes = undefined;
-    this.#joinRequests.clear();
-    this.#leaderData.clear();
+    this.#dropLeaderOnly();
     if (group === null || group.status === 'ended') return;
     // Never in a group: a pending join request just goes away (#10 7.2).
     if (group.status === 'awaiting_approval') {
@@ -2119,6 +2128,7 @@ export class SyncClient {
     if (reply.type === 'group.waiting') {
       this.#throttle?.cancel();
       this.#throttle = undefined;
+      this.#dropLeaderOnly();
       this.#update({ group: { status: 'waiting', groupId, role: 'member' } });
       this.#log('info', 'group_waiting');
       callbacks.resolve(
@@ -2141,8 +2151,8 @@ export class SyncClient {
     recreated: boolean,
   ): ResumedGroup {
     void this.#tokens?.saveToken(reply.token, undefined, ownName(reply));
-    // A member token: no leader-only data stays (#13 RC12).
-    this.#leaderData.clear();
+    // A member token: no leader-only data stays (#13 RC12); #startGroup as
+    // a member drops it.
     this.#startGroup({
       status: 'active',
       groupId: reply.groupId,
