@@ -7,7 +7,7 @@
 - Security-sensitive: yes
 - Review rounds: 2
 - Spec approved at Gate 1: yes
-- Last updated by: qa
+- Last updated by: engineer
 ## Model log
 - pm groom: sonnet (default) → DONE
 - pm update-spec: sonnet (default) → DONE
@@ -22,6 +22,8 @@
 - security code (round 1): opus (rule) → PASS
 - engineer fix (round 1): opus (rule) → DONE
 - qa validate (round 2): opus (rule) → PASS
+- security code (round 2): opus (rule) → PASS
+- engineer fix (round 2, N7 at user request): opus (rule) → DONE
 ## Gate 2 decisions (2026-11-05)
 - ADRs 0001-0006: recommended option accepted for each (0005 E1 escaping wording fixed per security.md F5).
 - Q2: AC32-AC35 kept. Q3: `different-content` -> block. Q4: malformed leader metadata -> `unsupported-schema` / block.
@@ -66,6 +68,11 @@
 - N1 (favicon, 0 CSP violations across 38 loads incl. `/favicon.svg`), N2 (PR body), N3, N4, N5 verified. N5 deviation (Hebrew `mixed-en-he` auto block) accepted: AC14 and AC20 still hold.
 - Checks: lint, typecheck, test (reader 504), build, audit, compose config/build/up: pass. CI 2/2 pass. AC1-AC41 (AC9 removed): all met.
 - Non-blocking N7: `server/run.ts` clientError handler answers idle-connection request timeouts with 400 (Node default is 408, which browsers retry); seen once as a Chrome 400 error page. Suggested fix: 408 or silent close for `ERR_HTTP_REQUEST_TIMEOUT`.
+## Fix round 2 (QA N7, at the user's request at Gate 3)
+- `f62d15f`: the `clientError` handler moved to `server/client-error.ts`. `ERR_HTTP_REQUEST_TIMEOUT` now gets `408 Request Timeout` with `Connection: close` and the security headers (Node's default status, which browsers retry); a connection that timed out without sending a byte is closed silently. Unparseable requests still get `400` with the security headers (C1). A socket that is no longer writable is destroyed; the handler never throws.
+- `run()` takes optional `timeouts` (headers 15 s, request 30 s, check interval 30 s by default, unchanged in production) so tests use 200/400/50 ms.
+- New `test/server-client-error.node.test.ts`: idle socket closed with no response, unfinished headers -> 408 (not 400), garbage -> 400, `/health` still 200 after each, plus never-throws unit tests. The two timeout tests fail against the old handler.
+- Checks: `pnpm lint` (eslint + prettier), `pnpm typecheck`, `pnpm test` (reader: 35 files / 509 tests), `pnpm build`: pass. Security A1 (Trusted Types) untouched; going to a follow-up issue.
 ## Verification notes
 - `pnpm audit --audit-level=high`, `pnpm lint`, `pnpm typecheck`, `pnpm test` (reader: 500 tests), `pnpm build`: pass.
 - `docker compose config`, `docker compose build reader` and `sync-server`: pass. `docker compose up reader`: healthy, `/`, `/library`, `/health` 200; `READER_ENTRY=x` exits 1 with `Config error: ...`. Runtime image: `/app` root-owned, `USER node`, `node_modules` = zod only, no source maps.
