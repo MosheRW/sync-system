@@ -119,6 +119,9 @@ export function classifyClose(code: number, duringHandshake: boolean): Classifie
         error: new SyncClientError('TOO_MANY_MESSAGES', { source: 'server' }),
         busy: 'too_many_messages',
       };
+    case CloseCode.REMOVED:
+      // #13 Gate 2 Q-A: removed by the leader; never retried.
+      return { error: new SyncClientError('REMOVED', { fatal: true, source: 'server' }) };
     case CloseCode.GOING_AWAY:
       return { error: new SyncClientError('CONNECTION_LOST'), busy: 'going_away' };
     default:

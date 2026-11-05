@@ -10,8 +10,11 @@ import type {
 } from '@sync-system/protocol';
 import type { ClientErrorCode, SyncClientError } from './errors.js';
 
-/** Why the client is closed (AC24). */
-export type ClosedReason = 'client' | 'fatal' | 'gave_up';
+/**
+ * Why the client is closed (AC24): `removed` when the leader removed this
+ * participant (close 4004, #13 Gate 2 Q-A); `connect()` starts again.
+ */
+export type ClosedReason = 'client' | 'fatal' | 'gave_up' | 'removed';
 
 /**
  * Connection state (AC24), a discriminated union on `status`:
@@ -235,6 +238,15 @@ export interface SyncClientEvents {
   joinResumed: JoinResumedEvent;
   /** Leader: the roster changed (#13 AC31). */
   rosterChanged: RosterChangedEvent;
+  /** This participant became, or is no longer, the vice-leader (#13 AC11). */
+  viceChanged: ViceChangedEvent;
+  /** The group was locked or unlocked (#13 AC29). */
+  lockChanged: LockChangedEvent;
+  /**
+   * The leader removed this participant (#13 AC32, Gate 2 Q-A): the token
+   * is deleted and the client is closed; it does not reconnect.
+   */
+  removed: RemovedEvent;
   error: SyncClientError;
 }
 
@@ -263,6 +275,20 @@ export interface RosterChangedEvent {
 }
 
 export type { LeaderState };
+
+export interface ViceChangedEvent {
+  readonly groupId: string;
+  readonly isVice: boolean;
+}
+
+export interface LockChangedEvent {
+  readonly groupId: string;
+  readonly locked: boolean;
+}
+
+export interface RemovedEvent {
+  readonly groupId: string;
+}
 
 /** Options of `createGroup()` (#10 AC38). */
 export interface CreateGroupOptions {

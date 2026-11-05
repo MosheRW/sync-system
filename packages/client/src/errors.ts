@@ -42,6 +42,11 @@ export const ClientErrorCode = {
   JOIN_METHOD_UNAVAILABLE: 'JOIN_METHOD_UNAVAILABLE',
   /** `cancelJoin()` withdrew the pending join request (#10 AC39). */
   JOIN_CANCELLED: 'JOIN_CANCELLED',
+  /**
+   * The leader removed this participant: the server closed the socket with
+   * 4004 (#13 Gate 2 Q-A). Fatal: the client does not reconnect.
+   */
+  REMOVED: 'REMOVED',
 } as const;
 
 export type ClientErrorCode = (typeof ClientErrorCode)[keyof typeof ClientErrorCode];
@@ -62,7 +67,15 @@ export type RequestKind =
   | 'tokens.check'
   | 'group.end'
   | 'group.leave'
-  | 'blocklist.set';
+  | 'blocklist.set'
+  | 'vice.set'
+  | 'vice.clear'
+  | 'group.lock'
+  | 'group.unlock'
+  | 'member.remove'
+  | 'leader.activity'
+  | 'keepalive.ack'
+  | 'leader.takeBack';
 
 interface KnownDetails {
   PROTOCOL_TOO_OLD: { minProtocolVersion?: number };
@@ -149,6 +162,7 @@ const MESSAGES: Record<ClientErrorCode, string> = {
   INVALID_DISPLAY_NAME: 'The display name is not valid',
   JOIN_METHOD_UNAVAILABLE: 'This join method is not available',
   JOIN_CANCELLED: 'The join request was cancelled',
+  REMOVED: 'The leader removed you from the group',
 };
 
 /**
@@ -166,6 +180,14 @@ export const ACTION_MESSAGES: {
     'group.joinByQr': 'Too many join attempts',
     'qr.issue': 'Too many QR code requests',
     'codes.rotate': 'Too many code rotations',
+    'vice.set': 'Too many vice-leader changes',
+    'vice.clear': 'Too many vice-leader clears',
+    'group.lock': 'Too many group locks',
+    'group.unlock': 'Too many group unlocks',
+    'member.remove': 'Too many member removals',
+    'leader.activity': 'Too many leader activity signals',
+    'keepalive.ack': 'Too many keep-alive answers',
+    'leader.takeBack': 'Too many take-backs',
   },
   NOT_LEADER: {
     'position.update': 'Only the leader can update the position',
@@ -175,6 +197,13 @@ export const ACTION_MESSAGES: {
     'codes.rotate': 'Only the leader can rotate the codes',
     'join.approve': 'Only the leader can approve join requests',
     'join.deny': 'Only the leader can deny join requests',
+    'vice.set': 'Only the leader can choose the vice-leader',
+    'vice.clear': 'Only the leader can clear the vice-leader',
+    'group.lock': 'Only the leader can lock the group',
+    'group.unlock': 'Only the leader can unlock the group',
+    'member.remove': 'Only the leader can remove members',
+    'leader.activity': 'Only the leader can send leader activity',
+    'keepalive.ack': 'Only the leader can answer the keep-alive',
   },
 };
 

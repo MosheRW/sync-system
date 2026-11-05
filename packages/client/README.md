@@ -409,6 +409,7 @@ fix the configuration.
 | `CONNECTION_LOST`         | client | The socket dropped or failed. Retryable.                                         |
 | `REQUEST_TIMEOUT`         | client | No reply in time (`request` says which).                                         |
 | `RECONNECT_FAILED`        | client | `maxAttempts` used up.                                                           |
+| `REMOVED`                 | server | The leader removed you (close 4004): closed, no reconnect, token deleted.        |
 | `SERVER_UNSUPPORTED`      | client | Server protocol versions or limits not supported. Fatal.                         |
 | `HANDSHAKE_REJECTED`      | client | Close 4001 without an error frame. Fatal.                                        |
 | `INVALID_PAYLOAD`         | client | Metadata, position or group ID is not valid input.                               |

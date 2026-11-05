@@ -44,6 +44,10 @@ const KNOWN_TYPES: ReadonlySet<string> = new Set<ServerMessage['type']>([
   'roster.snapshot',
   'roster.updated',
   'roster.removed',
+  'vice.updated',
+  'vice.changed',
+  'lock.changed',
+  'member.removed',
   'error',
 ]);
 

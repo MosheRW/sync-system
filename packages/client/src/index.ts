@@ -39,6 +39,9 @@ export type {
   SyncIndicator,
   RosterEntry,
   RosterChangedEvent,
+  ViceChangedEvent,
+  LockChangedEvent,
+  RemovedEvent,
   LeaderState,
 } from './state.js';
 export { CLIENT_PROTOCOL_VERSION, MIN_SERVER_PROTOCOL_VERSION } from './version.js';

@@ -22,6 +22,7 @@ import {
   HANDOFF_MODES,
   type LeaderState,
   resolveDisplayName,
+  CloseCode,
 } from '@sync-system/protocol';
 import { type BusySignal, nextDelay, streakAfterDrop, streakAfterFailure } from './backoff.js';
 import { Emitter, ListenerSet } from './emitter.js';
@@ -124,6 +125,14 @@ const REPLY_TYPES: Record<RequestKind, readonly ServerMessage['type'][]> = {
   'group.end': ['group.ended'],
   'group.leave': ['group.left'],
   'blocklist.set': ['blocklist.ack'],
+  'vice.set': ['vice.updated'],
+  'vice.clear': ['vice.updated'],
+  'group.lock': ['lock.changed'],
+  'group.unlock': ['lock.changed'],
+  'member.remove': ['member.removed'],
+  'leader.activity': ['activity.ack'],
+  'keepalive.ack': ['activity.ack'],
+  'leader.takeBack': ['leader.granted'],
 };
 
 /** The recovery fields of a leader state, for the token store (#13 D13). */
@@ -831,16 +840,6 @@ export class SyncClient {
     return this.#editBlockList(groupId, participantIds, (current, ids) => [...current, ...ids]);
   }
 
-  /** Removes participant IDs from a leader group's block list (#5 AC34). Same rules as add. */
-  removeFromBlockList(
-    groupId: string,
-    participantIds: readonly string[],
-  ): Promise<readonly string[]> {
-    return this.#editBlockList(groupId, participantIds, (current, ids) =>
-      current.filter((id) => !ids.includes(id)),
-    );
-  }
-
   /**
    * Deletes the stored token and recovery data of one group, locally, with
    * no server call (#5 M6). Uses the namespace of the last `hello.ok`, or
@@ -1001,7 +1000,19 @@ export class SyncClient {
 
   /** Sends a leader request and resolves with `map(reply)` (#10 AC40). */
   #leaderRequest<T>(
-    kind: 'codes.rotate' | 'qr.issue' | 'join.approve' | 'join.deny',
+    kind:
+      | 'codes.rotate'
+      | 'qr.issue'
+      | 'join.approve'
+      | 'join.deny'
+      | 'vice.set'
+      | 'vice.clear'
+      | 'group.lock'
+      | 'group.unlock'
+      | 'member.remove'
+      | 'leader.activity'
+      | 'keepalive.ack'
+      | 'leader.takeBack',
     fields: Record<string, unknown>,
     map: (reply: ServerMessage) => T,
   ): Promise<T> {
@@ -1082,6 +1093,102 @@ export class SyncClient {
       fromServer: true,
     });
     this.#emitCodesChanged(message.reason);
+  }
+
+  /**
+   * Leader: makes a connected member the vice-leader (#13 AC10), who takes
+   * the lead first after a grace period. Resolves with the vice's ID.
+   * Rejects locally with NOT_CONNECTED, NOT_IN_GROUP, NOT_LEADER or
+   * INVALID_PAYLOAD, and from the server with PARTICIPANT_NOT_FOUND,
+   * NOT_ALLOWED (the leader itself, an offline member) or RATE_LIMITED.
+   */
+  setViceLeader(participantId: string): Promise<string> {
+    const invalid = localError(() => {
+      this.#checkLeader('vice.set');
+      if (typeof participantId !== 'string' || !PARTICIPANT_ID_PATTERN.test(participantId)) {
+        throw new SyncClientError('INVALID_PAYLOAD', { request: 'vice.set' });
+      }
+    });
+    if (invalid) return Promise.reject(invalid);
+    return this.#leaderRequest('vice.set', { participantId }, (reply) => {
+      if (reply.type !== 'vice.updated') throw invalidServerMessage(['type'], 'vice.set');
+      this.#onLeaderState(reply.groupId, { viceId: reply.viceId ?? undefined });
+      return participantId;
+    });
+  }
+
+  /** Leader: clears the vice-leader (#13 AC10). Same rejections as `setViceLeader`. */
+  clearViceLeader(): Promise<void> {
+    const invalid = localError(() => this.#checkLeader('vice.clear'));
+    if (invalid) return Promise.reject(invalid);
+    return this.#leaderRequest('vice.clear', {}, (reply) => {
+      if (reply.type !== 'vice.updated') throw invalidServerMessage(['type'], 'vice.clear');
+      this.#onLeaderState(reply.groupId, { viceId: undefined });
+    });
+  }
+
+  /**
+   * Leader: stops all new joining by every method (#13 AC29); members get
+   * `lockChanged`. Members already admitted still rejoin by token.
+   */
+  lockGroup(): Promise<void> {
+    return this.#setLock('group.lock');
+  }
+
+  /** Leader: allows joining again (#13 AC29). */
+  unlockGroup(): Promise<void> {
+    return this.#setLock('group.unlock');
+  }
+
+  #setLock(kind: 'group.lock' | 'group.unlock'): Promise<void> {
+    const invalid = localError(() => this.#checkLeader(kind));
+    if (invalid) return Promise.reject(invalid);
+    return this.#leaderRequest(kind, {}, (reply) => {
+      if (reply.type !== 'lock.changed') throw invalidServerMessage(['type'], kind);
+      this.#onLeaderState(reply.groupId, { locked: reply.locked });
+      this.#applyLock(reply.groupId, reply.locked);
+    });
+  }
+
+  /**
+   * Leader: removes a participant for the rest of the session (#13 AC32):
+   * it is blocked, its connection is closed and every code rotates
+   * (`codesChanged` with reason `member_removed`). Resolves with the full
+   * block list, which is also stored for recovery. Works on offline roster
+   * members too. Rejects locally like `setViceLeader`, and from the server
+   * with PARTICIPANT_NOT_FOUND, NOT_ALLOWED (the leader), BLOCK_LIST_FULL,
+   * CODES_EXHAUSTED or RATE_LIMITED.
+   */
+  removeMember(participantId: string): Promise<readonly string[]> {
+    const invalid = localError(() => {
+      this.#checkLeader('member.remove');
+      if (typeof participantId !== 'string' || !PARTICIPANT_ID_PATTERN.test(participantId)) {
+        throw new SyncClientError('INVALID_PAYLOAD', { request: 'member.remove' });
+      }
+    });
+    if (invalid) return Promise.reject(invalid);
+    return this.#leaderRequest('member.remove', { participantId }, (reply) => {
+      if (reply.type !== 'member.removed') throw invalidServerMessage(['type'], 'member.remove');
+      this.#onLeaderState(reply.groupId, { blockList: reply.blockList });
+      this.#log('info', 'member_removed');
+      return Object.freeze([...reply.blockList]);
+    });
+  }
+
+  /** A change of the leader recovery state: kept in memory and in storage (#13 D13). */
+  #onLeaderState(groupId: string, patch: Partial<LeaderState>): void {
+    if (this.#leaderData.groupId !== groupId) return;
+    this.#leaderData.patchState(patch);
+    const state = this.#leaderData.state();
+    if (state !== null) void this.#tokens?.updateRecovery(groupId, recoveryState(state));
+  }
+
+  /** The lock flag of the active group, and `lockChanged` (#13 AC29). */
+  #applyLock(groupId: string, locked: boolean): void {
+    const group = this.#snapshot.group;
+    if (group?.status !== 'active' || group.groupId !== groupId || group.locked === locked) return;
+    this.#update({ group: { ...group, locked } });
+    this.#events.emit('lockChanged', Object.freeze({ groupId, locked }));
   }
 
   /**
@@ -1993,6 +2100,28 @@ export class SyncClient {
       case 'roster.removed':
         this.#onRoster(message);
         return;
+      case 'vice.updated':
+      case 'member.removed':
+        this.#onReply(message);
+        return;
+      case 'lock.changed':
+        // A reply to lock/unlock, or a member hearing about it.
+        if (message.reqId !== undefined && this.#requests.get(message.reqId) !== undefined) {
+          this.#onReply(message);
+          return;
+        }
+        this.#applyLock(message.groupId, message.locked);
+        return;
+      case 'vice.changed': {
+        const group = this.#snapshot.group;
+        if (group?.status !== 'active' || group.groupId !== message.groupId) return;
+        this.#log('info', 'vice_changed', { isVice: message.isVice });
+        this.#events.emit(
+          'viceChanged',
+          Object.freeze({ groupId: message.groupId, isVice: message.isVice }),
+        );
+        return;
+      }
       case 'token.refreshed':
         // A newer leader token replaces the stored one (#5 AC12, AC31).
         void this.#tokens?.saveToken(message.token);
@@ -2097,6 +2226,10 @@ export class SyncClient {
 
   #onSocketClosed(code: number): void {
     this.#log('debug', 'socket_closed', { code });
+    if (code === CloseCode.REMOVED) {
+      this.#onRemoved();
+      return;
+    }
     const { error, busy } = classifyClose(code, this.#phase !== 'ready');
     if (error.fatal) this.#fail(error);
     else this.#connectionLost(error, busy);
@@ -2127,6 +2260,30 @@ export class SyncClient {
       this.#log('info', 'join_settled', { outcome: 'lost' });
       approval.reject(new SyncClientError(requestError.code, { request: approval.request }));
     }
+  }
+
+  /**
+   * The leader removed this participant (#13 AC32, Gate 2 Q-A): close 4004
+   * right after `group.ended removed`. Terminal: no reconnect, the group's
+   * token and recovery data are deleted, the client is `closed` (reason
+   * `removed`) until the app calls `connect()`, and `removed` fires.
+   */
+  #onRemoved(): void {
+    const generation = this.#generation;
+    const group = this.#snapshot.group;
+    const groupId =
+      group !== null && group.status !== 'awaiting_approval' ? group.groupId : undefined;
+    const error = new SyncClientError('REMOVED', { fatal: true, source: 'server' });
+    this.#log('info', 'removed');
+    this.#teardown(error, error.code);
+    if (groupId !== undefined) void this.#tokens?.remove([groupId]);
+    if (group?.status !== 'ended') this.#endGroup('removed');
+    if (generation !== this.#generation) return;
+    const run = this.#takeRun();
+    this.#update({ connection: { status: 'closed', reason: 'removed', error } });
+    run?.reject(error);
+    if (generation !== this.#generation || groupId === undefined) return;
+    this.#events.emit('removed', Object.freeze({ groupId }));
   }
 
   /** A fatal error: closed, no automatic reconnect (AC14). */
