@@ -173,20 +173,29 @@ describe('lint restrictions (AC27, R10, L3)', () => {
     calculateConfigForFile(path: string): Promise<{ rules?: Record<string, unknown> }>;
   }
 
+  /** Loading ESLint and the workspace config is slow under load (15 s was not enough once). */
+  const LINT_PROBE_TIMEOUT_MS = 60_000;
+
   // Every source extension the package compiles, .tsx included.
-  it.each(['ts', 'tsx'])('apply to every .%s file in src', async (extension) => {
-    const requireRoot = createRequire(join(workspaceRoot, 'package.json'));
-    const { ESLint } = (await import(pathToFileURL(requireRoot.resolve('eslint')).href)) as {
-      ESLint: new (options: { cwd: string }) => Linter;
-    };
-    const eslint = new ESLint({ cwd: workspaceRoot });
-    const config = await eslint.calculateConfigForFile(
-      join(workspaceRoot, 'packages', 'react', 'src', 'hooks', `probe.${extension}`),
-    );
-    for (const rule of ['no-console', 'no-restricted-imports', 'no-restricted-globals']) {
-      expect(config.rules?.[rule], `${rule} on .${extension}`).toEqual(expect.arrayContaining([2]));
-    }
-  });
+  it.each(['ts', 'tsx'])(
+    'apply to every .%s file in src',
+    { timeout: LINT_PROBE_TIMEOUT_MS },
+    async (extension) => {
+      const requireRoot = createRequire(join(workspaceRoot, 'package.json'));
+      const { ESLint } = (await import(pathToFileURL(requireRoot.resolve('eslint')).href)) as {
+        ESLint: new (options: { cwd: string }) => Linter;
+      };
+      const eslint = new ESLint({ cwd: workspaceRoot });
+      const config = await eslint.calculateConfigForFile(
+        join(workspaceRoot, 'packages', 'react', 'src', 'hooks', `probe.${extension}`),
+      );
+      for (const rule of ['no-console', 'no-restricted-imports', 'no-restricted-globals']) {
+        expect(config.rules?.[rule], `${rule} on .${extension}`).toEqual(
+          expect.arrayContaining([2]),
+        );
+      }
+    },
+  );
 });
 
 describe('no automatic reconnect or rejoin (AC7, AC22, R5, section 9)', () => {
