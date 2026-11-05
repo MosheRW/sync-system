@@ -52,13 +52,15 @@
 .main {
   position: relative;
   flex: 1;
+  /* The swipe area: horizontal gestures are ours, vertical scroll and
+     pinch-zoom stay with the browser. */
+  touch-action: pan-y pinch-zoom;
 }
 
 .article {
   max-inline-size: calc(var(--measure-text) + 2 * var(--space-4));
   margin-inline: auto;
   padding: var(--space-6) var(--space-4);
-  touch-action: pan-y pinch-zoom;
 }
 
 .article:focus {

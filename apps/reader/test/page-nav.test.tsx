@@ -90,6 +90,28 @@ describe('page navigation (AC13)', () => {
     expect(counter()).toBe('2 / 3');
   });
 
+  it('swipes anywhere in the content region turn the page, not only over the text', () => {
+    renderReading(loaded(pagedDoc(3, 'ltr')));
+    const main = screen.getByRole('main');
+    // A swipe that starts and ends on <main> itself, below a short article.
+    // Finger right-to-left in an LTR document: next.
+    fireEvent.pointerDown(main, { pointerId: 1, pointerType: 'pen', clientX: 300, clientY: 500 });
+    fireEvent.pointerUp(main, { pointerId: 1, pointerType: 'pen', clientX: 100, clientY: 505 });
+    expect(counter()).toBe('2 / 3');
+    // Finger left-to-right: previous.
+    fireEvent.pointerDown(main, { pointerId: 2, pointerType: 'touch', clientX: 100, clientY: 500 });
+    fireEvent.pointerUp(main, { pointerId: 2, pointerType: 'touch', clientX: 300, clientY: 502 });
+    expect(counter()).toBe('1 / 3');
+  });
+
+  it('a mouse drag in the content region does not turn the page', () => {
+    renderReading(loaded(pagedDoc(3, 'ltr')));
+    const main = screen.getByRole('main');
+    fireEvent.pointerDown(main, { pointerId: 1, pointerType: 'mouse', clientX: 300, clientY: 500 });
+    fireEvent.pointerUp(main, { pointerId: 1, pointerType: 'mouse', clientX: 100, clientY: 505 });
+    expect(counter()).toBe('1 / 3');
+  });
+
   it('announces page changes politely, not on first load', () => {
     renderReading(loaded(pagedDoc(3, 'ltr')));
     const status = screen.getByRole('status');

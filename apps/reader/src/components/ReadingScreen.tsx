@@ -34,7 +34,10 @@ export function ReadingScreen({
   const docDir = documentDir(doc);
   const total = doc.pages.length;
   const articleRef = useRef<HTMLElement>(null);
-  const nav = usePageNavigation(total, docDir, articleRef);
+  // Swipes count anywhere between the header and the nav bar, not only
+  // over the text: short pages leave most of <main> empty (design.md 5).
+  const contentRegionRef = useRef<HTMLElement>(null);
+  const nav = usePageNavigation(total, docDir, contentRegionRef);
   const [announcement, setAnnouncement] = useState('');
   const page = doc.pages[nav.index] ?? doc.pages[0]!;
 
@@ -81,7 +84,7 @@ export function ReadingScreen({
         total={total}
         endSlot={headerEndSlot}
       />
-      <main className={styles.main}>
+      <main ref={contentRegionRef} className={styles.main}>
         <article
           ref={articleRef}
           tabIndex={-1}
