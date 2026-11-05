@@ -152,9 +152,16 @@ describe('leader return (#5 AC19)', () => {
 
   it('records the return as leader activity (fresh lat)', async () => {
     const scheduler = new ManualScheduler();
-    ts = await startTestServer({ scheduler });
+    // Frozen mode (#13 AC21): in auto mode the lead would pass on after the
+    // 30 s grace, so a return 5 minutes later would not be a leader return.
+    ts = await startTestServer({
+      scheduler,
+      apps: [{ namespace: 'app-a', apiKey: KEY_A, defaultHandoff: 'frozen' }],
+    });
     const group = await createGroupWithMembers(ts, 1);
     await group.leader.close();
+    // The server has handled the close before the clock moves.
+    await group.members[0]!.next('leader.offline');
     scheduler.advance(5 * MINUTE);
     const { reply } = await resumeWith(ts, group.leaderToken);
     if (reply.type !== 'group.resumed') throw new Error('expected resumed');
