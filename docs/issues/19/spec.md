@@ -50,6 +50,21 @@ Integration and quality
 - [ ] AC22. A README for the app documents the content schema, schema-version range policy, fingerprint algorithm and direction rules.
 - [ ] AC23. The content ID is a required string of the form `<namespace>/<slug>`. Namespace and slug each use lowercase letters, digits, `-` and `.` only, with a documented length cap (the architect may tighten the exact pattern). A UUID is accepted as the slug. Schema validation rejects IDs that do not match the documented format with a typed error. Tests cover valid IDs, invalid IDs (missing namespace, uppercase, disallowed characters, over-length, empty parts) and UUID-slug IDs.
 
+Content selection and library (post-design)
+
+- [ ] AC24. Each reading page shows exactly one book and behaves as if it were the only book that exists. There is no in-app switching between books.
+- [ ] AC25. The URL picks the content: `?book=<contentId>` loads bundled content (e.g. `?book=acme/psalms-he`) and `?src=<url>` loads fetched content. Tests cover each entry mode.
+- [ ] AC26. A library page lists the available bundled books, each linking to its own reading page (`?book=<contentId>`). Tested.
+- [ ] AC27. Environment variables configure what the app does with no parameter or an unknown book, with three options: show the library page, show an error page, or open a default book. The default book is also set by config. Tests cover all three options for both "no parameter" and "unknown book".
+- [ ] AC28. An unknown `?book=` id shows a "book not found" error page, with a link to the library when the library is enabled. Tested.
+- [ ] AC29. A deployment can be configured to serve one specific book only (single-book mode). In that mode URL parameters (`?book`, `?src`) are ignored, and the library is not offered. Tested, including that a `?book=` or `?src=` value is ignored.
+- [ ] AC30. Invalid configuration (invalid option value, or "open a default book" without a valid default book) is a startup/config error with a clear message, not a runtime surprise. Tested. Exact env variable names and validation rules are for the architect.
+- [ ] AC31. The "Go back" action on refused-file screens leads to the library when it is enabled, and is not shown otherwise (architect/designer to confirm). Tested.
+- [ ] AC32. (Orchestrator recommendation, user can override at Gate 2.) A page with zero blocks is invalid and rejected by validation with a typed error. Tested.
+- [ ] AC33. (Orchestrator recommendation, user can override at Gate 2.) Line breaks inside a block's text are significant and preserved when rendering (poetry). Tested.
+- [ ] AC34. (Orchestrator recommendation, user can override at Gate 2.) The fetch timeout defaults to 15 s and is configurable. Tested (default value and override), consistent with AC5.
+- [ ] AC35. (Orchestrator recommendation, user can override at Gate 2.) The current page does not survive a reload in item 7; persisting position belongs to the sync work in item 8.
+
 ## Out of scope
 - Item 8: code entry, QR display and scanning, approval prompt, connection indicator, keep-alive, "you're now leading", roster/counter/list and preview banner views, the follower "jump to group's page" prompt and late-joiner countdown, the joining flow in the UI.
 - Item 9: Redis, public docs, changelog, release, health endpoint, semver.
@@ -71,5 +86,27 @@ Integration and quality
 8. **Q8, content ID: modified by the user.** Required namespaced string `<namespace>/<slug>`; a UUID is accepted as the slug (AC23). Rationale: apps are already isolated on the server per the PRD, so collisions only matter within one app. Without a namespace, two different works sharing an ID would be misreported as `different-version` instead of `different-content`. Future: once uploads exist, the content source/server assigns IDs (see Out of scope).
 9. **Q9, default direction: accepted.** Default is `ltr`; `auto` is allowed on blocks only.
 
+## Decisions (post-design)
+
+Made by the user after the design phase, in answer to the designer's question on how the app chooses content.
+
+1. **One book per page.** Each reading page shows one book and behaves as if it is the only one. No in-app book switching (AC24).
+2. **URL selects content.** `?book=<contentId>` for bundled content, `?src=<url>` for fetched content (AC25).
+3. **Library page is in scope** for item 7: it lists bundled books, each linking to its own reading page (AC26).
+4. **No parameter or unknown book** is handled by environment config with three options: library page, error page, or a default book (also set by config) (AC27, AC28).
+5. **Single-book deployment.** A deployment may serve one specific book only; URL parameters are then unnecessary and ignored, and the library is not offered (AC29). This is the orchestrator's reading of the user's words: "it may display a single specific book only, so the url params are really unnecessary".
+6. **Config validation** (invalid value, missing default book) is a startup/config error (AC30). Env variable names are for the architect.
+7. **"Go back"** on refused-file screens leads to the library when enabled, otherwise it is not shown (AC31). Architect/designer to confirm.
+
+Designer questions 2-5 were decided by the orchestrator's recommendations. The user can override these at Gate 2:
+
+- A page with zero blocks is invalid (AC32).
+- Line breaks inside a block are preserved (AC33).
+- Fetch timeout defaults to 15 s, configurable (AC34).
+- The current page does not survive a reload in item 7; sync position is item 8 (AC35).
+
 ## Open questions
+
 - None remaining from Gate 1. The architect confirms the points listed in Q4 and may tighten the AC23 pattern.
+- For the architect and the security plan review: `?src=<url>` loads arbitrary URLs. Should it be restricted (for example an allow-list of origins via config), or disabled in some deployments? This is a security decision (SSRF-like fetching, tracking, hostile content), not decided here.
+- For the architect: exact env variable names, and whether single-book mode is a fourth value of the same setting or a separate setting.
