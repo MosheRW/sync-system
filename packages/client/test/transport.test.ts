@@ -29,9 +29,9 @@ describe('decodeFrame (AC10)', () => {
   });
 
   it('marks unknown types as unknown', () => {
-    expect(decodeFrame('{"type":"roster.updated","x":1}', 8192)).toEqual({
+    expect(decodeFrame('{"type":"future.event","x":1}', 8192)).toEqual({
       kind: 'unknown',
-      type: 'roster.updated',
+      type: 'future.event',
     });
   });
 

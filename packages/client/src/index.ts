@@ -37,6 +37,9 @@ export type {
   SyncClientEvents,
   SyncClientSnapshot,
   SyncIndicator,
+  RosterEntry,
+  RosterChangedEvent,
+  LeaderState,
 } from './state.js';
 export { CLIENT_PROTOCOL_VERSION, MIN_SERVER_PROTOCOL_VERSION } from './version.js';
 export type {
@@ -46,4 +49,5 @@ export type {
   JsonValue,
   Role,
   TokenStatus,
+  HandoffMode,
 } from '@sync-system/protocol';

@@ -1,6 +1,8 @@
 import type {
   AppLimits,
+  HandoffMode,
   JoinMethod,
+  LeaderState,
   JsonObject,
   JsonValue,
   Role,
@@ -81,6 +83,12 @@ export type GroupState =
       readonly position: JsonValue | undefined;
       /** False while the leader is offline (members only; always true for a leader). */
       readonly leaderOnline: boolean;
+      /** This user's name in the group (#13 AC36). Plain text: never render as HTML. */
+      readonly displayName: string;
+      /** True for a server-generated `Guest N` name; localize it (#13 Q5.1). */
+      readonly generated: boolean;
+      /** The leader locked the group: nobody new joins (#13 AC29). */
+      readonly locked: boolean;
     }
   | {
       /** Dropped; resuming with the stored token after the reconnect. */
@@ -225,8 +233,36 @@ export interface SyncClientEvents {
   joinPaused: JoinPausedEvent;
   /** Leader: door-code joining works again (#10 AC29, AC30). */
   joinResumed: JoinResumedEvent;
+  /** Leader: the roster changed (#13 AC31). */
+  rosterChanged: RosterChangedEvent;
   error: SyncClientError;
 }
+
+/**
+ * One admitted participant, for the leader only (#13 AC31). Names are
+ * untrusted plain text: render as text, never as HTML, and show `generated`
+ * (or the ID) so a chosen `Guest 3` cannot pass as a generated name (L8).
+ */
+export interface RosterEntry {
+  readonly participantId: string;
+  readonly displayName: string;
+  readonly generated: boolean;
+  readonly guestNumber?: number;
+  readonly role: Role;
+  readonly connected: boolean;
+  /** Local epoch ms of the admission (from the server's duration, #13 D12). */
+  readonly joinedAt: number;
+  /** Admitted by a stale leader after a restart; review it (#13 6.6.4). */
+  readonly admittedSinceRecovery?: true;
+}
+
+/** Leader: the roster changed (#13 AC31). */
+export interface RosterChangedEvent {
+  readonly groupId: string;
+  readonly roster: readonly RosterEntry[];
+}
+
+export type { LeaderState };
 
 /** Options of `createGroup()` (#10 AC38). */
 export interface CreateGroupOptions {
@@ -235,6 +271,10 @@ export interface CreateGroupOptions {
    * never both A and B. Omitted: the app's methods minus B when A is allowed.
    */
   readonly joinMethods?: readonly JoinMethod[];
+  /** `auto` hands off after the grace period, `frozen` never (#13 AC3). Default: the app's. */
+  readonly handoff?: HandoffMode;
+  /** The leader's own name (#13 AC35); missing or blank: a generated `Guest N`. */
+  readonly displayName?: string;
 }
 
 /** A QR ticket for the leader to show (#10 AC23, AC40). A bearer credential: never log or persist it. */

@@ -41,6 +41,9 @@ const leader: GroupState = {
   hasPosition: false,
   position: undefined,
   leaderOnline: true,
+  displayName: 'Guest 1',
+  generated: true,
+  locked: false,
 };
 const member: GroupState = { ...leader, role: 'member' };
 const memberLeaderOffline: GroupState = { ...leader, role: 'member', leaderOnline: false };

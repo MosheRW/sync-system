@@ -66,6 +66,9 @@ describe('createGroup (AC15)', () => {
       hasPosition: true,
       position: { page: 1 },
       leaderOnline: true,
+      displayName: 'Guest 1',
+      generated: true,
+      locked: false,
     });
     client.close();
   });

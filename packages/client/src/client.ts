@@ -19,6 +19,9 @@ import {
   type ServerMessage,
   type WelcomeMessage,
   checkJson,
+  HANDOFF_MODES,
+  type LeaderState,
+  resolveDisplayName,
 } from '@sync-system/protocol';
 import { type BusySignal, nextDelay, streakAfterDrop, streakAfterFailure } from './backoff.js';
 import { Emitter, ListenerSet } from './emitter.js';
@@ -65,7 +68,10 @@ import type {
   StoredGroupStatus,
   SyncClientEvents,
   SyncClientSnapshot,
+  RosterEntry,
 } from './state.js';
+import { LeaderData } from './leader-state.js';
+import type { Recovery } from './token-store.js';
 import { PositionThrottle } from './throttle.js';
 import { type InboundFrame, Transport } from './transport.js';
 
@@ -119,6 +125,23 @@ const REPLY_TYPES: Record<RequestKind, readonly ServerMessage['type'][]> = {
   'group.leave': ['group.left'],
   'blocklist.set': ['blocklist.ack'],
 };
+
+/** The recovery fields of a leader state, for the token store (#13 D13). */
+function recoveryState(
+  state: LeaderState,
+): Pick<Recovery, 'blockList' | 'locked' | 'viceId' | 'handoff'> {
+  return {
+    blockList: [...state.blockList],
+    locked: state.locked,
+    handoff: state.handoff,
+    ...(state.viceId === undefined ? {} : { viceId: state.viceId }),
+  };
+}
+
+/** The user's own chosen name from a reply, to send again on resume; none if generated. */
+function ownName(reply: { displayName: string; generated: boolean }): string | undefined {
+  return reply.generated ? undefined : reply.displayName;
+}
 
 /** Statuses after which a stored token is useless and deleted (#5 AC31). */
 const DEAD_STATUSES: ReadonlySet<TokenStatus> = new Set<TokenStatus>([
@@ -272,6 +295,8 @@ export class SyncClient {
   readonly #rejoin: RejoinStrategy = tokenRejoin;
   /** The join waiting for a leader's approval, if any (#10 AC39). */
   #approval: PendingApproval | undefined;
+  /** Roster and recovery state of the group this client leads (#13 AC31, D13). */
+  readonly #leaderData = new LeaderData();
   /** The leader's codes for its group (#10 AC40). */
   #leaderCodes: LeaderCodes | undefined;
   /** Pending join requests the leader was told about, by request ID (#10 AC40). */
@@ -392,7 +417,16 @@ export class SyncClient {
         }
       }
     });
-    if (invalid) return Promise.reject(invalid);
+    const nameInvalid = localError(() => {
+      if (options?.handoff !== undefined && !HANDOFF_MODES.includes(options.handoff)) {
+        throw new SyncClientError('INVALID_OPTIONS');
+      }
+      if (options?.displayName !== undefined && !resolveDisplayName(options.displayName).ok) {
+        throw new SyncClientError('INVALID_DISPLAY_NAME');
+      }
+    });
+    const refused = invalid ?? nameInvalid;
+    if (refused) return Promise.reject(refused);
     const reqId = this.#requests.nextId();
     const message = {
       type: 'group.create' as const,
@@ -400,20 +434,27 @@ export class SyncClient {
       metadata,
       ...(initialPosition === undefined ? {} : { position: initialPosition }),
       ...(options?.joinMethods === undefined ? {} : { joinMethods: [...options.joinMethods] }),
+      ...(options?.handoff === undefined ? {} : { handoff: options.handoff }),
+      ...(options?.displayName === undefined ? {} : { displayName: options.displayName }),
     };
     const result = deferred<CreatedGroup>();
     this.#trackGroupRequest('group.create', reqId, message, {
       resolve: (reply) => {
         if (reply.type !== 'group.created') return;
-        void this.#tokens?.saveToken(reply.token, {
-          metadata,
-          hasPosition: initialPosition !== undefined,
-          ...(initialPosition === undefined ? {} : { position: initialPosition }),
-          blockList: [],
-          // From the server's reply: always stored (#10 AC32, N1).
-          joinCodes: reply.codes.blob,
-          joinCodesGeneration: reply.codes.generation,
-        });
+        void this.#tokens?.saveToken(
+          reply.token,
+          {
+            metadata,
+            hasPosition: initialPosition !== undefined,
+            ...(initialPosition === undefined ? {} : { position: initialPosition }),
+            ...recoveryState(reply.state),
+            // From the server's reply: always stored (#10 AC32, N1).
+            joinCodes: reply.codes.blob,
+            joinCodesGeneration: reply.codes.generation,
+          },
+          ownName(reply),
+        );
+        this.#leaderData.reset(reply.groupId, reply.state);
         this.#startGroup({
           status: 'active',
           groupId: reply.groupId,
@@ -422,6 +463,9 @@ export class SyncClient {
           hasPosition: initialPosition !== undefined,
           position: initialPosition,
           leaderOnline: true,
+          displayName: reply.displayName,
+          generated: reply.generated,
+          locked: reply.state.locked,
         });
         const codes = this.#setLeaderCodes(reply.groupId, reply.joinMethods, reply.codes);
         result.resolve(
@@ -1040,6 +1084,40 @@ export class SyncClient {
     this.#emitCodesChanged(message.reason);
   }
 
+  /**
+   * The roster of the group this client leads, in admission order (#13
+   * AC31), or `[]`. Names are untrusted plain text.
+   */
+  getRoster(): readonly RosterEntry[] {
+    return this.#leaderData.roster();
+  }
+
+  /** The recovery state of the group this client leads (#13 D13), or null. */
+  getLeaderState(): LeaderState | null {
+    return this.#leaderData.state();
+  }
+
+  /** Roster frames for the group this client leads (#13 AC31). */
+  #onRoster(
+    message: Extract<
+      ServerMessage,
+      { type: 'roster.snapshot' | 'roster.updated' | 'roster.removed' }
+    >,
+  ): void {
+    const data = this.#leaderData;
+    const changed =
+      message.type === 'roster.snapshot'
+        ? data.snapshot(message.groupId, message.participants)
+        : message.type === 'roster.updated'
+          ? data.update(message.groupId, message.participant)
+          : data.remove(message.groupId, message.participantId);
+    if (!changed) return;
+    this.#events.emit(
+      'rosterChanged',
+      Object.freeze({ groupId: message.groupId, roster: data.roster() }),
+    );
+  }
+
   /** True when `groupId` is the active group this client leads. */
   #leads(groupId: string): boolean {
     const group = this.#snapshot.group;
@@ -1185,7 +1263,7 @@ export class SyncClient {
 
   /** A member admitted by code, ticket or approval: token stored, group active. */
   #joinedAsMember(reply: Extract<ServerMessage, { type: 'group.joined' }>): JoinedGroup {
-    void this.#tokens?.saveToken(reply.token);
+    void this.#tokens?.saveToken(reply.token, undefined, ownName(reply));
     const joined: JoinedGroup = Object.freeze({
       groupId: reply.groupId,
       role: 'member',
@@ -1202,6 +1280,9 @@ export class SyncClient {
       hasPosition: reply.hasPosition,
       position: reply.hasPosition ? reply.position : undefined,
       leaderOnline: reply.leaderOnline,
+      displayName: reply.displayName,
+      generated: reply.generated,
+      locked: reply.locked,
     });
     return joined;
   }
@@ -1374,9 +1455,11 @@ export class SyncClient {
     const group = this.#snapshot.group;
     this.#throttle?.cancel();
     this.#throttle = undefined;
-    // The leader's codes and request list belong to the group (#10 AC40).
+    // The leader's codes, request list, roster and recovery state belong to
+    // the group (#10 AC40, #13 RC12).
     this.#leaderCodes = undefined;
     this.#joinRequests.clear();
+    this.#leaderData.clear();
     if (group === null || group.status === 'ended') return;
     // Never in a group: a pending join request just goes away (#10 7.2).
     if (group.status === 'awaiting_approval') {
@@ -1695,6 +1778,12 @@ export class SyncClient {
         ...(leader && recovery !== undefined ? { blockList: [...recovery.blockList] } : {}),
         // The newest codes blob this client has, to keep the codes (#10 AC32, AC33).
         ...(leader && recovery?.joinCodes !== undefined ? { joinCodes: recovery.joinCodes } : {}),
+        // #13 D13: the rest of the leader recovery state, for a recreation.
+        ...(leader && recovery?.locked !== undefined ? { locked: recovery.locked } : {}),
+        ...(leader && recovery?.viceId !== undefined ? { viceId: recovery.viceId } : {}),
+        ...(leader && recovery?.handoff !== undefined ? { handoff: recovery.handoff } : {}),
+        // The user's own name, sent again on every resume (#13 Q5.4).
+        ...(entry.displayName === undefined ? {} : { displayName: entry.displayName }),
       };
       this.#trackGroupRequest('group.resume', reqId, message, {
         resolve: (reply) => this.#onResumed(entry, reply, callbacks),
@@ -1713,15 +1802,21 @@ export class SyncClient {
     const groupId = entry.claims.gid;
     if (reply.type === 'group.resumed') {
       // The server's metadata and position win (Q14) and become the recovery data.
-      void this.#tokens?.saveToken(reply.token, {
-        metadata: reply.metadata,
-        hasPosition: reply.hasPosition,
-        ...(reply.hasPosition ? { position: reply.position } : {}),
-        blockList: entry.recovery?.blockList ?? [],
-        // The server's current codes: always stored, even with a lower generation (#10 N1).
-        joinCodes: reply.codes.blob,
-        joinCodesGeneration: reply.codes.generation,
-      });
+      void this.#tokens?.saveToken(
+        reply.token,
+        {
+          metadata: reply.metadata,
+          hasPosition: reply.hasPosition,
+          ...(reply.hasPosition ? { position: reply.position } : {}),
+          // The server's recovery state wins (#13 D13; the block list only grows).
+          ...recoveryState(reply.state),
+          // The server's current codes: always stored, even with a lower generation (#10 N1).
+          joinCodes: reply.codes.blob,
+          joinCodesGeneration: reply.codes.generation,
+        },
+        ownName(reply),
+      );
+      this.#leaderData.reset(groupId, reply.state);
       this.#startGroup({
         status: 'active',
         groupId,
@@ -1730,6 +1825,9 @@ export class SyncClient {
         hasPosition: reply.hasPosition,
         position: reply.hasPosition ? reply.position : undefined,
         leaderOnline: true,
+        displayName: reply.displayName,
+        generated: reply.generated,
+        locked: reply.state.locked,
       });
       // The current codes come back with every leader resume (#10 AC33, AC34).
       this.#setLeaderCodes(groupId, reply.joinMethods, reply.codes);
@@ -1778,7 +1876,9 @@ export class SyncClient {
     reply: Extract<ServerMessage, { type: 'group.joined' }>,
     recreated: boolean,
   ): ResumedGroup {
-    void this.#tokens?.saveToken(reply.token);
+    void this.#tokens?.saveToken(reply.token, undefined, ownName(reply));
+    // A member token: no leader-only data stays (#13 RC12).
+    this.#leaderData.clear();
     this.#startGroup({
       status: 'active',
       groupId: reply.groupId,
@@ -1787,6 +1887,9 @@ export class SyncClient {
       hasPosition: reply.hasPosition,
       position: reply.hasPosition ? reply.position : undefined,
       leaderOnline: reply.leaderOnline,
+      displayName: reply.displayName,
+      generated: reply.generated,
+      locked: reply.locked,
     });
     this.#log('info', 'group_resumed', { role: 'member', recreated });
     return Object.freeze({
@@ -1885,6 +1988,11 @@ export class SyncClient {
         );
         return;
       }
+      case 'roster.snapshot':
+      case 'roster.updated':
+      case 'roster.removed':
+        this.#onRoster(message);
+        return;
       case 'token.refreshed':
         // A newer leader token replaces the stored one (#5 AC12, AC31).
         void this.#tokens?.saveToken(message.token);

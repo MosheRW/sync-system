@@ -21,10 +21,10 @@ describe('inbound validation (AC10)', () => {
     client.on('positionUpdated', events);
     client.on('groupEnded', events);
     const before = client.getSnapshot();
-    socket.receive({ type: 'roster.updated', groupId: 'g' });
+    socket.receive({ type: 'future.event', groupId: 'g' });
     expect(events).not.toHaveBeenCalled();
     expect(client.getSnapshot()).toBe(before);
-    expect(debug).toHaveBeenCalledWith('unknown_message', { type: 'roster.updated' });
+    expect(debug).toHaveBeenCalledWith('unknown_message', { type: 'future.event' });
     client.close();
   });
 

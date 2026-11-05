@@ -1,4 +1,6 @@
 import {
+  HANDOFF_MODES,
+  type HandoffMode,
   type JsonObject,
   type JsonValue,
   MAX_BLOCK_LIST_SIZE,
@@ -9,6 +11,7 @@ import {
   checkJson,
   decodeTokenClaims,
   isCodesBlobShape,
+  normalizeDisplayName,
 } from '@sync-system/protocol';
 import { type TimerHandle, clearTimer, now, setClampedTimeout } from './host.js';
 import { type StorageLog, type TokenStorage, storageErrorName } from './storage.js';
@@ -46,6 +49,12 @@ export interface Recovery {
   readonly joinCodes?: string;
   /** The blob's code generation, kept next to it to order copies (#10 R2). */
   readonly joinCodesGeneration?: number;
+  /** The lock flag (#13 D13, Q4.3); sent back when recreating the group. */
+  readonly locked?: boolean;
+  /** The vice-leader (#13 D13, AC13); sent back when recreating the group. */
+  readonly viceId?: string;
+  /** The handoff mode (#13 D13); sent back when recreating the group. */
+  readonly handoff?: HandoffMode;
 }
 
 /**
@@ -83,6 +92,11 @@ export interface StoredEntry {
   readonly claims: TokenClaims;
   /** Leader tokens only. */
   readonly recovery?: Recovery;
+  /**
+   * The user's own display name in this group (#13 Q5.4), re-sent on every
+   * resume. Local only: never in the token, deleted with the entry.
+   */
+  readonly displayName?: string;
 }
 
 type Change = (entries: readonly StoredEntry[]) => readonly StoredEntry[];
@@ -149,6 +163,15 @@ function readRecovery(value: unknown): Recovery | undefined {
     joinCodesGeneration >= 0
       ? { joinCodes, joinCodesGeneration }
       : {};
+  // #13 D13: optional leader recovery fields, each dropped if malformed.
+  const { locked, viceId, handoff } = value;
+  const extra = {
+    ...(typeof locked === 'boolean' ? { locked } : {}),
+    ...(typeof viceId === 'string' && PARTICIPANT_ID_PATTERN.test(viceId) ? { viceId } : {}),
+    ...(typeof handoff === 'string' && (HANDOFF_MODES as readonly string[]).includes(handoff)
+      ? { handoff: handoff as HandoffMode }
+      : {}),
+  };
   return hasPosition
     ? {
         metadata: metadata as JsonObject,
@@ -156,8 +179,16 @@ function readRecovery(value: unknown): Recovery | undefined {
         position: position as JsonValue,
         blockList,
         ...codes,
+        ...extra,
       }
-    : { metadata: metadata as JsonObject, hasPosition, blockList, ...codes };
+    : { metadata: metadata as JsonObject, hasPosition, blockList, ...codes, ...extra };
+}
+
+/** A stored own display name, if it is a string the #10 rule accepts. */
+function readDisplayName(value: unknown): { displayName: string } | Record<string, never> {
+  if (typeof value !== 'string') return {};
+  const name = normalizeDisplayName(value);
+  return name === undefined ? {} : { displayName: name };
 }
 
 function serialize(entries: readonly StoredEntry[]): string {
@@ -165,9 +196,13 @@ function serialize(entries: readonly StoredEntry[]): string {
     v: STORAGE_DOC_VERSION,
     entries: entries.map((entry) =>
       entry.recovery === undefined
-        ? { token: entry.token }
+        ? {
+            token: entry.token,
+            ...(entry.displayName === undefined ? {} : { displayName: entry.displayName }),
+          }
         : {
             token: entry.token,
+            ...(entry.displayName === undefined ? {} : { displayName: entry.displayName }),
             recovery: {
               metadata: entry.recovery.metadata,
               hasPosition: entry.recovery.hasPosition,
@@ -180,6 +215,9 @@ function serialize(entries: readonly StoredEntry[]): string {
                     joinCodes: entry.recovery.joinCodes,
                     joinCodesGeneration: entry.recovery.joinCodesGeneration,
                   }),
+              ...(entry.recovery.locked === undefined ? {} : { locked: entry.recovery.locked }),
+              ...(entry.recovery.viceId === undefined ? {} : { viceId: entry.recovery.viceId }),
+              ...(entry.recovery.handoff === undefined ? {} : { handoff: entry.recovery.handoff }),
             },
           },
     ),
@@ -296,16 +334,21 @@ export class TokenStore {
    * Leader recovery data is kept unless `recovery` replaces it; member tokens
    * carry none. An undecodable token is not stored.
    */
-  saveToken(token: string, recovery?: Recovery): Promise<void> {
+  /**
+   * Stores a token. A leader token keeps `recovery` (or the stored one); a
+   * member token drops any leader recovery data (#13 RC12). `displayName`
+   * (the user's own name, #13 Q5.4) replaces the stored one when given.
+   */
+  saveToken(token: string, recovery?: Recovery, displayName?: string): Promise<void> {
     const claims = decodeTokenClaims(token);
     if (claims === undefined || claims.aud !== this.#namespace) return Promise.resolve();
     return this.#mutate((entries) => {
       const previous = entries.find((entry) => entry.claims.gid === claims.gid);
       const kept = recovery ?? (previous?.claims.role === 'leader' ? previous.recovery : undefined);
+      const name = displayName ?? previous?.displayName;
+      const base = name === undefined ? { token, claims } : { token, claims, displayName: name };
       const entry: StoredEntry =
-        claims.role === 'leader' && kept !== undefined
-          ? { token, claims, recovery: kept }
-          : { token, claims };
+        claims.role === 'leader' && kept !== undefined ? { ...base, recovery: kept } : base;
       return [...entries.filter((e) => e.claims.gid !== claims.gid), entry];
     }, 'token_stored');
   }
@@ -655,9 +698,10 @@ export class TokenStore {
     if (typeof token !== 'string' || token.length > MAX_TOKEN_LENGTH) return undefined;
     const claims = decodeTokenClaims(token);
     if (claims === undefined || claims.aud !== this.#namespace) return undefined;
-    if (claims.role !== 'leader' || raw.recovery === undefined) return { token, claims };
+    const name = readDisplayName(raw.displayName);
+    if (claims.role !== 'leader' || raw.recovery === undefined) return { token, claims, ...name };
     const recovery = readRecovery(raw.recovery);
-    return recovery === undefined ? undefined : { token, claims, recovery };
+    return recovery === undefined ? undefined : { token, claims, recovery, ...name };
   }
 
   /** Expired first (by `exp` and by max session), then the oldest by last activity. */

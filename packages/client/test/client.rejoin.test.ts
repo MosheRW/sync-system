@@ -196,6 +196,9 @@ describe('token rejoin after an unexpected drop (#5 AC35, AC36)', () => {
       blockList: [],
       // The codes blob from group.created goes back with the resume (#10 AC32).
       joinCodes: TEST_CODES.blob,
+      // The rest of the recovery state (#13 D13).
+      locked: false,
+      handoff: 'auto',
     });
     next.receive({
       type: 'group.resumed',

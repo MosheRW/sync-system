@@ -53,6 +53,8 @@ describe('token capture (#5 AC31, AC34)', () => {
         blockList: [],
         joinCodes: TEST_CODES.blob,
         joinCodesGeneration: TEST_CODES.generation,
+        locked: false,
+        handoff: 'auto',
       },
     });
     client.close();
@@ -115,6 +117,8 @@ describe('token capture (#5 AC31, AC34)', () => {
           blockList: [],
           joinCodes: TEST_CODES.blob,
           joinCodesGeneration: TEST_CODES.generation,
+          locked: false,
+          handoff: 'auto',
         },
       },
     ]);
