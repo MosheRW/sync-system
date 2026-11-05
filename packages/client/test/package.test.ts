@@ -42,6 +42,9 @@ describe('public API (AC3)', () => {
         'indicatorOf',
         'isSyncClientError',
         'memoryStorage',
+        // #13 AC41: the preview helper.
+        'LeaderPreview',
+        'LEADER_ACTIVITY_MIN_INTERVAL_MS',
       ].sort(),
     );
     expect(api.createSyncClient).toBeTypeOf('function');

@@ -333,7 +333,11 @@ export class SyncClient {
    * The leader's private preview (#13 AC41): browse ahead without moving
    * the group; see `LeaderPreview`.
    */
-  readonly preview: LeaderPreview = new LeaderPreview({
+  get preview(): LeaderPreview {
+    return this.#preview;
+  }
+
+  readonly #preview: LeaderPreview = new LeaderPreview({
     isLeader: () => {
       const group = this.#snapshot.group;
       return group?.status === 'active' && group.role === 'leader';
