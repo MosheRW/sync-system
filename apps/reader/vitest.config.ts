@@ -23,5 +23,8 @@ export default defineConfig({
     setupFiles: ['test/setup.ts'],
     env: { NODE_ENV: 'test' },
     testTimeout: 15_000,
+    // Process CSS Modules with their source class names, so tests can assert
+    // classes such as `block` or `heading`.
+    css: { include: [/.+/], modules: { classNameStrategy: 'non-scoped' } },
   },
 });
