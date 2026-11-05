@@ -14,12 +14,15 @@ A pnpm workspace (Node 24, pnpm 10, TypeScript, ESM).
 | `@sync-system/protocol` | `packages/protocol` | Wire protocol: versions, error codes, schemas. |
 | `@sync-system/server`   | `apps/sync-server`  | The sync server (HTTP `/health` + WebSocket).  |
 | `@sync-system/client`   | `packages/client`   | Framework-free client for browsers and Node.   |
+| `@sync-system/react`    | `packages/react`    | React/Next provider and hooks over the client. |
 
 `packages/*` holds libraries and `apps/*` holds deployables.
 
 The client's usage, API, events, error codes, connection states and
 reconnect behavior are documented in
 [`packages/client/README.md`](packages/client/README.md).
+The React and Next.js provider, hooks and SSR rules are documented in
+[`packages/react/README.md`](packages/react/README.md).
 
 ```sh
 corepack enable          # uses the pnpm version pinned in package.json

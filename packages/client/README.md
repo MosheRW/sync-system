@@ -4,7 +4,8 @@ Framework-free TypeScript client for the sync server. It works in browsers and
 Node, and is safe to import during server-side rendering. It handles the
 connection life cycle, the handshake and version checks, typed group calls and
 events, leader throttling, size checks, and reconnects with backoff. The React
-package (item 6) builds on its snapshot/subscribe API.
+package [`@sync-system/react`](../react/README.md) builds on its
+snapshot/subscribe API.
 
 Runtime dependency: `@sync-system/protocol` only. No UI framework, no
 Node-only module.
@@ -78,8 +79,10 @@ calls `new Function` (also safe under a CSP without `unsafe-eval`). Still:
 
 - Do not create a client at module scope on an SSR server: it would be shared
   by every request and user.
-- Never call `connect()` during SSR. Create the client in the browser (item 6:
-  `getServerSnapshot` returns a constant idle snapshot).
+- Never call `connect()` during SSR. Create the client in the browser. For
+  React and Next.js, use [`@sync-system/react`](../react/README.md): its
+  provider creates the client after mount and its `getServerSnapshot` returns
+  a constant idle snapshot.
 
 ## API
 
@@ -149,7 +152,7 @@ fields, and passes the received objects through as they are.
 | `groupEnded`       | `{ groupId, reason, code? }`                      | `ended_by_leader`, `leader_timeout`, `max_session`, `removed`, `replaced`, `left`, `rejoin_failed` or `closed` (see "Stored groups and recovery"). |
 | `rejoined`         | `ResumedGroup`                                    | Leader or member got back into its group after a reconnect, or a waiting member was admitted.                                                      |
 | `leaderStatus`     | `{ groupId, online, cause?, graceEndsAt? }`       | A member's group paused (`cause`: `disconnected` or `inactive`; `graceEndsAt` when a handoff may follow) or is live again.                         |
-| `codesChanged`     | `{ groupId, codes, reason }`                      | Leader: codes `created`, `resumed` (only when they changed), `rotated` or `door_failures`.                                                         |
+| `codesChanged`     | `{ groupId, codes, reason }`                      | Leader: codes `created`, `resumed` (only when they changed), `rotated`, `door_failures`, `member_removed` or `superseded`.                         |
 | `joinRequested`    | `{ groupId, requestId, displayName?, expiresAt }` | Leader: someone asks to join (method B).                                                                                                           |
 | `joinWithdrawn`    | `{ groupId, requestId, reason }`                  | Leader: a request ended without a decision (`cancelled`, `disconnected`, `timeout`).                                                               |
 | `joinPaused`       | `{ groupId, retryAfterMs }`                       | Leader: door-code joining paused after repeated wrong door codes.                                                                                  |
@@ -284,9 +287,11 @@ attempts per connection per minute).
   door-code failures reset and a pause is lifted. 6 per minute.
 - `issueQrTicket()`: `{ ticket, expiresAt }` (6 per minute). The client never
   refreshes tickets on its own. Re-issue at about 80 % of the lifetime while
-  the QR code is on screen, and after `codesChanged` with reason `rotated` or
-  `resumed`. A `door_failures` change does not revoke tickets (re-issuing
-  anyway is harmless).
+  the QR code is on screen, and at once after `codesChanged` with reason
+  `rotated`, `resumed`, `member_removed` or `superseded`: each of them
+  revokes every outstanding ticket. A `door_failures` change does not revoke
+  tickets (re-issuing anyway is harmless). `useQrTicket()` in
+  `@sync-system/react` does all of this.
 - `getJoinRequests()`, `approveJoin(requestId)` (`admitted` or `group_full`),
   `denyJoin(requestId)`, and the `joinRequested` / `joinWithdrawn` events
   drive the approval prompt. Requests the server re-sends after a reconnect
