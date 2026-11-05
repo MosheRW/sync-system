@@ -25,22 +25,22 @@ Content loading and schema
 - [ ] AC5. A fetch failure (network error, non-2xx, timeout) yields a typed, user-visible error state, not a blank screen.
 
 Fingerprint
-- [ ] AC6. The fingerprint is a hash of the content file computed over a defined canonical form, so the same content gives the same fingerprint regardless of whitespace or key order, and the same value on any device. The algorithm and canonicalisation are documented.
+- [ ] AC6. The fingerprint is a hash of the content file computed over a defined canonical form, so the same content gives the same fingerprint regardless of whitespace or key order, and the same value on any device. The fingerprint is always computed by the app and never declared by the file. The algorithm (SHA-256 over canonical JSON, hex, via Web Crypto) and canonicalisation are documented.
 - [ ] AC7. Any change to text, direction, page order or schema version changes the fingerprint; a change that is only JSON formatting does not (tests for both).
 - [ ] AC8. The loaded-content result exposes `contentId`, `fingerprint` and `schemaVersion` as a metadata object ready to hand to the sync client's group metadata (what `createGroup(metadata)` already carries). The server is not changed and never reads it.
-- [ ] AC9. If the format lets a file declare its own fingerprint (see Q3), the declared value is verified against the computed one and a mismatch is a typed error. Dropped if Q3 resolves to "always computed".
+- AC9. (Removed at Gate 1, Q3.)
 
 Text direction
-- [ ] AC10. Direction can be set at document, page and block level with values `ltr`, `rtl` and (blocks only, see Q9) `auto`. The effective direction of a block is block, else page, else document, else a documented default.
+- [ ] AC10. Direction can be set at document, page and block level with values `ltr`, `rtl` and (blocks only) `auto`. The effective direction of a block is block, else page, else document, else the default `ltr`.
 - [ ] AC11. A block with `auto` takes its direction from its own text (first strong character); an empty or direction-neutral block falls back to its page/document direction. Tested with Hebrew, Arabic, English, mixed and neutral-only text.
 - [ ] AC12. Content direction is independent of interface direction: an RTL interface with LTR content and the reverse both work, each applied only to its own area (tests for all four combinations).
 - [ ] AC13. Page-turn direction follows the document direction: in an RTL document "next" moves leftward, "previous" rightward, and swipe gestures are reversed relative to LTR; keyboard and next/previous controls follow the same mapping. It is the document's direction, not the current page's or block's.
 - [ ] AC14. Mixed-direction content (an RTL document with LTR blocks and the reverse) renders each block in its own direction with correct alignment and punctuation placement, verified with sample content in tests.
 
-Content mismatch (logic and API only; presentation is Q1/Q2)
+Content mismatch (logic and API only; screens and prompts belong to item 8)
 - [ ] AC15. A pure, tested comparison function takes local content metadata and the leader's metadata (content ID, fingerprint, schema version) and returns one of: `match`, `different-content` (content ID differs), `different-version` (same ID, fingerprint differs), `unsupported-schema` (leader's schema version outside the app's range).
 - [ ] AC16. `unsupported-schema` blocks reading that content (consistent with AC3).
-- [ ] AC17. For `different-version`: if the content source can serve the leader's exact version, the loader can load it by content ID + fingerprint; if the source does not keep old versions, the outcome is `warn`, or `block` when that version's schema is no longer supported. The source's capability is declared by the loader, not guessed. (Scope depends on Q7.)
+- [ ] AC17. For `different-version` the comparison yields the outcome `warn`, or `block` when the leader's schema version is unsupported. The policy is warn/block only in v1. The loader may declare a version-lookup capability (not supported by default) for later, but nothing implements loading by content ID + fingerprint. The schema starts at version 1 and the supported range is 1 only.
 - [ ] AC18. Display names and any other text coming from the sync service are rendered as plain text, escaped (closes #13 AC38 for the reading app).
 
 Integration and quality
@@ -48,22 +48,28 @@ Integration and quality
 - [ ] AC20. Sample content (at least one RTL Hebrew, one LTR English, one mixed) is included, used by the tests and as the bundled content.
 - [ ] AC21. Lint, typecheck, build and tests pass in CI like the other packages. DOM access is safe if the chosen framework renders on the server (architect decides).
 - [ ] AC22. A README for the app documents the content schema, schema-version range policy, fingerprint algorithm and direction rules.
+- [ ] AC23. The content ID is a required string of the form `<namespace>/<slug>`. Namespace and slug each use lowercase letters, digits, `-` and `.` only, with a documented length cap (the architect may tighten the exact pattern). A UUID is accepted as the slug. Schema validation rejects IDs that do not match the documented format with a typed error. Tests cover valid IDs, invalid IDs (missing namespace, uppercase, disallowed characters, over-length, empty parts) and UUID-slug IDs.
 
 ## Out of scope
 - Item 8: code entry, QR display and scanning, approval prompt, connection indicator, keep-alive, "you're now leading", roster/counter/list and preview banner views, the follower "jump to group's page" prompt and late-joiner countdown, the joining flow in the UI.
 - Item 9: Redis, public docs, changelog, release, health endpoint, semver.
 - User-uploaded content and its upload flow (PRD future work). Only validation of fetched content is in scope.
 - Any server change; the server never reads content, metadata or position.
-- Choice of UI framework, packaging and Docker service for the app (architect/ADR; see Q6).
-- A content server that stores multiple versions; only the app's ability to ask for one is in scope.
+- Choice of UI framework, packaging and Docker service for the app (architect decides via ADR at Gate 2).
+- Item 8 (additions): the screens and prompts that show a content mismatch (warn/block UI), and sending the metadata on `createGroup` and reading it on join.
+- Future work: loading the leader's exact version by content ID + fingerprint, and a content server that stores multiple versions (only the optional capability declaration in AC17 is in scope).
+- Future work: once the upload feature is developed, the content source/server assigns content IDs and authors no longer pick them. The user wants this done as soon as uploads are built.
 
-## Open questions (for Gate 1)
-1. **Q1. Where does the mismatch warning/block UI live (7 or 8)?** The PRD puts "Content mismatch" under Product 1, but UX around joining belongs to item 8. Proposal: item 7 owns the pure comparison, loader behaviour and a result/state API (AC15-AC17); item 8 owns the screens and prompts that show it. Confirm or move the UI into 7.
-2. **Q2. Who sends and receives group metadata?** The client already carries `metadata` on `createGroup` and `group.joined`. Does item 7 wire the app to send the leader's content metadata on group creation and read it on join (thin integration, no UI), or does that wait for item 8 where the join flow is built? Proposal: item 7 provides the metadata object (AC8) and compare function only; item 8 does the wiring.
-3. **Q3. Fingerprint stored in the file or computed by the app?** The PRD says "a hash of the file". A hash cannot sit inside the file it hashes without a defined exclusion. Proposal: always computed over a canonical form (AC6); the file declares only content ID and schema version; AC9 is dropped. Alternative: the content source serves the fingerprint beside the file.
-4. **Q4. Algorithm and canonicalisation.** Proposal: SHA-256 over canonical JSON (sorted keys, no insignificant whitespace), hex, via Web Crypto so it works in browser and Node. Architect to confirm, including whether it covers display-design fields and Unicode normalisation.
-5. **Q5. What does "display design" in JSON cover?** The PRD says text and display design both come from JSON. Is theming/typography (fonts, sizes, colours, spacing) in item 7's schema, or text and direction only? Proposal: text and direction plus a minimal versioned set of display hints only if needed; richer design later.
-6. **Q6. Reading app package.** It does not exist yet (`apps/` has only `sync-server`). Framework, location, whether the Docker service lands here or in item 9, and SPA vs server-rendered are for the architect (ADR at Gate 2), not decided here.
-7. **Q7. Old-version lookup.** AC17 needs a content source that can serve a specific version. Bundled content has one version. Is "load by ID + fingerprint" required in v1, or only the warn/block policy, with lookup left to a later item? Also confirm the starting schema version and supported range (proposal: version 1, range 1 only).
-8. **Q8. Content ID.** Proposal: a free string authored in the file, uniqueness is the author's responsibility. Confirm.
-9. **Q9. Default direction and `auto` level.** Proposal: default `ltr` when nothing is declared; `auto` allowed on blocks only, as the PRD says.
+## Decisions (Gate 1)
+1. **Q1, mismatch UI: accepted.** Item 7 owns the pure comparison, loader behaviour and a result/state API (AC15-AC17). Item 8 owns the screens and prompts that show mismatches.
+2. **Q2, metadata wiring: accepted.** Item 7 provides the metadata object (AC8) and the compare function only. Item 8 sends the metadata on `createGroup` and reads it on join.
+3. **Q3, fingerprint location: accepted.** Always computed by the app over a canonical form; the file never declares it. AC9 removed (numbering kept stable).
+4. **Q4, algorithm: accepted.** SHA-256 over canonical JSON (sorted keys, no insignificant whitespace), hex, via Web Crypto. The architect confirms whether display-hint fields and Unicode normalisation are covered.
+5. **Q5, display design: accepted.** The schema holds text and direction, plus a minimal versioned set of display hints only if needed. Richer display design comes later.
+6. **Q6, app package: accepted.** The architect decides framework, location and the Docker service via ADR at Gate 2.
+7. **Q7, old-version lookup: decided.** Warn/block only in v1. Loading the leader's exact version by content ID + fingerprint is deferred (AC17 rewritten). For `different-version` the outcome is `warn`, or `block` when the leader's schema version is unsupported. Schema starts at version 1; supported range is 1 only.
+8. **Q8, content ID: modified by the user.** Required namespaced string `<namespace>/<slug>`; a UUID is accepted as the slug (AC23). Rationale: apps are already isolated on the server per the PRD, so collisions only matter within one app. Without a namespace, two different works sharing an ID would be misreported as `different-version` instead of `different-content`. Future: once uploads exist, the content source/server assigns IDs (see Out of scope).
+9. **Q9, default direction: accepted.** Default is `ltr`; `auto` is allowed on blocks only.
+
+## Open questions
+- None remaining from Gate 1. The architect confirms the points listed in Q4 and may tighten the AC23 pattern.

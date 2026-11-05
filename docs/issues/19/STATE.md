@@ -6,10 +6,12 @@
 - Plan approved by user: no
 - Security-sensitive: no
 - Review rounds: 0
+- Spec approved at Gate 1: yes
 - Last updated by: pm
 ## Model log
 - pm groom: sonnet (default) → DONE
+- pm update-spec: sonnet (default) → DONE
 ## Open questions
-- Q1-Q9 in spec.md (boundary with item 8: mismatch UI, metadata wiring; fingerprint scheme; display design scope; app package form; old-version lookup).
+- Q1-Q9 resolved at Gate 1 (see "Decisions (Gate 1)" in spec.md). Architect to confirm Q4 details (display hints, Unicode normalisation) and may tighten the AC23 ID pattern.
 ## Deviations from plan
 - none
