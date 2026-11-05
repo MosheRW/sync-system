@@ -31,6 +31,11 @@ const PUBLIC_HOOKS: Record<string, () => unknown> = {
   useStoredGroups: () => api.useStoredGroups(),
   useLeaderCodes: () => api.useLeaderCodes(),
   useQrTicket: () => api.useQrTicket(),
+  useJoinRequests: () => api.useJoinRequests(),
+  useRoster: () => api.useRoster(),
+  useViceLeader: () => api.useViceLeader(),
+  useGroupLock: () => api.useGroupLock(),
+  useMemberRemoval: () => api.useMemberRemoval(),
 };
 
 function Call({ use }: { use: () => unknown }): ReactNode {

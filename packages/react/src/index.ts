@@ -26,8 +26,24 @@ export { useCreateGroup, useJoinApproval, useJoinByCode, useJoinByQr } from './h
 export type { JoinApproval } from './hooks/join.js';
 export { useStoredGroups } from './hooks/stored-groups.js';
 export type { StoredGroups, StoredGroupsOptions } from './hooks/stored-groups.js';
-export { useLeaderCodes, useQrTicket } from './hooks/leader.js';
-export type { LeaderCodes, QrTicketHook, QrTicketOptions } from './hooks/leader.js';
+export {
+  useGroupLock,
+  useJoinRequests,
+  useLeaderCodes,
+  useMemberRemoval,
+  useQrTicket,
+  useRoster,
+  useViceLeader,
+} from './hooks/leader.js';
+export type {
+  GroupLock,
+  JoinRequests,
+  LeaderCodes,
+  MemberRemoval,
+  QrTicketHook,
+  QrTicketOptions,
+  ViceLeader,
+} from './hooks/leader.js';
 export { QrTicket } from './components/qr-ticket.js';
 export type { QrTicketProps } from './components/qr-ticket.js';
 export { ConnectionIndicator } from './components/connection-indicator.js';

@@ -29,6 +29,11 @@ export function AllHooks(): ReactNode {
   const stored = api.useStoredGroups({ checkOnConnect: true });
   const codes = api.useLeaderCodes();
   const qr = api.useQrTicket();
+  const requests = api.useJoinRequests();
+  const roster = api.useRoster();
+  const vice = api.useViceLeader();
+  const lock = api.useGroupLock();
+  const removal = api.useMemberRemoval();
   const summary = {
     status,
     group: snapshot.group === null ? 'none' : snapshot.group.status,
@@ -48,6 +53,11 @@ export function AllHooks(): ReactNode {
     stored: stored.groups === null ? null : stored.groups.length,
     codes: codes.codes === null ? null : 'set',
     qr: qr.state.status,
+    requests: requests.requests.length,
+    roster: roster.length,
+    vice: vice.isVice,
+    locked: lock.locked,
+    blocked: removal.blockList.length,
   };
   return (
     <div>
