@@ -8,7 +8,7 @@
 - QA verdict (round 1): PASS (46/46 ACs met; 5 non-blocking advisories in the PR comment)
 - QA verdict (round 2): PASS (all round 1 advisories fixed; 46/46 ACs still met; CI green on 281664d)
 - Security-sensitive: yes
-- Last updated by: qa
+- Last updated by: engineer
 ## Gate 1 decisions
 - User accepted every recommended default Q1.1-Q7 as written in `spec.md`,
   with one change: Q5.5 display names use the existing strict #10 rule
@@ -169,3 +169,4 @@
 - qa review (round 1): opus (NEXT_MODEL) → PASS
 - engineer fix (round 1 advisories): opus (rule) → DONE
 - qa review (round 2): opus (rule) → PASS
+- engineer fix (qa round 2 note): opus (rule) → DONE
