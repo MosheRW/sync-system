@@ -366,6 +366,74 @@ describe('QR re-issue (AC18)', () => {
     expect(client.count('issueQrTicket')).toBe(3);
   });
 
+  it('reads loading, never idle, while an issue is scheduled for an eligible leader', async () => {
+    const client = leader();
+    const { values } = mount(client);
+    // Mounted, the first issue not run yet.
+    expect(values.at(-1)?.state).toEqual({ status: 'loading', ticket: null });
+    await advance(0);
+    expect(ticketOf(values.at(-1))).toBe('tk-1');
+    // A new group within the 10 s floor: waiting for the floor.
+    act(() => client.follow('g-1'));
+    expect(values.at(-1)?.state).toEqual({ status: 'idle' });
+    act(() => client.lead('g-2'));
+    expect(values.at(-1)?.state).toEqual({ status: 'loading', ticket: null });
+    await advance(9_999);
+    expect(values.at(-1)?.state).toEqual({ status: 'loading', ticket: null });
+    expect(client.count('issueQrTicket')).toBe(1);
+    await advance(1);
+    expect(ticketOf(values.at(-1))).toBe('tk-2');
+  });
+
+  it('reads loading while waiting out a RATE_LIMITED wait after a group switch or hide/show', async () => {
+    const { client, values } = await rateLimited();
+    act(() => client.follow('g-1'));
+    act(() => client.lead('g-2'));
+    expect(values.at(-1)?.state).toEqual({ status: 'loading', ticket: null });
+    await advance(39_999);
+    expect(values.at(-1)?.state).toEqual({ status: 'loading', ticket: null });
+
+    const other = leader();
+    const seen: QrTicketHook[] = [];
+    function Probe(): ReactNode {
+      seen.push(useQrTicket());
+      return null;
+    }
+    const view = renderWithProvider(<Probe />, { client: other });
+    await advance(0);
+    other.impl.issueQrTicket = () =>
+      Promise.reject(new SyncClientError('RATE_LIMITED', { details: { retryAfterMs: 40_000 } }));
+    await advance(48_000);
+    view.rerenderWith(null);
+    await advance(0);
+    view.rerenderWith(<Probe />);
+    await advance(0);
+    expect(seen.at(-1)?.state).toEqual({ status: 'loading', ticket: null });
+  });
+
+  it('a release cancelled after the scheduled issue gave up still issues', async () => {
+    const client = leader();
+    const values: QrTicketHook[] = [];
+    function Probe({ enabled }: { enabled: boolean }): ReactNode {
+      values.push(useQrTicket({ enabled }));
+      return null;
+    }
+    const view = renderWithProvider(<Probe enabled={false} />, { client });
+    await advance(0);
+    // Shown and hidden at once: the scheduled issue sees no consumer and gives up.
+    view.rerenderWith(<Probe enabled />);
+    view.rerenderWith(<Probe enabled={false} />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    // Shown again before the deferred release stops the controller.
+    view.rerenderWith(<Probe enabled />);
+    expect(values.at(-1)?.state).toEqual({ status: 'loading', ticket: null });
+    await advance(0);
+    expect(client.count('issueQrTicket')).toBe(1);
+    expect(ticketOf(values.at(-1))).toBe('tk-1');
+  });
+
   it('JOIN_METHOD_UNAVAILABLE: unavailable, no timer', async () => {
     const client = leader();
     client.impl.issueQrTicket = () =>

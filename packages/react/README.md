@@ -334,7 +334,11 @@ It resets on group change or end.
   or is disabled.
 
 `state` is `idle`, `loading` (`ticket` or `null`), `ready` (`ticket`),
-`unavailable` or `error` (`error`, `ticket` or `null`). `refresh()` is ignored
+`unavailable` or `error` (`error`, `ticket` or `null`). `idle` means no QR
+is due: this client is not a connected leader, or the consumer is disabled
+or not mounted yet. While an issue is on the way for a connected leader (in
+flight, or waiting for the 10 s floor or a rate-limit wait) the state is
+`loading`, so the app can show "getting your QR code". `refresh()` is ignored
 while a request is in flight, during a rate-limit wait and within 10 s of the
 last issue (unless the ticket expired), so calling it in a loop cannot flood
 the server.

@@ -127,6 +127,10 @@ export type JoinFlowState =
 export type QrTicketState =
   /** Not a connected leader, disabled, or no consumer mounted. */
   | { readonly status: 'idle' }
+  /**
+   * An issue is on the way: in flight, or scheduled (waiting for the 10 s
+   * floor or a `RATE_LIMITED` wait). `ticket` is the still valid one, if any.
+   */
   | { readonly status: 'loading'; readonly ticket: QrTicket | null }
   | { readonly status: 'ready'; readonly ticket: QrTicket }
   /** `JOIN_METHOD_UNAVAILABLE`: the group has no method D. */

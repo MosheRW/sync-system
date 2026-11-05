@@ -135,7 +135,16 @@ export class QrTicketController {
       this.#schedule();
       return;
     }
-    if (this.#state === IDLE_QR && !this.#inFlight) this.#schedule();
+    // Idle, or loading with nothing pending (a release was cancelled before
+    // a scheduled issue ran): schedule the issue.
+    if (
+      (this.#state === IDLE_QR || this.#state.status === 'loading') &&
+      !this.#inFlight &&
+      !this.#scheduled &&
+      this.#issueTimer === undefined
+    ) {
+      this.#schedule();
+    }
   }
 
   /**
@@ -172,10 +181,15 @@ export class QrTicketController {
 
   /**
    * Issues now if allowed, else at the 10 s floor or the end of a
-   * `RATE_LIMITED` wait; never twice in one tick.
+   * `RATE_LIMITED` wait; never twice in one tick. The state reads `loading`
+   * until the issue.
    */
   #schedule(): void {
     if (this.#scheduled || this.#inFlight || this.#issueTimer !== undefined) return;
+    // An eligible leader with an issue on the way reads `loading`, never `idle`.
+    if (this.#state === IDLE_QR) {
+      this.#set(Object.freeze({ status: 'loading' as const, ticket: null }));
+    }
     const wait = Math.max(this.#lastIssueAt + QR_MIN_INTERVAL_MS, this.#rateLimitedUntil) - now();
     const generation = this.#generation;
     if (wait > 0) {

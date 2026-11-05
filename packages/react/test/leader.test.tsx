@@ -406,8 +406,9 @@ describe('leader-only data and action values never outlive the role (R3, M3)', (
     expect(v.vice.setVice.value).toBeUndefined();
     expect(v.removal.blockList).toEqual([]);
     expect(v.removal.remove.value).toBeUndefined();
-    // Group A's ticket is gone; B gets its own (issued after the 10 s floor).
+    // Group A's ticket is gone; B gets its own (issued after the 10 s
+    // floor), so the QR reads loading meanwhile.
     expect(v.qr.state).not.toBe(before);
-    expect(v.qr.state).toEqual({ status: 'idle' });
+    expect(v.qr.state).toEqual({ status: 'loading', ticket: null });
   });
 });
