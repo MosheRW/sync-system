@@ -10,6 +10,7 @@ import {
 import { TokenKeyring } from '../src/tokens/token-keys.js';
 import { TokenService } from '../src/tokens/token-service.js';
 import { createGroupWithMembers, resumeWith } from './helpers/groups.js';
+import { GRACE_MS, expireHold, isHeld } from './helpers/lifecycle.js';
 import { ManualScheduler } from './helpers/manual-scheduler.js';
 import type { TestClient } from './helpers/test-client.js';
 import { KEY_A, type TestServer, startTestServer } from './helpers/test-server.js';
@@ -48,7 +49,7 @@ describe('a group that empties ends (#13 D15, RC17)', () => {
     ts = await startTestServer({ scheduler, store });
     const group = await createGroupWithMembers(ts, 0);
     await group.leader.close();
-    await waitUntil(() => store.size === 0);
+    await expireHold(scheduler, store, group.groupId);
     expect(emptyEnds(ts)).toHaveLength(1);
     expect(ts.logs.events()).not.toContain('group_dropped');
     expect(scheduler.pending).toBe(0);
@@ -59,25 +60,27 @@ describe('a group that empties ends (#13 D15, RC17)', () => {
 
   it('ends when the leader is offline and the last member disconnects', async () => {
     const store = new InMemoryGroupStore();
-    ts = await startTestServer({ store, scheduler: new ManualScheduler() });
+    const scheduler = new ManualScheduler();
+    ts = await startTestServer({ store, scheduler });
     const group = await createGroupWithMembers(ts, 1);
     await group.leader.close();
     await group.members[0]!.next('leader.offline');
     await group.members[0]!.close();
-    await waitUntil(() => store.size === 0);
+    await expireHold(scheduler, store, group.groupId);
     expect(emptyEnds(ts)).toHaveLength(1);
   });
 
   it('ends when the leader is offline and the last member leaves, with no frame', async () => {
     const store = new InMemoryGroupStore();
-    ts = await startTestServer({ store, scheduler: new ManualScheduler() });
+    const scheduler = new ManualScheduler();
+    ts = await startTestServer({ store, scheduler });
     const group = await createGroupWithMembers(ts, 1);
     await group.leader.close();
     const member = group.members[0]!;
     await member.next('leader.offline');
     member.send({ type: 'group.leave', reqId: 'l' });
     expect(await member.next()).toEqual({ type: 'group.left', reqId: 'l', groupId: group.groupId });
-    await waitUntil(() => store.size === 0);
+    await expireHold(scheduler, store, group.groupId);
     // The leaver got its reply only; nobody is told about an empty end.
     await member.expectNoMessage(50);
     expect(emptyEnds(ts)).toHaveLength(1);
@@ -85,9 +88,10 @@ describe('a group that empties ends (#13 D15, RC17)', () => {
 
   it('answers a pending joiner of an emptied group with GROUP_ENDED', async () => {
     const store = new InMemoryGroupStore();
+    const scheduler = new ManualScheduler();
     ts = await startTestServer({
       store,
-      scheduler: new ManualScheduler(),
+      scheduler,
       apps: [{ namespace: 'app-a', apiKey: KEY_A, joinMethods: ['B'] }],
     });
     const leader = await ts.connectReady();
@@ -97,6 +101,7 @@ describe('a group that empties ends (#13 D15, RC17)', () => {
     joiner.send({ type: 'group.joinByCode', joinCode: created.codes.groupCode });
     await joiner.next('join.pending');
     await leader.close();
+    await expireHold(scheduler, store, created.groupId);
     expect(await joiner.next('error')).toMatchObject({ code: 'GROUP_ENDED' });
     expect(store.size).toBe(0);
   });
@@ -113,7 +118,7 @@ describe('a group that empties ends (#13 D15, RC17)', () => {
     ]);
     await group.members[0]!.close();
     await group.leader.close();
-    await waitUntil(() => store.size === 0);
+    await expireHold(scheduler, store, group.groupId);
     scheduler.advance(MINUTE);
     for (const token of [group.leaderToken, group.memberTokens[0]]) {
       const { reply } = await resumeWith(ts, token, { metadata: {} });
@@ -137,7 +142,7 @@ describe('a group that empties ends (#13 D15, RC17)', () => {
     const first = await createGroupWithMembers(ts, 1);
     await first.members[0]!.close();
     await first.leader.close();
-    await waitUntil(() => store.size === 0);
+    await expireHold(scheduler, store, first.groupId);
     // A second end evicts the first group's entry.
     const second = await createGroupWithMembers(ts, 0);
     second.leader.send({ type: 'group.end' });
@@ -165,7 +170,7 @@ describe('a group that empties ends (#13 D15, RC17)', () => {
     const group = await createGroupWithMembers(ts, 0);
     expect(claimsOf(group.leaderToken).iat).toBe(Math.floor(startedAt / 1000));
     await group.leader.close();
-    await waitUntil(() => store.size === 0);
+    await expireHold(scheduler, store, group.groupId);
     const other = await createGroupWithMembers(ts, 0);
     other.leader.send({ type: 'group.end' });
     await other.leader.next('group.ended');
@@ -200,7 +205,7 @@ describe('groups recreated after a restart, then emptied (#13 6.9 layer 1)', () 
     expect(reply).toMatchObject({ type: 'group.resumed', recreated: true });
     if (reply.type !== 'group.resumed') throw new Error('expected group.resumed');
     await client.close();
-    await waitUntil(() => store.size === 0);
+    await expireHold(scheduler, store, group.groupId);
     return { group, scheduler, store, startedAt, inProcessToken: reply.token };
   }
 
@@ -325,5 +330,119 @@ describe('a late close of an old socket (#13 RC19, L12)', () => {
     expect(emptyEnds(ts)).toHaveLength(0);
     fresh.send({ type: 'position.update', position: 1 });
     expect(await fresh.next('position.ack')).toEqual({ type: 'position.ack' });
+  });
+});
+
+describe('the empty-group hold (#13 Gate 2 Q-G, RC21)', () => {
+  async function held(handoff: 'auto' | 'frozen' = 'auto', joinMethods = ['A', 'B', 'C', 'D']) {
+    const scheduler = new ManualScheduler();
+    const store = new InMemoryGroupStore();
+    ts = await startTestServer({
+      scheduler,
+      store,
+      apps: [{ namespace: 'app-a', apiKey: KEY_A, defaultHandoff: handoff, joinMethods }],
+    });
+    return { scheduler, store };
+  }
+
+  it('refuses every new admission while held with the locked-group answer (RC21 a)', async () => {
+    const { store } = await held();
+    const leader = await ts!.connectReady();
+    leader.send({ type: 'group.create', metadata: {}, joinMethods: ['A', 'D'] });
+    const created = await leader.next('group.created');
+    leader.send({ type: 'qr.issue' });
+    const { ticket } = await leader.next('qr.ticket');
+    const b = await ts!.connectReady();
+    b.send({ type: 'group.create', metadata: {}, joinMethods: ['B'] });
+    const bCreated = await b.next('group.created');
+    const asking = await ts!.connectReady();
+    asking.send({ type: 'group.joinByCode', joinCode: bCreated.codes.groupCode });
+    await asking.next('join.pending');
+    await leader.close();
+    await b.close();
+    await waitUntil(
+      async () => (await isHeld(store, created.groupId)) && (await isHeld(store, bCreated.groupId)),
+    );
+    const locked = { type: 'error', code: 'GROUP_LOCKED', message: 'Group is locked' };
+    const byCode = await ts!.connectReady();
+    byCode.send({
+      type: 'group.joinByCode',
+      joinCode: created.codes.groupCode,
+      doorCode: created.codes.doorCode,
+    });
+    expect(await byCode.next()).toEqual(locked);
+    const byQr = await ts!.connectReady();
+    byQr.send({ type: 'group.joinByQr', ticket });
+    expect(await byQr.next()).toEqual(locked);
+    const byB = await ts!.connectReady();
+    byB.send({ type: 'group.joinByCode', joinCode: bCreated.codes.groupCode });
+    expect(await byB.next()).toEqual(locked);
+    expect((await store.get('app-a', created.groupId))?.participantIds).toHaveLength(1);
+  });
+
+  it('a leader back inside the hold keeps the lead with no role change', async () => {
+    const { scheduler, store } = await held();
+    const group = await createGroupWithMembers(ts!, 1);
+    await group.members[0]!.close();
+    await group.leader.close();
+    await waitUntil(() => isHeld(store, group.groupId));
+    scheduler.advance(GRACE_MS - 1);
+    const { reply } = await resumeWith(ts!, group.leaderToken);
+    expect(reply).toMatchObject({ type: 'group.resumed', recreated: false });
+    scheduler.advance(10 * 60_000);
+    expect(await store.get('app-a', group.groupId)).toMatchObject({
+      leaderId: group.leaderId,
+      pause: undefined,
+      leaderOnline: true,
+    });
+  });
+
+  it('a member back inside the hold takes over at the original deadline, not later', async () => {
+    const { scheduler, store } = await held();
+    const group = await createGroupWithMembers(ts!, 1);
+    await group.leader.close();
+    await group.members[0]!.next('leader.offline');
+    const deadline = (await store.get('app-a', group.groupId))?.pause?.graceEndsAt;
+    await group.members[0]!.close();
+    await waitUntil(() => isHeld(store, group.groupId));
+    scheduler.advance(10_000);
+    const { client } = await resumeWith(ts!, group.memberTokens[0]);
+    expect((await store.get('app-a', group.groupId))?.pause?.graceEndsAt).toBe(deadline);
+    scheduler.advanceTo(deadline! - 1);
+    await client.expectNoMessage(30);
+    scheduler.advanceTo(deadline!);
+    expect(await client.next('leader.granted')).toMatchObject({ reason: 'handoff_disconnect' });
+  });
+
+  it('a frozen-mode empty group ends at the hold deadline, not the frozen bound', async () => {
+    const { scheduler, store } = await held('frozen');
+    const group = await createGroupWithMembers(ts!, 0);
+    await group.leader.close();
+    await waitUntil(() => isHeld(store, group.groupId));
+    expect((await store.get('app-a', group.groupId))?.pause).toEqual({
+      cause: 'offline',
+      holdEndsAt: scheduler.now() + GRACE_MS,
+    });
+    scheduler.advance(GRACE_MS - 1);
+    expect(store.size).toBe(1);
+    scheduler.advance(1);
+    await waitUntil(() => store.size === 0);
+    expect(emptyEnds(ts!)).toHaveLength(1);
+  });
+
+  it('never extends the hold: a member back and gone again ends it at the first deadline', async () => {
+    const { scheduler, store } = await held('frozen');
+    const group = await createGroupWithMembers(ts!, 1);
+    await group.leader.close();
+    await group.members[0]!.close();
+    await waitUntil(() => isHeld(store, group.groupId));
+    scheduler.advance(GRACE_MS - 5_000);
+    const { client } = await resumeWith(ts!, group.memberTokens[0]);
+    scheduler.advance(10_000);
+    // Someone was connected at the deadline: frozen mode keeps waiting.
+    expect(store.size).toBe(1);
+    await client.close();
+    // The hold already ran out, so the group ends at once.
+    await waitUntil(() => store.size === 0);
   });
 });

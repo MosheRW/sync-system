@@ -9,7 +9,11 @@ let store: InMemoryGroupStore;
 
 beforeEach(async () => {
   store = new InMemoryGroupStore();
-  ts = await startTestServer({ store, apps: [{ namespace: 'app-a', apiKey: KEY_A }] });
+  // A 1 s grace keeps the real-clock hold of an emptied group short (#13 Q-G).
+  ts = await startTestServer({
+    store,
+    apps: [{ namespace: 'app-a', apiKey: KEY_A, disconnectGraceSeconds: 1 }],
+  });
 });
 
 afterEach(async () => {
@@ -68,9 +72,9 @@ describe('disconnects (AC17)', () => {
     member.send({ type: 'group.create', metadata: {} });
     expect(await member.next('error')).toMatchObject({ code: 'ALREADY_IN_GROUP' });
 
-    // When the last member leaves, the group is dropped from memory.
+    // When the last member leaves, the group is held, then ends (#13 Q-G).
     await member.close();
-    await waitUntil(() => store.size === 0);
+    await waitUntil(() => store.size === 0, 3000);
   });
 
   it('freezes the group on an abrupt leader disconnect too', async () => {
@@ -84,7 +88,7 @@ describe('disconnects (AC17)', () => {
     const { members, leader } = await createGroupWithMembers(ts, 1);
     members[0]!.terminate();
     leader.terminate();
-    await waitUntil(() => store.size === 0);
+    await waitUntil(() => store.size === 0, 3000);
     await waitUntil(() => ts.server.stats().total === 0);
   });
 

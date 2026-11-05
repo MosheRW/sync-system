@@ -4,9 +4,9 @@ import type { TokenSecrets } from '../src/config/token-secret.js';
 import { InMemoryGroupStore } from '../src/groups/in-memory-group-store.js';
 import { createGroupWithMembers, resumeWith } from './helpers/groups.js';
 import { ManualScheduler } from './helpers/manual-scheduler.js';
+import { expireHold } from './helpers/lifecycle.js';
 import { KEY_A, type TestServer, startTestServer } from './helpers/test-server.js';
 import { claimsOf } from './helpers/tokens.js';
-import { waitUntil } from './helpers/wait.js';
 
 const MINUTE = 60_000;
 
@@ -244,7 +244,8 @@ describe('one group per token (#5 AC27, AC28)', () => {
     ts = await startTestServer({ scheduler, store });
     const group = await createGroupWithMembers(ts, 0, { position: 'p' });
     await group.leader.close();
-    await waitUntil(() => store.size === 0);
+    // Held for the grace period, then ended (#13 Q-G).
+    await expireHold(scheduler, store, group.groupId);
     scheduler.advance(MINUTE);
     const { reply } = await resumeWith(ts, group.leaderToken, { metadata: {}, position: 'p' });
     expect(reply).toMatchObject({ type: 'error', code: 'GROUP_ENDED' });

@@ -42,7 +42,14 @@ beforeAll(async () => {
       MAX_INBOUND_BURST: '20',
     },
     apps: [
-      { namespace: 'app-a', apiKey: KEY_A, maxLeaderUpdatesPerSecond: 2, maxMessageBytes: 256 },
+      {
+        namespace: 'app-a',
+        apiKey: KEY_A,
+        maxLeaderUpdatesPerSecond: 2,
+        maxMessageBytes: 256,
+        // A 1 s grace keeps the real-clock hold of an emptied group short (#13 Q-G).
+        disconnectGraceSeconds: 1,
+      },
       { namespace: 'app-b', apiKey: KEY_B },
     ],
   });
@@ -149,7 +156,9 @@ describe('logs never contain personal or secret data (AC24, L5, L8)', () => {
       createLogger({ level: 'trace', destination: ts.logs }),
     );
 
-    // Sanity: the flows really were logged at trace level.
+    // Sanity: the flows really were logged at trace level. The emptied
+    // group ends after its hold (#13 Q-G).
+    await waitUntil(() => ts.logs.events().includes('group_ended'), 3000);
     const events = ts.logs.events();
     for (const event of [
       'handshake_rejected',

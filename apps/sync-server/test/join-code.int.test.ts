@@ -12,6 +12,8 @@ import { CodesBlobService } from '../src/tokens/codes-blob.js';
 import { CODES_BLOB_INFO_PREFIX, TokenKeyring } from '../src/tokens/token-keys.js';
 import { ScriptedRandom } from './helpers/codes.js';
 import { createGroupWithMembers } from './helpers/groups.js';
+import { expireHold } from './helpers/lifecycle.js';
+import { ManualScheduler } from './helpers/manual-scheduler.js';
 import type { TestClient } from './helpers/test-client.js';
 import {
   KEY_A,
@@ -20,7 +22,6 @@ import {
   type TestServer,
   startTestServer,
 } from './helpers/test-server.js';
-import { waitUntil } from './helpers/wait.js';
 
 const SECRET = Buffer.from('q9Zt2Lx7Vb4Nm1Rt6Yw0Ue5Io3AaKd8Fj2Hs7Gp1Wc=');
 const ALL: JoinMethod[] = ['A', 'B', 'C', 'D'];
@@ -167,7 +168,8 @@ describe('code uniqueness and release (#10 AC9, AC11)', () => {
   ] as const)('frees the codes of a group %s', async (_label, how) => {
     const random = new ScriptedRandom();
     const store = new InMemoryGroupStore();
-    const server = await start({ codeRandom: random.next, store });
+    const scheduler = new ManualScheduler();
+    const server = await start({ codeRandom: random.next, store, scheduler });
     const scripted = [7, 0, 0, 0, 0, 0, 0, 0, 0];
     random.queue(...scripted);
     const leader = await server.connectReady();
@@ -177,7 +179,8 @@ describe('code uniqueness and release (#10 AC9, AC11)', () => {
       await leader.next('group.ended');
     } else {
       await leader.close();
-      await waitUntil(() => store.size === 0);
+      // Held for the grace period, then gone (#13 Q-G).
+      await expireHold(scheduler, store, first.groupId);
     }
     random.queue(...scripted);
     const second = await create(await server.connectReady(), ['B', 'C']);

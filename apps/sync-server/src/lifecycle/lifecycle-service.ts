@@ -5,7 +5,13 @@ import type {
   ServerMessage,
 } from '@sync-system/protocol';
 import type { AppConfig } from '../apps/app-registry.js';
-import type { GroupPause, GroupRecord, GroupStore } from '../groups/group-store.js';
+import {
+  type GroupPause,
+  type GroupRecord,
+  type GroupStore,
+  connectedCount,
+  pauseDeadline,
+} from '../groups/group-store.js';
 import type { GroupTimers } from '../groups/group-timers.js';
 import type { Session } from '../groups/session.js';
 import { type Logger, groupRef } from '../logging/logger.js';
@@ -44,6 +50,10 @@ export interface LifecycleHost {
   onLeaderReturn(leader: Session, record: GroupRecord): void;
   /** Restarts the leader-token refresh for the group's online leader. */
   startRefresh(namespace: string, groupId: string, at: number): void;
+  /** Ends a group nobody is connected to (#13 D15). */
+  endEmpty(app: AppConfig, groupId: string): Promise<void>;
+  /** True when an open session owns any membership of the group (#13 RC19). */
+  anyoneAttached(record: GroupRecord): boolean;
   now(): number;
 }
 
@@ -247,18 +257,69 @@ export class LifecycleService {
     });
   }
 
-  /** The grace period ended (#13 6.4). */
+  /**
+   * The pause deadline passed (#13 6.4, Q-G): the grace end, or the end of
+   * an empty group's hold.
+   */
   private async onGraceEnd(
     app: AppConfig,
     groupId: string,
     term: number,
-    graceEndsAt: number,
+    deadline: number,
   ): Promise<void> {
     const record = await this.host.store.get(app.namespace, groupId);
     // Stale: the group is gone, live again, or a new leader leads (RC13).
     if (record === undefined || record.term !== term) return;
-    if (record.pause?.graceEndsAt !== graceEndsAt) return;
-    await this.graceEnded(app, record);
+    if (pauseDeadline(record.pause) !== deadline) return;
+    // RC21 (c): still nobody connected at the deadline: the group ends, in
+    // both modes, never falling back to the frozen bound.
+    if (this.isEmpty(record)) {
+      await this.host.endEmpty(app, groupId);
+      return;
+    }
+    if (record.pause?.graceEndsAt === deadline) await this.graceEnded(app, record);
+  }
+
+  /** Nobody is connected: no attached member and the leader offline (#13 Q-G). */
+  isEmpty(record: GroupRecord): boolean {
+    return connectedCount(record) === 0 && !this.host.anyoneAttached(record);
+  }
+
+  /**
+   * Holds a group that just emptied (#13 Q-G, RC21): instead of ending at
+   * once, it stays in memory, paused, until one deadline that is never
+   * extended: the running grace end (auto), or a hold end set once (frozen).
+   * While held nobody new is admitted (`GROUP_LOCKED`); only token resumes
+   * re-attach. If that deadline already passed, the group ends now. Under
+   * the group lock, after the RC19 re-check.
+   */
+  async hold(app: AppConfig, record: GroupRecord): Promise<void> {
+    const namespace = app.namespace;
+    const now = this.host.now();
+    const running = pauseDeadline(record.pause);
+    const deadline = running ?? now + app.disconnectGraceSeconds * 1000;
+    // The leader is offline, so the cause is `offline` (D8 invariant).
+    const pause: GroupPause =
+      running !== undefined
+        ? { ...record.pause!, cause: 'offline' }
+        : record.handoff === 'auto'
+          ? { cause: 'offline', graceEndsAt: deadline }
+          : { ...record.pause, cause: 'offline', holdEndsAt: deadline };
+    const hadPause = record.pause !== undefined;
+    record = (await this.host.store.patch(namespace, record.id, { pause })) ?? record;
+    if (!hadPause) {
+      await this.host.scheduleFrozenEnd(app, record);
+      if ((await this.host.store.get(namespace, record.id)) === undefined) return;
+    }
+    if (deadline <= now) {
+      await this.host.endEmpty(app, record.id);
+      return;
+    }
+    this.armGrace(app, record, deadline);
+    this.host.logger.info(
+      { event: 'group_held', namespace, groupRef: groupRef(record.id) },
+      'empty group held',
+    );
   }
 
   /**

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { InMemoryGroupStore } from '../src/groups/in-memory-group-store.js';
 import { createGroupWithMembers } from './helpers/groups.js';
 import { ManualScheduler } from './helpers/manual-scheduler.js';
+import { expireHold } from './helpers/lifecycle.js';
 import { KEY_A, type TestServer, startTestServer } from './helpers/test-server.js';
 import { waitUntil } from './helpers/wait.js';
 
@@ -82,11 +83,14 @@ describe('max session time (#5 AC21, Q2)', () => {
 
   it('an emptied group’s timers are cancelled', async () => {
     const scheduler = new ManualScheduler();
-    ts = await startTestServer({ scheduler });
-    const { leader } = await createGroupWithMembers(ts, 0);
+    const store = new InMemoryGroupStore();
+    ts = await startTestServer({ scheduler, store });
+    const { leader, groupId } = await createGroupWithMembers(ts, 0);
     // Max session and the keep-alive prompt (#13 6.3).
     expect(scheduler.pending).toBe(2);
     await leader.close();
+    // Held for the grace period, then ended (#13 Q-G).
+    await expireHold(scheduler, store, groupId);
     await waitUntil(() => scheduler.pending === 0);
   });
 });

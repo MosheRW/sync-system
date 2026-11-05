@@ -89,6 +89,16 @@ export interface GroupRecord {
 export interface GroupPause {
   readonly cause: 'offline' | 'inactive';
   readonly graceEndsAt?: number;
+  /**
+   * Frozen mode only: when an empty group's hold ends (#13 Q-G, RC21 (b)).
+   * Set once and never extended; in `auto` mode the hold uses `graceEndsAt`.
+   */
+  readonly holdEndsAt?: number;
+}
+
+/** The single deadline of a pause: the grace end (auto) or the hold end (frozen). */
+export function pauseDeadline(pause: GroupPause | undefined): number | undefined {
+  return pause?.graceEndsAt ?? pause?.holdEndsAt;
 }
 
 /** Record fields `patch` may set in one atomic step (#13 3.2). */

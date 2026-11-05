@@ -25,6 +25,9 @@ export interface TestApp {
   joinMethods?: string[];
   qrTicketSeconds?: number;
   approvalTimeoutSeconds?: number;
+  disconnectGraceSeconds?: number;
+  keepAliveCountdownSeconds?: number;
+  defaultHandoff?: string;
 }
 
 export interface RealServerOptions {

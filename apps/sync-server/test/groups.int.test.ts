@@ -10,7 +10,11 @@ let store: InMemoryGroupStore;
 
 beforeEach(async () => {
   store = new InMemoryGroupStore();
-  ts = await startTestServer({ store });
+  // A 1 s grace keeps the real-clock hold of an emptied group short (#13 Q-G).
+  ts = await startTestServer({
+    store,
+    apps: [{ namespace: 'app-a', apiKey: KEY_A, disconnectGraceSeconds: 1 }],
+  });
 });
 
 afterEach(async () => {
@@ -165,6 +169,6 @@ describe('group join (AC12)', () => {
     await leader.next('group.created');
     expect(store.size).toBe(1);
     await leader.close();
-    await waitUntil(() => store.size === 0);
+    await waitUntil(() => store.size === 0, 3000);
   });
 });

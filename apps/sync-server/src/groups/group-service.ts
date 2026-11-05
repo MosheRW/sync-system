@@ -248,6 +248,8 @@ export class GroupService implements GroupActions {
       rosterSnapshot: (record) => this.rosterSnapshot(record),
       onLeaderReturn: (leader, record) => this.joins.onLeaderReturn(leader, record),
       startRefresh: (namespace, groupId, at) => this.startRefresh(namespace, groupId, at),
+      endEmpty: (app, groupId) => this.endGroup(app, groupId, 'empty'),
+      anyoneAttached: (record) => this.anyoneAttached(record),
       now: () => this.now(),
     });
     this.parking = new ParkingLot(deps.scheduler);
@@ -554,7 +556,19 @@ export class GroupService implements GroupActions {
    * the leader locked it. Token resumes and parked admissions ignore it.
    */
   private admissionClosed(record: GroupRecord): boolean {
-    return record.locked;
+    // RC21 (a): a held empty group admits nobody new either, with the same
+    // answer as a locked one, so the hold is no new oracle.
+    return record.locked || (!record.leaderOnline && connectedCount(record) === 0);
+  }
+
+  /**
+   * Nobody is connected any more (#13 D15, Q-G): the group is held for the
+   * grace period, then ends `empty` (RC21). Under the group lock.
+   */
+  private async emptied(app: AppConfig, groupId: string): Promise<void> {
+    const record = await this.deps.store.get(app.namespace, groupId);
+    if (record === undefined) return;
+    await this.lifecycle.hold(app, record);
   }
 
   /** The leader recovery state (#13 D13). */
@@ -959,7 +973,7 @@ export class GroupService implements GroupActions {
         });
         this.rosterRemoved(updated, [participantId]);
       }
-      if (result && result.connected === 0) await this.endGroup(app, groupId, 'empty');
+      if (result && result.connected === 0) await this.emptied(app, groupId);
       this.deps.logger.info(
         { event: 'group_left', namespace: app.namespace, groupRef: groupRef(groupId) },
         'group left',
@@ -1505,7 +1519,7 @@ export class GroupService implements GroupActions {
       }
       const result = await this.deps.store.removeParticipant(namespace, groupId, participantId);
       await this.leaveRosterOnDisconnect(app, record, participantId);
-      if (result && result.connected === 0) await this.endGroup(app, groupId, 'empty');
+      if (result && result.connected === 0) await this.emptied(app, groupId);
     });
   }
 
@@ -1527,7 +1541,7 @@ export class GroupService implements GroupActions {
     // Nobody to prompt while the leader is away (#13 6.3).
     this.lifecycle.stopKeepAlive(namespace, groupId);
     if (connectedCount(record) === 0) {
-      await this.endGroup(app, groupId, 'empty');
+      await this.lifecycle.hold(app, record);
       return;
     }
     this.deps.logger.info(

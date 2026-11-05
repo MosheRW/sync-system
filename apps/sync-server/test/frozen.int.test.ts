@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { InMemoryGroupStore } from '../src/groups/in-memory-group-store.js';
 import { createGroupWithMembers, resumeWith } from './helpers/groups.js';
 import { ManualScheduler } from './helpers/manual-scheduler.js';
+import { expireHold } from './helpers/lifecycle.js';
 import {
   KEY_A,
   type TestAppInput,
@@ -191,13 +192,14 @@ describe('frozen group end (#5 AC21)', () => {
 
   it('a stale timer for an emptied group is a no-op', async () => {
     const { scheduler, store, ts } = await start();
-    const { leader, members } = await createGroupWithMembers(ts, 1);
+    const { leader, members, groupId } = await createGroupWithMembers(ts, 1);
     await leader.close();
     await members[0]!.next('leader.offline');
     // Max-session and frozen-end timers (frozen mode: no grace end).
     expect(scheduler.pending).toBe(2);
     await members[0]!.close();
-    await waitUntil(() => store.size === 0);
+    // Held for the grace period, then ended (#13 Q-G).
+    await expireHold(scheduler, store, groupId);
     // Ending the emptied group cancelled its timers.
     expect(scheduler.pending).toBe(0);
     scheduler.advance(WINDOW * 2);
@@ -208,11 +210,11 @@ describe('frozen group end (#5 AC21)', () => {
 });
 
 describe('a group nobody is connected to ends (#13 D15; was dropped in #5 AC22)', () => {
-  it('ends a group whose leader leaves alone, as empty', async () => {
+  it('ends a group whose leader leaves alone, as empty, after the hold (#13 Q-G)', async () => {
     const { store, ts, scheduler } = await start();
-    const { leader } = await createGroupWithMembers(ts, 0);
+    const { leader, groupId } = await createGroupWithMembers(ts, 0);
     await leader.close();
-    await waitUntil(() => store.size === 0);
+    await expireHold(scheduler, store, groupId);
     expect(scheduler.pending).toBe(0);
     expect(ts.logs.events()).not.toContain('group_dropped');
     expect(ts.logs.records().find((r) => r.event === 'group_ended')).toMatchObject({
@@ -221,16 +223,16 @@ describe('a group nobody is connected to ends (#13 D15; was dropped in #5 AC22)'
     });
   });
 
-  it('ends a frozen group when its last member leaves', async () => {
-    const { store, ts } = await start();
-    const { leader, members } = await createGroupWithMembers(ts, 2);
+  it('ends a frozen group after the hold when its last member leaves', async () => {
+    const { store, ts, scheduler } = await start();
+    const { leader, members, groupId } = await createGroupWithMembers(ts, 2);
     await leader.close();
     await members[0]!.next('leader.offline');
     await members[0]!.close();
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(store.size).toBe(1);
     await members[1]!.close();
-    await waitUntil(() => store.size === 0);
+    await expireHold(scheduler, store, groupId);
   });
 
   it('leaves no timer behind on server close', async () => {
