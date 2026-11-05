@@ -19,6 +19,7 @@ export const he: Messages = {
   reasonNetwork: 'סיבה: שגיאת רשת',
   reasonHttp: 'סיבה: HTTP {status}',
   reasonTimeout: 'סיבה: תם הזמן אחרי {seconds} שניות',
+  reasonTimeoutOne: 'סיבה: תם הזמן אחרי שנייה אחת',
 
   tooNewHeading: 'הטקסט הזה דורש גרסה חדשה יותר של האפליקציה',
   tooNewBody: 'יש לעדכן את האפליקציה כדי לפתוח אותו.',

@@ -17,6 +17,8 @@ export const en = {
   reasonNetwork: 'Reason: network error',
   reasonHttp: 'Reason: HTTP {status}',
   reasonTimeout: 'Reason: timed out after {seconds} s',
+  /** The 1-second case: Hebrew needs a singular form. */
+  reasonTimeoutOne: 'Reason: timed out after 1 s',
 
   tooNewHeading: 'This text needs a newer app',
   tooNewBody: 'Update the app to open it.',

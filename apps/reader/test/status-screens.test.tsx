@@ -97,6 +97,19 @@ describe('fetch-failure screens (AC5, AC31)', () => {
       'Reason: timed out after 3 s',
     );
   });
+
+  it('uses the singular for a 1-second timeout in Hebrew', () => {
+    const he = createI18n('he');
+    expect(statusView(error({ kind: 'timeout', seconds: 1 }), he, true).details).toBe(
+      'סיבה: תם הזמן אחרי שנייה אחת',
+    );
+    expect(statusView(error({ kind: 'timeout', seconds: 2 }), he, true).details).toBe(
+      'סיבה: תם הזמן אחרי 2 שניות',
+    );
+    expect(statusView(error({ kind: 'timeout', seconds: 1 }), en, true).details).toBe(
+      'Reason: timed out after 1 s',
+    );
+  });
 });
 
 describe('refused-file screens (AC3, AC4, AC31)', () => {

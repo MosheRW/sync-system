@@ -117,7 +117,9 @@ function errorView(error: ContentError, i18n: I18n, back: StatusView['libraryLin
       return failed(
         t.timeoutHeading,
         t.timeoutBody,
-        i18n.format(t.reasonTimeout, { seconds: error.seconds }),
+        error.seconds === 1
+          ? t.reasonTimeoutOne
+          : i18n.format(t.reasonTimeout, { seconds: error.seconds }),
       );
     case 'too-large':
       return refused(
