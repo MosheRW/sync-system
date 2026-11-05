@@ -11,6 +11,19 @@ import { LogCapture } from './helpers/log-capture.js';
 const SENSITIVE_KEYS = [
   // Display names (#10 AC20, R9).
   'displayName',
+  // #13 M2, RC9: role and roster keys that carry group-scoped IDs or names.
+  'pid',
+  'pids',
+  'successor',
+  'target',
+  'targetId',
+  'roster',
+  'participants',
+  'guestNumber',
+  'names',
+  'leaderId',
+  'displacedLeaderId',
+  'viceId',
   // Join codes, door codes, the codes payload and the signed codes blob (#10 R10).
   'joinCode',
   'doorCode',
@@ -134,6 +147,33 @@ describe('log redaction at any depth (#10 B1)', () => {
       'x',
     );
     expect(out.text).not.toContain('SENTINEL');
+  });
+
+  it('drops every ID and name of a GroupRecord-shaped object, keeps term and reasons (#13 RC9)', () => {
+    const { out, logger } = capture();
+    const pid = 'SENTINEL-PID-0b6a3f5e';
+    const record = {
+      leaderId: pid,
+      displacedLeaderId: pid,
+      viceId: pid,
+      successor: pid,
+      target: pid,
+      term: 1_767_225_600_123,
+      roster: [{ pid, name: 'SENTINEL-NAME', generated: false, guestNumber: 3 }],
+      pause: { cause: 'offline', graceEndsAt: 5 },
+      state: { blockList: [pid], locked: true, viceId: pid, handoff: 'auto' },
+    };
+    logger.info(
+      { event: 'test', record, handoffReason: 'take_back', endReason: 'empty', term: record.term },
+      'x',
+    );
+    expect(out.text).not.toContain('SENTINEL');
+    expect(out.records()[0]).toMatchObject({
+      handoffReason: 'take_back',
+      endReason: 'empty',
+      term: record.term,
+      record: { term: record.term, pause: { cause: 'offline' } },
+    });
   });
 
   it('keeps the allowed fields at every depth', () => {
