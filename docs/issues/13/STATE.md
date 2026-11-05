@@ -4,10 +4,11 @@
 - Branch: feat/13-roles-lifecycle
 - PR: #14 (ready for review)
 - Plan approved by user: yes (Gate 2, 2026-11-04)
-- Review rounds: 1 fixed (round 1 advisories, QA 1-4 and security L-1 to L-3, fixed at the user's Gate 3 request)
+- Review rounds: 2 (round 2 re-check of the round 1 advisory fixes)
 - QA verdict (round 1): PASS (46/46 ACs met; 5 non-blocking advisories in the PR comment)
+- QA verdict (round 2): PASS (all round 1 advisories fixed; 46/46 ACs still met; CI green on 281664d)
 - Security-sensitive: yes
-- Last updated by: engineer
+- Last updated by: qa
 ## Gate 1 decisions
 - User accepted every recommended default Q1.1-Q7 as written in `spec.md`,
   with one change: Q5.5 display names use the existing strict #10 rule
@@ -167,3 +168,4 @@
 - engineer implement: opus (Implementer model: opus; security-sensitive)
 - qa review (round 1): opus (NEXT_MODEL) → PASS
 - engineer fix (round 1 advisories): opus (rule) → DONE
+- qa review (round 2): opus (rule) → PASS
