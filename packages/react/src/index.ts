@@ -11,6 +11,17 @@ export {
   useUpdateRequired,
 } from './hooks/connection.js';
 export type { Connection } from './hooks/connection.js';
+export { useSyncAction } from './action.js';
+export {
+  useGroup,
+  useGroupEnded,
+  useGroupExit,
+  useLeaderStatus,
+  usePosition,
+  useRemoved,
+} from './hooks/group.js';
+export type { GroupEnded, GroupExit, LeaderStatus, Position } from './hooks/group.js';
+export { useSyncEvent } from './hooks/events.js';
 export { ConnectionIndicator } from './components/connection-indicator.js';
 export type {
   ConnectionIndicatorProps,

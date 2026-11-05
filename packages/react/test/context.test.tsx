@@ -16,6 +16,14 @@ const PUBLIC_HOOKS: Record<string, () => unknown> = {
   useSyncIndicator: () => api.useSyncIndicator(),
   useUpdateRequired: () => api.useUpdateRequired(),
   useSyncClient: () => api.useSyncClient(),
+  useSyncAction: () => api.useSyncAction((client) => client.getState()),
+  useGroup: () => api.useGroup(),
+  useGroupEnded: () => api.useGroupEnded(),
+  usePosition: () => api.usePosition(),
+  useLeaderStatus: () => api.useLeaderStatus(),
+  useRemoved: () => api.useRemoved(),
+  useGroupExit: () => api.useGroupExit(),
+  useSyncEvent: () => api.useSyncEvent('state', () => undefined),
 };
 
 function Call({ use }: { use: () => unknown }): ReactNode {
