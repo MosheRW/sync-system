@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { TokenSecrets } from '../src/config/token-secret.js';
 import type { GroupRecord, GroupStore } from '../src/groups/group-store.js';
 import { InMemoryGroupStore } from '../src/groups/in-memory-group-store.js';
+import { DOOR_FAILURES_BEFORE_ROTATION } from '../src/limits/constants.js';
 import { TokenKeyring } from '../src/tokens/token-keys.js';
 import { TokenService } from '../src/tokens/token-service.js';
 import {
@@ -14,7 +15,7 @@ import {
 import { GRACE_MS, isHeld } from './helpers/lifecycle.js';
 import { ManualScheduler } from './helpers/manual-scheduler.js';
 import type { TestClient } from './helpers/test-client.js';
-import { type TestServer, startTestServer } from './helpers/test-server.js';
+import { KEY_A, type TestServer, startTestServer } from './helpers/test-server.js';
 import { claimsOf } from './helpers/tokens.js';
 import { waitUntil } from './helpers/wait.js';
 
@@ -148,6 +149,59 @@ describe('supersede after a restart (#13 AC26, 6.6, RC6, RC7)', () => {
     if (reply.type !== 'group.resumed') throw new Error('expected group.resumed');
     expect((await joinByCode(ts!, { codes: reply.codes })).reply.type).toBe('group.joined');
     expect((await joinByCode(ts!, line.group)).reply).toMatchObject({ code: 'CODE_NOT_FOUND' });
+  });
+
+  it('rotates when the requester blob differs only by a door rotation: no stale ticket or code survives (L-2)', async () => {
+    const secrets: TokenSecrets = { current: randomBytes(32), source: 'env' };
+    const scheduler = new ManualScheduler();
+    const apps = [{ namespace: 'app-a', apiKey: KEY_A, joinMethods: ['A', 'D'] }];
+    ts = await startTestServer({ tokenSecrets: secrets, scheduler, apps });
+    const group = await createGroupWithMembers(ts, 2, { joinMethods: ['A', 'D'] });
+    const [bClient] = group.members as [TestClient, TestClient];
+    await group.leader.close();
+    await bClient.next('leader.offline');
+    scheduler.advance(GRACE_MS);
+    const granted = await bClient.next('leader.granted');
+    // Wrong door codes rotate the door only: same group code, same ticket generation.
+    const guesser = await ts.connectReady();
+    const door = group.join.doorCode!;
+    const wrong = String((Number(door) + 1) % 1_000_000).padStart(6, '0');
+    for (let i = 0; i < DOOR_FAILURES_BEFORE_ROTATION; i++) {
+      guesser.send({ type: 'group.joinByCode', joinCode: group.join.joinCode, doorCode: wrong });
+      await guesser.next('error');
+    }
+    const updated = await frameOf(bClient, 'codes.updated');
+    if (updated.type !== 'codes.updated') throw new Error('expected codes.updated');
+    expect(updated).toMatchObject({ reason: 'door_failures' });
+    expect(updated.codes.groupCode).toBe(group.codes.groupCode);
+    await ts.close();
+
+    const store = new InMemoryGroupStore();
+    ts = await startTestServer({ tokenSecrets: secrets, scheduler, store, apps });
+    // Stale A recreates from its old blob and issues a QR ticket in its stale period.
+    const { client: a, reply: recreated } = await resumeWith(ts, group.leaderToken, {
+      metadata: {},
+      joinCodes: group.codes.blob,
+    });
+    expect(recreated).toMatchObject({ type: 'group.resumed', recreated: true });
+    a.send({ type: 'qr.issue' });
+    const issued = await frameOf(a, 'qr.ticket');
+    const ticket = (issued as { ticket: string }).ticket;
+    const staleTicketGeneration = (await record(store, group.groupId)).codes.ticketGeneration;
+
+    const { client: b, reply } = await resumeWith(ts, granted.token, {
+      joinCodes: updated.codes.blob,
+    });
+    expect(reply).toMatchObject({ type: 'group.resumed', superseded: true, codesChanged: true });
+    expect(await frameOf(b, 'codes.updated')).toMatchObject({ reason: 'superseded' });
+    const after = await record(store, group.groupId);
+    expect(after.codes.ticketGeneration).not.toBe(staleTicketGeneration);
+    expect(after.codes.groupCode).not.toBe(group.codes.groupCode);
+    // The stale period's ticket and the stale group code are dead.
+    const joiner = await ts.connectReady();
+    joiner.send({ type: 'group.joinByQr', ticket });
+    expect(await joiner.next('error')).toMatchObject({ code: 'QR_INVALID' });
+    expect((await joinByCode(ts, group)).reply).toMatchObject({ code: 'CODE_NOT_FOUND' });
   });
 
   it('H1: a grant made in P2 by the stale line never beats B (6.6.3 rows 1, 2)', async () => {

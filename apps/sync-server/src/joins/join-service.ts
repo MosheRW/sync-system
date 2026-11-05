@@ -577,9 +577,12 @@ export class JoinService {
   /**
    * Supersede codes (#13 6.6.2 step 5, M1): the requester's blob is adopted
    * (codes and ticket generation) if it verifies for this group, has the
-   * group's methods, another generation, and its codes are free; otherwise
-   * a full new set is claimed. Either way no code or ticket of the stale
-   * line survives. Returns the codes to store, or `exhausted`.
+   * group's methods, shares nothing with the stale line (another code
+   * generation, another ticket generation, no equal code), and its codes
+   * are free; otherwise a full new set is claimed. Either way no code or
+   * ticket of the stale line survives: a blob from after a door-only
+   * rotation keeps the stale ticket generation and group code, so it is
+   * rotated (#13 security L-2). Returns the codes to store, or `exhausted`.
    */
   supersedeCodes(
     record: GroupRecord,
@@ -590,7 +593,7 @@ export class JoinService {
       blob === undefined ? undefined : this.deps.codesBlobs.verify(blob, namespace, record.id);
     if (
       verified !== undefined &&
-      verified.codes.generation !== record.codes.generation &&
+      sharesNothing(verified.codes, record.codes) &&
       verified.methods.length === record.joinMethods.length &&
       verified.methods.every((m) => record.joinMethods.includes(m)) &&
       this.index.claim(namespace, record.id, verified.codes)
@@ -1042,4 +1045,20 @@ export class JoinService {
       this.qrLimiter.size
     );
   }
+}
+
+/**
+ * Whether `next` keeps nothing of `stale` (#13 M1, security L-2): another
+ * code generation and ticket generation, and no code equal to a stale one.
+ */
+function sharesNothing(next: GroupCodes, stale: GroupCodes): boolean {
+  const same = (a: string | undefined, b: string | undefined): boolean =>
+    a !== undefined && a === b;
+  return (
+    next.generation !== stale.generation &&
+    next.ticketGeneration !== stale.ticketGeneration &&
+    !same(next.groupCode, stale.groupCode) &&
+    !same(next.doorCode, stale.doorCode) &&
+    !same(next.alphaCode, stale.alphaCode)
+  );
 }
