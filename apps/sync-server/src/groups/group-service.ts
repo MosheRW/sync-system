@@ -914,14 +914,8 @@ export class GroupService implements GroupActions {
     list: readonly string[],
   ): Promise<ErrorMessage | undefined> {
     const namespace = app.namespace;
-    const blockList = [...new Set([...record.blockList, ...list])].filter(
-      (id) => id !== record.leaderId,
-    );
-    if (blockList.length > MAX_BLOCK_LIST_SIZE) {
-      return errorMessage(ErrorCode.BLOCK_LIST_FULL, {
-        details: { maxBlockList: MAX_BLOCK_LIST_SIZE },
-      });
-    }
+    const blockList = blockListUnion(record, list);
+    if (blockList.length > MAX_BLOCK_LIST_SIZE) return blockListFull();
     const result = await this.deps.store.setBlockList(namespace, record.id, blockList);
     if (!result) return undefined;
     // Blocked participants leave the roster, attached or not (#13 AC31),
@@ -1153,9 +1147,14 @@ export class GroupService implements GroupActions {
     const { app } = session;
     const namespace = app.namespace;
     const now = this.now();
-    this.replaceOwner(namespace, record.id, claims.pid, session);
     // Only an explicit list replaces the server's; an omitted one keeps it (L5).
-    // A union only (#13 D5); past 256 the leader is told and nothing changes.
+    // A union only (#13 D5); past 256 the leader is told and nothing changes:
+    // checked before any state changes, so a refused return keeps the old
+    // session attached (#13 security L-1).
+    if (blockList !== undefined && blockListUnion(record, blockList).length > MAX_BLOCK_LIST_SIZE) {
+      return blockListFull();
+    }
+    this.replaceOwner(namespace, record.id, claims.pid, session);
     if (blockList !== undefined) {
       const refused = await this.applyBlockList(app, record, blockList);
       if (refused !== undefined) return refused;
@@ -1681,9 +1680,9 @@ export class GroupService implements GroupActions {
   ): Promise<ServerMessage> {
     const { app } = session;
     const namespace = app.namespace;
-    // Newest wins (AC20). The store is idempotent per participant ID, so the
-    // replaced session's slot is reused, not doubled.
-    this.replaceOwner(namespace, record.id, claims.pid, session);
+    // The store is idempotent per participant ID, so the replaced session's
+    // slot is reused, not doubled. Refusals come first: a refused resume
+    // leaves the older session attached (#13 security L-1).
     const added = await this.deps.store.addParticipant(
       namespace,
       record.id,
@@ -1695,6 +1694,8 @@ export class GroupService implements GroupActions {
     if (added.status === 'full') {
       return errorMessage(ErrorCode.GROUP_FULL, { details: { maxGroupSize: app.maxGroupSize } });
     }
+    // Newest wins (AC20).
+    this.replaceOwner(namespace, record.id, claims.pid, session);
     const entered = await this.enterRoster(added.group, claims.pid, name);
     this.attach(session, { groupId: record.id, participantId: claims.pid });
     this.tellReturningVice(entered, claims.pid);
@@ -1906,4 +1907,16 @@ export class GroupService implements GroupActions {
       'group ended',
     );
   }
+}
+
+/** The block list after adding `list`: deduplicated, never the leader (#13 D5). */
+function blockListUnion(record: GroupRecord, list: readonly string[]): string[] {
+  return [...new Set([...record.blockList, ...list])].filter((id) => id !== record.leaderId);
+}
+
+/** BLOCK_LIST_FULL: a union past the cap changes nothing (#13 Q-C). */
+function blockListFull(): ErrorMessage {
+  return errorMessage(ErrorCode.BLOCK_LIST_FULL, {
+    details: { maxBlockList: MAX_BLOCK_LIST_SIZE },
+  });
 }
