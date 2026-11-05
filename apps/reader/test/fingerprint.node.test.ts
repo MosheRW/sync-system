@@ -26,7 +26,7 @@ const VECTOR_FINGERPRINT = 'a8672a8d9ccb84e903c9167de7dbe3d1a7b4cd42f00d53a38726
 function parsed(text: string): CanonicalJsonValue {
   const result = parseContentText(text);
   if (!result.ok) throw new Error(JSON.stringify(result.error));
-  return result.document as CanonicalJsonValue;
+  return result.document;
 }
 
 type Doc = {
@@ -40,7 +40,7 @@ type Doc = {
 function variant(change: (doc: Doc) => void): Promise<string> {
   const doc = JSON.parse(vectorText) as Doc;
   change(doc);
-  return computeFingerprint(doc as unknown as CanonicalJsonValue);
+  return computeFingerprint(doc);
 }
 
 describe('computeFingerprint (AC6, AC7)', () => {
