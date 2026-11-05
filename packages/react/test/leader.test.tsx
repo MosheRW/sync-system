@@ -54,8 +54,10 @@ describe('useLeaderCodes (AC18, Q-A)', () => {
       await values.at(-1)!.rotate.run();
     });
     expect(values.at(-1)?.rotate.value).toBe(next);
+    const from = values.length;
     act(() => client.lead('g-2'));
-    expect(values.at(-1)?.rotate.value).toBeUndefined();
+    // Not even the first render after the switch returns the old codes.
+    for (const value of values.slice(from)) expect(value.rotate.value).toBeUndefined();
   });
 
   it('setJoiningEnabled maps to unlock/lock of all joining', async () => {
@@ -318,7 +320,20 @@ describe('leader-only data and action values never outlive the role (R3, M3)', (
     return { client, values };
   }
 
-  function expectNothingLeft(values: Everything[]): void {
+  /** No render from `from` on returns an old action value, not even for one commit. */
+  function expectNoStaleValue(values: Everything[], from: number): void {
+    expect(values.length).toBeGreaterThan(from);
+    for (const [index, v] of values.slice(from).entries()) {
+      const at = `render ${from + index}`;
+      expect(v.codes.rotate.value, at).toBeUndefined();
+      expect(v.requests.approve.value, at).toBeUndefined();
+      expect(v.vice.setVice.value, at).toBeUndefined();
+      expect(v.removal.remove.value, at).toBeUndefined();
+    }
+  }
+
+  function expectNothingLeft(values: Everything[], from: number): void {
+    expectNoStaleValue(values, from);
     const v = values.at(-1)!;
     expect(v.codes.codes).toBeNull();
     expect(v.codes.rotate.value).toBeUndefined();
@@ -334,6 +349,7 @@ describe('leader-only data and action values never outlive the role (R3, M3)', (
 
   it('demotion (leadershipLost)', async () => {
     const { client, values } = await leadingWithValues();
+    const from = values.length;
     act(() => {
       client.follow('g-1');
       client.emit('leadershipLost', {
@@ -342,11 +358,12 @@ describe('leader-only data and action values never outlive the role (R3, M3)', (
         takeBackAvailable: false,
       });
     });
-    expectNothingLeft(values);
+    expectNothingLeft(values, from);
   });
 
   it('removal (close 4004)', async () => {
     const { client, values } = await leadingWithValues();
+    const from = values.length;
     act(() => {
       client.emit('removed', { groupId: 'g-1' });
       client.setSnapshot({
@@ -354,21 +371,23 @@ describe('leader-only data and action values never outlive the role (R3, M3)', (
         group: { status: 'ended', groupId: 'g-1', reason: 'removed' },
       });
     });
-    expectNothingLeft(values);
+    expectNothingLeft(values, from);
   });
 
   it('group end', async () => {
     const { client, values } = await leadingWithValues();
+    const from = values.length;
     act(() => {
       client.setGroup({ status: 'ended', groupId: 'g-1', reason: 'ended_by_leader' });
       client.emit('groupEnded', { groupId: 'g-1', reason: 'ended_by_leader' });
     });
-    expectNothingLeft(values);
+    expectNothingLeft(values, from);
   });
 
   it('group A -> group B', async () => {
     const { client, values } = await leadingWithValues();
     const before = values.at(-1)!.qr.state;
+    const from = values.length;
     act(() => {
       client.codes = null;
       client.roster = [];
@@ -376,6 +395,7 @@ describe('leader-only data and action values never outlive the role (R3, M3)', (
       client.leaderState = null;
       client.lead('g-2');
     });
+    expectNoStaleValue(values, from);
     const v = values.at(-1)!;
     expect(v.codes.codes).toBeNull();
     expect(v.codes.rotate.value).toBeUndefined();

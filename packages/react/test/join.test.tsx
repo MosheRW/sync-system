@@ -68,8 +68,11 @@ describe('create and join actions (AC15)', () => {
       await values.at(-1)!.run({});
     });
     expect(values.at(-1)?.value).toBe(CREATED);
+    const from = values.length;
     act(() => client.follow('g-1'));
-    expect(values.at(-1)?.value).toBeUndefined();
+    // Not even the first render after the demotion returns the codes.
+    expect(values.length).toBeGreaterThan(from);
+    for (const value of values.slice(from)) expect(value.value).toBeUndefined();
   });
 
   it.each([
