@@ -287,7 +287,7 @@ describe('token rejections (#5 AC7, AC8, AC9, AC27)', () => {
     expect(cross.reply).toMatchObject({ code: 'TOKEN_INVALID' });
   });
 
-  it('refuses a leader token whose pid is not the group leader', async () => {
+  it('resumes a leader token whose pid is not the group leader as a member (#13 D4)', async () => {
     const tokenSecrets = secrets();
     ts = await startTestServer({ tokenSecrets });
     const group = await createGroupWithMembers(ts, 0);
@@ -303,8 +303,10 @@ describe('token rejections (#5 AC7, AC8, AC9, AC27)', () => {
       term: claims.term,
       now: Date.now(),
     });
+    // The role comes from the live record: a leader token of someone else
+    // never leads (#13 D4, AC24); it rejoins as a member.
     const { reply } = await resumeWith(ts, impostor);
-    expect(reply).toMatchObject({ code: 'TOKEN_INVALID' });
+    expect(reply).toMatchObject({ type: 'group.joined', role: 'member' });
   });
 
   it('reports a leader token past the recovery window as TOKEN_EXPIRED (AC9)', async () => {

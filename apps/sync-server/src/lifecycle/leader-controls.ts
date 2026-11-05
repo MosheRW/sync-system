@@ -6,6 +6,7 @@ import {
   type ErrorMessage,
   type KeepAliveAckMessage,
   type LeaderActivityMessage,
+  type LeaderTakeBackMessage,
   type JoinCodesPayload,
   type MemberRemoveMessage,
   type ServerMessage,
@@ -21,6 +22,7 @@ import {
   LEADER_CONTROL_WINDOW_MS,
   LOCK_CHANGES_PER_GROUP_PER_MINUTE,
   MEMBER_REMOVALS_PER_GROUP_PER_MINUTE,
+  TAKE_BACKS_PER_GROUP_PER_MINUTE,
   VICE_CHANGES_PER_GROUP_PER_MINUTE,
 } from '../limits/constants.js';
 import { SlidingWindowRateLimiter } from '../limits/rate-limiter.js';
@@ -73,6 +75,16 @@ export interface LeaderControlsHost {
   codesPayload(record: GroupRecord): JoinCodesPayload;
   /** Re-reads the record. */
   get(record: GroupRecord): Promise<GroupRecord | undefined>;
+  /**
+   * Runs `task` under the lock of the session's group with the record and
+   * the owned membership, without the leader check (take-back).
+   */
+  asMember(
+    session: Session,
+    task: (record: GroupRecord, membership: Membership) => Promise<ServerMessage>,
+  ): Promise<ServerMessage>;
+  /** Swaps the lead to the requester (6.6 take-back); returns `leader.granted`. */
+  takeBackFor(session: Session, record: GroupRecord, pid: string): Promise<ServerMessage>;
   now(): number;
 }
 
@@ -98,6 +110,8 @@ export class LeaderControls {
   private readonly removeLimiter: SlidingWindowRateLimiter;
   /** leader.activity and keepalive.ack per group, shared (#13 8.2). */
   private readonly activityLimiter: SlidingWindowRateLimiter;
+  /** leader.takeBack per group (#13 8.2). */
+  private readonly takeBackLimiter: SlidingWindowRateLimiter;
 
   constructor(
     private readonly host: LeaderControlsHost,
@@ -108,6 +122,35 @@ export class LeaderControls {
     this.lockLimiter = new SlidingWindowRateLimiter(now, LEADER_CONTROL_WINDOW_MS);
     this.removeLimiter = new SlidingWindowRateLimiter(now, LEADER_CONTROL_WINDOW_MS);
     this.activityLimiter = new SlidingWindowRateLimiter(now, LEADER_CONTROL_WINDOW_MS);
+    this.takeBackLimiter = new SlidingWindowRateLimiter(now, LEADER_CONTROL_WINDOW_MS);
+  }
+
+  /**
+   * leader.takeBack (#13 AC24, AC25, 6.6, RC2): only the session that owns
+   * the most recent displaced leader may take back; anyone else gets
+   * NOT_ALLOWED with no state change and no budget spent. Then the per-group
+   * limiter, then the swap (term from nextTerm, escalated false, the slot
+   * now holds the leader it replaced).
+   */
+  takeBack(session: Session, _message: LeaderTakeBackMessage): Promise<ServerMessage> {
+    return this.host.asMember(session, async (record, membership) => {
+      if (
+        record.displacedLeaderId === undefined ||
+        membership.participantId !== record.displacedLeaderId
+      ) {
+        return actionErrorMessage(ErrorCode.NOT_ALLOWED, 'leader.takeBack');
+      }
+      const rate = this.takeBackLimiter.tryAcquire(
+        groupKey(record),
+        TAKE_BACKS_PER_GROUP_PER_MINUTE,
+      );
+      if (!rate.ok) {
+        return actionErrorMessage(ErrorCode.RATE_LIMITED, 'leader.takeBack', {
+          details: { retryAfterMs: rate.retryAfterMs },
+        });
+      }
+      return this.host.takeBackFor(session, record, membership.participantId);
+    });
   }
 
   /**
@@ -312,6 +355,7 @@ export class LeaderControls {
     this.lockLimiter.forget(`${namespace}:${groupId}`);
     this.removeLimiter.forget(`${namespace}:${groupId}`);
     this.activityLimiter.forget(`${namespace}:${groupId}`);
+    this.takeBackLimiter.forget(`${namespace}:${groupId}`);
   }
 
   /** Server shutdown (#13 RC2). */
@@ -320,6 +364,7 @@ export class LeaderControls {
     this.lockLimiter.clear();
     this.removeLimiter.clear();
     this.activityLimiter.clear();
+    this.takeBackLimiter.clear();
   }
 
   /** Number of tracked limiter keys. For tests only. */
@@ -328,7 +373,8 @@ export class LeaderControls {
       this.viceLimiter.size +
       this.lockLimiter.size +
       this.removeLimiter.size +
-      this.activityLimiter.size
+      this.activityLimiter.size +
+      this.takeBackLimiter.size
     );
   }
 }

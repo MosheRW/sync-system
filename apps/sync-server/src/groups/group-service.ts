@@ -24,6 +24,7 @@ import {
   type MemberRemoveMessage,
   type KeepAliveAckMessage,
   type LeaderActivityMessage,
+  type LeaderTakeBackMessage,
   CloseCode,
   MAX_BLOCK_LIST_SIZE,
   type ViceClearMessage,
@@ -220,6 +221,11 @@ export class GroupService implements GroupActions {
         releaseClaim: (record, claimed) => this.joins.releaseClaim(record, claimed),
         codesPayload: (record) => this.joins.payload(record),
         get: (record) => this.deps.store.get(record.appNamespace, record.id),
+        asMember: (session, task) => this.asMember(session, task),
+        takeBackFor: async (session, record, pid) => {
+          const swapped = await this.lifecycle.handoff(session.app, record, pid, 'take_back');
+          return swapped.granted;
+        },
         toMembers: (record, message) =>
           this.deps.notifier.broadcast(this.memberKeys(record), message),
         now: () => this.now(),
@@ -528,6 +534,37 @@ export class GroupService implements GroupActions {
         }
       }
       return reply;
+    });
+  }
+
+  /** leader.takeBack (#13 AC24). */
+  takeBack(session: Session, message: LeaderTakeBackMessage): Promise<ServerMessage> {
+    return this.controls.takeBack(session, message);
+  }
+
+  /**
+   * Runs `task` under the lock of the session's own group with the record
+   * read under it (for take-back: no leader check, the caller decides).
+   * Parked, pending and groupless sessions get NOT_ALLOWED / NOT_IN_GROUP.
+   */
+  private async asMember(
+    session: Session,
+    task: (record: GroupRecord, membership: Membership) => Promise<ServerMessage>,
+  ): Promise<ServerMessage> {
+    if (session.parked !== undefined || session.pendingJoin !== undefined) {
+      return actionErrorMessage(ErrorCode.NOT_ALLOWED, 'leader.takeBack');
+    }
+    const membership = this.owned(session);
+    if (membership === undefined) return errorMessage(ErrorCode.NOT_IN_GROUP);
+    const namespace = session.app.namespace;
+    return this.locks.run(groupKey(namespace, membership.groupId), async () => {
+      const current = this.owned(session);
+      if (current === undefined || current.groupId !== membership.groupId) {
+        return errorMessage(ErrorCode.NOT_IN_GROUP);
+      }
+      const record = await this.deps.store.get(namespace, membership.groupId);
+      if (record === undefined) return errorMessage(ErrorCode.NOT_IN_GROUP);
+      return task(record, current);
     });
   }
 
@@ -883,6 +920,10 @@ export class GroupService implements GroupActions {
     if (record.viceId !== undefined && blockList.includes(record.viceId)) {
       await this.controls.applyVice(record, undefined);
     }
+    // A blocked displaced leader loses the take-back slot (#13 RC4).
+    if (record.displacedLeaderId !== undefined && blockList.includes(record.displacedLeaderId)) {
+      await this.deps.store.patch(namespace, record.id, { displacedLeaderId: undefined });
+    }
     if (gone.length > 0) {
       const current = (await this.deps.store.get(namespace, record.id)) ?? record;
       const updated = await this.putRoster(current, {
@@ -965,8 +1006,12 @@ export class GroupService implements GroupActions {
       session.membership = undefined;
       const result = await this.deps.store.removeParticipant(app.namespace, groupId, participantId);
       if (current !== undefined) {
-        // A vice-leader who leaves loses the designation (#13 AC12).
+        // A vice-leader who leaves loses the designation (#13 AC12), and a
+        // displaced leader who leaves loses the take-back slot (L3).
         if (current.viceId === participantId) await this.controls.applyVice(current, undefined);
+        if (current.displacedLeaderId === participantId) {
+          await this.deps.store.patch(app.namespace, groupId, { displacedLeaderId: undefined });
+        }
         const latest = (await this.deps.store.get(app.namespace, groupId)) ?? current;
         const updated = await this.putRoster(latest, {
           ...rosterStateOf(latest),
@@ -1035,7 +1080,8 @@ export class GroupService implements GroupActions {
         case 'blocked':
           return errorMessage(ErrorCode.PARTICIPANT_BLOCKED);
         case 'live':
-          return claims.role === 'leader'
+          // #13 D4: the role comes from the live record, not from the token.
+          return claims.pid === record!.leaderId
             ? this.leaderReturn(session, record!, claims, message.blockList, message.joinCodes)
             : this.memberResume(session, record!, claims, name);
         case 'recoverable': {
@@ -1473,6 +1519,10 @@ export class GroupService implements GroupActions {
     const entered = await this.enterRoster(added.group, claims.pid, name);
     this.attach(session, { groupId: record.id, participantId: claims.pid });
     this.tellReturningVice(entered, claims.pid);
+    // The displaced leader is back as a member: it may take back (AC24).
+    if (claims.pid === entered.displacedLeaderId) {
+      this.deliverLater(session, { type: 'takeback.offered', groupId: record.id });
+    }
     this.deps.logger.info(
       {
         event: 'group_resumed',

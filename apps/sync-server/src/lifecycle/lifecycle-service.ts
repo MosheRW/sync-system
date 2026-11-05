@@ -369,7 +369,7 @@ export class LifecycleService {
     record: GroupRecord,
     successor: string,
     reason: 'handoff_disconnect' | 'handoff_inactivity' | 'take_back',
-  ): Promise<GroupRecord> {
+  ): Promise<{ record: GroupRecord; granted: ServerMessage }> {
     const namespace = app.namespace;
     const now = this.host.now();
     const old = record.leaderId;
@@ -397,33 +397,44 @@ export class LifecycleService {
     this.stopKeepAlive(namespace, record.id);
     this.armKeepAlive(app, updated);
     this.host.startRefresh(namespace, record.id, now);
-    this.announce(updated, successor, old, reason, oldAttached ? oldSession : undefined);
+    const granted = this.announce(
+      updated,
+      successor,
+      old,
+      reason,
+      oldAttached ? oldSession : undefined,
+    );
     this.host.logger.info(
       { event: 'leader_handoff', namespace, groupRef: groupRef(record.id), handoffReason: reason },
       'leadership handed over',
     );
-    return updated;
+    return { record: updated, granted };
   }
 
-  /** Tells the new leader, the old leader and everyone else (#13 AC23). */
+  /**
+   * Tells the new leader, the old leader and everyone else (#13 AC23).
+   * Returns `leader.granted`; a take-back sends it as the reply instead of
+   * an event (the roster and the pending requests follow either way).
+   */
   private announce(
     record: GroupRecord,
     successor: string,
     old: string,
     reason: 'handoff_disconnect' | 'handoff_inactivity' | 'take_back',
     oldSession: Session | undefined,
-  ): void {
+  ): ServerMessage {
+    const granted: ServerMessage = {
+      type: 'leader.granted',
+      groupId: record.id,
+      reason,
+      token: this.host.issueToken(record, successor, 'leader'),
+      state: this.host.leaderState(record),
+      joinMethods: [...record.joinMethods],
+      codes: this.host.codesPayload(record),
+    };
     const leader = this.host.sessionOf(record, successor);
     if (leader !== undefined) {
-      this.host.deliverLater(leader, {
-        type: 'leader.granted',
-        groupId: record.id,
-        reason,
-        token: this.host.issueToken(record, successor, 'leader'),
-        state: this.host.leaderState(record),
-        joinMethods: [...record.joinMethods],
-        codes: this.host.codesPayload(record),
-      });
+      if (reason !== 'take_back') this.host.deliverLater(leader, granted);
       this.host.deliverLater(leader, this.host.rosterSnapshot(record));
       this.host.onLeaderReturn(leader, record);
     }
@@ -446,5 +457,6 @@ export class LifecycleService {
       const session = this.host.sessionOf(record, pid);
       if (session !== undefined) this.host.deliverLater(session, changed);
     }
+    return granted;
   }
 }

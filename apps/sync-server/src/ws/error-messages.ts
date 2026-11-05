@@ -29,6 +29,7 @@ export const ACTION_ERROR_TEXT = {
     'member.remove': 'Too many member removals',
     'leader.activity': 'Too many leader activity signals',
     'keepalive.ack': 'Too many keep-alive answers',
+    'leader.takeBack': 'Too many take-backs',
   },
   NOT_LEADER: {
     'position.update': 'Only the leader can update the position',
@@ -49,6 +50,7 @@ export const ACTION_ERROR_TEXT = {
   NOT_ALLOWED: {
     'vice.set': 'This participant cannot be the vice-leader now',
     'member.remove': 'This participant cannot be removed',
+    'leader.takeBack': 'Only the displaced leader can take back the lead',
   },
 } as const satisfies Record<ActionErrorCode, Record<string, string>>;
 

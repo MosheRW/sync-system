@@ -166,6 +166,7 @@ const schemas = buildJitless(() => {
   // No payload: unknown keys are stripped, so nothing sent with it is read (#13 AC30).
   const leaderActivitySchema = z.object({ type: z.literal('leader.activity'), reqId });
   const keepAliveAckSchema = z.object({ type: z.literal('keepalive.ack'), reqId });
+  const takeBackSchema = z.object({ type: z.literal('leader.takeBack'), reqId });
 
   const clientMessageSchema = z.discriminatedUnion('type', [
     helloSchema,
@@ -190,6 +191,7 @@ const schemas = buildJitless(() => {
     memberRemoveSchema,
     leaderActivitySchema,
     keepAliveAckSchema,
+    takeBackSchema,
   ]);
 
   const appLimitsSchema = z.object({
@@ -427,6 +429,7 @@ const schemas = buildJitless(() => {
       takeBackAvailable: z.boolean(),
     }),
     z.object({ type: z.literal('leader.changed'), groupId: z.string(), reason: leadershipReason }),
+    z.object({ type: z.literal('takeback.offered'), groupId: z.string() }),
     z.object({
       type: z.literal('member.removed'),
       reqId,

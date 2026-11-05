@@ -39,15 +39,18 @@ export function issuedInThisProcess(claims: TokenClaims, processStartedAt: numbe
  *    issued while their group is in memory, and a group leaves memory only
  *    by ending, so such a group ended here (#13 RC17);
  * 2. older than the app's max session time: `expired`;
- * 3. a leader token whose last activity is older than the inactivity limit
- *    plus the recovery slack: `expired`. Member tokens skip this check: they
- *    are never refreshed, so their validity comes from the group being live
- *    or recreatable and from the creation time (Q-B);
- * 4. a member on the live group's block list: `blocked`;
- * 5. a leader token that is not the live group's leader: `invalid` (item 5
- *    adds the demotion rule here);
- * 6. the group is in memory: `live`;
- * 7. otherwise `recoverable` (leader) or `waiting` (member).
+ * 3. the group is in memory (#13 D4: the role comes from the record, not
+ *    the token):
+ *    - the participant is on the block list: `blocked`, whatever the token
+ *      role (RC8);
+ *    - it is the record's leader: a leader return, with any token role, so
+ *      the `lat` bound applies (L2): `expired` past it, else `live`;
+ *    - anyone else, a displaced or stale leader token included: `live`, a
+ *      member resume (AC24); a `lat`-expired leader token of someone else
+ *      still resumes as a member;
+ * 4. not in memory: a leader token past its `lat` bound is `expired`
+ *    (it never recreates, RC8); else `recoverable` (leader) or `waiting`
+ *    (member).
  */
 export function classifyToken(input: ClassifyInput): TokenStatus {
   const { claims, app, record, now } = input;
@@ -59,16 +62,13 @@ export function classifyToken(input: ClassifyInput): TokenStatus {
     return 'ended';
   }
   if (claims.gct + app.maxSessionMinutes * MINUTE_MS <= now) return 'expired';
-  if (
-    claims.role === 'leader' &&
-    claims.lat + app.inactivityLimitMinutes * MINUTE_MS + input.refreshMaxMs <= now
-  ) {
-    return 'expired';
-  }
+  const latExpired =
+    claims.lat + app.inactivityLimitMinutes * MINUTE_MS + input.refreshMaxMs <= now;
   if (record !== undefined) {
-    if (claims.role === 'member' && record.blockList.includes(claims.pid)) return 'blocked';
-    if (claims.role === 'leader' && claims.pid !== record.leaderId) return 'invalid';
+    if (record.blockList.includes(claims.pid)) return 'blocked';
+    if (claims.pid === record.leaderId) return latExpired ? 'expired' : 'live';
     return 'live';
   }
+  if (claims.role === 'leader' && latExpired) return 'expired';
   return claims.role === 'leader' ? 'recoverable' : 'waiting';
 }

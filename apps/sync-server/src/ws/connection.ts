@@ -387,6 +387,9 @@ export class Connection implements HeartbeatTarget {
       case 'keepalive.ack':
         response = await groups.leaderActivity(session, message);
         break;
+      case 'leader.takeBack':
+        response = await groups.takeBack(session, message);
+        break;
     }
     this.reply(withReqId(response, message.reqId));
   }
@@ -464,6 +467,7 @@ function canCarryReqId(message: ServerMessage): boolean {
     message.type === 'vice.updated' ||
     message.type === 'lock.changed' ||
     message.type === 'member.removed' ||
-    message.type === 'activity.ack'
+    message.type === 'activity.ack' ||
+    message.type === 'leader.granted'
   );
 }

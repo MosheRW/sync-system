@@ -27,6 +27,7 @@ const NAMES: Record<string, RegExp> = {
   'member.remove': /remov/i,
   'leader.activity': /leader activity/i,
   'keepalive.ack': /keep-alive/i,
+  'leader.takeBack': /take.?back/i,
 };
 
 describe('per-action error texts (#7 A1)', () => {
@@ -60,6 +61,7 @@ describe('per-action error texts (#7 A1)', () => {
         'member.remove': 'Too many member removals',
         'leader.activity': 'Too many leader activity signals',
         'keepalive.ack': 'Too many keep-alive answers',
+        'leader.takeBack': 'Too many take-backs',
       },
       NOT_LEADER: {
         'position.update': 'Only the leader can update the position',
@@ -80,6 +82,7 @@ describe('per-action error texts (#7 A1)', () => {
       NOT_ALLOWED: {
         'vice.set': 'This participant cannot be the vice-leader now',
         'member.remove': 'This participant cannot be removed',
+        'leader.takeBack': 'Only the displaced leader can take back the lead',
       },
     });
   });

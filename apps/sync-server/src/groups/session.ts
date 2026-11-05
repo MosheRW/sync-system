@@ -21,6 +21,7 @@ import type {
   MemberRemoveMessage,
   LeaderActivityMessage,
   KeepAliveAckMessage,
+  LeaderTakeBackMessage,
 } from '@sync-system/protocol';
 import type { AppConfig } from '../apps/app-registry.js';
 
@@ -129,6 +130,8 @@ export interface GroupActions {
     session: Session,
     message: LeaderActivityMessage | KeepAliveAckMessage,
   ): Promise<ServerMessage>;
+  /** The most recent displaced leader takes the lead back (#13 AC24). */
+  takeBack(session: Session, message: LeaderTakeBackMessage): Promise<ServerMessage>;
   /** Runs the disconnect rules (member removal, group end). */
   disconnect(session: Session): Promise<void>;
 }

@@ -93,6 +93,8 @@ export type {
   LeaderGrantedMessage,
   LeaderLostMessage,
   LeaderChangedMessage,
+  LeaderTakeBackMessage,
+  TakeBackOfferedMessage,
   JoinPendingMessage,
   JoinRequestedMessage,
   JoinWithdrawnMessage,

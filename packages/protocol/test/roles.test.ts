@@ -281,3 +281,11 @@ describe('the inactivity end (#13 AC22)', () => {
     );
   });
 });
+
+describe('take-back messages (#13 AC24)', () => {
+  it('parses leader.takeBack and takeback.offered', () => {
+    expect(parseClientMessage({ type: 'leader.takeBack', reqId: 't' }).ok).toBe(true);
+    expect(parseServerMessage({ type: 'takeback.offered', groupId: GID }).ok).toBe(true);
+    expect(parseServerMessage({ type: 'takeback.offered' }).ok).toBe(false);
+  });
+});

@@ -255,6 +255,15 @@ export interface KeepAliveAckMessage {
   reqId?: string;
 }
 
+/**
+ * The most recent displaced leader takes the lead back (#13 AC24, Q2.4).
+ * Reply: `leader.granted` with reason `take_back`.
+ */
+export interface LeaderTakeBackMessage {
+  type: 'leader.takeBack';
+  reqId?: string;
+}
+
 export type ClientMessage =
   | HelloMessage
   | GroupCreateMessage
@@ -277,7 +286,8 @@ export type ClientMessage =
   | GroupUnlockMessage
   | MemberRemoveMessage
   | LeaderActivityMessage
-  | KeepAliveAckMessage;
+  | KeepAliveAckMessage
+  | LeaderTakeBackMessage;
 
 export type ClientMessageType = ClientMessage['type'];
 
@@ -717,6 +727,12 @@ export interface LeaderLostMessage {
   takeBackAvailable: boolean;
 }
 
+/** To the displaced leader back as a member: it may take the lead back (#13 AC24). */
+export interface TakeBackOfferedMessage {
+  type: 'takeback.offered';
+  groupId: string;
+}
+
 /** To every other member: someone else leads now. No participant ID (#13 AC23, Q3.3). */
 export interface LeaderChangedMessage {
   type: 'leader.changed';
@@ -819,6 +835,7 @@ export type ServerMessage =
   | LeaderGrantedMessage
   | LeaderLostMessage
   | LeaderChangedMessage
+  | TakeBackOfferedMessage
   | ErrorMessage;
 
 export type ServerMessageType = ServerMessage['type'];

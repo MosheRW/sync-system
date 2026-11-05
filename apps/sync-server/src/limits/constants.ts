@@ -109,6 +109,9 @@ export const LEADER_CONTROL_WINDOW_MS = 60_000;
  */
 export const LEADER_ACTIVITY_PER_GROUP_PER_MINUTE = 12;
 
+/** leader.takeBack per group per window (#13 8.2, Q-E): caps a take-back ping-pong. */
+export const TAKE_BACKS_PER_GROUP_PER_MINUTE = 3;
+
 /** member.remove per group per window (#13 8.2, Q-E). */
 export const MEMBER_REMOVALS_PER_GROUP_PER_MINUTE = 10;
 
