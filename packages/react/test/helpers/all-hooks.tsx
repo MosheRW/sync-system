@@ -27,6 +27,8 @@ export function AllHooks(): ReactNode {
   const byQr = api.useJoinByQr();
   const approval = api.useJoinApproval();
   const stored = api.useStoredGroups({ checkOnConnect: true });
+  const codes = api.useLeaderCodes();
+  const qr = api.useQrTicket();
   const summary = {
     status,
     group: snapshot.group === null ? 'none' : snapshot.group.status,
@@ -44,11 +46,14 @@ export function AllHooks(): ReactNode {
     joining: create.pending || byCode.pending || byQr.pending,
     flow: approval.flow.status,
     stored: stored.groups === null ? null : stored.groups.length,
+    codes: codes.codes === null ? null : 'set',
+    qr: qr.state.status,
   };
   return (
     <div>
       <pre>{JSON.stringify(summary)}</pre>
       <api.ConnectionIndicator>{({ indicator: i }) => <span>{i}</span>}</api.ConnectionIndicator>
+      <api.QrTicket>{(state) => <span>{state.status}</span>}</api.QrTicket>
     </div>
   );
 }

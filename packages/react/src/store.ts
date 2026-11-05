@@ -13,6 +13,7 @@ import type {
   SyncClientSnapshot,
 } from '@sync-system/client';
 import { now } from './host.js';
+import { QrTicketController } from './qr-controller.js';
 import {
   EMPTY_LIST,
   IDLE_JOIN_FLOW,
@@ -26,7 +27,6 @@ import type {
   JoinFlowState,
   JoinPausedState,
   LeadershipChange,
-  QrTicketState,
   StoredGroup,
   SyncClientLike,
   SyncState,
@@ -99,21 +99,6 @@ interface ViceRecord {
 }
 
 /**
- * Hooks into the QR controller (wired in by the leader chunk). Kept as an
- * interface so the store stays independent of how the ticket is issued.
- */
-export interface StorePlugin {
-  /** The plugin's part of the state. */
-  readonly state: QrTicketState;
-  /** Called after every snapshot change while attached. */
-  onSnapshot(): void;
-  /** Called on every `codesChanged` event while attached. */
-  onCodesChanged(event: SyncClientEvents['codesChanged']): void;
-  /** Called when the store detaches for the last time. */
-  onDetach(): void;
-}
-
-/**
  * The package's state store (D2), framework-free. Composes the core
  * snapshot with the leader-only and event-derived data the core does not
  * keep in it, as one identity-stable value for `useSyncExternalStore`.
@@ -153,7 +138,8 @@ export class SyncStore {
   #blockList: { readonly groupId: string; readonly list: readonly string[] } | null = null;
   /** The core block list the action result above was recorded against. */
   #blockListBase: readonly string[] | null = null;
-  #plugin: StorePlugin | null = null;
+  /** The shared QR ticket re-issue timer (D5); inert over no client. */
+  readonly qr: QrTicketController;
 
   /**
    * No side effects: nothing is read from the client and nothing subscribes
@@ -178,12 +164,14 @@ export class SyncStore {
           })
         : SERVER_STATE;
     this.#state = this.#base;
-  }
-
-  /** Wires in the QR controller (one per store). */
-  setPlugin(plugin: StorePlugin): void {
-    if (this.client === null) return;
-    this.#plugin = plugin;
+    this.qr = new QrTicketController({
+      client,
+      connectedLeadGroupId: () =>
+        client !== null && client.getSnapshot().connection.status === 'connected'
+          ? leadingGroupId(client.getSnapshot())
+          : null,
+      changed: () => this.changed(),
+    });
   }
 
   /**
@@ -203,6 +191,7 @@ export class SyncStore {
       ];
       this.#seen = client.getSnapshot();
       this.#dirty = true;
+      this.qr.evaluate();
       this.#notify();
     }
     let detached = false;
@@ -211,8 +200,9 @@ export class SyncStore {
       detached = true;
       this.#attachCount -= 1;
       if (this.#attachCount > 0) return;
+      // The QR controller is stopped by its consumers' release, not here:
+      // StrictMode detaches and re-attaches synchronously.
       for (const off of this.#unsubscribers.splice(0)) off();
-      this.#plugin?.onDetach();
     };
   }
 
@@ -270,7 +260,7 @@ export class SyncStore {
       joinFlow: this.#joinFlowOf(snapshot),
       preview: keepPreview(prev.preview, client.preview.getState()),
       storedGroups: this.#storedGroups,
-      qr: this.#plugin?.state ?? IDLE_QR,
+      qr: lead === null ? IDLE_QR : this.qr.state,
     };
     this.#stateLeadGroup = lead;
     if (shallowEqual(prev, next)) return prev;
@@ -415,7 +405,7 @@ export class SyncStore {
       this.#prune(snapshot);
     }
     this.#dirty = true;
-    this.#plugin?.onSnapshot();
+    this.qr.evaluate();
     this.#notify();
   };
 
@@ -445,7 +435,7 @@ export class SyncStore {
         const changed = payload as SyncClientEvents['codesChanged'];
         // A rotation lifts a pause (core rotateCodes doc).
         if (changed.reason === 'rotated') this.#joinPaused = null;
-        this.#plugin?.onCodesChanged(changed);
+        this.qr.codesChanged(changed);
         break;
       }
       case 'viceChanged': {

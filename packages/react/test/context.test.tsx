@@ -29,6 +29,8 @@ const PUBLIC_HOOKS: Record<string, () => unknown> = {
   useJoinByQr: () => api.useJoinByQr(),
   useJoinApproval: () => api.useJoinApproval(),
   useStoredGroups: () => api.useStoredGroups(),
+  useLeaderCodes: () => api.useLeaderCodes(),
+  useQrTicket: () => api.useQrTicket(),
 };
 
 function Call({ use }: { use: () => unknown }): ReactNode {
