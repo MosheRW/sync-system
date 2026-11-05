@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } 
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import * as core from '@sync-system/client';
 import { afterAll, beforeAll, describe, expect, expectTypeOf, it } from 'vitest';
 import type * as api from '../src/index.js';
@@ -163,6 +164,27 @@ describe('no logging, no HTML, no URLs (AC27, R10, L3)', () => {
           `${file.name}: ${match[0]}`,
         ).toBe(true);
       }
+    }
+  });
+});
+
+describe('lint restrictions (AC27, R10, L3)', () => {
+  interface Linter {
+    calculateConfigForFile(path: string): Promise<{ rules?: Record<string, unknown> }>;
+  }
+
+  // Every source extension the package compiles, .tsx included.
+  it.each(['ts', 'tsx'])('apply to every .%s file in src', async (extension) => {
+    const requireRoot = createRequire(join(workspaceRoot, 'package.json'));
+    const { ESLint } = (await import(pathToFileURL(requireRoot.resolve('eslint')).href)) as {
+      ESLint: new (options: { cwd: string }) => Linter;
+    };
+    const eslint = new ESLint({ cwd: workspaceRoot });
+    const config = await eslint.calculateConfigForFile(
+      join(workspaceRoot, 'packages', 'react', 'src', 'hooks', `probe.${extension}`),
+    );
+    for (const rule of ['no-console', 'no-restricted-imports', 'no-restricted-globals']) {
+      expect(config.rules?.[rule], `${rule} on .${extension}`).toEqual(expect.arrayContaining([2]));
     }
   });
 });

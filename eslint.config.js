@@ -25,7 +25,7 @@ export default tseslint.config(
   {
     // The client runs in browsers, Node and SSR: no console (AC32), no Node or
     // framework modules (AC1), no browser globals read directly (AC7).
-    files: ['packages/client/src/**/*.ts'],
+    files: ['packages/client/src/**/*.{ts,tsx}'],
     rules: {
       'no-console': 'error',
       'no-restricted-imports': [
@@ -43,7 +43,7 @@ export default tseslint.config(
     // react-dom or server modules (AC2, Q3), no browser globals read directly
     // and no own connections or URL handling (L3, R10). host.ts is the only
     // globalThis reader.
-    files: ['packages/react/src/**/*.ts'],
+    files: ['packages/react/src/**/*.{ts,tsx}'],
     rules: {
       'no-console': 'error',
       'no-restricted-imports': [
