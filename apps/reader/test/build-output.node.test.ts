@@ -46,6 +46,14 @@ describe('production build is CSP-clean (security C7, C10)', () => {
     }
   });
 
+  it('ships a same-origin favicon so browsers do not request a missing /favicon.ico', () => {
+    const html = readFileSync(join(outDir, 'index.html'), 'utf8');
+    expect(html).toMatch(/<link rel="icon" href="\/favicon\.svg" type="image\/svg\+xml"/);
+    const svg = readFileSync(join(outDir, 'favicon.svg'), 'utf8');
+    expect(svg).toMatch(/^<svg\b/);
+    expect(svg).not.toMatch(/<script\b|<style\b|\son[a-z]+=|data:|href=/i);
+  });
+
   it('emits the library index next to the app', () => {
     const entries = JSON.parse(readFileSync(join(outDir, 'library-index.json'), 'utf8')) as {
       contentId: string;
