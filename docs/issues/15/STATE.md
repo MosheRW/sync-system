@@ -10,6 +10,6 @@
 ## Model log
 - pm grooming: sonnet (default) → DONE
 ## Open questions
-- Q1-Q10 in spec.md
+- none (Q1-Q10 decided at Gate 1, see spec.md)
 ## Deviations from plan
 - none
