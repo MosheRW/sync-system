@@ -1,13 +1,13 @@
 # State: #19 feat: reading app content, text direction (RTL) and content fingerprint (PRD item 7)
 - Path: full
-- Phase: architecture
+- Phase: implementation
 - Branch: feat/19-reading-app-content
 - PR: #20
-- Plan approved by user: no
+- Plan approved by user: yes (Gate 2, 2026-11-05)
 - Security-sensitive: yes
 - Review rounds: 0
 - Spec approved at Gate 1: yes
-- Last updated by: security
+- Last updated by: engineer
 ## Model log
 - pm groom: sonnet (default) → DONE
 - pm update-spec: sonnet (default) → DONE
@@ -17,6 +17,10 @@
 - pm update-spec-3: sonnet (default) → DONE
 - architect plan: opus (NEXT_MODEL) → DONE
 - security plan: opus (rule) → PASS
+## Gate 2 decisions (2026-11-05)
+- ADRs 0001-0006: recommended option accepted for each (0005 E1 escaping wording fixed per security.md F5).
+- Q2: AC32-AC35 kept. Q3: `different-content` -> block. Q4: malformed leader metadata -> `unsupported-schema` / block.
+- Q5: status-screen copy in architecture.md 6.4 accepted. Q6: sample texts as proposed.
 ## Open questions
 - Q1-Q9 resolved at Gate 1 (see "Decisions (Gate 1)" in spec.md). Architect to confirm Q4 details (display hints, Unicode normalisation) and may tighten the AC23 ID pattern.
 - Design decisions for architect: D1-D6 and open questions 1-6 in design.md (library, not-found, single-book mode added).

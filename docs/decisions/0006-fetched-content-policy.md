@@ -1,6 +1,6 @@
 # 0006. Fetched content (`?src=<url>`): origin policy, limits and headers
 
-- Status: Proposed
+- Status: Accepted (Gate 2, 2026-11-05: user chose the recommended option)
 - Date: 2026-11-05
 - Issue: #19
 

@@ -1,6 +1,6 @@
 # 0005. Reader configuration, content selection and the library
 
-- Status: Proposed
+- Status: Accepted (Gate 2, 2026-11-05: user chose the recommended option)
 - Date: 2026-11-05
 - Issue: #19
 
@@ -73,7 +73,10 @@ how config reaches a client-rendered app (0001).
    library index), and injects the public config into `index.html` as
    `<script type="application/json" id="reader-config">` (recommended).** No
    extra request, no loading flash, CSP-safe (a JSON script block is never
-   executed; `<` is escaped as `<`). The dev and preview servers do the
+   executed). After `JSON.stringify`, the server replaces `<`, `>`, `&`,
+   U+2028 and U+2029 with the JSON escapes `\u003c`, `\u003e`, `\u0026`,
+   `\u2028` and `\u2029` (never HTML entities, which are not decoded inside
+   `<script>`), so no value can close the block. The dev and preview servers do the
    same through the Vite plugin, so `pnpm dev` with a bad env also fails to
    start. The client parses it with the same zod schema.
 2. A `/config.json` request at boot: one more round trip and a loading state

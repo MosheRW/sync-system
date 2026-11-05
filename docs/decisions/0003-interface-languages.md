@@ -1,6 +1,6 @@
 # 0003. Interface languages and how the language is chosen
 
-- Status: Proposed
+- Status: Accepted (Gate 2, 2026-11-05: user chose the recommended option)
 - Date: 2026-11-05
 - Issue: #19
 

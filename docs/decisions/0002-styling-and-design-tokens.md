@@ -1,6 +1,6 @@
 # 0002. Styling approach, design tokens and fonts
 
-- Status: Proposed
+- Status: Accepted (Gate 2, 2026-11-05: user chose the recommended option)
 - Date: 2026-11-05
 - Issue: #19
 
