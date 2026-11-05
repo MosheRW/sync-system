@@ -5,9 +5,9 @@
 - PR: #20
 - Plan approved by user: yes (Gate 2, 2026-11-05)
 - Security-sensitive: yes
-- Review rounds: 2
+- Review rounds: 3
 - Spec approved at Gate 1: yes
-- Last updated by: engineer
+- Last updated by: qa
 ## Model log
 - pm groom: sonnet (default) → DONE
 - pm update-spec: sonnet (default) → DONE
@@ -24,6 +24,7 @@
 - qa validate (round 2): opus (rule) → PASS
 - security code (round 2): opus (rule) → PASS
 - engineer fix (round 2, N7 at user request): opus (rule) → DONE
+- qa validate (round 3): opus (rule) → PASS
 ## Gate 2 decisions (2026-11-05)
 - ADRs 0001-0006: recommended option accepted for each (0005 E1 escaping wording fixed per security.md F5).
 - Q2: AC32-AC35 kept. Q3: `different-content` -> block. Q4: malformed leader metadata -> `unsupported-schema` / block.
@@ -73,6 +74,10 @@
 - `run()` takes optional `timeouts` (headers 15 s, request 30 s, check interval 30 s by default, unchanged in production) so tests use 200/400/50 ms.
 - New `test/server-client-error.node.test.ts`: idle socket closed with no response, unfinished headers -> 408 (not 400), garbage -> 400, `/health` still 200 after each, plus never-throws unit tests. The two timeout tests fail against the old handler.
 - Checks: `pnpm lint` (eslint + prettier), `pnpm typecheck`, `pnpm test` (reader: 35 files / 509 tests), `pnpm build`: pass. Security A1 (Trusted Types) untouched; going to a follow-up issue.
+## QA verdict (round 3, delta f62d15f): PASS
+- N7 fixed. Against the production build with real timeouts: an idle socket that sent nothing is closed silently (about 24 s); unfinished or trickled headers get `408` with `Connection: close` and the security headers; garbage still gets `400` with the security headers (C1); `/health` returns 200 afterwards and the process stays up.
+- Checks: lint, typecheck, test (reader 509), build, audit: pass. CI 2/2 pass on `82c34ce`. AC1-AC41 (AC9 removed): still met.
+- Headless Chrome sweep (22 loads, en and he): 0 CSP violations, with a positive control. No findings. All 37 commits signed.
 ## Verification notes
 - `pnpm audit --audit-level=high`, `pnpm lint`, `pnpm typecheck`, `pnpm test` (reader: 500 tests), `pnpm build`: pass.
 - `docker compose config`, `docker compose build reader` and `sync-server`: pass. `docker compose up reader`: healthy, `/`, `/library`, `/health` 200; `READER_ENTRY=x` exits 1 with `Config error: ...`. Runtime image: `/app` root-owned, `USER node`, `node_modules` = zod only, no source maps.
