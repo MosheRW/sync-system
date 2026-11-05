@@ -4,11 +4,12 @@
 - Branch: feat/13-roles-lifecycle
 - PR: #14 (ready for review)
 - Plan approved by user: yes (Gate 2, 2026-11-04)
-- Review rounds: 2 (round 2 re-check of the round 1 advisory fixes)
+- Review rounds: 3 (round 3 quick check of the group.waiting leader-reset test)
 - QA verdict (round 1): PASS (46/46 ACs met; 5 non-blocking advisories in the PR comment)
 - QA verdict (round 2): PASS (all round 1 advisories fixed; 46/46 ACs still met; CI green on 281664d)
+- QA verdict (round 3): PASS (test-only change; new group.waiting test fails without #dropLeaderOnly(); CI green on 5a2f3bb)
 - Security-sensitive: yes
-- Last updated by: engineer
+- Last updated by: qa
 ## Gate 1 decisions
 - User accepted every recommended default Q1.1-Q7 as written in `spec.md`,
   with one change: Q5.5 display names use the existing strict #10 rule
@@ -170,3 +171,4 @@
 - engineer fix (round 1 advisories): opus (rule) → DONE
 - qa review (round 2): opus (rule) → PASS
 - engineer fix (qa round 2 note): opus (rule) → DONE
+- qa review (round 3 check): opus (rule) → PASS
