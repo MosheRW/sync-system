@@ -1,5 +1,7 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { InMemoryGroupStore } from '../src/groups/in-memory-group-store.js';
+import { JoinService } from '../src/joins/join-service.js';
+import { LeaderControls } from '../src/lifecycle/leader-controls.js';
 import { createGroupWithMembers } from './helpers/groups.js';
 import { GRACE_MS } from './helpers/lifecycle.js';
 import { ManualScheduler } from './helpers/manual-scheduler.js';
@@ -15,6 +17,7 @@ let ts: TestServer | undefined;
 afterEach(async () => {
   await ts?.close();
   ts = undefined;
+  vi.restoreAllMocks();
 });
 
 async function start(maxSessionMinutes: number, handoff: 'auto' | 'frozen' = 'auto') {
@@ -119,5 +122,54 @@ describe('timer cleanup (#13 AC19, RC13, RC2)', () => {
     await ts!.close();
     ts = undefined;
     expect(scheduler.pending).toBe(0);
+  });
+
+  it('no per-group budget is left after an end, for any reason, or after server.close()', async () => {
+    const forget = vi.spyOn(LeaderControls.prototype, 'forgetGroup');
+    const close = vi.spyOn(LeaderControls.prototype, 'close');
+    const joinsClose = vi.spyOn(JoinService.prototype, 'close');
+    const { scheduler, store } = await start(180);
+    // Charges the vice, lock and activity budgets of the group.
+    const charge = async (group: Awaited<ReturnType<typeof createGroupWithMembers>>) => {
+      group.leader.send({ type: 'leader.activity' });
+      await group.leader.next('activity.ack');
+      group.leader.send({ type: 'group.lock' });
+      await group.leader.next('lock.changed');
+      if (group.memberIds.length > 0) {
+        group.leader.send({ type: 'vice.set', participantId: group.memberIds[0] });
+        await group.leader.next('vice.updated');
+      }
+    };
+    const ended = await createGroupWithMembers(ts!, 1);
+    await charge(ended);
+    ended.leader.send({ type: 'group.end' });
+    await ended.leader.next('group.ended');
+    // The server's own instance, found through its first end.
+    const instance = forget.mock.contexts[0] as LeaderControls;
+    expect(forget).toHaveBeenLastCalledWith('app-a', ended.groupId);
+    expect(instance.limiterSize).toBe(0);
+
+    // An `empty` end after the leader's grace.
+    const emptied = await createGroupWithMembers(ts!, 0);
+    await charge(emptied);
+    expect(instance.limiterSize).toBeGreaterThan(0);
+    await emptied.leader.close();
+    await waitUntil(async () => (await store.get('app-a', emptied.groupId))?.pause !== undefined);
+    scheduler.advance(GRACE_MS);
+    await waitUntil(() => store.size === 0);
+    expect(forget).toHaveBeenLastCalledWith('app-a', emptied.groupId);
+    expect(instance.limiterSize).toBe(0);
+
+    // A live group's budgets go with server.close().
+    const live = await createGroupWithMembers(ts!, 1);
+    await charge(live);
+    expect(instance.limiterSize).toBeGreaterThan(0);
+    await ts!.close();
+    ts = undefined;
+    expect(close).toHaveBeenCalled();
+    expect(instance.limiterSize).toBe(0);
+    // The join budgets (per connection and per group) go too (#10 AC31).
+    const joins = joinsClose.mock.contexts[0] as JoinService;
+    expect(joins.limiterSize).toBe(0);
   });
 });
