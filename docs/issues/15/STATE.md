@@ -1,17 +1,18 @@
 # State: #15 feat: React/Next package (PRD item 6)
 - Path: full
-- Phase: implementation
+- Phase: validation
 - Branch: feat/15-react-package
 - PR: #16 (ready for review)
 - Plan approved by user: yes
 - Security-sensitive: yes
-- Review rounds: 0
-- Last updated by: engineer
+- Review rounds: 1
+- Last updated by: qa
 ## Model log
 - pm grooming: sonnet (default) → DONE
 - architect plan: opus (NEXT_MODEL) → DONE
 - security plan (round 1): opus (rule) → PASS
 - engineer implement: opus (architect `Implementer model: opus`) → DONE (13 chunks, all checks green)
+- qa review (round 1): opus (NEXT_MODEL) → PASS (checks 10/10, ACs 29/29; 1 advisory: QR rate-limit wait reset on revoking codesChanged)
 ## Gate 2 decisions (user, 2026-11-05)
 - Plan approved as written.
 - Q-A accepted: `setJoiningEnabled` = lock/unlock of all joining; "expiry" =
