@@ -43,7 +43,9 @@ export interface QrHost {
  * and enabled and this client leads an active group on a live connection.
  *
  * - Issues on start, re-issues at 80 % of the lifetime (never sooner than
- *   10 s apart), and at once after a revoking code change (R1).
+ *   10 s apart), and at once after a revoking code change (R1). A revoking
+ *   change drops the ticket at once but never cuts a `RATE_LIMITED` wait
+ *   short; nothing (stop, remount, group switch) clears that wait.
  * - `refresh()` is a no-op while a request is in flight, during a
  *   `RATE_LIMITED` wait and within 10 s of the last issue, unless the
  *   ticket expired (R2).
@@ -149,15 +151,20 @@ export class QrTicketController {
     this.#clearTimers();
     this.#generation += 1;
     this.#inFlight = false;
-    this.#rateLimitedUntil = 0;
+    // The revoked ticket goes at once; a pending RATE_LIMITED wait is kept.
     this.#set(Object.freeze({ status: 'loading' as const, ticket: null }));
-    this.#issue();
+    const wait = this.#rateLimitedUntil - now();
+    if (wait > 0) this.#armIssue(wait);
+    else this.#issue();
   }
 
-  /** Issues now if allowed, else at the 10 s floor; never twice in one tick. */
+  /**
+   * Issues now if allowed, else at the 10 s floor or the end of a
+   * `RATE_LIMITED` wait; never twice in one tick.
+   */
   #schedule(): void {
     if (this.#scheduled || this.#inFlight || this.#issueTimer !== undefined) return;
-    const wait = this.#lastIssueAt + QR_MIN_INTERVAL_MS - now();
+    const wait = Math.max(this.#lastIssueAt + QR_MIN_INTERVAL_MS, this.#rateLimitedUntil) - now();
     const generation = this.#generation;
     if (wait > 0) {
       this.#issueTimer = setTimer(() => {
@@ -295,7 +302,7 @@ export class QrTicketController {
     this.#clearTimers();
     this.#generation += 1;
     this.#inFlight = false;
-    this.#rateLimitedUntil = 0;
+    // The RATE_LIMITED wait outlives a stop: it ends on its own (at most 60 s).
     this.#group = null;
     this.#codesGeneration = null;
     this.#set(IDLE_QR);

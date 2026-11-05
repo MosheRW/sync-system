@@ -235,6 +235,75 @@ describe('QR re-issue (AC18)', () => {
     expect(client.count('issueQrTicket')).toBe(5);
   });
 
+  /** Mounts, issues tk-1, then a re-issue at 48 s is rate-limited for 40 s. */
+  async function rateLimited(): Promise<{ client: FakeSyncClient; values: QrTicketHook[] }> {
+    const client = leader();
+    const { values } = mount(client);
+    await advance(0);
+    client.impl.issueQrTicket = () =>
+      Promise.reject(new SyncClientError('RATE_LIMITED', { details: { retryAfterMs: 40_000 } }));
+    await advance(48_000);
+    expect(client.count('issueQrTicket')).toBe(2);
+    client.impl.issueQrTicket = (): QrTicket => {
+      issued += 1;
+      return { ticket: `tk-${issued}`, expiresAt: Date.now() + 60_000 };
+    };
+    return { client, values };
+  }
+
+  it.each(['rotated', 'resumed', 'member_removed', 'superseded'] as CodesChangedReason[])(
+    'codesChanged %s during a RATE_LIMITED wait drops the ticket at once but keeps the wait (R1, R9)',
+    async (reason) => {
+      const { client, values } = await rateLimited();
+      await advance(5_000);
+      act(() => {
+        client.codes = { generation: 2, groupCode: '654321' };
+        client.emit('codesChanged', { groupId: 'g-1', codes: client.codes, reason });
+      });
+      expect(values.at(-1)?.state).toEqual({ status: 'loading', ticket: null });
+      await advance(34_999);
+      expect(client.count('issueQrTicket')).toBe(2);
+      expect(ticketOf(values.at(-1))).toBeNull();
+      await advance(1);
+      expect(client.count('issueQrTicket')).toBe(3);
+      expect(ticketOf(values.at(-1))).toBe('tk-2');
+    },
+  );
+
+  it('a demotion and a new group during a RATE_LIMITED wait issue only after the wait', async () => {
+    const { client, values } = await rateLimited();
+    act(() => client.follow('g-1'));
+    expect(values.at(-1)?.state).toEqual({ status: 'idle' });
+    act(() => client.lead('g-2'));
+    await advance(39_999);
+    expect(client.count('issueQrTicket')).toBe(2);
+    await advance(1);
+    expect(client.count('issueQrTicket')).toBe(3);
+  });
+
+  it('hiding and showing the QR during a RATE_LIMITED wait issues only after the wait', async () => {
+    const client = leader();
+    const values: QrTicketHook[] = [];
+    function Probe(): ReactNode {
+      values.push(useQrTicket());
+      return null;
+    }
+    const view = renderWithProvider(<Probe />, { client });
+    await advance(0);
+    client.impl.issueQrTicket = () =>
+      Promise.reject(new SyncClientError('RATE_LIMITED', { details: { retryAfterMs: 40_000 } }));
+    await advance(48_000);
+    view.rerenderWith(null);
+    await advance(0);
+    client.impl.issueQrTicket = () => ({ ticket: 'tk-again', expiresAt: Date.now() + 60_000 });
+    view.rerenderWith(<Probe />);
+    await advance(39_999);
+    expect(client.count('issueQrTicket')).toBe(2);
+    await advance(1);
+    expect(client.count('issueQrTicket')).toBe(3);
+    expect(ticketOf(values.at(-1))).toBe('tk-again');
+  });
+
   it('JOIN_METHOD_UNAVAILABLE: unavailable, no timer', async () => {
     const client = leader();
     client.impl.issueQrTicket = () =>
