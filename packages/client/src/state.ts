@@ -43,8 +43,9 @@ export type ConnectionState =
 
 /**
  * Why a group ended for this client (#5):
- * - `ended_by_leader`, `leader_timeout`, `max_session`, `removed`: the
- *   server's `group.ended` reasons (the token is deleted);
+ * - `ended_by_leader`, `leader_timeout`, `max_session`, `removed`,
+ *   `inactivity`: the server's `group.ended` reasons (the token is
+ *   deleted; `inactivity`: #13 AC22);
  * - `replaced`: the same participant resumed on another connection (another
  *   tab or device). The token is kept and nothing is resumed automatically;
  * - `left`: `leaveGroup()` or `endGroup()` succeeded;
@@ -57,6 +58,7 @@ export type GroupEndedReason =
   | 'max_session'
   | 'replaced'
   | 'removed'
+  | 'inactivity'
   | 'left'
   | 'rejoin_failed'
   | 'closed';

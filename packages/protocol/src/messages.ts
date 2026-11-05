@@ -16,10 +16,12 @@ export type Role = 'leader' | 'vice-leader' | 'member';
  * - `max_session`: the group reached its max session time;
  * - `replaced`: a newer connection resumed the same participant (only that
  *   older connection is told; the group goes on);
- * - `removed`: the participant is on the leader's block list.
+ * - `removed`: the participant is on the leader's block list;
+ * - `inactivity`: a leader who got the lead through a missed keep-alive
+ *   missed its own keep-alive too (#13 AC22).
  */
 export type GroupEndedReason =
-  'ended_by_leader' | 'leader_timeout' | 'max_session' | 'replaced' | 'removed';
+  'ended_by_leader' | 'leader_timeout' | 'max_session' | 'replaced' | 'removed' | 'inactivity';
 
 /** Every GroupEndedReason, for schemas and exhaustive checks. */
 export const GROUP_ENDED_REASONS = [
@@ -28,6 +30,7 @@ export const GROUP_ENDED_REASONS = [
   'max_session',
   'replaced',
   'removed',
+  'inactivity',
 ] as const satisfies readonly GroupEndedReason[];
 
 // ---------------------------------------------------------------------------

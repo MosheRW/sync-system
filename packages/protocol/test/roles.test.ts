@@ -273,3 +273,11 @@ describe('leadership messages (#13 AC23)', () => {
     );
   });
 });
+
+describe('the inactivity end (#13 AC22)', () => {
+  it('parses group.ended with reason inactivity', () => {
+    expect(parseServerMessage({ type: 'group.ended', groupId: GID, reason: 'inactivity' }).ok).toBe(
+      true,
+    );
+  });
+});

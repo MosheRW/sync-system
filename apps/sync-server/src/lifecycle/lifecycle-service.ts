@@ -50,6 +50,8 @@ export interface LifecycleHost {
   onLeaderReturn(leader: Session, record: GroupRecord): void;
   /** Restarts the leader-token refresh for the group's online leader. */
   startRefresh(namespace: string, groupId: string, at: number): void;
+  /** Ends the group for everyone with `inactivity` (#13 AC22). */
+  endInactive(app: AppConfig, groupId: string): Promise<void>;
   /** Ends a group nobody is connected to (#13 D15). */
   endEmpty(app: AppConfig, groupId: string): Promise<void>;
   /** True when an open session owns any membership of the group (#13 RC19). */
@@ -136,6 +138,8 @@ export class LifecycleService {
       (await this.host.store.patch(namespace, record.id, {
         lastActivityAt: Math.max(record.lastActivityAt, at),
         keepAlivePending: false,
+        // A leader that acted once is like any other leader (#13 D9, Q-B).
+        escalated: false,
       })) ?? record;
     // An inactive pause ends with the leader's next counted activity (6.2).
     if (updated.pause?.cause === 'inactive') updated = await this.unpause(app, updated);
@@ -190,6 +194,12 @@ export class LifecycleService {
       { event: 'keepalive_missed', namespace, groupRef: groupRef(groupId) },
       'keep-alive missed',
     );
+    // One-step escalation (AC22): a leader that got the lead through a
+    // missed keep-alive and missed its own ends the group, with no grace.
+    if (record.escalated) {
+      await this.host.endInactive(app, groupId);
+      return;
+    }
     // The first leader to miss it: freeze for the grace period (AC17, Q1.2).
     await this.pause(app, record, 'inactive');
   }

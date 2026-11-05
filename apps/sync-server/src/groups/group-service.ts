@@ -249,6 +249,7 @@ export class GroupService implements GroupActions {
       onLeaderReturn: (leader, record) => this.joins.onLeaderReturn(leader, record),
       startRefresh: (namespace, groupId, at) => this.startRefresh(namespace, groupId, at),
       endEmpty: (app, groupId) => this.endGroup(app, groupId, 'empty'),
+      endInactive: (app, groupId) => this.endGroup(app, groupId, 'inactivity'),
       anyoneAttached: (record) => this.anyoneAttached(record),
       now: () => this.now(),
     });
