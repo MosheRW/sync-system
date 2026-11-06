@@ -37,13 +37,8 @@ Source: PRD "Product 1: the reading app" (Follower experience, Content mismatch)
 - As a **member**, I want to browse freely and get a prompt to jump back when the leader moves, so that I'm never pulled away mid-sentence but never lost.
 - As a **member**, I want to see whether I'm following, reconnecting or waiting for an offline leader, so that I trust what's on screen.
 - As a **member with different content**, I want to be warned or blocked when my book isn't the leader's, so that I don't follow a position in a different text.
-- As a **leader**, I want to see who is in the group (a counter on a phone, names on a laptop), so that I know when everyone has arrived.
-- As a **leader**, I want to look ahead without moving the group, and then bring the group there or go back, so that I can prepare.
-- As a **leader**, I want a keep-alive prompt before the group times out, so that a quiet but real session isn't closed on me.
-- As a **member who suddenly becomes leader**, I want an unmistakable "you're now leading" moment, so that I know the group now follows me.
-- As an **original leader who comes back**, I want to be asked whether to take the lead back, so that I can resume without a fight.
-- As a **leader**, I want to name a vice-leader, remove someone, lock the group and end it, so that I stay in control.
 - As **anyone whose phone locked or who reloaded**, I want to come back to the same group, role and page without codes, so that a short interruption costs nothing.
+- (Leader-side stories moved to #25, 8b.)
 - As a **Hebrew-speaking user**, I want every new screen and prompt in Hebrew and right-to-left, so that the app feels native.
 
 ## Acceptance criteria
@@ -59,7 +54,7 @@ Source: PRD "Product 1: the reading app" (Follower experience, Content mismatch)
 - [ ] AC7. A display name is optional, 1-32 characters after trimming under the #13 AC35 rule; an invalid name gets a clear inline message before anything is sent, and a blank name means a generated one. Tested with valid, too long, control / bidi characters and blank names.
 
 ### Showing codes and QR (leader)
-- [ ] AC8. For a method A group, the leader's screen shows the group code and the door code at all times while leading, in any view (reading, preview, roster), on every screen size. For B the group code, for C the alphanumeric code. Tested per method.
+- [ ] AC8. For a method A group, the leader's screen shows the group code and the door code at all times while leading, in any view, on every screen size. For B the group code, for C the alphanumeric code. Tested per method.
 - [ ] AC9. Codes update on screen when they change (door-code rotation after wrong guesses, leader rotation, recreation with new codes), and the leader is told in words that they changed. Tested for each change reason the client reports.
 - [ ] AC10. The leader can rotate all codes (`rotateCodes`), with a confirmation that old codes and QR codes stop working. Tested.
 - [ ] AC11. When door-code joining is paused (#10 AC29), the leader sees that joining by code is paused and until when (from a server duration). Tested.

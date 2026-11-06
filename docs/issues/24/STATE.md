@@ -1,6 +1,8 @@
-# State: #24 feat: reading app sync UX: joining, prompts, connection indicator and leader views (PRD item 8)
+# State: #24 feat: reading app sync UX: join and follow (PRD item 8a)
 - Path: full
 - Phase: grooming
+- Spec approved at Gate 1: yes (2026-11-06, "Accept all")
+- Split: AC38-AC49 moved to #25 (8b, depends on this issue; no branch yet)
 - Branch: feat/24-reading-app-sync-ux
 - PR: none
 - Plan approved by user: no
@@ -9,10 +11,10 @@
 - Last updated by: pm
 ## Model log
 - pm groom: opus (orchestrator: broad scope) → DONE
+- pm update-spec: sonnet (default) → DONE
 ## Open questions
-- Q1-Q11 in spec.md, each with a recommendation; for the user at Gate 1.
-- Q1: split item 8 into 8a (join and follow, AC1-AC37 + AC50-AC56) and 8b (leader views and lifecycle, AC38-AC49). If accepted, the pm moves the `[8b]` ACs to a new issue.
-- Q2 (QR library, scanning approach) and Q9 (public API key) need the security plan review.
-- Q6 is the PRD's open question on phone-lock duration.
+- None for the user; Q1-Q11 accepted at Gate 1 (see spec.md "Decisions").
+- For the architect: QR library choice, browser test tool, position payload format, config names.
+- For the security plan review: public API key in the bundle (Q9), new QR dependency (Q2).
 ## Deviations from plan
 - None yet.
