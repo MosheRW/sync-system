@@ -136,6 +136,13 @@ All recommendations were accepted as written.
 - Q10. End-to-end check: an automated browser test against the real sync server and reader (tool chosen by the architect).
 - Q11. Preview mode entry: now belongs to #25 (8b); the 8b designer answers it.
 
+## Decisions (design, 2026-11-06: "Accept all")
+The recommendations in `design.md` section 14 were accepted as written.
+- U1. Fresh joiners (just opened the book, by QR or without turning a page) jump straight to the group's page. The 10 s countdown applies only to members who were already reading elsewhere. **This refines AC28:** "a late joiner whose page differs from the group's" means a joiner who turned a page or had a restored reading position on this book before admission; a fresh joiner gets no countdown.
+- U2. The different-book block screen offers "Open the group's book" when that book is bundled and the app is not in single-book mode (a navigation that keeps the membership; Decision Q4).
+- U3. Members leave with no confirmation; only the leader's "End group" is confirmed (AC32).
+- U4. Hebrew uses "המוביל" for "the leader"; QA includes a native-speaker review of the Hebrew strings.
+
 ## Open questions
 None for the user. Left to the architect / designer / security plan review:
 - QR library choice and audit (Q2), the browser test tool (Q10), the position payload format (AC29), config variable names (AC1).
