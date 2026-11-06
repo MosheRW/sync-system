@@ -4,7 +4,7 @@
 - Spec approved at Gate 1: yes (2026-11-06, "Accept all")
 - Split: AC38-AC49 moved to #25 (8b, depends on this issue; no branch yet)
 - Branch: feat/24-reading-app-sync-ux
-- PR: none
+- PR: #26
 - Plan approved by user: no
 - Security-sensitive: yes (architecture.md section 16: new deps lean-qr and @playwright/test, CSP connect-src, public API key in config, codes/names/tickets input, tokens in sessionStorage)
 - Review rounds: 0
