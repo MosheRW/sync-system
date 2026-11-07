@@ -33,6 +33,7 @@ describe('connection state (AC24)', () => {
         namespace: 'app-a',
         joinMethods: ['A', 'B', 'C', 'D'],
         limits: LIMITS,
+        defaultHandoff: 'auto',
       },
       { status: 'closed', reason: 'client' },
     ]);

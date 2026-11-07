@@ -200,6 +200,11 @@ not only from `error` events.
 | `reconnecting` | `attempt`, `delayMs`, `retryAt`, `attempting`         | Waiting for the backoff timer (`attempting: false`) or retrying (`true`).           |
 | `closed`       | `reason`, `error?`                                    | `reason` is `client` (`close()`), `fatal` or `gave_up`. Terminal until `connect()`. |
 
+`connected` (and the `ConnectedInfo` that `connect()` resolves with) also
+carries `defaultHandoff` (`auto` or `frozen`): the app's
+handoff mode for a group created without one, so a create form can preselect
+it.
+
 `GroupState` (in `snapshot.group`) is `active` (with `role`, `metadata`,
 `hasPosition`, `position`, `leaderOnline`), `rejoining` (leader or member,
 resuming after a drop), `waiting` (a member parked until its leader recreates

@@ -28,6 +28,7 @@ const connections: Record<string, ConnectionState> = {
     namespace: 'app-a',
     joinMethods: ['A', 'D'],
     limits: LIMITS,
+    defaultHandoff: 'auto',
   },
   reconnecting: { status: 'reconnecting', attempt: 1, delayMs: 500, retryAt: 0, attempting: false },
   closed: { status: 'closed', reason: 'fatal', error: new SyncClientError('INVALID_API_KEY') },

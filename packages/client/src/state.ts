@@ -34,6 +34,8 @@ export type ConnectionState =
       readonly namespace: string;
       readonly joinMethods: readonly JoinMethod[];
       readonly limits: Readonly<AppLimits>;
+      /** The handoff mode of a group created without one, from `hello.ok` (#13 AC3). */
+      readonly defaultHandoff: HandoffMode;
     }
   | {
       readonly status: 'reconnecting';
@@ -146,6 +148,8 @@ export interface ConnectedInfo {
   /** The join methods the app allows, from `hello.ok` (#10 AC4). */
   readonly joinMethods: readonly JoinMethod[];
   readonly limits: Readonly<AppLimits>;
+  /** The handoff mode of a group created without one, from `hello.ok` (#13 AC3). */
+  readonly defaultHandoff: HandoffMode;
 }
 
 /**
