@@ -1,4 +1,4 @@
-import { type ReactNode, type Ref, forwardRef } from 'react';
+import { type ReactNode, type Ref, forwardRef, useEffect, useRef } from 'react';
 import styles from './group.module.css';
 
 export interface ButtonProps {
@@ -82,12 +82,19 @@ export function NoticeBar({
   onDismiss,
   dismissLabel,
   tone = 'info',
+  autoFocus = false,
 }: {
   children: ReactNode;
   onDismiss?: () => void;
   dismissLabel: string;
   tone?: 'info' | 'warning';
+  /** Focus Dismiss on appearance (focus was in something that closed, design F12.3). */
+  autoFocus?: boolean;
 }) {
+  const dismissRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (autoFocus) dismissRef.current?.focus();
+  }, [autoFocus]);
   return (
     <div
       role="status"
@@ -95,7 +102,7 @@ export function NoticeBar({
     >
       <p className={styles.noticeText}>{children}</p>
       {onDismiss ? (
-        <button type="button" className={styles.textButton} onClick={onDismiss}>
+        <button ref={dismissRef} type="button" className={styles.textButton} onClick={onDismiss}>
           {dismissLabel}
         </button>
       ) : null}

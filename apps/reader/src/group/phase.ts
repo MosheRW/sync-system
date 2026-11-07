@@ -35,6 +35,8 @@ export interface PhaseInput {
   readonly compare: CompareResult | null;
   /** The version warning was acknowledged for this leader's text. */
   readonly acknowledged: boolean;
+  /** The page-load resume ran out of attempts (network). */
+  readonly resumeFailed?: boolean;
 }
 
 /** Fatal codes that are not "update required": the group stays stored. */
@@ -67,6 +69,7 @@ export function derivePhase(input: PhaseInput): Phase {
     if (input.compare === 'different-version' && !input.acknowledged) return 'mismatch-warn';
     return 'member';
   }
+  if (input.resumeFailed === true) return 'disconnected';
   if (input.resuming) return 'resuming';
   return 'solo';
 }

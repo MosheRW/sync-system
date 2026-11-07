@@ -1,6 +1,6 @@
-import { type JoinedGroup, useConnection, useGroupExit } from '@sync-system/react';
+import { type JoinedGroup, useConnection, useGroupExit, useSyncSnapshot } from '@sync-system/react';
 import { useCallback, useRef, useState } from 'react';
-import { Button } from '../components/group/controls.js';
+import { Button, NoticeBar } from '../components/group/controls.js';
 import { GroupSheet, type SheetContent } from '../components/group/GroupSheet.js';
 import {
   DOOR_FORM_ID,
@@ -20,6 +20,7 @@ import type { LibraryEntry } from '../library/types.js';
 import { browserNavigation } from './browser.js';
 import { type GroupEnv, useGroupEnv } from './context.js';
 import { useJoin } from './use-join.js';
+import { useResume } from './use-resume.js';
 
 type View = 'join' | 'waiting' | 'opening' | 'missing';
 
@@ -44,6 +45,10 @@ function GroupLibraryOn({ entries, env }: { entries: readonly LibraryEntry[]; en
   const [view, setView] = useState<View | null>(null);
   const [missingId, setMissingId] = useState<string | null>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
+  // A tab in a group comes back to it here too (AC34).
+  useResume(env, true, () => undefined);
+  const snapshot = useSyncSnapshot();
+  const group = snapshot.group?.status === 'active' ? snapshot.group : null;
 
   const onAdmitted = useCallback(
     (joined: JoinedGroup) => {
@@ -209,14 +214,69 @@ function GroupLibraryOn({ entries, env }: { entries: readonly LibraryEntry[]; en
     };
   }
 
+  // In a group: say which book, offer it when bundled (design 6.10).
+  const groupBook = group !== null ? parseLeaderMetadata(group.metadata) : null;
+  const groupEntry =
+    groupBook !== null
+      ? entries.find((entry) => entry.contentId === groupBook.contentId)
+      : undefined;
+  const inGroupNotice =
+    group !== null ? (
+      <NoticeBar dismissLabel={t.dismiss}>
+        {groupEntry !== undefined ? (
+          <>
+            {t.libraryInGroup.split('{title}')[0]}
+            {groupEntry.title !== undefined ? (
+              <PlainText text={groupEntry.title} dir={groupEntry.dir} singleLine />
+            ) : (
+              <PlainText text={groupEntry.contentId} dir="ltr" />
+            )}
+            {t.libraryInGroup.split('{title}')[1]}{' '}
+            <Button
+              variant="text"
+              onClick={() => {
+                env.pointers.update({ mode: 'following' });
+                connection.disconnect();
+                browserNavigation.assign(bookHref(groupEntry.contentId));
+              }}
+            >
+              {t.openGroupBook}
+            </Button>
+          </>
+        ) : (
+          t.memberGroupTitle
+        )}
+      </NoticeBar>
+    ) : null;
+
   return (
     <>
       <LibraryScreen
         entries={entries}
+        notice={inGroupNotice}
         headerAction={
-          <Button ref={buttonRef} className={styles.libraryAction} onClick={open}>
-            {t.joinGroup}
-          </Button>
+          group !== null ? (
+            // A leader ends the group from the book, with its confirmation (AC32).
+            group.role === 'member' ? (
+              <Button
+                ref={buttonRef}
+                className={styles.libraryAction}
+                pending={exit.leave.pending}
+                pendingLabel={t.leaving}
+                onClick={() => {
+                  void exit.leave.run().then((result) => {
+                    if (result.ok) env.pointers.forget();
+                  });
+                }}
+              >
+                {t.leaveGroup}
+              </Button>
+            ) : null
+          ) : (
+            <Button ref={buttonRef} className={styles.libraryAction} onClick={open}>
+              {t.joinGroup}
+            </Button>
+          )
         }
       />
       {content !== null ? (

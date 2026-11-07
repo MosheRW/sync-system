@@ -5,14 +5,16 @@ import {
   useCreateGroup,
   useGroupExit,
   useJoinRequests,
+  useGroupEnded,
   useLeaderCodes,
   usePosition,
+  useRemoved,
   useQrTicket,
   useSyncEvent,
   useSyncIndicator,
   useSyncSnapshot,
 } from '@sync-system/react';
-import { type JoinedGroup } from '@sync-system/react';
+import { type JoinedGroup, type ResumedGroup } from '@sync-system/react';
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ApprovalTray } from '../components/group/ApprovalTray.js';
 import { ConfirmDialog } from '../components/group/ConfirmDialog.js';
@@ -54,6 +56,9 @@ import { type IndicatorKind, derivePhase, indicatorFor } from './phase.js';
 import { encodePosition } from './position.js';
 import { useFollow } from './use-follow.js';
 import { useJoin } from './use-join.js';
+import { useResume } from './use-resume.js';
+import { decodePosition } from './position.js';
+import type { GroupPointer } from './session-store.js';
 import { useQrLanding } from './use-qr-landing.js';
 import { useDocumentVisible } from './use-document-visible.js';
 import { LARGE_SCREEN, useMediaQuery } from './use-media-query.js';
@@ -125,17 +130,23 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
   const [formError, setFormError] = useState<SyncClientError | null>(null);
   const [confirm, setConfirm] = useState<Confirm>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [endedNotice, setEndedNotice] = useState<string | null>(null);
+  const focusDismiss = useRef(false);
   const [announcement, announce] = useAnnouncer();
   const ownIndex = useRef(props.initialIndex ?? 0);
   const position = usePosition();
   const [restored] = useState(restoredPage);
   const turnedSinceLoad = useRef(false);
   const [jumpRequest, setJumpRequest] = useState<{ index: number; id: number } | null>(null);
-  const resumedMode = useRef<'following' | 'browsing' | null>(null);
+  // A membership that comes back by resume keeps the tab's stored mode (Q3).
+  // Set from the pointer at load: the group turns active before resumeGroup resolves.
+  const resumedMode = useRef<'following' | 'browsing' | null>(env.pointers.read()?.mode ?? null);
 
   const onAdmitted = useCallback(
     (joined: JoinedGroup) => {
       env.pointers.write({ groupId: joined.groupId, mode: 'following', ack: null, qrShown: false });
+      // A new admission, not a resume (F8 positioning).
+      resumedMode.current = null;
       setSheet(null);
       announce(t.announceAdmitted);
     },
@@ -147,6 +158,17 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
     onError: () => setSheet('join'),
   });
   const landing = useQrLanding(env, onAdmitted);
+  // Back to this tab's group after a reload (AC34, AC36); waits for a QR answer (L3).
+  const onResumed = useCallback((resumed: ResumedGroup, pointer: GroupPointer) => {
+    if (resumed.role === 'leader') {
+      // The group's page wins for the leader (Decision Q3).
+      const index = resumed.hasPosition ? decodePosition(resumed.position, doc.pages.length) : null;
+      if (index !== null) setJumpRequest((prev) => ({ index, id: (prev?.id ?? 0) + 1 }));
+    }
+    void pointer;
+    // doc.pages.length is fixed for this page.
+  }, []); // eslint-disable-line
+  const resume = useResume(env, landing.state.status === 'none', onResumed);
   // A QR landing opens the sheet on "Joining the group…": zero taps (F5.4).
   const landingStatus = landing.state.status;
   useEffect(() => {
@@ -172,10 +194,11 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
     connection: snapshot.connection,
     group,
     joining: create.pending || join.pending,
-    resuming: false,
-    hasPointer: false,
+    resuming: resume.status === 'pending' && landing.state.status === 'none',
+    hasPointer: env.pointers.read() !== null,
     compare,
     acknowledged,
+    resumeFailed: resume.status === 'failed',
   });
   // "Open the group's book": the local catalogue's ID, found by lookup (R6, U2).
   const localGroupBook =
@@ -183,7 +206,17 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
       ? env.bundledIds.find((id) => id === leaderBook.contentId)
       : undefined;
 
+  const lastExit = useRef<'end' | 'leave' | null>(null);
   const leaveGroup = () => {
+    if (phase === 'disconnected') {
+      // Not connected: forget the group in this tab (token and pointer, R5).
+      resume.forget();
+      join.clear();
+      setSheet(null);
+      setEndedNotice(t.leftGroup);
+      return;
+    }
+    lastExit.current = 'leave';
     void exit.leave.run().then((result) => {
       if (!result.ok) return;
       env.pointers.forget();
@@ -319,10 +352,47 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
     else setSheet((view) => (view === 'waiting' ? 'join' : view));
   }, [waiting]);
 
+  // The group ended: say why, forget it, close everything; the book stays (AC33, F12).
+  const ended = useGroupEnded();
+  const removed = useRemoved();
+  const resumedThisLoad = resume.status === 'done';
+  useEffect(() => {
+    if (ended === null && !removed) return;
+    const reason = removed ? 'removed' : ended!.reason;
+    if (reason === 'closed') return;
+    env.pointers.forget();
+    resumedMode.current = null;
+    const text = {
+      ended_by_leader: t.endedByLeader,
+      leader_timeout: t.endedLeaderTimeout,
+      max_session: t.endedMaxSession,
+      inactivity: t.endedInactivity,
+      removed: t.endedRemoved,
+      replaced: t.endedReplaced,
+      left: lastExit.current === 'end' ? t.endedByYou : t.leftGroup,
+      rejoin_failed: resumedThisLoad ? t.endedRejoinFailed : t.storedGroupGone,
+    }[reason];
+    lastExit.current = null;
+    focusDismiss.current = document.activeElement?.closest('dialog, [role="region"]') != null;
+    setSheet(null);
+    setConfirm(null);
+    join.clear();
+    setEndedNotice(text);
+    announce(text);
+    // One notice per end.
+  }, [ended, removed]); // eslint-disable-line
+
+  // A stored group that is gone: one short notice, never retried (AC37).
+  useEffect(() => {
+    if (resume.status === 'gone' || resume.status === 'none') resumedMode.current = null;
+    if (resume.status === 'gone') setEndedNotice(t.storedGroupGone);
+  }, [resume.status, t.storedGroupGone]);
+
   const openSheet = () => {
     if (phase === 'leader') setSheet('leader');
     else if (phase === 'awaiting') setSheet('waiting');
     else if (phase === 'joining') setSheet('join');
+    else if (phase === 'disconnected') setSheet('member');
     else if (
       group?.status === 'active' ||
       group?.status === 'rejoining' ||
@@ -356,6 +426,7 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
   };
 
   const runEnd = () => {
+    lastExit.current = 'end';
     void exit.end.run().then((result) => {
       if (!result.ok) return;
       env.pointers.forget();
@@ -417,6 +488,18 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
 
   const noticeBars = (
     <>
+      {endedNotice !== null ? (
+        <NoticeBar
+          dismissLabel={t.dismiss}
+          autoFocus={focusDismiss.current}
+          onDismiss={() => {
+            setEndedNotice(null);
+            focusArticle();
+          }}
+        >
+          {endedNotice}
+        </NoticeBar>
+      ) : null}
       {isLeader && notice !== null ? (
         <NoticeBar
           dismissLabel={t.dismiss}
@@ -588,6 +671,29 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
         >
           {t.cancelRequest}
         </Button>
+      ),
+    };
+  } else if (sheet === 'member' && phase === 'disconnected') {
+    content2 = {
+      key: 'disconnected',
+      title: t.memberGroupTitle,
+      body: <p className={styles.para}>{t.announceDisconnected}</p>,
+      footer: (
+        <>
+          <Button pending={exit.leave.pending} pendingLabel={t.leaving} onClick={leaveGroup}>
+            {t.leaveGroup}
+          </Button>
+          <Button
+            variant="primary"
+            onClick={() => {
+              setSheet(null);
+              resume.retry();
+              if (connection.status === 'closed') connection.retry();
+            }}
+          >
+            {t.tryAgain}
+          </Button>
+        </>
       ),
     };
   } else if (sheet === 'member' && group !== null && group.status !== 'ended') {
@@ -773,7 +879,7 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
           )
         }
         belowHeader={strip}
-        notices={large ? null : noticeBars}
+        notices={large && isLeader ? null : noticeBars}
         aside={panel}
         blocked={
           phase === 'mismatch-block' &&
