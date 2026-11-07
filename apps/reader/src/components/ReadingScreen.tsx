@@ -2,7 +2,7 @@ import { type ReactNode, useEffect, useRef, useState } from 'react';
 import type { LoadedContent } from '../content/loader.js';
 import { documentDir } from '../direction/effective.js';
 import { useI18n } from '../i18n/index.js';
-import { usePageNavigation } from '../navigation/use-page-navigation.js';
+import { type MoveSource, usePageNavigation } from '../navigation/use-page-navigation.js';
 import { PageView } from './ContentBlock.js';
 import { LiveAnnouncer } from './LiveAnnouncer.js';
 import { PageNav } from './PageNav.js';
@@ -13,6 +13,10 @@ export interface ReadingScreenProps {
   content: LoadedContent;
   /** Move focus to the article on mount (after a successful retry). */
   focusContent?: boolean;
+  /** The first page shown, e.g. restored from this tab's storage (#24 AC36). */
+  initialIndex?: number;
+  /** Every page change, with who caused it (the reader or the app). */
+  onPageChange?: (index: number, source: MoveSource) => void;
   /** Reserved for item 8: header end slot and overlay layer. */
   headerEndSlot?: ReactNode;
   overlay?: ReactNode;
@@ -26,6 +30,8 @@ export interface ReadingScreenProps {
 export function ReadingScreen({
   content,
   focusContent = false,
+  initialIndex = 0,
+  onPageChange,
   headerEndSlot,
   overlay,
 }: ReadingScreenProps) {
@@ -37,7 +43,10 @@ export function ReadingScreen({
   // Swipes count anywhere between the header and the nav bar, not only
   // over the text: short pages leave most of <main> empty (design.md 5).
   const contentRegionRef = useRef<HTMLElement>(null);
-  const nav = usePageNavigation(total, docDir, contentRegionRef);
+  const nav = usePageNavigation(total, docDir, contentRegionRef, {
+    initialIndex,
+    ...(onPageChange ? { onMove: onPageChange } : {}),
+  });
   const [announcement, setAnnouncement] = useState('');
   const page = doc.pages[nav.index] ?? doc.pages[0]!;
 

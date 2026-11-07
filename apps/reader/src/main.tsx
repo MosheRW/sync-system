@@ -6,6 +6,7 @@ import { entries, loaders } from 'virtual:reader-library';
 import { App } from './app/App.js';
 import { boot } from './app/boot.js';
 import { createContentLoader } from './content/loader.js';
+import { safeSessionStorage } from './group/session-store.js';
 import './styles/tokens.css';
 import './styles/global.css';
 
@@ -38,6 +39,7 @@ if (container) {
         route={route}
         entries={entries}
         loader={loader}
+        storage={safeSessionStorage()}
       />
     </StrictMode>,
   );

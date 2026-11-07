@@ -5,6 +5,7 @@ import { type LocationLike, resolveEntry } from '../../src/app/resolve-entry.js'
 import type { EntryMode, LibrarySetting, PublicConfig } from '../../src/config/schema.js';
 import type { FetchLike } from '../../src/content/fetch-text.js';
 import { type ContentLoader, createContentLoader } from '../../src/content/loader.js';
+import type { StorageLike } from '../../src/group/session-store.js';
 import type { UiLanguage } from '../../src/i18n/index.js';
 import type { LibraryEntry } from '../../src/library/types.js';
 import { sampleText } from './render.js';
@@ -59,6 +60,7 @@ export function renderApp(options: {
   uiLang?: UiLanguage;
   fetchImpl?: FetchLike;
   loader?: ContentLoader;
+  storage?: StorageLike | null;
 }): RenderResult {
   const config = options.config === undefined ? testConfig() : options.config;
   const location = { pathname: '/', search: '', ...options.location };
@@ -77,6 +79,7 @@ export function renderApp(options: {
       route={route}
       entries={ENTRIES}
       loader={loader}
+      storage={options.storage ?? null}
     />,
   );
 }

@@ -1,9 +1,11 @@
+import { useMemo } from 'react';
 import type { PublicConfig } from '../config/schema.js';
 import type { ContentLoader, ContentSource } from '../content/loader.js';
 import { LibraryScreen } from '../components/LibraryScreen.js';
 import { ReadingScreen } from '../components/ReadingScreen.js';
 import { LoadingScreen, StatusScreen } from '../components/StatusScreen.js';
 import { type StatusInput, statusView } from '../components/status-screens.js';
+import { type PageStore, type StorageLike, createPageStore } from '../group/session-store.js';
 import { I18nProvider, type UiLanguage, useI18n } from '../i18n/index.js';
 import type { LibraryEntry } from '../library/types.js';
 import type { Route } from './resolve-entry.js';
@@ -17,6 +19,12 @@ export interface AppProps {
   route: Route | null;
   entries: readonly LibraryEntry[];
   loader: ContentLoader | null;
+  /**
+   * This tab's `sessionStorage`, already guarded (`safeSessionStorage()`),
+   * for the reading position and the group pointer (ADR 0009). `null` or
+   * absent: nothing is kept across reloads.
+   */
+  storage?: StorageLike | null;
 }
 
 function Status({ input, libraryOn }: { input: StatusInput; libraryOn: boolean }) {
@@ -28,10 +36,12 @@ function ReadingRoute({
   loader,
   source,
   config,
+  pages,
 }: {
   loader: ContentLoader;
   source: ContentSource;
   config: PublicConfig;
+  pages: PageStore;
 }) {
   const i18n = useI18n();
   const { state, retry } = useContent(loader, source, config.fetchTimeoutSeconds);
@@ -52,13 +62,31 @@ function ReadingRoute({
           retrying={state.retrying}
         />
       );
-    case 'ready':
+    case 'ready': {
       // Nothing from a refused file ever reaches this point (AC3, AC4).
-      return <ReadingScreen content={state.content} focusContent={state.afterRetry} />;
+      const { metadata, document: doc } = state.content;
+      return (
+        <ReadingScreen
+          content={state.content}
+          focusContent={state.afterRetry}
+          // This tab's page for this exact text (#24 AC36, Decision Q3).
+          initialIndex={pages.read(metadata.contentId, metadata.fingerprint, doc.pages.length) ?? 0}
+          onPageChange={(index) => pages.write(metadata.contentId, metadata.fingerprint, index)}
+        />
+      );
+    }
   }
 }
 
-function Routes({ config, configIssue, route, entries, loader }: Omit<AppProps, 'uiLang'>) {
+function Routes({
+  config,
+  configIssue,
+  route,
+  entries,
+  loader,
+  storage = null,
+}: Omit<AppProps, 'uiLang'>) {
+  const pages = useMemo(() => createPageStore(storage), [storage]);
   if (!config || !route || !loader) {
     return (
       <Status
@@ -69,7 +97,7 @@ function Routes({ config, configIssue, route, entries, loader }: Omit<AppProps, 
   }
   switch (route.kind) {
     case 'reading':
-      return <ReadingRoute loader={loader} source={route.source} config={config} />;
+      return <ReadingRoute loader={loader} source={route.source} config={config} pages={pages} />;
     case 'library':
       return <LibraryScreen entries={entries} />;
     case 'book-not-found':
