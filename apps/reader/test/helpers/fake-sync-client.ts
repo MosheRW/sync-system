@@ -252,7 +252,7 @@ export class FakeSyncClient implements SyncClientLike {
   }
   close(): void {
     this.#record('close', []);
-    (this.impl.close)?.();
+    this.impl.close?.();
   }
   createGroup(...args: Parameters<SyncClientLike['createGroup']>): Promise<CreatedGroup> {
     return this.#call('createGroup', args);
