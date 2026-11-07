@@ -79,6 +79,20 @@ export {
   isSyncClientError,
 } from '@sync-system/client';
 
+// The join input rules, so apps check codes, tickets and names exactly as
+// the client and server do before sending (#24 P2). Same function objects.
+export {
+  MAX_DISPLAY_NAME_INPUT_LENGTH,
+  MAX_DISPLAY_NAME_LENGTH,
+  MAX_JOIN_CODE_INPUT_LENGTH,
+  MAX_QR_TICKET_LENGTH,
+  classifyJoinCode,
+  isDoorCode,
+  isQrTicketShape,
+  normalizeJoinCode,
+  resolveDisplayName,
+} from '@sync-system/client';
+
 // Core types the hooks return, so apps need not import the core (AC2).
 export type {
   ClosedReason,
@@ -94,6 +108,7 @@ export type {
   GroupState,
   HandoffMode,
   JoinByQrOptions,
+  JoinCodeKind,
   JoinCodes,
   JoinedGroup,
   JoinMethod,
@@ -117,6 +132,7 @@ export type {
   PositionUpdatedEvent,
   PreviewState,
   RemovedEvent,
+  ResolvedDisplayName,
   ResumedGroup,
   ResumeOptions,
   Role,

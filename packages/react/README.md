@@ -259,6 +259,13 @@ the same answer).
 
 There is no join by group ID (removed in #10).
 
+The join input rules are re-exported from the core (the same functions the
+client and server run), so a form can explain a mistake before sending:
+`normalizeJoinCode`, `classifyJoinCode`, `isDoorCode`, `isQrTicketShape`,
+`resolveDisplayName` and the caps `MAX_JOIN_CODE_INPUT_LENGTH`,
+`MAX_DISPLAY_NAME_INPUT_LENGTH`, `MAX_DISPLAY_NAME_LENGTH` and
+`MAX_QR_TICKET_LENGTH`. The server stays authoritative.
+
 `useJoinApproval().flow` follows the last join call of any join hook:
 `idle`, `joining`, `waiting` (`{ requestId, expiresAt }`, from the snapshot's
 `awaiting_approval`), `paused` (`JOIN_PAUSED`: door-code joining is paused,
