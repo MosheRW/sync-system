@@ -29,17 +29,20 @@ import {
 } from '../components/group/JoinViews.js';
 import { GroupSheet, type SheetContent, startView } from '../components/group/GroupSheet.js';
 import { CodeStrip, LeaderCodes, LeaderDetails, qrOnly } from '../components/group/LeaderViews.js';
+import { MismatchBlock, VersionWarnDialog } from '../components/group/MismatchViews.js';
+import { bookHref } from '../components/LibraryScreen.js';
 import { QrCodeView } from '../components/group/QrCodeView.js';
 import styles from '../components/group/group.module.css';
 import { PlainText } from '../components/PlainText.js';
 import { ARTICLE_ID, ReadingScreen, type ReadingScreenProps } from '../components/ReadingScreen.js';
 import { compareContent } from '../content/compare.js';
 import type { ContentSource } from '../content/loader.js';
-import { toGroupMetadata } from '../content/metadata.js';
+import { parseLeaderMetadata, toGroupMetadata } from '../content/metadata.js';
 import { documentDir } from '../direction/effective.js';
 import { useI18n } from '../i18n/index.js';
 import type { MoveSource } from '../navigation/use-page-navigation.js';
 import { indicatorAnnouncement, useAnnouncer } from './announce.js';
+import { browserNavigation } from './browser.js';
 import { type GroupEnv, useGroupEnv } from './context.js';
 import { type ShareTarget, buildJoinLink } from './deep-link.js';
 import { errorText, errorView } from './errors.js';
@@ -149,6 +152,10 @@ function GroupReadingOn({ source, ...props }: GroupReadingProps) {
       memberMetadata === null ? null : compareContent(content.metadata, memberMetadata).result,
     [memberMetadata, content.metadata],
   );
+  // The version warning's answer lasts for this leader text in this tab (F6).
+  const [ack, setAck] = useState(() => env.pointers.read()?.ack ?? null);
+  const leaderBook = useMemo(() => parseLeaderMetadata(memberMetadata), [memberMetadata]);
+  const acknowledged = ack !== null && leaderBook !== null && ack === leaderBook.fingerprint;
   const phase = derivePhase({
     enabled: true,
     connection: snapshot.connection,
@@ -157,8 +164,34 @@ function GroupReadingOn({ source, ...props }: GroupReadingProps) {
     resuming: false,
     hasPointer: false,
     compare,
-    acknowledged: false,
+    acknowledged,
   });
+  // "Open the group's book": the local catalogue's ID, found by lookup (R6, U2).
+  const localGroupBook =
+    leaderBook !== null && !env.singleBook
+      ? env.bundledIds.find((id) => id === leaderBook.contentId)
+      : undefined;
+
+  const leaveGroup = () => {
+    void exit.leave.run().then((result) => {
+      if (!result.ok) return;
+      env.pointers.forget();
+      join.clear();
+      setSheet(null);
+    });
+  };
+  const openGroupBook = () => {
+    if (localGroupBook === undefined) return;
+    env.pointers.update({ mode: 'following' });
+    // A clean close keeps the tokens; the book page resumes by token (8.3).
+    connection.disconnect();
+    browserNavigation.assign(bookHref(localGroupBook));
+  };
+  const followAnyway = () => {
+    if (leaderBook === null) return;
+    setAck(leaderBook.fingerprint);
+    env.pointers.update({ ack: leaderBook.fingerprint });
+  };
   const kind = indicatorFor(phase, clientIndicator, 'following');
   const graceEndsAt =
     group?.status === 'active' && group.leader.status !== 'online'
@@ -672,6 +705,19 @@ function GroupReadingOn({ source, ...props }: GroupReadingProps) {
         belowHeader={strip}
         notices={large ? null : noticeBars}
         aside={panel}
+        blocked={
+          phase === 'mismatch-block' &&
+          (compare === 'different-content' || compare === 'unsupported-schema') ? (
+            <MismatchBlock
+              result={compare}
+              leaderMetadata={memberMetadata}
+              canOpen={localGroupBook !== undefined}
+              leavePending={exit.leave.pending}
+              onLeave={leaveGroup}
+              onOpen={openGroupBook}
+            />
+          ) : null
+        }
         overlay={!large && tray !== null ? <div className={styles.overlayStack}>{tray}</div> : null}
       />
       {content2 !== null ? (
@@ -679,6 +725,13 @@ function GroupReadingOn({ source, ...props }: GroupReadingProps) {
           content={content2}
           onClose={() => setSheet(null)}
           returnFocus={() => buttonRef.current}
+        />
+      ) : null}
+      {phase === 'mismatch-warn' ? (
+        <VersionWarnDialog
+          leavePending={exit.leave.pending}
+          onFollow={followAnyway}
+          onLeave={leaveGroup}
         />
       ) : null}
       {landing.state.status === 'ask' ? (
