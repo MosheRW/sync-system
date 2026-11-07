@@ -134,7 +134,7 @@ describe('content check before following (#24 AC21-AC24)', () => {
     expect(screen.getByRole('button', { name: 'Not following, group options' })).toBeDefined();
     fireEvent.click(within(dialog).getByRole('button', { name: 'Follow anyway' }));
     expect(screen.queryByRole('alertdialog')).toBeNull();
-    expect(JSON.parse(storage.getItem(POINTER_KEY)!).ack).toBe('f'.repeat(64));
+    expect((JSON.parse(storage.getItem(POINTER_KEY)!) as { ack: string }).ack).toBe('f'.repeat(64));
     // A reload of the tab: not asked again for the same leader text.
     view.unmount();
     await member(meta, { storage });
