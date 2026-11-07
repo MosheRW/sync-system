@@ -1,6 +1,6 @@
 # 0007. QR code rendering library for the reader
 
-- Status: Proposed
+- Status: Accepted (Gate 2, 2026-11-07: user chose the recommended option)
 - Date: 2026-11-06
 - Issue: #24
 
@@ -64,7 +64,7 @@ entry file found no `eval`, `new Function` or `innerHTML`.
 
 ## Decision
 
-Proposed: **`lean-qr`**, pinned to an exact version (`2.7.4`, no range) as a
+Accepted: **`lean-qr`**, pinned to an exact version (`2.7.4`, no range) as a
 dev dependency of `apps/reader`, imported from one module only
 (`src/components/group/QrCodeView.tsx`) through its main entry, drawn as an
 SVG `<path>` with error correction M, a 4-module quiet zone and fixed

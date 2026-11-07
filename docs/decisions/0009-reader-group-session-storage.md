@@ -1,6 +1,6 @@
 # 0009. Where the reader keeps group tokens, the group pointer and the reading position
 
-- Status: Proposed
+- Status: Accepted (Gate 2, 2026-11-07: user chose the recommended option)
 - Date: 2026-11-06
 - Issue: #24
 
@@ -53,7 +53,7 @@ group's max session time.
 
 ## Decision
 
-Proposed: **option 1**. The client gets `storage: <safe sessionStorage
+Accepted: **option 1**. The client gets `storage: <safe sessionStorage
 wrapper>` (falls back to `'memory'` when `sessionStorage` throws); the
 reader stores `reader:v1:group@<sync host>` (group pointer) and
 `reader:v1:page:<contentId>:<fingerprint>` (position), both versioned JSON,

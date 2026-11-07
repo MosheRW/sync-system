@@ -1,6 +1,6 @@
 # 0008. End-to-end browser test tool
 
-- Status: Proposed
+- Status: Accepted (Gate 2, 2026-11-07: user chose the recommended option)
 - Date: 2026-11-06
 - Issue: #24
 
@@ -41,7 +41,7 @@ test, so CSP violations are caught (#19 C7 asks for zero violations).
 
 ## Decision
 
-Proposed: **Playwright Test, Chromium only**, pinned to an exact version as
+Accepted: **Playwright Test, Chromium only**, pinned to an exact version as
 a dev dependency of `apps/reader`, with tests in `apps/reader/e2e/` and a
 `test:e2e` script that is **not** part of `pnpm test`. It runs in a separate
 CI job (`e2e`) after the build. Runner-up: Vitest browser mode.
