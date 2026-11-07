@@ -4,6 +4,7 @@ import {
   useConnection,
   useCreateGroup,
   useGroupExit,
+  useJoinRequests,
   useLeaderCodes,
   useQrTicket,
   useSyncEvent,
@@ -12,6 +13,7 @@ import {
 } from '@sync-system/react';
 import { type JoinedGroup } from '@sync-system/react';
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ApprovalTray } from '../components/group/ApprovalTray.js';
 import { ConfirmDialog } from '../components/group/ConfirmDialog.js';
 import { Button, NoticeBar } from '../components/group/controls.js';
 import { CREATE_FORM_ID, CreateGroupForm } from '../components/group/CreateGroupForm.js';
@@ -107,6 +109,7 @@ function GroupReadingOn({ source, ...props }: GroupReadingProps) {
   const create = useCreateGroup();
   const leader = useLeaderCodes();
   const exit = useGroupExit();
+  const requests = useJoinRequests();
   const large = useMediaQuery(LARGE_SCREEN);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const [sheet, setSheet] = useState<SheetView | null>(null);
@@ -326,6 +329,12 @@ function GroupReadingOn({ source, ...props }: GroupReadingProps) {
       top={top}
     />
   );
+
+  // Join requests: overlay on phones, top of the panel on large screens (6.15).
+  const tray =
+    isLeader && requests.requests.length > 0 ? (
+      <ApprovalTray requests={requests} announce={announce} />
+    ) : null;
 
   const noticeBars = (
     <>
@@ -633,7 +642,10 @@ function GroupReadingOn({ source, ...props }: GroupReadingProps) {
       <aside className={styles.panel} aria-label={t.yourGroupTitle}>
         <h2 className={styles.panelHeading}>{t.yourGroupTitle}</h2>
         {leaderDetails(
-          noticeBars,
+          <>
+            {tray}
+            {noticeBars}
+          </>,
           hasQr ? (
             <>
               {panelQr ? qrView : null}
@@ -660,6 +672,7 @@ function GroupReadingOn({ source, ...props }: GroupReadingProps) {
         belowHeader={strip}
         notices={large ? null : noticeBars}
         aside={panel}
+        overlay={!large && tray !== null ? <div className={styles.overlayStack}>{tray}</div> : null}
       />
       {content2 !== null ? (
         <GroupSheet
