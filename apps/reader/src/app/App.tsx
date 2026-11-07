@@ -1,3 +1,4 @@
+import type { SyncClientLike } from '@sync-system/react';
 import { useMemo } from 'react';
 import type { PublicConfig } from '../config/schema.js';
 import type { ContentLoader, ContentSource } from '../content/loader.js';
@@ -5,6 +6,7 @@ import { LibraryScreen } from '../components/LibraryScreen.js';
 import { ReadingScreen } from '../components/ReadingScreen.js';
 import { LoadingScreen, StatusScreen } from '../components/StatusScreen.js';
 import { type StatusInput, statusView } from '../components/status-screens.js';
+import { SyncRoot } from '../group/SyncRoot.js';
 import type { QrLanding } from '../group/deep-link.js';
 import { type PageStore, type StorageLike, createPageStore } from '../group/session-store.js';
 import { I18nProvider, type UiLanguage, useI18n } from '../i18n/index.js';
@@ -31,6 +33,8 @@ export interface AppProps {
    * (#24 R3). Memory only; ignored when sync is off.
    */
   qrLanding?: QrLanding | null;
+  /** Tests only: a scripted sync client instead of the provider-owned one. */
+  syncClient?: SyncClientLike;
 }
 
 function Status({ input, libraryOn }: { input: StatusInput; libraryOn: boolean }) {
@@ -91,8 +95,11 @@ function Routes({
   entries,
   loader,
   storage = null,
+  qrLanding = null,
+  syncClient,
 }: Omit<AppProps, 'uiLang'>) {
   const pages = useMemo(() => createPageStore(storage), [storage]);
+  const bundledIds = useMemo(() => entries.map((entry) => entry.contentId), [entries]);
   if (!config || !route || !loader) {
     return (
       <Status
@@ -101,6 +108,40 @@ function Routes({
       />
     );
   }
+  const routes = (
+    <RouteView config={config} route={route} entries={entries} loader={loader} pages={pages} />
+  );
+  // Sync off: item 7's solo reader, no group control and no connection (AC2).
+  if (config.sync === null) return routes;
+  return (
+    <SyncRoot
+      sync={config.sync}
+      storage={storage}
+      landing={qrLanding}
+      libraryOn={config.library === 'on' && config.entry !== 'single-book'}
+      singleBook={config.entry === 'single-book'}
+      bundledIds={bundledIds}
+      srcOrigins={config.srcOrigins}
+      {...(syncClient !== undefined ? { client: syncClient } : {})}
+    >
+      {routes}
+    </SyncRoot>
+  );
+}
+
+function RouteView({
+  config,
+  route,
+  entries,
+  loader,
+  pages,
+}: {
+  config: PublicConfig;
+  route: Route;
+  entries: readonly LibraryEntry[];
+  loader: ContentLoader;
+  pages: PageStore;
+}) {
   switch (route.kind) {
     case 'reading':
       return <ReadingRoute loader={loader} source={route.source} config={config} pages={pages} />;

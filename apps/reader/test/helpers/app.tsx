@@ -1,10 +1,17 @@
 import { webcrypto } from 'node:crypto';
+import type { SyncClientLike } from '@sync-system/react';
 import { type RenderResult, render } from '@testing-library/react';
 import { App } from '../../src/app/App.js';
 import { type LocationLike, resolveEntry } from '../../src/app/resolve-entry.js';
-import type { EntryMode, LibrarySetting, PublicConfig } from '../../src/config/schema.js';
+import type {
+  EntryMode,
+  LibrarySetting,
+  PublicConfig,
+  SyncConfig,
+} from '../../src/config/schema.js';
 import type { FetchLike } from '../../src/content/fetch-text.js';
 import { type ContentLoader, createContentLoader } from '../../src/content/loader.js';
+import type { QrLanding } from '../../src/group/deep-link.js';
 import type { StorageLike } from '../../src/group/session-store.js';
 import type { UiLanguage } from '../../src/i18n/index.js';
 import type { LibraryEntry } from '../../src/library/types.js';
@@ -26,6 +33,17 @@ export const BUNDLED: Record<string, () => Promise<string>> = {
   'samples/pride-and-prejudice-en': () => Promise.resolve(sampleText('pride-and-prejudice-en')),
   'samples/untitled': () => Promise.resolve(sampleText('untitled')),
 };
+
+/** Sync on, against a loopback test server (#24). */
+export const SYNC: SyncConfig = Object.freeze({
+  url: 'ws://127.0.0.1:8080/ws',
+  apiKey: 'dev-only-insecure-api-key-change-me-please',
+  appVersion: '0.1.0',
+  lateJoinSeconds: 10,
+});
+
+/** The pointer key for SYNC's host. */
+export const POINTER_KEY = 'reader:v1:group@127.0.0.1:8080';
 
 export function testConfig(
   entry: EntryMode = 'library',
@@ -61,6 +79,8 @@ export function renderApp(options: {
   fetchImpl?: FetchLike;
   loader?: ContentLoader;
   storage?: StorageLike | null;
+  qrLanding?: QrLanding | null;
+  syncClient?: SyncClientLike;
 }): RenderResult {
   const config = options.config === undefined ? testConfig() : options.config;
   const location = { pathname: '/', search: '', ...options.location };
@@ -80,6 +100,8 @@ export function renderApp(options: {
       entries={ENTRIES}
       loader={loader}
       storage={options.storage ?? null}
+      qrLanding={options.qrLanding ?? null}
+      {...(options.syncClient ? { syncClient: options.syncClient } : {})}
     />,
   );
 }

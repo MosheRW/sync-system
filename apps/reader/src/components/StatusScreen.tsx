@@ -16,10 +16,21 @@ export interface StatusView {
   details?: ReactNode;
 }
 
+/** An extra button (group screens, #24 design 6.12). */
+export interface StatusAction {
+  label: string;
+  onClick: () => void;
+  primary?: boolean;
+}
+
 export interface StatusScreenProps {
   view: StatusView;
   onRetry?: () => void;
   retrying?: boolean;
+  /** Buttons after the retry and library actions. */
+  actions?: readonly StatusAction[];
+  /** Render as a section inside another screen's `<main>` (the mismatch block). */
+  embedded?: boolean;
 }
 
 function Icon({ tone }: { tone: StatusView['tone'] }) {
@@ -43,27 +54,40 @@ function Icon({ tone }: { tone: StatusView['tone'] }) {
  * heading on arrival so screen readers hear the reason; the page title is
  * the heading.
  */
-export function StatusScreen({ view, onRetry, retrying = false }: StatusScreenProps) {
+export function StatusScreen({
+  view,
+  onRetry,
+  retrying = false,
+  actions = [],
+  embedded = false,
+}: StatusScreenProps) {
   const { t } = useI18n();
   const headingRef = useRef<HTMLHeadingElement>(null);
 
   useEffect(() => {
-    document.title = view.heading;
+    // Inside the reading screen the page title stays the book's (design 9).
+    if (!embedded) document.title = view.heading;
     headingRef.current?.focus();
-  }, [view.heading]);
+  }, [view.heading, embedded]);
 
   const libraryLabel = view.libraryLink === 'primary' ? t.goToLibrary : t.backToLibrary;
   const showRetry = view.retry && onRetry !== undefined;
 
+  const Root = embedded ? 'section' : 'main';
   return (
-    <main className={styles.screen}>
+    <Root className={styles.screen} {...(embedded ? { 'aria-labelledby': 'status-heading' } : {})}>
       <div className={styles.panel}>
         <Icon tone={view.tone} />
-        <h1 ref={headingRef} tabIndex={-1} className={styles.heading}>
+        <h1
+          ref={headingRef}
+          tabIndex={-1}
+          className={styles.heading}
+          {...(embedded ? { id: 'status-heading' } : {})}
+        >
           {view.heading}
         </h1>
         {view.body ? <p className={styles.body}>{view.body}</p> : null}
-        {showRetry || view.libraryLink ? (
+        {showRetry || view.libraryLink || actions.length > 0 ? (
           <div className={styles.actions}>
             {showRetry ? (
               <button
@@ -88,6 +112,16 @@ export function StatusScreen({ view, onRetry, retrying = false }: StatusScreenPr
                 {libraryLabel}
               </a>
             ) : null}
+            {actions.map((action) => (
+              <button
+                key={action.label}
+                type="button"
+                className={action.primary === true ? styles.primary : styles.secondary}
+                onClick={action.onClick}
+              >
+                {action.label}
+              </button>
+            ))}
           </div>
         ) : null}
         {view.details ? (
@@ -97,7 +131,7 @@ export function StatusScreen({ view, onRetry, retrying = false }: StatusScreenPr
           </details>
         ) : null}
       </div>
-    </main>
+    </Root>
   );
 }
 
