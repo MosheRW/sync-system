@@ -5,6 +5,7 @@ import {
   useCreateGroup,
   useGroupExit,
   useLeaderCodes,
+  useQrTicket,
   useSyncEvent,
   useSyncIndicator,
   useSyncSnapshot,
@@ -15,28 +16,46 @@ import { Button, NoticeBar } from '../components/group/controls.js';
 import { CREATE_FORM_ID, CreateGroupForm } from '../components/group/CreateGroupForm.js';
 import { GroupButton } from '../components/group/GroupButton.js';
 import { GroupSheet, type SheetContent, startView } from '../components/group/GroupSheet.js';
-import { CodeStrip, LeaderDetails } from '../components/group/LeaderViews.js';
+import { CodeStrip, LeaderCodes, LeaderDetails, qrOnly } from '../components/group/LeaderViews.js';
+import { QrCodeView } from '../components/group/QrCodeView.js';
 import styles from '../components/group/group.module.css';
 import { ARTICLE_ID, ReadingScreen, type ReadingScreenProps } from '../components/ReadingScreen.js';
+import type { ContentSource } from '../content/loader.js';
 import { toGroupMetadata } from '../content/metadata.js';
 import { documentDir } from '../direction/effective.js';
 import { useI18n } from '../i18n/index.js';
 import type { MoveSource } from '../navigation/use-page-navigation.js';
 import { indicatorAnnouncement, useAnnouncer } from './announce.js';
-import { useGroupEnv } from './context.js';
+import { type GroupEnv, useGroupEnv } from './context.js';
+import { type ShareTarget, buildJoinLink } from './deep-link.js';
 import { errorText, errorView } from './errors.js';
 import { ownNameText } from './names.js';
 import { type IndicatorKind, derivePhase, indicatorFor } from './phase.js';
 import { encodePosition } from './position.js';
+import { useDocumentVisible } from './use-document-visible.js';
 import { LARGE_SCREEN, useMediaQuery } from './use-media-query.js';
 
 export type GroupReadingProps = Omit<
   ReadingScreenProps,
   'headerEndSlot' | 'overlay' | 'belowHeader' | 'notices' | 'aside' | 'blocked' | 'announce'
->;
+> & {
+  /** Where the book came from: the QR link opens the same one (Decision Q4). */
+  source?: ContentSource;
+};
 
 /** Which sheet view is open (design 6). */
-export type SheetView = 'start' | 'create' | 'ready' | 'leader';
+export type SheetView = 'start' | 'create' | 'ready' | 'leader' | 'qr';
+
+/** The book a join link opens, from validated values only (R4). */
+function shareTargetOf(
+  env: GroupEnv,
+  source: ContentSource | undefined,
+  contentId: string,
+): ShareTarget {
+  if (env.singleBook) return { kind: 'single-book' };
+  if (source?.kind === 'url') return { kind: 'src', url: source.url, srcOrigins: env.srcOrigins };
+  return { kind: 'book', contentId };
+}
 
 type Confirm = 'rotate' | 'end' | null;
 
@@ -53,15 +72,19 @@ export function focusArticle(): void {
  */
 export function GroupReading(props: GroupReadingProps) {
   const env = useGroupEnv();
+  // ReadingScreen ignores `source`.
   if (env === null || env.groupsDisabled) return <ReadingScreen {...props} />;
   return <GroupReadingOn {...props} />;
 }
 
-function GroupReadingOn(props: GroupReadingProps) {
+function GroupReadingOn({ source, ...props }: GroupReadingProps) {
   const env = useGroupEnv()!;
   const i18n = useI18n();
   const { t } = i18n;
   const { content, onPageChange } = props;
+  const visible = useDocumentVisible();
+  const [panelQr, setPanelQr] = useState(() => env.pointers.read()?.qrShown ?? false);
+  const [hasQr, setHasQr] = useState(true);
   const doc = content.document;
   const snapshot = useSyncSnapshot();
   const clientIndicator = useSyncIndicator();
@@ -178,12 +201,15 @@ function GroupReadingOn(props: GroupReadingProps) {
           setFormError(result.error);
           return;
         }
+        const withQr = result.value.joinMethods.includes('D');
         env.pointers.write({
           groupId: result.value.groupId,
           mode: 'following',
           ack: null,
-          qrShown: result.value.joinMethods.includes('D'),
+          qrShown: withQr,
         });
+        setHasQr(withQr);
+        setPanelQr(withQr);
         setSheet('ready');
       });
   };
@@ -203,15 +229,37 @@ function GroupReadingOn(props: GroupReadingProps) {
     });
   };
 
+  // The QR is issued only while it is on screen and the tab is visible (AC12).
+  const qrOnScreen =
+    isLeader &&
+    hasQr &&
+    (sheet === 'ready' || sheet === 'qr' || (large && panelQr && sheet === null));
+  const qr = useQrTicket({ enabled: qrOnScreen && visible });
+  const target = shareTargetOf(env, source, doc.contentId);
+  const linkFor = (ticket: string) => buildJoinLink(window.location.origin, target, ticket);
+  const hasCodes = leader.codes !== null && !qrOnly(leader.codes);
+  const offline = connection.status !== 'connected';
+  const qrView = (
+    <div className={styles.stack}>
+      <QrCodeView state={qr.state} linkFor={linkFor} offline={offline} hasCodes={hasCodes} />
+      <p className={styles.muted}>{t.qrTitle}</p>
+    </div>
+  );
+  const setPanelQrShown = (shown: boolean) => {
+    setPanelQr(shown);
+    env.pointers.update({ qrShown: shown });
+  };
+
   const ownName =
     group?.status === 'active'
       ? ownNameText(group.displayName, group.generated, t, i18n.format)
       : null;
-  const leaderDetails = (top?: ReactNode) => (
+  const leaderDetails = (top?: ReactNode, qrPart?: ReactNode) => (
     <LeaderDetails
       codes={leader.codes}
       pausedUntil={paused}
       name={ownName}
+      qr={qrPart}
       rotatePending={leader.rotate.pending}
       endPending={exit.end.pending}
       onRotate={() => setConfirm('rotate')}
@@ -304,7 +352,7 @@ function GroupReadingOn(props: GroupReadingProps) {
       body: (
         <>
           <p className={styles.para}>{t.groupReadyBody}</p>
-          {leaderDetails()}
+          {leaderDetails(undefined, hasQr ? qrView : undefined)}
         </>
       ),
       footer: (
@@ -314,18 +362,64 @@ function GroupReadingOn(props: GroupReadingProps) {
       ),
     };
   } else if (sheet === 'leader' && isLeader) {
-    content2 = { key: 'leader', title: t.yourGroupTitle, body: leaderDetails() };
+    content2 = {
+      key: 'leader',
+      title: t.yourGroupTitle,
+      body: leaderDetails(
+        undefined,
+        hasQr ? <Button onClick={() => setSheet('qr')}>{t.showQr}</Button> : undefined,
+      ),
+    };
+  } else if (sheet === 'qr' && isLeader) {
+    content2 = {
+      key: 'qr',
+      title: t.qrTitle,
+      onBack: () => setSheet(null),
+      body: (
+        <div className={styles.stack}>
+          <QrCodeView state={qr.state} linkFor={linkFor} offline={offline} hasCodes={hasCodes} />
+          <p className={styles.para}>{t.qrHint}</p>
+          {leader.codes !== null ? <LeaderCodes codes={leader.codes} large /> : null}
+        </div>
+      ),
+    };
   }
 
   const strip =
     isLeader && !large && leader.codes !== null ? (
-      <CodeStrip codes={leader.codes} pausedUntil={paused} />
+      <CodeStrip
+        codes={leader.codes}
+        pausedUntil={paused}
+        {...(hasQr
+          ? {
+              qrButton: (
+                <Button
+                  aria-label={t.showQr}
+                  variant={qrOnly(leader.codes) ? 'primary' : 'secondary'}
+                  onClick={() => setSheet('qr')}
+                >
+                  {qrOnly(leader.codes) ? t.showQr : t.qrButton}
+                </Button>
+              ),
+            }
+          : {})}
+      />
     ) : null;
   const panel =
     isLeader && large ? (
       <aside className={styles.panel} aria-label={t.yourGroupTitle}>
         <h2 className={styles.panelHeading}>{t.yourGroupTitle}</h2>
-        {leaderDetails(noticeBars)}
+        {leaderDetails(
+          noticeBars,
+          hasQr ? (
+            <>
+              {panelQr ? qrView : null}
+              <Button onClick={() => setPanelQrShown(!panelQr)}>
+                {panelQr ? t.hideQr : t.showQr}
+              </Button>
+            </>
+          ) : undefined,
+        )}
       </aside>
     ) : null;
 

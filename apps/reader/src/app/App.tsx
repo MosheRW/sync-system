@@ -77,6 +77,7 @@ function ReadingRoute({
       const { metadata, document: doc } = state.content;
       return (
         <GroupReading
+          source={source}
           content={state.content}
           focusContent={state.afterRetry}
           // This tab's page for this exact text (#24 AC36, Decision Q3).

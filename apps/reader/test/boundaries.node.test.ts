@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { readFileSync, readdirSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { join, relative, sep } from 'node:path';
 import { ESLint } from 'eslint';
 import { describe, expect, it } from 'vitest';
 
@@ -42,6 +42,27 @@ describe('package boundaries (AC19)', () => {
         }
       }
     }
+  });
+});
+
+describe('dependencies stay confined (#24 security R10)', () => {
+  const files = sourceFiles(srcDir);
+  const importers = (pattern: RegExp) =>
+    files
+      .filter((file) =>
+        [...readFileSync(file, 'utf8').matchAll(IMPORT)].some((m) =>
+          pattern.test(m[1] ?? m[2] ?? ''),
+        ),
+      )
+      .map((file) => relative(srcDir, file).split(sep).join('/'));
+
+  it('imports lean-qr only in QrCodeView, from its main entry', () => {
+    expect(importers(/^lean-qr/)).toEqual(['components/group/QrCodeView.tsx']);
+    expect(importers(/^lean-qr\//)).toEqual([]);
+  });
+
+  it('never imports Playwright or the e2e suite', () => {
+    expect(importers(/playwright|(^|\/)e2e(\/|$)/)).toEqual([]);
   });
 });
 
