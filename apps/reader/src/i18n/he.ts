@@ -56,6 +56,7 @@ export const he: Messages = {
   noBookDetails: 'לא צוין ספר בקישור.',
   notConfiguredHeading: 'האפליקציה לא הוגדרה',
   notConfiguredBody: 'יש לבקש מהאחראי עליה לבדוק את ההגדרות.',
+  syncConfigInvalidDetails: 'הגדרות הסנכרון לא תקינות.',
 
   libraryHeading: 'ספרייה',
   readingFallbackName: 'קריאה',

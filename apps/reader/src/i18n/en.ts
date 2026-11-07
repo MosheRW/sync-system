@@ -55,6 +55,7 @@ export const en = {
   noBookDetails: 'No book was specified in the link.',
   notConfiguredHeading: "This app isn't set up",
   notConfiguredBody: 'Ask the person who runs it to check its settings.',
+  syncConfigInvalidDetails: 'Sync settings are not valid.',
 
   libraryHeading: 'Library',
   readingFallbackName: 'Reading',

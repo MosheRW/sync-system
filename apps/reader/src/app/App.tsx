@@ -11,6 +11,8 @@ import { useContent } from './use-content.js';
 
 export interface AppProps {
   config: PublicConfig | null;
+  /** Why `config` is `null` (#24 AC1): `sync` shows the sync settings details. */
+  configIssue?: 'sync' | 'config' | null;
   uiLang: UiLanguage;
   route: Route | null;
   entries: readonly LibraryEntry[];
@@ -56,9 +58,14 @@ function ReadingRoute({
   }
 }
 
-function Routes({ config, route, entries, loader }: Omit<AppProps, 'uiLang'>) {
+function Routes({ config, configIssue, route, entries, loader }: Omit<AppProps, 'uiLang'>) {
   if (!config || !route || !loader) {
-    return <Status input={{ kind: 'not-configured' }} libraryOn={false} />;
+    return (
+      <Status
+        input={{ kind: 'not-configured', syncInvalid: configIssue === 'sync' }}
+        libraryOn={false}
+      />
+    );
   }
   switch (route.kind) {
     case 'reading':

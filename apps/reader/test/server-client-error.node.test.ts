@@ -81,7 +81,7 @@ describe('request timeouts are not answered with 400 (QA N7, security C1)', () =
 });
 
 describe('createClientErrorHandler never throws', () => {
-  const handle = createClientErrorHandler(securityHeaders([]));
+  const handle = createClientErrorHandler(securityHeaders({ srcOrigins: [] }));
   const parseError = Object.assign(new Error('Parse Error'), { code: 'HPE_INVALID_METHOD' });
 
   it('destroys a socket that is no longer writable', () => {

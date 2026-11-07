@@ -74,7 +74,7 @@ describe('README drift guard (AC22)', () => {
   });
 
   it('documents the CSP the server sends', () => {
-    const csp = contentSecurityPolicy([]).replace(" connect-src 'self';", '');
+    const csp = contentSecurityPolicy({ srcOrigins: [] }).replace(" connect-src 'self';", '');
     for (const directive of csp.split('; ')) expect(flat, directive).toContain(directive);
     expect(flat).toContain("connect-src 'self' <READER_SRC_ORIGINS>");
   });

@@ -29,6 +29,7 @@ describe('parseReaderConfig defaults (ADR 0005)', () => {
       srcOrigins: [],
       fetchTimeoutSeconds: 15,
       srcMaxBytes: 5_242_880,
+      sync: null,
       port: 8080,
       host: '0.0.0.0',
       warnings: [],
@@ -221,13 +222,14 @@ describe('publicConfig and parsePublicConfig (C5)', () => {
       'library',
       'srcMaxBytes',
       'srcOrigins',
+      'sync',
       'uiLang',
     ]);
   });
 
   it('round-trips through the client parser', () => {
     const value = JSON.parse(JSON.stringify(publicConfig(config))) as unknown;
-    expect(parsePublicConfig(value)).toEqual(publicConfig(config));
+    expect(parsePublicConfig(value)).toEqual({ ok: true, config: publicConfig(config) });
   });
 
   it.each([
@@ -243,6 +245,6 @@ describe('publicConfig and parsePublicConfig (C5)', () => {
     ],
     ['a malformed book', { ...publicConfig(config), entry: 'default-book', book: '../x' }],
   ])('rejects %s', (_name, value) => {
-    expect(parsePublicConfig(value)).toBeNull();
+    expect(parsePublicConfig(value)).toEqual({ ok: false, reason: 'config' });
   });
 });

@@ -28,6 +28,7 @@ describe('config injection (ADR 0005 E1, security C5)', () => {
       srcOrigins: ['https://a.example'],
       fetchTimeoutSeconds: 15,
       srcMaxBytes: 5_242_880,
+      sync: null,
     });
   });
 

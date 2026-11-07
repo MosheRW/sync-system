@@ -39,6 +39,7 @@ export function testConfig(
     srcOrigins: ['https://content.example.org'],
     fetchTimeoutSeconds: 15,
     srcMaxBytes: 5_242_880,
+    sync: null,
     ...overrides,
   };
 }

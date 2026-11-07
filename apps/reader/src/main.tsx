@@ -9,7 +9,7 @@ import { createContentLoader } from './content/loader.js';
 import './styles/tokens.css';
 import './styles/global.css';
 
-const { config, uiLang, route } = boot(
+const { config, configIssue, uiLang, route } = boot(
   document,
   navigator.languages,
   window.location,
@@ -31,7 +31,14 @@ const container = document.getElementById('root');
 if (container) {
   createRoot(container).render(
     <StrictMode>
-      <App config={config} uiLang={uiLang} route={route} entries={entries} loader={loader} />
+      <App
+        config={config}
+        configIssue={configIssue}
+        uiLang={uiLang}
+        route={route}
+        entries={entries}
+        loader={loader}
+      />
     </StrictMode>,
   );
 }

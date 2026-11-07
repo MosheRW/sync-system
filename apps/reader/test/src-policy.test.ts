@@ -87,7 +87,6 @@ describe('checkAllowedOrigin (config entries, security C2)', () => {
     'https://a.example:8443',
     'http://localhost:3000',
     'http://127.0.0.1:8000',
-    'http://[::1]:5000',
   ])('accepts %s', (entry) => {
     expect(checkAllowedOrigin(entry)).toEqual({ ok: true, origin: entry });
   });
@@ -108,6 +107,11 @@ describe('checkAllowedOrigin (config entries, security C2)', () => {
     ['javascript:alert(1)', 'scheme'],
     ['http://a.example', 'http-not-loopback'],
     ['https://u:p@a.example', 'credentials'],
+    // #24 L1, R1: hosts a CSP source can't hold; IPv6 literals aren't CSP host sources.
+    ['https://a;b', 'host'],
+    ['https://a,b', 'host'],
+    ["https://a'b", 'host'],
+    ['http://[::1]:5000', 'host'],
   ])('rejects %j (%s)', (entry, issue) => {
     expect(checkAllowedOrigin(entry)).toEqual({ ok: false, issue });
   });
