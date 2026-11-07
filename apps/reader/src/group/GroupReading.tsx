@@ -6,6 +6,7 @@ import {
   useGroupExit,
   useJoinRequests,
   useLeaderCodes,
+  usePosition,
   useQrTicket,
   useSyncEvent,
   useSyncIndicator,
@@ -30,6 +31,7 @@ import {
 import { GroupSheet, type SheetContent, startView } from '../components/group/GroupSheet.js';
 import { CodeStrip, LeaderCodes, LeaderDetails, qrOnly } from '../components/group/LeaderViews.js';
 import { MismatchBlock, VersionWarnDialog } from '../components/group/MismatchViews.js';
+import { JumpPrompt, LateJoinPrompt } from '../components/group/Prompts.js';
 import { bookHref } from '../components/LibraryScreen.js';
 import { QrCodeView } from '../components/group/QrCodeView.js';
 import styles from '../components/group/group.module.css';
@@ -42,6 +44,7 @@ import { documentDir } from '../direction/effective.js';
 import { useI18n } from '../i18n/index.js';
 import type { MoveSource } from '../navigation/use-page-navigation.js';
 import { indicatorAnnouncement, useAnnouncer } from './announce.js';
+import { formatLong } from './countdown.js';
 import { browserNavigation } from './browser.js';
 import { type GroupEnv, useGroupEnv } from './context.js';
 import { type ShareTarget, buildJoinLink } from './deep-link.js';
@@ -49,6 +52,7 @@ import { errorText, errorView } from './errors.js';
 import { ownNameText } from './names.js';
 import { type IndicatorKind, derivePhase, indicatorFor } from './phase.js';
 import { encodePosition } from './position.js';
+import { useFollow } from './use-follow.js';
 import { useJoin } from './use-join.js';
 import { useQrLanding } from './use-qr-landing.js';
 import { useDocumentVisible } from './use-document-visible.js';
@@ -60,6 +64,8 @@ export type GroupReadingProps = Omit<
 > & {
   /** Where the book came from: the QR link opens the same one (Decision Q4). */
   source?: ContentSource;
+  /** The first page came from this tab's storage (a joiner is then not "fresh", U1). */
+  restoredPage?: boolean;
 };
 
 /** Which sheet view is open (design 6). */
@@ -97,7 +103,7 @@ export function GroupReading(props: GroupReadingProps) {
   return <GroupReadingOn {...props} />;
 }
 
-function GroupReadingOn({ source, ...props }: GroupReadingProps) {
+function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReadingProps) {
   const env = useGroupEnv()!;
   const i18n = useI18n();
   const { t } = i18n;
@@ -121,6 +127,11 @@ function GroupReadingOn({ source, ...props }: GroupReadingProps) {
   const [notice, setNotice] = useState<string | null>(null);
   const [announcement, announce] = useAnnouncer();
   const ownIndex = useRef(props.initialIndex ?? 0);
+  const position = usePosition();
+  const [restored] = useState(restoredPage);
+  const turnedSinceLoad = useRef(false);
+  const [jumpRequest, setJumpRequest] = useState<{ index: number; id: number } | null>(null);
+  const resumedMode = useRef<'following' | 'browsing' | null>(null);
 
   const onAdmitted = useCallback(
     (joined: JoinedGroup) => {
@@ -192,7 +203,18 @@ function GroupReadingOn({ source, ...props }: GroupReadingProps) {
     setAck(leaderBook.fingerprint);
     env.pointers.update({ ack: leaderBook.fingerprint });
   };
-  const kind = indicatorFor(phase, clientIndicator, 'following');
+  const followed = useFollow({
+    active: phase === 'member' && isMember,
+    membership: isMember ? group.groupId : null,
+    pageCount: doc.pages.length,
+    ownIndex: () => ownIndex.current,
+    fresh: () => !turnedSinceLoad.current && !restored,
+    lateJoinMs: env.sync.lateJoinSeconds * 1000,
+    resumedMode: () => resumedMode.current,
+    onJump: (index) => setJumpRequest((prev) => ({ index, id: (prev?.id ?? 0) + 1 })),
+    onMode: (mode) => env.pointers.update({ mode }),
+  });
+  const kind = indicatorFor(phase, clientIndicator, followed.state.mode);
   const graceEndsAt =
     group?.status === 'active' && group.leader.status !== 'online'
       ? (group.leader.graceEndsAt ?? null)
@@ -258,9 +280,33 @@ function GroupReadingOn({ source, ...props }: GroupReadingProps) {
     (index: number, source: MoveSource) => {
       ownIndex.current = index;
       onPageChange?.(index, source);
+      if (source === 'user') {
+        turnedSinceLoad.current = true;
+        followed.userTurned(index);
+      }
+      // The leader's page is the group's (AC25); the client throttles (trailing send).
+      if (position.canUpdate) position.updatePosition(encodePosition(index));
     },
-    [onPageChange],
+    [onPageChange, followed, position],
   );
+
+  // Prompts are announced once when they appear or change (design 6.13, 6.14).
+  const late = followed.state.late;
+  const jump = followed.state.jump;
+  const lateShown = late !== null;
+  useEffect(() => {
+    if (late === null) return;
+    announce(
+      i18n.format(t.announceLateJoin, {
+        n: late.index + 1,
+        time: formatLong(env.sync.lateJoinSeconds * 1000, i18n),
+      }),
+    );
+    // Only on appearance; the page in it may change later.
+  }, [lateShown]);
+  useEffect(() => {
+    if (jump !== null) announce(i18n.format(t.announceJump, { n: jump.index + 1 }));
+  }, [jump, announce, i18n, t.announceJump]);
 
   const ensureConnected = () => {
     if (connection.status === 'idle' || connection.status === 'closed') connection.connect();
@@ -564,7 +610,30 @@ function GroupReadingOn({ source, ...props }: GroupReadingProps) {
               <PlainText text={ownName} dir="auto" maxLength={32} />
             </p>
           ) : null}
+          {followed.state.mode === 'browsing' &&
+          followed.groupIndex !== null &&
+          followed.groupIndex !== ownIndex.current ? (
+            <>
+              <p className={styles.para}>
+                {i18n.format(t.groupOnPage, { n: followed.groupIndex + 1 })}
+              </p>
+              <Button
+                variant="primary"
+                onClick={() => {
+                  setSheet(null);
+                  followed.goToGroup();
+                }}
+              >
+                {i18n.format(t.goToPage, { n: followed.groupIndex + 1 })}
+              </Button>
+            </>
+          ) : null}
         </div>
+      ),
+      footer: (
+        <Button pending={exit.leave.pending} pendingLabel={t.leaving} onClick={leaveGroup}>
+          {t.leaveGroup}
+        </Button>
       ),
     };
   } else if (sheet === 'qr-join' && landing.state.status === 'joining') {
@@ -697,6 +766,7 @@ function GroupReadingOn({ source, ...props }: GroupReadingProps) {
         {...props}
         onPageChange={pageChanged}
         announce={announcement}
+        jumpRequest={jumpRequest}
         headerEndSlot={
           kind === null ? null : (
             <GroupButton ref={buttonRef} kind={kind} graceEndsAt={graceEndsAt} onOpen={openSheet} />
@@ -718,7 +788,29 @@ function GroupReadingOn({ source, ...props }: GroupReadingProps) {
             />
           ) : null
         }
-        overlay={!large && tray !== null ? <div className={styles.overlayStack}>{tray}</div> : null}
+        overlay={
+          late !== null || jump !== null || (!large && tray !== null) ? (
+            <div className={styles.overlayStack}>
+              {late !== null ? (
+                <LateJoinPrompt
+                  index={late.index}
+                  deadline={late.deadline}
+                  totalMs={env.sync.lateJoinSeconds * 1000}
+                  onGo={followed.goToGroup}
+                  onStay={followed.stayHere}
+                  onExpired={followed.lateExpired}
+                />
+              ) : jump !== null ? (
+                <JumpPrompt
+                  index={jump.index}
+                  onGo={followed.goToGroup}
+                  onStay={followed.stayHere}
+                />
+              ) : null}
+              {!large ? tray : null}
+            </div>
+          ) : null
+        }
       />
       {content2 !== null ? (
         <GroupSheet

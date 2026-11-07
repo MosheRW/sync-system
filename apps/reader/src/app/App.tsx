@@ -75,13 +75,15 @@ function ReadingRoute({
     case 'ready': {
       // Nothing from a refused file ever reaches this point (AC3, AC4).
       const { metadata, document: doc } = state.content;
+      const restored = pages.read(metadata.contentId, metadata.fingerprint, doc.pages.length);
       return (
         <GroupReading
           source={source}
           content={state.content}
           focusContent={state.afterRetry}
           // This tab's page for this exact text (#24 AC36, Decision Q3).
-          initialIndex={pages.read(metadata.contentId, metadata.fingerprint, doc.pages.length) ?? 0}
+          initialIndex={restored ?? 0}
+          restoredPage={restored !== null}
           onPageChange={(index) => pages.write(metadata.contentId, metadata.fingerprint, index)}
         />
       );
