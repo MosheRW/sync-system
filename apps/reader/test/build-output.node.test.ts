@@ -54,6 +54,16 @@ describe('production build is CSP-clean (security C7, C10)', () => {
     expect(svg).not.toMatch(/<script\b|<style\b|\son[a-z]+=|data:|href=/i);
   });
 
+  it('bundles no Playwright, e2e or lean-qr extras code (#24 security R10)', () => {
+    const js = allFiles(outDir)
+      .filter((file) => file.endsWith('.js'))
+      .map((file) => readFileSync(file, 'utf8'))
+      .join(' ');
+    expect(js).not.toMatch(/playwright/i);
+    expect(js).not.toContain('toSvgDataURL');
+    expect(js).not.toContain('data:image');
+  });
+
   it('emits the library index next to the app', () => {
     const entries = JSON.parse(readFileSync(join(outDir, 'library-index.json'), 'utf8')) as {
       contentId: string;

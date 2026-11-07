@@ -10,3 +10,7 @@ config/*.json
 !config/apps.example.json
 !config/apps.dev.json
 dist-server
+
+# Playwright's local output (snapshots can show codes; never committed or uploaded, #24 L5).
+test-results
+playwright-report
