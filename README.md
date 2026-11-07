@@ -637,8 +637,10 @@ server {
 ## Reading app
 
 A JSON-driven reading app with right-to-left, left-to-right and mixed-direction
-text, and a content fingerprint for group sync (item 8 adds the sync itself).
-Full documentation: [`apps/reader/README.md`](apps/reader/README.md).
+text, a content fingerprint, and groups: start one, join by code or QR, follow
+the leader's page (#24). Full documentation:
+[`apps/reader/README.md`](apps/reader/README.md), groups in its
+[Groups](apps/reader/README.md#groups) section.
 
 ```sh
 pnpm --filter @sync-system/reader dev           # http://localhost:5173
@@ -647,7 +649,8 @@ docker compose up --build reader                # http://127.0.0.1:8081
 
 The `reader` service in `compose.yaml` builds `apps/reader/Dockerfile`, binds
 port 8081 to `127.0.0.1` only, runs read-only as a non-root user, and sets
-every `READER_*` variable to its default: the library is the entry page and
-`?src` links are disabled. A bad value makes the container exit 1 with
+every `READER_*` variable to its default (the library is the entry page and
+`?src` links are disabled), except the sync settings, which wire it to the
+`sync-server` service with the public dev key. A bad value makes the container exit 1 with
 `Config error: ...`. Serve it over HTTPS beyond `localhost`: the fingerprint
 needs Web Crypto, which browsers offer only in secure contexts.
