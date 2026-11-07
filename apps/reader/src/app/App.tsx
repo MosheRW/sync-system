@@ -5,6 +5,7 @@ import { LibraryScreen } from '../components/LibraryScreen.js';
 import { ReadingScreen } from '../components/ReadingScreen.js';
 import { LoadingScreen, StatusScreen } from '../components/StatusScreen.js';
 import { type StatusInput, statusView } from '../components/status-screens.js';
+import type { QrLanding } from '../group/deep-link.js';
 import { type PageStore, type StorageLike, createPageStore } from '../group/session-store.js';
 import { I18nProvider, type UiLanguage, useI18n } from '../i18n/index.js';
 import type { LibraryEntry } from '../library/types.js';
@@ -25,6 +26,11 @@ export interface AppProps {
    * absent: nothing is kept across reloads.
    */
   storage?: StorageLike | null;
+  /**
+   * A QR ticket this page load arrived with, already removed from the URL
+   * (#24 R3). Memory only; ignored when sync is off.
+   */
+  qrLanding?: QrLanding | null;
 }
 
 function Status({ input, libraryOn }: { input: StatusInput; libraryOn: boolean }) {
