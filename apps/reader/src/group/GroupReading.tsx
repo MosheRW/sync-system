@@ -10,16 +10,27 @@ import {
   useSyncIndicator,
   useSyncSnapshot,
 } from '@sync-system/react';
-import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ConfirmDialog } from '../components/group/ConfirmDialog.js';
 import { Button, NoticeBar } from '../components/group/controls.js';
 import { CREATE_FORM_ID, CreateGroupForm } from '../components/group/CreateGroupForm.js';
 import { GroupButton } from '../components/group/GroupButton.js';
+import {
+  DOOR_FORM_ID,
+  DoorForm,
+  JOIN_FORM_ID,
+  JoinErrorMessage,
+  JoinForm,
+  WaitingBody,
+  useWaitLeft,
+} from '../components/group/JoinViews.js';
 import { GroupSheet, type SheetContent, startView } from '../components/group/GroupSheet.js';
 import { CodeStrip, LeaderCodes, LeaderDetails, qrOnly } from '../components/group/LeaderViews.js';
 import { QrCodeView } from '../components/group/QrCodeView.js';
 import styles from '../components/group/group.module.css';
+import { PlainText } from '../components/PlainText.js';
 import { ARTICLE_ID, ReadingScreen, type ReadingScreenProps } from '../components/ReadingScreen.js';
+import { compareContent } from '../content/compare.js';
 import type { ContentSource } from '../content/loader.js';
 import { toGroupMetadata } from '../content/metadata.js';
 import { documentDir } from '../direction/effective.js';
@@ -32,6 +43,7 @@ import { errorText, errorView } from './errors.js';
 import { ownNameText } from './names.js';
 import { type IndicatorKind, derivePhase, indicatorFor } from './phase.js';
 import { encodePosition } from './position.js';
+import { useJoin } from './use-join.js';
 import { useDocumentVisible } from './use-document-visible.js';
 import { LARGE_SCREEN, useMediaQuery } from './use-media-query.js';
 
@@ -44,7 +56,8 @@ export type GroupReadingProps = Omit<
 };
 
 /** Which sheet view is open (design 6). */
-export type SheetView = 'start' | 'create' | 'ready' | 'leader' | 'qr';
+export type SheetView =
+  'start' | 'create' | 'ready' | 'leader' | 'qr' | 'join' | 'waiting' | 'member';
 
 /** The book a join link opens, from validated values only (R4). */
 function shareTargetOf(
@@ -101,16 +114,34 @@ function GroupReadingOn({ source, ...props }: GroupReadingProps) {
   const [announcement, announce] = useAnnouncer();
   const ownIndex = useRef(props.initialIndex ?? 0);
 
+  const join = useJoin({
+    onAdmitted: (joined) => {
+      env.pointers.write({ groupId: joined.groupId, mode: 'following', ack: null, qrShown: false });
+      setSheet(null);
+      announce(t.announceAdmitted);
+    },
+    // A result that needs an answer reopens the sheet (design F3.3).
+    onError: () => setSheet('join'),
+  });
+
   const group = snapshot.group;
   const isLeader = group?.status === 'active' && group.role === 'leader';
+  const isMember = group?.status === 'active' && group.role === 'member';
+  // The content check runs before anything is followed (AC21, item 7 compare).
+  const memberMetadata = isMember ? group.metadata : null;
+  const compare = useMemo(
+    () =>
+      memberMetadata === null ? null : compareContent(content.metadata, memberMetadata).result,
+    [memberMetadata, content.metadata],
+  );
   const phase = derivePhase({
     enabled: true,
     connection: snapshot.connection,
     group,
-    joining: create.pending,
+    joining: create.pending || join.pending,
     resuming: false,
     hasPointer: false,
-    compare: null,
+    compare,
     acknowledged: false,
   });
   const kind = indicatorFor(phase, clientIndicator, 'following');
@@ -187,10 +218,26 @@ function GroupReadingOn({ source, ...props }: GroupReadingProps) {
     if (connection.status === 'idle' || connection.status === 'closed') connection.connect();
   };
 
+  // A method B request waits for approval: the sheet shows it (design F3).
+  const waiting = join.waitingUntil !== null;
+  useEffect(() => {
+    if (waiting) setSheet((view) => (view === 'join' ? 'waiting' : view));
+    else setSheet((view) => (view === 'waiting' ? 'join' : view));
+  }, [waiting]);
+
   const openSheet = () => {
     if (phase === 'leader') setSheet('leader');
-    else setSheet('start');
+    else if (phase === 'awaiting') setSheet('waiting');
+    else if (phase === 'joining') setSheet('join');
+    else if (
+      group?.status === 'active' ||
+      group?.status === 'rejoining' ||
+      group?.status === 'waiting'
+    ) {
+      setSheet('member');
+    } else setSheet('start');
   };
+  const waitLeft = useWaitLeft(join.error);
 
   const submitCreate = (options: CreateGroupOptions) => {
     setFormError(null);
@@ -297,7 +344,11 @@ function GroupReadingOn({ source, ...props }: GroupReadingProps) {
         setFormError(null);
         setSheet('create');
       },
-      onJoin: () => undefined,
+      onJoin: () => {
+        ensureConnected();
+        join.backToCode();
+        setSheet('join');
+      },
       t,
     });
   } else if (sheet === 'create') {
@@ -343,6 +394,123 @@ function GroupReadingOn({ source, ...props }: GroupReadingProps) {
         >
           {t.startGroupSubmit}
         </Button>
+      ),
+    };
+  } else if (sheet === 'join' && join.step === 'code') {
+    const allowed =
+      connection.state.status === 'connected' ? connection.state.joinMethods : ['A', 'B', 'C'];
+    const digits = allowed.includes('A') || allowed.includes('B');
+    const fieldFocus = join.error?.view.focus;
+    content2 = {
+      key: 'join-code',
+      title: t.joinTitle,
+      onBack: () => {
+        join.backToCode();
+        setSheet('start');
+      },
+      body: (
+        <>
+          <JoinForm
+            code={join.code}
+            onCodeChange={join.setCode}
+            name={join.name}
+            onNameChange={join.setName}
+            lettersToggle={digits && allowed.includes('C')}
+            lettersOnly={!digits && allowed.includes('C')}
+            fieldError={
+              join.error !== null && fieldFocus === 'name'
+                ? { field: 'name', text: t.nameInvalidChars }
+                : null
+            }
+            onSubmit={join.submitCode}
+          />
+          {join.error !== null && fieldFocus !== 'name' ? (
+            <JoinErrorMessage error={join.error} />
+          ) : null}
+        </>
+      ),
+      footer: (
+        <Button
+          type="submit"
+          form={JOIN_FORM_ID}
+          variant="primary"
+          pending={join.pending}
+          pendingLabel={t.joining}
+          inactive={waitLeft > 0}
+        >
+          {t.joinSubmit}
+        </Button>
+      ),
+    };
+  } else if (sheet === 'join' && join.step === 'door') {
+    content2 = {
+      key: 'join-door',
+      title: t.doorTitle,
+      onBack: join.backToCode,
+      body: (
+        <>
+          <DoorForm
+            code={join.code}
+            door={join.door}
+            onDoorChange={join.setDoor}
+            error={join.error?.view.focus === 'door' ? t.errDoorWrong : null}
+            onChangeCode={join.backToCode}
+            onSubmit={join.submitDoor}
+          />
+          {join.error !== null && join.error.view.focus !== 'door' ? (
+            <JoinErrorMessage error={join.error} />
+          ) : null}
+        </>
+      ),
+      footer: (
+        <Button
+          type="submit"
+          form={DOOR_FORM_ID}
+          variant="primary"
+          pending={join.pending}
+          pendingLabel={t.joining}
+          inactive={waitLeft > 0}
+        >
+          {t.joinSubmit}
+        </Button>
+      ),
+    };
+  } else if (sheet === 'waiting' && join.waitingUntil !== null) {
+    content2 = {
+      key: 'waiting',
+      title: t.waitingTitle,
+      body: <WaitingBody expiresAt={join.waitingUntil} />,
+      footer: (
+        <Button
+          pending={join.cancelPending}
+          pendingLabel={t.cancelRequest}
+          onClick={join.cancelRequest}
+        >
+          {t.cancelRequest}
+        </Button>
+      ),
+    };
+  } else if (sheet === 'member' && group !== null && group.status !== 'ended') {
+    content2 = {
+      key: 'member',
+      title: t.memberGroupTitle,
+      body: (
+        <div className={styles.stack}>
+          <p className={styles.para}>
+            {t.groupBookLabel}{' '}
+            {doc.title !== undefined ? (
+              <PlainText text={doc.title} dir={documentDir(doc)} singleLine />
+            ) : (
+              <PlainText text={doc.contentId} dir="ltr" />
+            )}
+          </p>
+          {ownName !== null ? (
+            <p className={styles.para}>
+              {i18n.format(t.yourName, { name: '\u0000' }).split('\u0000')[0]}
+              <PlainText text={ownName} dir="auto" maxLength={32} />
+            </p>
+          ) : null}
+        </div>
       ),
     };
   } else if (sheet === 'ready' && isLeader) {
