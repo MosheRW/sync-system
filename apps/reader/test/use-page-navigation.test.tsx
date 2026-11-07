@@ -1,8 +1,8 @@
 import { fireEvent, render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ReadingScreen } from '../src/components/ReadingScreen.js';
 import { I18nProvider } from '../src/i18n/index.js';
-import { renderApp } from './helpers/app.js';
+import { readingReady, renderApp } from './helpers/app.js';
 import { loaded, pagedDoc, renderReading } from './helpers/render.js';
 import { MemoryStorage } from './helpers/storage.js';
 
@@ -80,17 +80,21 @@ describe('initial page, move source and modal dialogs (#24 7.2, 7.7)', () => {
 });
 
 describe('solo reading position across a reload (#24 AC36)', () => {
+  beforeEach(() => {
+    sessionStorage.clear();
+  });
+
   it('returns to the page of this book in this tab', async () => {
     const storage = new MemoryStorage();
     const location = { search: '?book=samples%2Fpride-and-prejudice-en' };
     const first = renderApp({ location, storage });
-    await screen.findByText(/^1 \/ \d+$/);
+    await readingReady(/^1 \/ \d+$/);
     fireEvent.keyDown(document, { key: 'ArrowRight' });
     fireEvent.keyDown(document, { key: 'ArrowRight' });
     expect(screen.getByText(/^3 \/ \d+$/)).toBeDefined();
     first.unmount();
     renderApp({ location, storage });
-    expect(await screen.findByText(/^3 \/ \d+$/)).toBeDefined();
+    expect(await readingReady(/^3 \/ \d+$/)).toBeDefined();
     expect(storage.keys()).toEqual([
       expect.stringMatching(/^reader:v1:page:samples\/pride-and-prejudice-en:[0-9a-f]{64}$/),
     ]);

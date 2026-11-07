@@ -1,6 +1,6 @@
 import { webcrypto } from 'node:crypto';
 import type { SyncClientLike } from '@sync-system/react';
-import { type RenderResult, render } from '@testing-library/react';
+import { type RenderResult, act, render, screen } from '@testing-library/react';
 import { App } from '../../src/app/App.js';
 import { type LocationLike, resolveEntry } from '../../src/app/resolve-entry.js';
 import type {
@@ -70,6 +70,20 @@ export function testLoader(fetchImpl?: FetchLike, config = testConfig()): Conten
     subtle: webcrypto.subtle,
     ...(fetchImpl ? { fetchImpl } : {}),
   });
+}
+
+/**
+ * Waits until the reading screen shows `counter` and React has run its
+ * effects. `findBy*` resolves on the DOM mutation, which can come before the
+ * passive effects that attach the page-turn key listener; a key pressed in
+ * between is lost.
+ */
+export async function readingReady(counter: RegExp = /^\d+ \/ \d+$/): Promise<HTMLElement> {
+  const element = await screen.findByText(counter);
+  await act(async () => {
+    await Promise.resolve();
+  });
+  return element;
 }
 
 export function renderApp(options: {
