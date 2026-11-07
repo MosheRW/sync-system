@@ -27,6 +27,8 @@ export interface PageNavigationOptions {
   initialIndex?: number;
   /** Called after every page change with who caused it. */
   onMove?: (index: number, source: MoveSource) => void;
+  /** Change it when the swipe area's element is replaced, to re-attach the listeners. */
+  swipeKey?: unknown;
 }
 
 function isEditable(target: EventTarget | null): boolean {
@@ -195,7 +197,7 @@ export function usePageNavigation(
       area.removeEventListener('pointerup', onUp);
       area.removeEventListener('pointercancel', onCancel);
     };
-  }, [docDir, perform, swipeArea]);
+  }, [docDir, perform, swipeArea, options.swipeKey]);
 
   return { index, lastMove, endNudge, goTo, next, previous, perform };
 }

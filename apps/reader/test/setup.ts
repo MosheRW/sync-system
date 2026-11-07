@@ -22,6 +22,40 @@ afterAll(() => {
   expect(failures).toEqual([]);
 });
 
+// jsdom has no <dialog> modal API: a minimal shim that toggles `open` and
+// fires `close` (#24 architecture 7.7). Inertness and real focus trapping
+// are checked in the e2e suite (Chromium).
+if (typeof HTMLDialogElement !== 'undefined' && !('showModal' in HTMLDialogElement.prototype)) {
+  Object.assign(HTMLDialogElement.prototype, {
+    showModal(this: HTMLDialogElement) {
+      this.setAttribute('open', '');
+    },
+    show(this: HTMLDialogElement) {
+      this.setAttribute('open', '');
+    },
+    close(this: HTMLDialogElement) {
+      if (!this.hasAttribute('open')) return;
+      this.removeAttribute('open');
+      this.dispatchEvent(new Event('close'));
+    },
+  });
+}
+
+// jsdom has no matchMedia: phone width by default; tests stub wider screens.
+if (typeof window !== 'undefined' && typeof window.matchMedia !== 'function') {
+  window.matchMedia = (query: string) =>
+    ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+      addListener: () => undefined,
+      removeListener: () => undefined,
+      dispatchEvent: () => false,
+    }) as MediaQueryList;
+}
+
 // jsdom files: unmount every rendered tree after each test (no Vitest
 // globals, so Testing Library cannot register this itself).
 if (typeof document !== 'undefined') {

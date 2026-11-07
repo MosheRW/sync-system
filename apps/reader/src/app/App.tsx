@@ -3,9 +3,9 @@ import { useMemo } from 'react';
 import type { PublicConfig } from '../config/schema.js';
 import type { ContentLoader, ContentSource } from '../content/loader.js';
 import { LibraryScreen } from '../components/LibraryScreen.js';
-import { ReadingScreen } from '../components/ReadingScreen.js';
 import { LoadingScreen, StatusScreen } from '../components/StatusScreen.js';
 import { type StatusInput, statusView } from '../components/status-screens.js';
+import { GroupReading } from '../group/GroupReading.js';
 import { SyncRoot } from '../group/SyncRoot.js';
 import type { QrLanding } from '../group/deep-link.js';
 import { type PageStore, type StorageLike, createPageStore } from '../group/session-store.js';
@@ -76,7 +76,7 @@ function ReadingRoute({
       // Nothing from a refused file ever reaches this point (AC3, AC4).
       const { metadata, document: doc } = state.content;
       return (
-        <ReadingScreen
+        <GroupReading
           content={state.content}
           focusContent={state.afterRetry}
           // This tab's page for this exact text (#24 AC36, Decision Q3).

@@ -18,6 +18,18 @@
   --color-danger: #b3261e;
   --color-focus: #1f5fbf;
 
+  /* Groups (#24 design D1, section 10). The QR colours are fixed in both
+     themes: many camera apps fail on inverted codes. */
+  --color-positive: #1e7a3c;
+  --color-warning: #8a5a00;
+  --color-accent-subtle: #e8f0fc;
+  --color-danger-subtle: #fcedec;
+  --color-on-danger: #ffffff;
+  --color-qr-dark: #000000;
+  --color-qr-light: #ffffff;
+  --color-backdrop: rgb(0 0 0 / 40%);
+  --shadow-raised: 0 4px 16px rgb(0 0 0 / 16%);
+
   --font-ui:
     system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans', 'Noto Sans Hebrew',
     'Noto Naskh Arabic', Arial, sans-serif;
@@ -33,6 +45,9 @@
   --text-lg-lh: 1.4;
   --text-xl: 1.5rem;
   --text-xl-lh: 1.3;
+  --text-code: 1.125rem;
+  --text-code-lg: 2.5rem;
+  --text-code-lg-lh: 1.2;
   --weight-regular: 400;
   --weight-strong: 600;
 
@@ -46,6 +61,8 @@
 
   --radius-sm: 4px;
   --radius-md: 8px;
+  --radius-lg: 16px;
+  --radius-pill: 999px;
   --hairline: 1px;
   --focus-ring: 2px;
 
@@ -60,10 +77,25 @@
   --measure-status: 40ch;
   --measure-library: 40rem;
   --nudge: 8px;
+  --size-strip: 2.75rem;
+  --size-panel: 20rem;
+  --size-qr: min(18rem, 80vw, 55dvh);
+  --size-dot: 10px;
+  --measure-sheet: 28rem;
+  --z-chrome: 2;
+  --z-overlay: 3;
+  --z-modal: 10;
 
   --duration-fast: 120ms;
   --duration-page: 200ms;
+  --duration-sheet: 200ms;
   --easing: cubic-bezier(0.2, 0, 0, 1);
+}
+
+@media (min-width: 640px) {
+  :root {
+    --text-code: 1.5rem;
+  }
 }
 
 @media (prefers-color-scheme: dark) {
@@ -79,6 +111,13 @@
     --color-on-accent: #121416;
     --color-danger: #f28b82;
     --color-focus: #8ab4f8;
+    --color-positive: #81c995;
+    --color-warning: #fdd663;
+    --color-accent-subtle: #1b2a41;
+    --color-danger-subtle: #3a1f1d;
+    --color-on-danger: #121416;
+    --color-backdrop: rgb(0 0 0 / 60%);
+    --shadow-raised: 0 4px 16px rgb(0 0 0 / 50%);
   }
 }
 
@@ -86,6 +125,7 @@
   :root {
     --duration-fast: 0ms;
     --duration-page: 0ms;
+    --duration-sheet: 0ms;
     --nudge: 0px;
   }
 }
