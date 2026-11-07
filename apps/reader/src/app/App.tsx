@@ -2,9 +2,9 @@ import type { SyncClientLike } from '@sync-system/react';
 import { useMemo } from 'react';
 import type { PublicConfig } from '../config/schema.js';
 import type { ContentLoader, ContentSource } from '../content/loader.js';
-import { LibraryScreen } from '../components/LibraryScreen.js';
 import { LoadingScreen, StatusScreen } from '../components/StatusScreen.js';
 import { type StatusInput, statusView } from '../components/status-screens.js';
+import { GroupLibrary } from '../group/GroupLibrary.js';
 import { GroupReading } from '../group/GroupReading.js';
 import { SyncRoot } from '../group/SyncRoot.js';
 import type { QrLanding } from '../group/deep-link.js';
@@ -147,7 +147,7 @@ function RouteView({
     case 'reading':
       return <ReadingRoute loader={loader} source={route.source} config={config} pages={pages} />;
     case 'library':
-      return <LibraryScreen entries={entries} />;
+      return <GroupLibrary entries={entries} />;
     case 'book-not-found':
       return (
         <Status

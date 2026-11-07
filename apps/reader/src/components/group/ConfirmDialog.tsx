@@ -8,6 +8,8 @@ export interface ConfirmDialogProps {
   title: string;
   body: string;
   confirmLabel: string;
+  /** Default "Cancel". */
+  cancelLabel?: string;
   pendingLabel: string;
   /** End group uses the danger style; Get new codes the primary (design 6.16). */
   tone: 'danger' | 'primary';
@@ -26,6 +28,7 @@ export function ConfirmDialog({
   title,
   body,
   confirmLabel,
+  cancelLabel,
   pendingLabel,
   tone,
   pending,
@@ -44,7 +47,7 @@ export function ConfirmDialog({
       footer={
         <>
           <Button ref={cancelRef} variant="secondary" onClick={onCancel}>
-            {t.cancel}
+            {cancelLabel ?? t.cancel}
           </Button>
           <Button variant={tone} pending={pending} pendingLabel={pendingLabel} onClick={onConfirm}>
             {confirmLabel}

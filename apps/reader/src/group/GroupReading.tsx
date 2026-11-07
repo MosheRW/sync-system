@@ -10,6 +10,7 @@ import {
   useSyncIndicator,
   useSyncSnapshot,
 } from '@sync-system/react';
+import { type JoinedGroup } from '@sync-system/react';
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ConfirmDialog } from '../components/group/ConfirmDialog.js';
 import { Button, NoticeBar } from '../components/group/controls.js';
@@ -44,6 +45,7 @@ import { ownNameText } from './names.js';
 import { type IndicatorKind, derivePhase, indicatorFor } from './phase.js';
 import { encodePosition } from './position.js';
 import { useJoin } from './use-join.js';
+import { useQrLanding } from './use-qr-landing.js';
 import { useDocumentVisible } from './use-document-visible.js';
 import { LARGE_SCREEN, useMediaQuery } from './use-media-query.js';
 
@@ -57,7 +59,7 @@ export type GroupReadingProps = Omit<
 
 /** Which sheet view is open (design 6). */
 export type SheetView =
-  'start' | 'create' | 'ready' | 'leader' | 'qr' | 'join' | 'waiting' | 'member';
+  'start' | 'create' | 'ready' | 'leader' | 'qr' | 'join' | 'waiting' | 'member' | 'qr-join';
 
 /** The book a join link opens, from validated values only (R4). */
 function shareTargetOf(
@@ -114,15 +116,25 @@ function GroupReadingOn({ source, ...props }: GroupReadingProps) {
   const [announcement, announce] = useAnnouncer();
   const ownIndex = useRef(props.initialIndex ?? 0);
 
-  const join = useJoin({
-    onAdmitted: (joined) => {
+  const onAdmitted = useCallback(
+    (joined: JoinedGroup) => {
       env.pointers.write({ groupId: joined.groupId, mode: 'following', ack: null, qrShown: false });
       setSheet(null);
       announce(t.announceAdmitted);
     },
+    [env.pointers, announce, t.announceAdmitted],
+  );
+  const join = useJoin({
+    onAdmitted,
     // A result that needs an answer reopens the sheet (design F3.3).
     onError: () => setSheet('join'),
   });
+  const landing = useQrLanding(env, onAdmitted);
+  // A QR landing opens the sheet on "Joining the group…": zero taps (F5.4).
+  const landingStatus = landing.state.status;
+  useEffect(() => {
+    if (landingStatus === 'joining' || landingStatus === 'failed') setSheet('qr-join');
+  }, [landingStatus]);
 
   const group = snapshot.group;
   const isLeader = group?.status === 'active' && group.role === 'leader';
@@ -513,6 +525,49 @@ function GroupReadingOn({ source, ...props }: GroupReadingProps) {
         </div>
       ),
     };
+  } else if (sheet === 'qr-join' && landing.state.status === 'joining') {
+    content2 = {
+      key: 'qr-joining',
+      title: t.qrJoiningTitle,
+      body: (
+        <p className={styles.qrState} role="status">
+          <span className={styles.spinner} aria-hidden="true" />
+        </p>
+      ),
+    };
+  } else if (sheet === 'qr-join' && landing.state.status === 'failed') {
+    const view = errorView(landing.state.error);
+    content2 = {
+      key: 'qr-failed',
+      title: t.qrJoinFailedTitle,
+      body:
+        view !== null ? (
+          <JoinErrorMessage error={{ view: { ...view, focus: 'heading' }, retryAt: null }} />
+        ) : null,
+      footer: (
+        <>
+          <Button
+            onClick={() => {
+              landing.dismiss();
+              setSheet(null);
+            }}
+          >
+            {t.readOnMyOwn}
+          </Button>
+          <Button
+            variant="primary"
+            onClick={() => {
+              landing.dismiss();
+              ensureConnected();
+              join.backToCode();
+              setSheet('join');
+            }}
+          >
+            {t.joinWithCode}
+          </Button>
+        </>
+      ),
+    };
   } else if (sheet === 'ready' && isLeader) {
     content2 = {
       key: 'ready',
@@ -611,6 +666,19 @@ function GroupReadingOn({ source, ...props }: GroupReadingProps) {
           content={content2}
           onClose={() => setSheet(null)}
           returnFocus={() => buttonRef.current}
+        />
+      ) : null}
+      {landing.state.status === 'ask' ? (
+        <ConfirmDialog
+          title={t.switchGroupTitle}
+          body={t.switchGroupBody}
+          confirmLabel={t.switchGroupConfirm}
+          cancelLabel={t.switchGroupKeep}
+          pendingLabel={t.joining}
+          tone="primary"
+          pending={landing.state.pending}
+          onConfirm={landing.switchGroup}
+          onCancel={landing.stay}
         />
       ) : null}
       {confirm === 'rotate' && isLeader ? (

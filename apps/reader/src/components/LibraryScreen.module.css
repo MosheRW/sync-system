@@ -9,6 +9,21 @@
   border-block-end: var(--hairline) solid var(--color-border);
 }
 
+.headerRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  max-inline-size: var(--measure-library);
+  margin: 0 auto;
+  padding-inline-end: var(--space-4);
+}
+
+.headerRow .heading {
+  flex: 1;
+  margin: 0;
+}
+
 .heading {
   margin: 0 auto;
   max-inline-size: var(--measure-library);
