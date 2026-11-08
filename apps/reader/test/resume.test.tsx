@@ -3,7 +3,7 @@ import { act, fireEvent, screen, within } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { POINTER_KEY, testLoader } from './helpers/app.js';
 import { FakeSyncClient, GROUP_ID, connected } from './helpers/fake-sync-client.js';
-import { renderGroupApp } from './helpers/group.js';
+import { getNotice, renderGroupApp } from './helpers/group.js';
 import { MemoryStorage } from './helpers/storage.js';
 
 const BOOK_ID = 'samples/pride-and-prejudice-en';
@@ -135,7 +135,7 @@ describe('a stored group that is gone (#24 AC37)', () => {
     });
     await connect(client);
     expect(storage.getItem(POINTER_KEY)).toBeNull();
-    expect(screen.getAllByText('Your group has ended.')).toHaveLength(1);
+    expect(getNotice('Your group has ended.')).toBeDefined();
     await connect(client);
     expect(client.count('resumeGroup')).toBe(1);
     expect(screen.getByRole('button', { name: 'Group, group options' })).toBeDefined();
@@ -158,7 +158,7 @@ describe('a stored group that is gone (#24 AC37)', () => {
     expect(within(sheet).getByRole('button', { name: 'Try again' })).toBeDefined();
     fireEvent.click(within(sheet).getByRole('button', { name: 'Leave group' }));
     expect(storage.getItem(POINTER_KEY)).toBeNull();
-    expect(screen.getByText('You left the group.')).toBeDefined();
+    expect(getNotice('You left the group.')).toBeDefined();
   });
 });
 
@@ -185,7 +185,7 @@ describe('leaving and group end (#24 AC32, AC33)', () => {
       await Promise.resolve();
     });
     expect(screen.queryByRole('alertdialog')).toBeNull();
-    expect(screen.getByText('You left the group.')).toBeDefined();
+    expect(getNotice('You left the group.')).toBeDefined();
     expect(storage.getItem(POINTER_KEY)).toBeNull();
     expect(counter()).toMatch(/^2 \//);
   });

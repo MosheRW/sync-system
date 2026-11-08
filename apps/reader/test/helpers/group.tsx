@@ -65,6 +65,20 @@ export async function createAsLeader(
   await screen.findByRole('dialog', { name: 'Your group is ready' });
 }
 
+/**
+ * The visible notice bar that says `text`. The shared live region may repeat
+ * the same words (it drops a group message only right after a page turn), so
+ * a plain `getByText` can find two elements.
+ */
+export function getNotice(text: string): HTMLElement {
+  const notices = screen
+    .getAllByRole('status')
+    .filter((el) => !el.hasAttribute('aria-live') && el.textContent?.includes(text));
+  if (notices.length !== 1)
+    throw new Error(`expected one notice "${text}", found ${notices.length}`);
+  return notices[0]!;
+}
+
 /** Stubs `matchMedia` so `(min-width: 1024px)` matches. */
 export function largeScreen(): void {
   vi.stubGlobal('matchMedia', (query: string) => ({
