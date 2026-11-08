@@ -1,6 +1,6 @@
 # State: #24 feat: reading app sync UX: join and follow (PRD item 8a)
 - Path: full
-- Phase: implementation
+- Phase: validation
 - Spec approved at Gate 1: yes (2026-11-06, "Accept all")
 - Split: AC38-AC49 moved to #25 (8b, depends on this issue; no branch yet)
 - Branch: feat/24-reading-app-sync-ux
@@ -8,9 +8,10 @@
 - Plan approved by user: yes (Gate 2, 2026-11-07)
 - Gate 2 decisions (2026-11-07, "Approve all"): ADR 0007 `lean-qr` 2.7.4 Accepted; ADR 0008 Playwright, Chromium only, CI job `e2e` Accepted; ADR 0009 tokens, pointer and position in `sessionStorage` per tab Accepted; Q-A1 compose reuses `dev-app`, no server change; Q-A2 per-tab storage (a new tab doesn't resume, reopen-closed-tab does); Q-A3 25 s phone-lock test, README advises `disconnectGraceSeconds` 45; security L3: a QR ticket in a tab with a group asks once "Leave your current group and join this one?"; R1-R14 mandatory.
 - Security-sensitive: yes (security plan review PASS, docs/issues/24/security.md: 0 critical, 0 high, 1 medium, 10 low; required controls R1-R14)
-- Review rounds: 0
+- Review rounds: 1
+- QA verdict (round 1, 2026-11-08): FAIL, 44/44 criteria met, checks failed on a flaky reader test; findings 1-3 (flaky `resume.test.tsx` assertion, QR takes up to 10 s to reappear on phones, `leaveFailed` never shown) and 4-6 (lint warnings, dead `announceFollowingTo`, root README compose command). PR review comment: https://github.com/MosheRW/sync-system/pull/26#pullrequestreview-5816972463
 - Design decisions: U1-U4 accepted (2026-11-06, "Accept all"), recorded in spec.md
-- Last updated by: engineer
+- Last updated by: qa
 ## Model log
 - pm groom: opus (orchestrator: broad scope) → DONE
 - pm update-spec: sonnet (default) → DONE
@@ -18,12 +19,14 @@
 - architect plan: opus (default) → DONE
 - security plan: opus (rule) → PASS
 - engineer implement: opus (Implementer model line) → DONE
+- qa validate: opus (NEXT_MODEL) → FAIL
 ## Measured (AC56, e2e against the real sync server)
 - Local (Windows, Chromium headless): QR deep link to Following 200-220 ms; code submit to Following (method A, door code included) 130-148 ms; leader move to both members 13-16 ms.
 - CI `e2e` job (ubuntu-latest, run 42400662557): 149 ms, 140 ms, 22 ms.
 - AC35: leader connection cut for 25 s through the TCP proxy; leader back Leading with no prompt, member saw the grace state and followed the next move (passes locally and in CI).
 ## Open questions
 - None for the user.
+- U4: Hebrew strings for a native-speaker review are listed in the QA review comment (round 1).
 ## Deviations from plan
 - Chunk placement: the browser config result union and the sync-invalid details landed in chunk 5 (planned 9); all en/he group copy in chunk 9; the item 7 compare and a member view in chunk 13 (block and warn UI in 16); member Leave in 16-17 (planned 18).
 - `securityHeaders({ srcOrigins, syncUrl })` takes the checked sync URL and re-derives the origin inside `server/headers.ts` (plan named the field `syncOrigin`).
