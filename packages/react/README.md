@@ -337,8 +337,12 @@ It resets on group change or end.
   `JOIN_METHOD_UNAVAILABLE` (no method D):
   `unavailable`. Other errors: `error`, no automatic retry;
 - an expired ticket is never shown as `ready`;
-- the timer stops and the ticket is dropped when the last consumer unmounts
-  or is disabled.
+- the timer stops and the state drops the ticket when the last consumer
+  unmounts or is disabled: nothing is issued while the QR is hidden. The last
+  unexpired ticket is kept inside the provider (not in the state), so showing
+  the QR again on the same connection and group shows it at once and
+  re-issues on the normal schedule. It is forgotten on expiry, a revoking
+  code change, a lost connection or lead, or a group switch.
 
 `state` is `idle`, `loading` (`ticket` or `null`), `ready` (`ticket`),
 `unavailable` or `error` (`error`, `ticket` or `null`). `idle` means no QR

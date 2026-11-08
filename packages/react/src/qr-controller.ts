@@ -57,8 +57,14 @@ export interface QrHost {
  * - `JOIN_METHOD_UNAVAILABLE`: `unavailable`; other errors: `error`, no
  *   automatic retry; `RATE_LIMITED`: one retry after the server's delay
  *   (10 s to 60 s).
- * - Stopping drops the ticket: the credential leaves memory when nothing
- *   shows it. Over no client everything is a no-op (R6).
+ * - Stopping drops the ticket from the state: nothing exposes it while no
+ *   consumer shows it. When the last consumer goes (the QR is hidden), the
+ *   last unexpired ticket is parked in a private field, so showing the QR
+ *   again on the same connection and lead shows it at once instead of
+ *   waiting out the 10 s floor (#24 QA finding 2). Nothing is issued while
+ *   parked. The parked ticket is dropped on expiry, a revoking code change,
+ *   a lost connection or lead, or a group switch. Over no client
+ *   everything is a no-op (R6).
  */
 export class QrTicketController {
   readonly #host: QrHost;
@@ -77,6 +83,10 @@ export class QrTicketController {
   #group: string | null = null;
   /** The code generation the current request or ticket was issued under. */
   #codesGeneration: number | null = null;
+  /** When the current ticket is due for re-issue (80 % of its lifetime). */
+  #reissueAt = 0;
+  /** The last unexpired ticket while no consumer shows it (never in the state). */
+  #parked: Parked | null = null;
 
   constructor(host: QrHost) {
     this.#host = host;
@@ -102,7 +112,9 @@ export class QrTicketController {
     if (this.#refs > 0 || this.#releaseTimer !== undefined) return;
     this.#releaseTimer = setTimer(() => {
       this.#releaseTimer = undefined;
-      if (this.#refs === 0) this.#stop();
+      if (this.#refs !== 0) return;
+      this.#park();
+      this.#stop();
     }, 0);
   }
 
@@ -123,7 +135,10 @@ export class QrTicketController {
   /** Re-checks eligibility; called on every store change. */
   evaluate(): void {
     if (this.#host.client === null) return;
-    const lead = this.#refs > 0 ? this.#host.connectedLeadGroupId() : null;
+    const connectedLead = this.#host.connectedLeadGroupId();
+    // A parked ticket is only for the same lead on a live connection.
+    if (this.#parked !== null && this.#parked.group !== connectedLead) this.#parked = null;
+    const lead = this.#refs > 0 ? connectedLead : null;
     if (lead === null) {
       if (this.#refs === 0 && this.#releaseTimer !== undefined) return;
       this.#stop();
@@ -132,7 +147,7 @@ export class QrTicketController {
     if (lead !== this.#group) {
       this.#stop();
       this.#group = lead;
-      this.#schedule();
+      if (!this.#unpark()) this.#schedule();
       return;
     }
     // Idle, or loading with nothing pending (a release was cancelled before
@@ -154,12 +169,15 @@ export class QrTicketController {
    */
   connectionOpened(): void {
     this.#rateLimitedUntil = 0;
+    this.#parked = null;
   }
 
   /** A `codesChanged` event (R1). */
   codesChanged(event: SyncClientEvents['codesChanged']): void {
-    if (this.#host.client === null || this.#refs === 0) return;
-    if (!REVOKING.has(event.reason)) return;
+    if (this.#host.client === null || !REVOKING.has(event.reason)) return;
+    // A revoked ticket is never shown again, parked or not (R1).
+    if (this.#parked?.group === event.groupId) this.#parked = null;
+    if (this.#refs === 0) return;
     const lead = this.#host.connectedLeadGroupId();
     if (lead === null || lead !== event.groupId || lead !== this.#group) return;
     // A request or ticket issued under these codes is already valid.
@@ -259,7 +277,9 @@ export class QrTicketController {
     }
     this.#set(Object.freeze({ status: 'ready' as const, ticket }));
     const lifetime = expiresAt - time;
-    this.#armIssue(Math.max(QR_MIN_INTERVAL_MS, QR_REISSUE_SHARE * lifetime));
+    const delay = Math.max(QR_MIN_INTERVAL_MS, QR_REISSUE_SHARE * lifetime);
+    this.#reissueAt = time + delay;
+    this.#armIssue(delay);
     this.#armExpiry(ticket);
   }
 
@@ -311,6 +331,45 @@ export class QrTicketController {
     );
   }
 
+  /** Keeps the shown, unexpired ticket of the current lead while hidden. */
+  #park(): void {
+    const ticket = this.#validTicket();
+    this.#parked =
+      ticket !== null && this.#group !== null
+        ? {
+            ticket,
+            group: this.#group,
+            codesGeneration: this.#codesGeneration,
+            reissueAt: this.#reissueAt,
+          }
+        : null;
+  }
+
+  /**
+   * Shows the parked ticket again (same lead, not expired) and re-issues on
+   * its normal schedule: at its 80 % mark, never inside the 10 s floor or a
+   * `RATE_LIMITED` wait. `false` when there is nothing to show.
+   */
+  #unpark(): boolean {
+    const parked = this.#parked;
+    this.#parked = null;
+    const time = now();
+    if (parked === null || parked.group !== this.#group || parked.ticket.expiresAt <= time) {
+      return false;
+    }
+    this.#reissueAt = parked.reissueAt;
+    this.#codesGeneration = parked.codesGeneration;
+    this.#set(Object.freeze({ status: 'ready' as const, ticket: parked.ticket }));
+    const due = Math.max(
+      parked.reissueAt,
+      this.#lastIssueAt + QR_MIN_INTERVAL_MS,
+      this.#rateLimitedUntil,
+    );
+    this.#armIssue(Math.max(0, due - time));
+    this.#armExpiry(parked.ticket);
+    return true;
+  }
+
   #validTicket(): QrTicket | null {
     const ticket = ticketOf(this.#state);
     return ticket !== null && ticket.expiresAt > now() ? ticket : null;
@@ -339,6 +398,13 @@ export class QrTicketController {
     this.#state = state;
     this.#host.changed();
   }
+}
+
+interface Parked {
+  readonly ticket: QrTicket;
+  readonly group: string;
+  readonly codesGeneration: number | null;
+  readonly reissueAt: number;
 }
 
 function ticketOf(state: QrTicketState): QrTicket | null {
