@@ -11,7 +11,7 @@
 - Review rounds: 1
 - QA verdict (round 1, 2026-11-08): FAIL, 44/44 criteria met, checks failed on a flaky reader test; findings 1-3 (flaky `resume.test.tsx` assertion, QR takes up to 10 s to reappear on phones, `leaveFailed` never shown) and 4-6 (lint warnings, dead `announceFollowingTo`, root README compose command). PR review comment: https://github.com/MosheRW/sync-system/pull/26#pullrequestreview-5816972463
 - Design decisions: U1-U4 accepted (2026-11-06, "Accept all"), recorded in spec.md
-- Last updated by: qa
+- Last updated by: engineer
 ## Model log
 - pm groom: opus (orchestrator: broad scope) → DONE
 - pm update-spec: sonnet (default) → DONE
@@ -20,6 +20,21 @@
 - security plan: opus (rule) → PASS
 - engineer implement: opus (Implementer model line) → DONE
 - qa validate: opus (NEXT_MODEL) → FAIL
+- security code (round 1): opus (rule) → PASS
+- engineer fix (round 1): opus (rule) → DONE
+## Fix round 1 (2026-11-11, engineer)
+QA findings 1-6 and security lows 1-3, one commit each (plus one bug found on the way):
+- QA 1, flaky notice assertion: `c0f072a` (`getNotice()` helper queries the notice bar, not the live region; also used for "Your group has ended.").
+- QA 2, QR up to 10 s on phones: `18a8d14` (`QrTicketController` parks the last unexpired ticket on hide and shows it at once on show; nothing issued while hidden; re-issue on the 80 % schedule; dropped on expiry, revoking codes change, lost connection or lead, group switch). react + reader tests with fake timers.
+- QA 3, `leaveFailed` never shown: `1f28d57` (member sheet, mismatch block, version warning; one test each).
+- QA 4, unused eslint directives: `089a748`.
+- QA 5, dead `announceFollowingTo`: `127ef99` (removed from en, he and the design table: design 9 announces only "Page n of N" on a followed move).
+- QA 6, compose command: `de1848a` (root and reader READMEs).
+- Found while fixing security 1: `01a10ca` (after L3 "Join this group" the resume hook resumed the old group and, on a gone answer, forgot the new group's pointer).
+- Security 1, `GROUP_FULL` / failed L3 switch token: `279eaa7` (`forgetStoredGroup`; `GROUP_FULL` in the gone-codes test checks no token remains).
+- Security 2, password in a refused URL: `415ad74` (user info replaced by `***`).
+- Security 3, dead `[::1]`: `93f811e`.
+Checks: `pnpm lint` 0 errors 0 warnings; `pnpm typecheck` pass; `pnpm test` pass (protocol 207, sync-server 1145, client 569, react 222, reader 849), reader suite 3 more runs all green; `pnpm build` pass; `pnpm audit --audit-level=high` clean; e2e 4/4 (QR link to Following 280 ms, code submit 168 ms, leader move 17 ms, 25 s phone lock passes).
 ## Measured (AC56, e2e against the real sync server)
 - Local (Windows, Chromium headless): QR deep link to Following 200-220 ms; code submit to Following (method A, door code included) 130-148 ms; leader move to both members 13-16 ms.
 - CI `e2e` job (ubuntu-latest, run 42400662557): 149 ms, 140 ms, 22 ms.
@@ -39,4 +54,7 @@
 - Resume treats `GROUP_FULL` as gone (pointer forgotten, one notice). Leave while not connected forgets the group locally (pointer, and the token through the client's `forgetGroup`).
 - Library in a group: a notice with Open the group's book and, for members, Leave group in the header (the leader ends from the reading page, with its confirmation).
 - e2e: the TCP proxy holds new connections during a cut (dropped packets, like a locked phone) instead of refusing them, so the reconnect lands when the network returns; the QR deep link is built from the ticket the leader's client received (no QR image decoding).
+- Fix round 1: the parked QR ticket is a private field of the controller, never in the store state, so it isn't visible in React state while hidden (the #15 "ticket drop when no consumer is mounted" now means "dropped from the state"); `packages/react/README.md` updated.
+- Fix round 1: the URL redaction also covers `READER_SRC_ORIGINS` entries (same helper, same leak); the reader README's compose command was fixed too.
+- Fix round 1: `01a10ca` is outside the listed findings: a real L3 bug found while testing security finding 1.
 - Extra commits between chunks: `b7d97e4` (prettier on the fake client, CI lint), `6d5e124` (flaky restore test: wait for effects), `23307d9` (a lint error pushed with chunk 16).
