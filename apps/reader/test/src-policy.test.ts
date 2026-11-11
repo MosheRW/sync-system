@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { checkAllowedOrigin, isLoopbackHttpOrigin } from '../src/content/origin.js';
+import { LOOPBACK_HOSTS, checkAllowedOrigin, isLoopbackHttpOrigin } from '../src/content/origin.js';
 import { checkSrc } from '../src/content/src-policy.js';
 
 const ORIGINS = ['https://content.example.org', 'http://localhost:4000'];
@@ -119,5 +119,7 @@ describe('checkAllowedOrigin (config entries, security C2)', () => {
   it('detects loopback http origins', () => {
     expect(isLoopbackHttpOrigin('http://localhost:3000')).toBe(true);
     expect(isLoopbackHttpOrigin('https://localhost:3000')).toBe(false);
+    expect(isLoopbackHttpOrigin('http://[::1]:3000')).toBe(false);
+    expect([...LOOPBACK_HOSTS]).toEqual(['localhost', '127.0.0.1']);
   });
 });

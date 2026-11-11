@@ -4,8 +4,12 @@
  * global, available in browsers and Node.
  */
 
-/** Hosts for which `http:` is allowed (development only, security F9). */
-export const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(['localhost', '127.0.0.1', '[::1]']);
+/**
+ * Hosts for which `http:` is allowed (development only, security F9). No
+ * IPv6 literal: a CSP source can't hold one, so `isCspHostname` refuses it
+ * first (#24 R1).
+ */
+export const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(['localhost', '127.0.0.1']);
 
 export type OriginIssue =
   | 'not-a-url'
