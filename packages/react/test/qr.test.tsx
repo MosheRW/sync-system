@@ -595,6 +595,39 @@ describe('hiding and showing the QR (#24 QA finding 2, AC12)', () => {
     },
   );
 
+  it.each(['rotated', 'resumed', 'member_removed', 'superseded'] as CodesChangedReason[])(
+    'codesChanged %s inside the release tick never parks the revoked ticket (R1)',
+    async (reason) => {
+      const values: QrTicketHook[] = [];
+      function Probe({ enabled }: { enabled: boolean }): ReactNode {
+        values.push(useQrTicket({ enabled }));
+        return null;
+      }
+      const client = leader();
+      const view = renderWithProvider(<Probe enabled />, { client });
+      await advance(0);
+      expect(ticketOf(values.at(-1))).toBe('tk-1');
+      // The last consumer goes: the release timer is armed, not run yet.
+      act(() => view.rerenderWith(<Probe enabled={false} />));
+      act(() => {
+        client.codes = { generation: 2, groupCode: '654321' };
+        client.emit('codesChanged', { groupId: 'g-1', codes: client.codes, reason });
+      });
+      await advance(0);
+      expect(values.at(-1)?.state).toEqual({ status: 'idle' });
+      await advance(10_000);
+      const gate = deferred<QrTicket>();
+      client.impl.issueQrTicket = () => gate.promise;
+      const shownFrom = values.length;
+      act(() => view.rerenderWith(<Probe enabled />));
+      await advance(0);
+      // Not even for one render.
+      expect(values.slice(shownFrom).map(ticketOf)).not.toContain('tk-1');
+      expect(values.at(-1)?.state).toEqual({ status: 'loading', ticket: null });
+      expect(client.count('issueQrTicket')).toBe(2);
+    },
+  );
+
   it('door_failures while hidden keeps the parked ticket', async () => {
     const client = leader();
     const qr = toggled(client);

@@ -341,8 +341,10 @@ It resets on group change or end.
   unmounts or is disabled: nothing is issued while the QR is hidden. The last
   unexpired ticket is kept inside the provider (not in the state), so showing
   the QR again on the same connection and group shows it at once and
-  re-issues on the normal schedule. It is forgotten on expiry, a revoking
-  code change, a lost connection or lead, or a group switch.
+  re-issues on the normal schedule. It is dropped on a revoking code change,
+  a lost connection or lead, or a group switch. An expired one is discarded
+  when the QR is shown again and a new ticket is issued: a ticket is never
+  shown after its expiry.
 
 `state` is `idle`, `loading` (`ticket` or `null`), `ready` (`ticket`),
 `unavailable` or `error` (`error`, `ticket` or `null`). `idle` means no QR

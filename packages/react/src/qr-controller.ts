@@ -62,9 +62,11 @@ export interface QrHost {
  *   last unexpired ticket is parked in a private field, so showing the QR
  *   again on the same connection and lead shows it at once instead of
  *   waiting out the 10 s floor (#24 QA finding 2). Nothing is issued while
- *   parked. The parked ticket is dropped on expiry, a revoking code change,
- *   a lost connection or lead, or a group switch. Over no client
- *   everything is a no-op (R6).
+ *   parked, and no timer runs. The parked ticket is dropped on a revoking
+ *   code change (even one that lands before the release timer runs), a
+ *   lost connection or lead, or a group switch. An expired one is
+ *   discarded at the next check, when the QR is shown again, and is never
+ *   shown after its expiry. Over no client everything is a no-op (R6).
  */
 export class QrTicketController {
   readonly #host: QrHost;
@@ -87,6 +89,12 @@ export class QrTicketController {
   #reissueAt = 0;
   /** The last unexpired ticket while no consumer shows it (never in the state). */
   #parked: Parked | null = null;
+  /**
+   * The latest revoking code change seen, consumers or not: a ticket issued
+   * under an older code generation of that group is never parked or shown
+   * again (R1, #24 security round 2, A1).
+   */
+  #revoked: { readonly group: string; readonly generation: number } | null = null;
 
   constructor(host: QrHost) {
     this.#host = host;
@@ -175,6 +183,8 @@ export class QrTicketController {
   /** A `codesChanged` event (R1). */
   codesChanged(event: SyncClientEvents['codesChanged']): void {
     if (this.#host.client === null || !REVOKING.has(event.reason)) return;
+    // Kept even with no consumer: the release timer may still park (A1).
+    this.#revoked = { group: event.groupId, generation: event.codes.generation };
     // A revoked ticket is never shown again, parked or not (R1).
     if (this.#parked?.group === event.groupId) this.#parked = null;
     if (this.#refs === 0) return;
@@ -331,11 +341,13 @@ export class QrTicketController {
     );
   }
 
-  /** Keeps the shown, unexpired ticket of the current lead while hidden. */
+  /** Keeps the shown, unexpired, unrevoked ticket of the current lead while hidden. */
   #park(): void {
     const ticket = this.#validTicket();
     this.#parked =
-      ticket !== null && this.#group !== null
+      ticket !== null &&
+      this.#group !== null &&
+      !this.#isRevoked(this.#group, this.#codesGeneration)
         ? {
             ticket,
             group: this.#group,
@@ -346,7 +358,7 @@ export class QrTicketController {
   }
 
   /**
-   * Shows the parked ticket again (same lead, not expired) and re-issues on
+   * Shows the parked ticket again (same lead, not expired, not revoked) and re-issues on
    * its normal schedule: at its 80 % mark, never inside the 10 s floor or a
    * `RATE_LIMITED` wait. `false` when there is nothing to show.
    */
@@ -354,7 +366,12 @@ export class QrTicketController {
     const parked = this.#parked;
     this.#parked = null;
     const time = now();
-    if (parked === null || parked.group !== this.#group || parked.ticket.expiresAt <= time) {
+    if (
+      parked === null ||
+      parked.group !== this.#group ||
+      parked.ticket.expiresAt <= time ||
+      this.#isRevoked(parked.group, parked.codesGeneration)
+    ) {
       return false;
     }
     this.#reissueAt = parked.reissueAt;
@@ -368,6 +385,18 @@ export class QrTicketController {
     this.#armIssue(Math.max(0, due - time));
     this.#armExpiry(parked.ticket);
     return true;
+  }
+
+  /**
+   * A ticket issued under `codesGeneration` was revoked by a later code
+   * change of `group`. Unknown codes count as revoked once one was seen.
+   * `door_failures` moves the code generation but keeps tickets valid
+   * (D12), so only revoking changes are compared, never the current codes.
+   */
+  #isRevoked(group: string, codesGeneration: number | null): boolean {
+    const revoked = this.#revoked;
+    if (revoked === null || revoked.group !== group) return false;
+    return codesGeneration === null || codesGeneration < revoked.generation;
   }
 
   #validTicket(): QrTicket | null {
