@@ -24,6 +24,7 @@
 - security code (round 1): opus (rule) → PASS
 - engineer fix (round 1): opus (rule) → DONE
 - qa validate (round 2): opus (rule) → BLOCKED (CI e2e runner infrastructure; no code findings)
+- security code (round 2): opus (rule) → PASS (2 new lows A1, A2; advisory)
 ## Fix round 1 (2026-11-11, engineer)
 QA findings 1-6 and security lows 1-3, one commit each (plus one bug found on the way):
 - QA 1, flaky notice assertion: `c0f072a` (`getNotice()` helper queries the notice bar, not the live region; also used for "Your group has ended.").
