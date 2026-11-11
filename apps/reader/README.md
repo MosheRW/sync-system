@@ -30,7 +30,7 @@ pnpm --filter @sync-system/reader preview  # vite preview with the same config a
 Docker (the `reader` service in the root `compose.yaml`, loopback port 8081):
 
 ```sh
-docker compose up --build reader
+docker compose up --build           # the reader and the sync server its groups use
 docker compose ps reader            # STATUS shows (healthy)
 open http://127.0.0.1:8081/         # the library
 ```

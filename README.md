@@ -644,7 +644,7 @@ the leader's page (#24). Full documentation:
 
 ```sh
 pnpm --filter @sync-system/reader dev           # http://localhost:5173
-docker compose up --build reader                # http://127.0.0.1:8081
+docker compose up --build                       # reader and sync server, http://127.0.0.1:8081
 ```
 
 The `reader` service in `compose.yaml` builds `apps/reader/Dockerfile`, binds
