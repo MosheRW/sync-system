@@ -816,3 +816,28 @@
 .dotPreview {
   color: var(--color-accent);
 }
+
+/* ---- Lifecycle cards (#25 design 6.7, 6.10) ---- */
+.cardWarning {
+  border-color: var(--color-warning);
+}
+
+.cardTitle,
+.cardTitleWarning {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin: 0;
+  font-size: var(--text-md);
+  font-weight: var(--weight-strong);
+}
+
+.cardTitleWarning {
+  color: var(--color-warning);
+}
+
+.cardActionsEnd {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}

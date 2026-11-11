@@ -368,4 +368,18 @@ export const he: Messages = {
   announcePreviewOn: 'התצוגה המקדימה פעילה. הקבוצה נשארת בעמוד {n}.',
   announcePreviewOff: 'חזרה לעמוד הקבוצה.',
   announceGroupMoved: 'הקבוצה עברה לעמוד {n}.',
+  // #25 keep-alive (design 7.5)
+  keepAliveRegion: 'המשך הקבוצה',
+  keepAliveTitle: 'עדיין קוראים?',
+  keepAliveBody: 'הקבוצה תיעצר בעוד {time} אם לא ממשיכים.',
+  keepAliveBodyLast: 'הקבוצה תסתיים בעוד {time} אם לא ממשיכים.',
+  keepGoing: 'להמשיך',
+  keepingGoing: 'ממשיכים…',
+  keepAlivePausedTitle: 'הקבוצה עצרה',
+  keepAlivePausedHandoff: 'בקרוב מישהו אחר יוביל. כדי להמשיך להוביל, יש לבחור "להמשיך".',
+  keepAlivePausedWait: 'הקבוצה מחכה לך. כדי להמשיך, יש לבחור "להמשיך".',
+  announceKeepAlive: 'הקבוצה תיעצר בעוד {time}. כדי להמשיך אפשר לדפדף או לבחור "להמשיך".',
+  announceKeepAliveLast: 'הקבוצה תסתיים בעוד {time}. כדי להמשיך אפשר לדפדף או לבחור "להמשיך".',
+  announcePaused: 'הקבוצה עצרה. כדי להמשיך יש לבחור "להמשיך".',
+  announceKeptGoing: 'הקבוצה ממשיכה.',
 };

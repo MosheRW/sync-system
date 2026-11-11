@@ -125,6 +125,8 @@ export interface RosterListProps {
   stale: boolean;
   /** Polite announcements (vice, removed). */
   announce: (text: string) => void;
+  /** A leader action succeeded (the last-chance hint goes, #25 8.3). */
+  onActivity?: () => void;
   /** Focus was inside the list when it unmounted (resize below 1024 px, design F14.4). */
   onUnmountWithFocus?: () => void;
 }
@@ -166,6 +168,7 @@ export function RosterList({
   viceId,
   stale,
   announce,
+  onActivity,
   onUnmountWithFocus,
 }: RosterListProps) {
   const i18n = useI18n();
@@ -243,6 +246,7 @@ export function RosterList({
     void running.then((result) => {
       setPending(null);
       if (result.ok) {
+        onActivity?.();
         setOpen(null);
         toggles.current.get(id)?.focus();
         announce(
@@ -263,6 +267,7 @@ export function RosterList({
     removeError.clear();
     void removal.remove.run(id).then((result) => {
       if (result.ok) {
+        onActivity?.();
         focusAfter.current = { id: neighbour(previousOrder.current, id) };
         setRemoveTarget(null);
         setOpen(null);

@@ -90,7 +90,14 @@ export function LockLine({ member = false }: { member?: boolean }) {
  * Lock / Unlock group (#25 design 6.5, F18, AC44): no confirmation; the
  * label says the action; errors under the button (design 7.11).
  */
-export function LockControl({ announce }: { announce: (text: string) => void }) {
+export function LockControl({
+  announce,
+  onActivity,
+}: {
+  announce: (text: string) => void;
+  /** A leader action succeeded (#25 8.3). */
+  onActivity?: () => void;
+}) {
   const { t } = useI18n();
   const lock = useGroupLock();
   const error = useActionError();
@@ -101,6 +108,7 @@ export function LockControl({ announce }: { announce: (text: string) => void }) 
     error.clear();
     void action.run().then((result) => {
       if (result.ok) {
+        onActivity?.();
         announce(locking ? t.announceLocked : t.announceUnlocked);
         return;
       }

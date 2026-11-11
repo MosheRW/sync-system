@@ -6,6 +6,8 @@ import {
   useGroupExit,
   useJoinRequests,
   useGroupEnded,
+  useHandoffMode,
+  useKeepAlive,
   useLeaderCodes,
   usePosition,
   useRemoved,
@@ -46,6 +48,7 @@ import {
 import { PreviewBanner } from '../components/group/PreviewBanner.js';
 import { MismatchBlock, VersionWarnDialog } from '../components/group/MismatchViews.js';
 import { PeopleCounter, PeopleRow, RosterList } from '../components/group/People.js';
+import { KeepAliveCard } from '../components/group/LifecycleCards.js';
 import { JumpPrompt, LateJoinPrompt } from '../components/group/Prompts.js';
 import { bookHref } from '../components/LibraryScreen.js';
 import { QrCodeView } from '../components/group/QrCodeView.js';
@@ -70,6 +73,7 @@ import { useBannerSlot } from './use-banner-slot.js';
 import { useLeadershipFlow } from './use-leadership-flow.js';
 import type { LeaderError } from './leader-errors.js';
 import { usePreviewMode } from './use-preview-mode.js';
+import { countRoster } from './roster-view.js';
 import type { Messages } from '../i18n/en.js';
 import { encodePosition } from './position.js';
 import { useFollow } from './use-follow.js';
@@ -175,6 +179,8 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
   const [confirm, setConfirm] = useState<Confirm>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [announcement, announce] = useAnnouncer();
+  // The assertive channel: keep-alive appearance and run-out only (#25 U13).
+  const [assertiveAnnouncement, announceAssertive] = useAnnouncer();
   const ownIndex = useRef(props.initialIndex ?? 0);
   const position = usePosition();
   const [restored] = useState(restoredPage);
@@ -237,7 +243,8 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
   const endedNotice = (text: keyof Messages, focus = false) =>
     showEnded({ row: 1, kind: 'ended', text, focus });
   const locked = group?.status === 'active' && group.locked;
-  useLeadershipFlow({ isMember, isVice: vice.isVice, show: banners.show });
+  const flow = useLeadershipFlow({ isMember, isVice: vice.isVice, show: banners.show });
+  const { leaderActivity } = flow;
   // The content check runs before anything is followed (AC21, item 7 compare).
   const memberMetadata = isMember ? group.metadata : null;
   const compare = useMemo(
@@ -409,21 +416,24 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
       // Previewing: a preview move, never a position update (#25 AC41, R21).
       if (previewMode.isActiveNow()) {
         previewMode.move(index);
+        leaderActivity();
         return;
       }
       // The leader's page is the group's (AC25); only real moves are sent
       // (#25 7.3); the client throttles (trailing send).
       if (position.canUpdate && groupIndexRef.current !== index) {
         position.updatePosition(encodePosition(index));
+        leaderActivity();
       }
     },
-    [onPageChange, followed, position, previewMode],
+    [onPageChange, followed, position, previewMode, leaderActivity],
   );
 
   const startPreview = () => {
     setSheet(null);
     setPreviewError(null);
     previewMode.start(ownIndex.current);
+    leaderActivity();
   };
   const returnFromPreview = () => {
     const index = previewMode.returnToGroup();
@@ -439,6 +449,7 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
     const error = previewMode.bring(isLeader);
     setPreviewError(error);
     if (error !== null) return;
+    leaderActivity();
     announce(i18n.format(t.announceGroupMoved, { n: view + 1 }));
     focusArticle();
   };
@@ -604,6 +615,7 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
       viceId={vice.viceId}
       stale={connection.status !== 'connected'}
       announce={announce}
+      onActivity={leaderActivity}
       {...(onUnmountWithFocus !== undefined ? { onUnmountWithFocus } : {})}
     />
   );
@@ -626,7 +638,7 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
             onStart={startPreview}
             onReturn={returnFromPreview}
           />
-          <LockControl announce={announce} />
+          <LockControl announce={announce} onActivity={leaderActivity} />
         </>
       }
       {...(people !== undefined ? { people } : {})}
@@ -635,6 +647,23 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
         : {})}
     />
   );
+
+  // The keep-alive card (#25 architecture 8.3): leader only, top of the overlay.
+  const keepAlive = useKeepAlive().prompt;
+  const handoff = useHandoffMode();
+  const keepAliveCard =
+    isLeader && keepAlive !== null ? (
+      <KeepAliveCard
+        prompt={keepAlive}
+        handoff={handoff}
+        othersHere={countRoster(roster).here}
+        lastChance={flow.lastChance}
+        announce={announce}
+        announceAssertive={announceAssertive}
+        onActivity={leaderActivity}
+        onClosedWithFocus={focusArticle}
+      />
+    ) : null;
 
   // Join requests: overlay on phones, top of the panel on large screens (6.15).
   const tray =
@@ -1037,6 +1066,7 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
         {...props}
         onPageChange={pageChanged}
         announce={announcement}
+        announceAssertive={assertiveAnnouncement}
         jumpRequest={jumpRequest}
         headerEndSlot={
           kind === null ? null : (
@@ -1066,9 +1096,12 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
           ) : null
         }
         overlay={
-          late !== null || jump !== null || (!large && tray !== null) ? (
+          keepAliveCard !== null || late !== null || jump !== null || (!large && tray !== null) ? (
             <div className={styles.overlayStack}>
-              {late !== null ? (
+              {/* One card, by priority (#25 design 2.2): keep-alive, late-join, jump. */}
+              {keepAliveCard !== null ? (
+                keepAliveCard
+              ) : late !== null ? (
                 <LateJoinPrompt
                   index={late.index}
                   deadline={late.deadline}

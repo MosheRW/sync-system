@@ -370,6 +370,21 @@ export const en = {
   announcePreviewOn: 'Preview on. The group stays on page {n}.',
   announcePreviewOff: "Back on the group's page.",
   announceGroupMoved: 'The group moved to page {n}.',
+  // #25 keep-alive (design 7.5)
+  keepAliveRegion: 'Keep the group going',
+  keepAliveTitle: 'Still reading?',
+  keepAliveBody: 'The group pauses in {time} unless you keep it going.',
+  keepAliveBodyLast: 'The group ends in {time} unless you keep it going.',
+  keepGoing: 'Keep going',
+  keepingGoing: 'Keeping the group going…',
+  keepAlivePausedTitle: 'The group is paused',
+  keepAlivePausedHandoff: 'Someone else will lead soon. Keep going to stay the leader.',
+  keepAlivePausedWait: 'The group waits for you. Keep going to carry on.',
+  announceKeepAlive: 'The group pauses in {time}. Turn a page or use Keep going to keep it going.',
+  announceKeepAliveLast:
+    'The group ends in {time}. Turn a page or use Keep going to keep it going.',
+  announcePaused: 'The group is paused. Use Keep going to carry on.',
+  announceKeptGoing: 'The group keeps going.',
 };
 
 export type Messages = { readonly [K in keyof typeof en]: string };
