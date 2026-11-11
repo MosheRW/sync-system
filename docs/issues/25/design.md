@@ -89,7 +89,7 @@ Highest first.
 | 3 | **Leadership notice**: lost-lead (AC47), take-back refused (AC48), leader-changed (AC49) | member | sticky notice (lost-lead, refused) or info notice (leader-changed) | Dismiss, or auto-hide (2.4) |
 | 4 | **Vice-leader notice** (AC60) | member | info notice | Dismiss or auto-hide |
 | 5 | **Lock notice** (AC44, member side) | member | info notice | Dismiss or auto-hide |
-| 6 | **QR-pasted notice** (AC57) | anyone | info notice | Dismiss or auto-hide |
+| 6 | **QR-pasted notice** (AC57) | anyone | sticky notice (U8 decision) | Dismiss |
 
 Rules:
 1. A new banner with **higher or equal** priority than the current one
@@ -108,11 +108,13 @@ Rules:
    but the group-ended notice (which can't coexist with it: preview ends with
    the group).
 
-### 2.4 Lifetime of info notices (see U8)
-- **Sticky notices** (group-ended, lost-lead, take-back refused) stay until
-  Dismiss or until replaced. They explain a change of the user's own role or
-  membership, which they must not miss.
-- **Info notices** (leader-changed, vice-leader, lock, QR-pasted) hide by
+### 2.4 Lifetime of notices (U8, decided 2026-11-11)
+- **Sticky notices** (group-ended, lost-lead, take-back refused, QR-pasted)
+  stay until Dismiss or until replaced. The first three explain a change of
+  the user's own role or membership, which they must not miss; the QR-pasted
+  notice stays because the user acted and is waiting for a result (user's
+  change to U8).
+- **Info notices** (leader-changed, vice-leader, lock) hide by
   themselves after **15 s** visible time, with **Dismiss** available
   throughout. The timer pauses while the pointer is over the banner or focus is
   inside it, and while the tab is hidden (it counts visible time only). The
@@ -349,7 +351,9 @@ Taps are counted from the reading page. **(goal)** marks where the goal is met.
    meaningless and stays silent, 8a F5). On the library page it shows as a
    `NoticeBar` at the top of the list (same text). While a mismatch block or a
    status screen is up, it isn't shown (no banner slot there).
-3. Pasting again replaces the notice (equal priority) and restarts its timer.
+3. The notice is sticky (U8 decision): it stays until **Dismiss** or until a
+   higher or equal priority banner replaces it; it doesn't hide by itself.
+   Pasting again replaces it with the same notice (equal priority).
 
 ## 4. Screens and components
 
@@ -687,7 +691,12 @@ people in the group are under Group.
 - `NoticeBar` (8a 6.6) in the banner slot: info icon, text, **Dismiss**,
   `role="status"`. Lost-lead and take-back refused use `tone="warning"`
   (warning icon), the rest `tone="info"`.
-- Auto-hide per 2.4 for info notices; no visual timer.
+- States: shown, waiting (queued behind a higher banner, 2.3), dismissed,
+  replaced, dropped (no longer true, 2.3 rule 3), and for info notices only
+  auto-hidden.
+- Auto-hide per 2.4 for the info notices only (leader-changed, vice-leader,
+  lock); no visual timer. Sticky notices (lost-lead, take-back refused,
+  QR-pasted) never hide by themselves.
 - Dismiss: focus to the article (8a rule).
 
 ### 6.10 TakeBackCard (AC48)
@@ -1055,7 +1064,27 @@ tokens are added.
 - **D9. Mismatched new leader** (U11): what the reader knows about the
   content check at the moment of `nowLeading`.
 
-## 13. Open questions (for the user)
+## 13. Design decisions (user, 2026-11-11)
+
+Decided at Gate 2 input: "Accept all" for U5-U14 as recommended, with one
+change to U8: "the pasted-QR-link notice (AC57) also stays until dismissed,
+like the lost-lead and 'can't take the lead back' notices. Only the
+leader-changed, vice-leader and lock notices hide after 15 s of visible
+time." The text below keeps each item's recommendation as written, with the
+decision noted; sections 2.3, 2.4, F24 and 6.9 already follow the decisions.
+
+| Item | Decision |
+|---|---|
+| U5 | Accepted as recommended |
+| U6 | Accepted as recommended |
+| U7 | Accepted as recommended |
+| U8 | **Changed**: the QR-pasted notice is sticky; only leader-changed, vice-leader and lock notices auto-hide after 15 s |
+| U9 | Accepted as recommended |
+| U10 | Accepted as recommended |
+| U11 | Accepted as recommended |
+| U12 | Accepted as recommended ("סגן המוביל") |
+| U13 | Accepted as recommended |
+| U14 | Accepted as recommended |
 
 Recommendation first in each.
 
@@ -1075,7 +1104,9 @@ Recommendation first in each.
   so their next page turn doesn't yank everyone to wherever they were browsing.
   Alternatives: (a) move them to the group's page on dismiss; (b) do nothing
   special (their next turn moves the group).
-- **U8. Info notices hide by themselves.** Recommendation: leader-changed,
+- **U8. Info notices hide by themselves.** (Decided with a change: the
+  QR-pasted notice stays until dismissed; see the table above.)
+  Recommendation: leader-changed,
   vice-leader, lock and QR-pasted notices hide after 15 s of visible time
   (paused on hover/focus and in a background tab), with Dismiss; lost-lead and
   "can't take the lead back" stay until dismissed. Reason: members read for
