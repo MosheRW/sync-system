@@ -23,7 +23,12 @@ export interface ReadingScreenProps {
   overlay?: ReactNode;
   /** Inside the sticky header, under its row: the leader's code strip (design 4.2). */
   belowHeader?: ReactNode;
-  /** At the top of the reading region: codes notice, group-ended notice (design 6.6, F12). */
+  /**
+   * The banner slot (#25 design 2.1, D1): one banner, sticky at the top of
+   * the reading column under the header, before `notices`.
+   */
+  banner?: ReactNode;
+  /** At the top of the reading region: the leader's codes notices (design 6.6). */
   notices?: ReactNode;
   /** The leader's Group panel column at 1024 px and up (design 4.3). */
   aside?: ReactNode;
@@ -31,6 +36,8 @@ export interface ReadingScreenProps {
   blocked?: ReactNode;
   /** A group announcement for the shared live region (design 9); a page announcement wins. */
   announce?: { readonly text: string; readonly id: number } | null;
+  /** The assertive channel (#25 D4): keep-alive appearance and run-out only. */
+  announceAssertive?: { readonly text: string; readonly id: number } | null;
   /** The app moves the page (a group move): `goTo(index, 'app')` once per `id`. */
   jumpRequest?: { readonly index: number; readonly id: number } | null;
 }
@@ -51,10 +58,12 @@ export function ReadingScreen({
   headerEndSlot,
   overlay,
   belowHeader,
+  banner,
   notices,
   aside,
   blocked,
   announce = null,
+  announceAssertive = null,
   jumpRequest = null,
 }: ReadingScreenProps) {
   const { t, format } = useI18n();
@@ -71,7 +80,26 @@ export function ReadingScreen({
     swipeKey: blocked !== undefined && blocked !== null,
   });
   const [announcement, setAnnouncement] = useState('');
+  const [assertive, setAssertive] = useState('');
   const page = doc.pages[nav.index] ?? doc.pages[0]!;
+  const screenRef = useRef<HTMLDivElement>(null);
+
+  // The banner sticks under the sticky header, whose height changes with the
+  // code strip: the height goes to a custom property through the CSSOM (no
+  // `style=` attribute, #24 R12).
+  const hasBanner = banner !== undefined && banner !== null;
+  useEffect(() => {
+    const screen = screenRef.current;
+    const header = screen?.querySelector('header');
+    if (!hasBanner || !screen || !header || typeof ResizeObserver === 'undefined') {
+      return undefined;
+    }
+    const observer = new ResizeObserver(() => {
+      screen.style.setProperty('--header-block-size', `${header.getBoundingClientRect().height}px`);
+    });
+    observer.observe(header);
+    return () => observer.disconnect();
+  }, [hasBanner]);
 
   useEffect(() => {
     document.title = doc.title?.replace(/\s*[\r\n]+\s*/g, ' ') ?? t.readingFallbackName;
@@ -96,6 +124,12 @@ export function ReadingScreen({
     if (Date.now() - pageAnnouncedAt.current < 100) return;
     setAnnouncement(announce.text);
   }, [announce]);
+
+  useEffect(() => {
+    if (announceAssertive !== null) setAssertive(announceAssertive.text);
+  }, [announceAssertive]);
+
+  const bannerSlot = hasBanner ? <div className={styles.banner}>{banner}</div> : null;
 
   const { goTo } = nav;
   useEffect(() => {
@@ -124,12 +158,13 @@ export function ReadingScreen({
   if (blocked !== undefined && blocked !== null) {
     // Nothing to navigate while blocked: no header, no page navigation (6.11).
     return (
-      <div className={styles.screen}>
+      <div ref={screenRef} className={styles.screen}>
         <main ref={contentRegionRef} className={styles.main}>
+          {bannerSlot}
           {notices}
           {blocked}
         </main>
-        <LiveAnnouncer message={announcement} />
+        <LiveAnnouncer message={announcement} assertive={assertive} />
       </div>
     );
   }
@@ -137,6 +172,7 @@ export function ReadingScreen({
   const column = (
     <>
       <main ref={contentRegionRef} className={styles.main}>
+        {bannerSlot}
         {notices}
         <article
           ref={articleRef}
@@ -161,7 +197,7 @@ export function ReadingScreen({
   );
 
   return (
-    <div className={styles.screen}>
+    <div ref={screenRef} className={styles.screen}>
       <ReaderHeader
         title={doc.title}
         docDir={docDir}
@@ -179,7 +215,7 @@ export function ReadingScreen({
       ) : (
         column
       )}
-      <LiveAnnouncer message={announcement} />
+      <LiveAnnouncer message={announcement} assertive={assertive} />
     </div>
   );
 }

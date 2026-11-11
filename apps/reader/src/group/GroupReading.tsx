@@ -13,10 +13,12 @@ import {
   useSyncEvent,
   useSyncIndicator,
   useSyncSnapshot,
+  useViceLeader,
 } from '@sync-system/react';
 import { type JoinedGroup, type ResumedGroup } from '@sync-system/react';
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ApprovalTray } from '../components/group/ApprovalTray.js';
+import { BannerSlot } from '../components/group/BannerSlot.js';
 import { ConfirmDialog } from '../components/group/ConfirmDialog.js';
 import { Button, NoticeBar } from '../components/group/controls.js';
 import { CREATE_FORM_ID, CreateGroupForm } from '../components/group/CreateGroupForm.js';
@@ -53,6 +55,8 @@ import { type ShareTarget, buildJoinLink } from './deep-link.js';
 import { errorText, errorView } from './errors.js';
 import { ownNameText } from './names.js';
 import { type IndicatorKind, derivePhase, indicatorFor } from './phase.js';
+import { useBannerSlot } from './use-banner-slot.js';
+import type { Messages } from '../i18n/en.js';
 import { encodePosition } from './position.js';
 import { useFollow } from './use-follow.js';
 import { useJoin } from './use-join.js';
@@ -65,7 +69,15 @@ import { LARGE_SCREEN, useMediaQuery } from './use-media-query.js';
 
 export type GroupReadingProps = Omit<
   ReadingScreenProps,
-  'headerEndSlot' | 'overlay' | 'belowHeader' | 'notices' | 'aside' | 'blocked' | 'announce'
+  | 'headerEndSlot'
+  | 'overlay'
+  | 'belowHeader'
+  | 'banner'
+  | 'notices'
+  | 'aside'
+  | 'blocked'
+  | 'announce'
+  | 'announceAssertive'
 > & {
   /** Where the book came from: the QR link opens the same one (Decision Q4). */
   source?: ContentSource;
@@ -130,8 +142,6 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
   const [formError, setFormError] = useState<SyncClientError | null>(null);
   const [confirm, setConfirm] = useState<Confirm>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [endedNotice, setEndedNotice] = useState<string | null>(null);
-  const focusDismiss = useRef(false);
   const [announcement, announce] = useAnnouncer();
   const ownIndex = useRef(props.initialIndex ?? 0);
   const position = usePosition();
@@ -178,6 +188,22 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
   const group = snapshot.group;
   const isLeader = group?.status === 'active' && group.role === 'leader';
   const isMember = group?.status === 'active' && group.role === 'member';
+  const vice = useViceLeader();
+  // The banner slot (#25 architecture 6): one banner, dropped when no longer true.
+  const banners = useBannerSlot(
+    {
+      isLeader,
+      isVice: vice.isVice,
+      locked: group?.status === 'active' && group.locked,
+      inGroup:
+        group !== null &&
+        (group.status === 'active' || group.status === 'rejoining' || group.status === 'waiting'),
+    },
+    announce,
+  );
+  const showEnded = banners.show;
+  const endedNotice = (text: keyof Messages, focus = false) =>
+    showEnded({ row: 1, kind: 'ended', text, focus });
   // The content check runs before anything is followed (AC21, item 7 compare).
   const memberMetadata = isMember ? group.metadata : null;
   const compare = useMemo(
@@ -219,7 +245,7 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
       resume.forget();
       join.clear();
       setSheet(null);
-      setEndedNotice(t.leftGroup);
+      endedNotice('leftGroup');
       return;
     }
     lastExit.current = 'leave';
@@ -374,23 +400,25 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
     if (reason === 'closed') return;
     env.pointers.forget();
     resumedMode.current = null;
-    const text = {
-      ended_by_leader: t.endedByLeader,
-      leader_timeout: t.endedLeaderTimeout,
-      max_session: t.endedMaxSession,
-      inactivity: t.endedInactivity,
-      removed: t.endedRemoved,
-      replaced: t.endedReplaced,
-      left: lastExit.current === 'end' ? t.endedByYou : t.leftGroup,
-      rejoin_failed: resumedThisLoad ? t.endedRejoinFailed : t.storedGroupGone,
-    }[reason];
+    const key = (
+      {
+        ended_by_leader: 'endedByLeader',
+        leader_timeout: 'endedLeaderTimeout',
+        max_session: 'endedMaxSession',
+        inactivity: 'endedInactivity',
+        removed: 'endedRemoved',
+        replaced: 'endedReplaced',
+        left: lastExit.current === 'end' ? 'endedByYou' : 'leftGroup',
+        rejoin_failed: resumedThisLoad ? 'endedRejoinFailed' : 'storedGroupGone',
+      } as const
+    )[reason];
     lastExit.current = null;
-    focusDismiss.current = document.activeElement?.closest('dialog, [role="region"]') != null;
+    const focus = document.activeElement?.closest('dialog, [role="region"]') != null;
     setSheet(null);
     setConfirm(null);
     join.clear();
-    setEndedNotice(text);
-    announce(text);
+    endedNotice(key, focus);
+    announce(t[key]);
     // Only `ended` and `removed` on purpose: one notice per end, not a
     // repeat when the text, pointers or join state change.
   }, [ended, removed]);
@@ -398,8 +426,8 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
   // A stored group that is gone: one short notice, never retried (AC37).
   useEffect(() => {
     if (resume.status === 'gone' || resume.status === 'none') resumedMode.current = null;
-    if (resume.status === 'gone') setEndedNotice(t.storedGroupGone);
-  }, [resume.status, t.storedGroupGone]);
+    if (resume.status === 'gone') showEnded({ row: 1, kind: 'ended', text: 'storedGroupGone' });
+  }, [resume.status, showEnded]);
 
   const openSheet = () => {
     if (phase === 'leader') setSheet('leader');
@@ -501,18 +529,6 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
 
   const noticeBars = (
     <>
-      {endedNotice !== null ? (
-        <NoticeBar
-          dismissLabel={t.dismiss}
-          autoFocus={focusDismiss.current}
-          onDismiss={() => {
-            setEndedNotice(null);
-            focusArticle();
-          }}
-        >
-          {endedNotice}
-        </NoticeBar>
-      ) : null}
       {isLeader && notice !== null ? (
         <NoticeBar
           dismissLabel={t.dismiss}
@@ -897,6 +913,9 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
           )
         }
         belowHeader={strip}
+        banner={
+          banners.shown !== null ? <BannerSlot slot={banners} onDismissed={focusArticle} /> : null
+        }
         notices={large && isLeader ? null : noticeBars}
         aside={panel}
         blocked={

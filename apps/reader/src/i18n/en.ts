@@ -287,6 +287,24 @@ export const en = {
   endedReplaced: 'This group is open in another tab or device, so this tab left it.',
   endedRejoinFailed: "Couldn't get back into the group. It may have ended.",
   storedGroupGone: 'Your group has ended.',
+  // #25 banners (design 7.7-7.9)
+  changedDisconnect: 'The leader lost connection, so someone else is leading now.',
+  changedInactive: 'The leader was inactive, so someone else is leading now.',
+  changedTakeBack: 'The previous leader is leading again.',
+  changedSuperseded: "The group's leader changed.",
+  lostDisconnect:
+    'You were away too long, so someone else is leading now. You can keep reading with the group.',
+  lostInactive:
+    'You were inactive too long, so someone else is leading now. You can keep reading with the group.',
+  lostTakeBack: 'The previous leader took the lead back. You can keep reading with the group.',
+  lostSuperseded: 'Someone else is leading this group now. You can keep reading with the group.',
+  takeBackNotAllowed: "You can't take the lead back any more.",
+  noticeViceOn: "You're the vice-leader. If the leader drops, you'll lead the group.",
+  noticeViceOff: "You're no longer the vice-leader.",
+  noticeLocked: 'The leader locked the group. Nobody new can join.',
+  noticeUnlocked: 'The leader unlocked the group. New people can join again.',
+  noticeQrPasted:
+    "That link wasn't used. To join with it, open it in a new tab or scan the QR code again.",
 };
 
 export type Messages = { readonly [K in keyof typeof en]: string };
