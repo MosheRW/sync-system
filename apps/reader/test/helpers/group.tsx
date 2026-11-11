@@ -1,7 +1,7 @@
 import type { JoinCodes, JoinMethod, RosterEntry } from '@sync-system/react';
 import { act, fireEvent, screen, within } from '@testing-library/react';
 import { vi } from 'vitest';
-import { SYNC, readingReady, renderApp, testConfig } from './app.js';
+import { SYNC, readingReady, renderApp, testConfig, testLoader } from './app.js';
 import { FakeSyncClient, GROUP_ID, connected } from './fake-sync-client.js';
 import { MemoryStorage } from './storage.js';
 
@@ -128,4 +128,14 @@ export function rosterEntry(participantId: string, extra: Partial<RosterEntry> =
     joinedAt: 0,
     ...extra,
   });
+}
+
+/** The bundled test book's own metadata: a member with it passes the content check. */
+export async function localMetadata() {
+  const result = await testLoader().load({
+    kind: 'bundled',
+    contentId: 'samples/pride-and-prejudice-en',
+  });
+  if (!result.ok) throw new Error('load');
+  return { ...result.content.metadata };
 }

@@ -326,6 +326,38 @@ export const en = {
   autoNameTag: 'Auto name',
   guestNameUnknown: 'Guest',
   recoveryMarker: 'Joined while the group was restoring',
+  // #25 leader controls (design 7.2-7.4, 7.9, 7.10)
+  makeVice: 'Make vice-leader',
+  makeViceHint: 'If you drop, the vice-leader leads.',
+  makeViceAway: "Only someone who's here can be vice-leader.",
+  settingVice: 'Making vice-leader…',
+  clearVice: 'Remove as vice-leader',
+  clearingVice: 'Removing as vice-leader…',
+  removeMember: 'Remove from group',
+  announceVice: 'Vice-leader now: {name}.',
+  announceViceCleared: "There's no vice-leader now.",
+  announceRemoved: '{name} was removed from the group.',
+  removeTitle: 'Remove {name}?',
+  removeBody:
+    "They can't come back to this group. All codes and the QR code will change, so give the new ones to anyone still joining.",
+  removeConfirm: 'Remove',
+  removing: 'Removing…',
+  lockGroup: 'Lock group',
+  lockHint: 'Nobody new can join until you unlock it. People in the group stay in.',
+  unlockGroup: 'Unlock group',
+  locking: 'Locking…',
+  unlocking: 'Unlocking…',
+  lockedLeaderLine: 'Locked: nobody new can join.',
+  lockedMemberLine: 'The group is locked. Nobody new can join.',
+  announceLocked: 'The group is locked.',
+  announceUnlocked: 'The group is open to new people again.',
+  memberViceLine: 'Your role: vice-leader.',
+  errNotLeader: "You're not leading any more, so nothing changed.",
+  errViceAway: "{name} isn't here, so they can't be vice-leader.",
+  errPersonGone: '{name} has already left the group.',
+  errBlockListFull:
+    "You can't remove anyone else from this group. Lock it instead to keep new people out.",
+  errRemoveCodes: "Couldn't make new codes, so nobody was removed. Try again in a minute.",
 };
 
 export type Messages = { readonly [K in keyof typeof en]: string };

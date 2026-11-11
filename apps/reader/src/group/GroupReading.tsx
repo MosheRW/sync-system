@@ -34,7 +34,14 @@ import {
   useWaitLeft,
 } from '../components/group/JoinViews.js';
 import { GroupSheet, type SheetContent, startView } from '../components/group/GroupSheet.js';
-import { CodeStrip, LeaderCodes, LeaderDetails, qrOnly } from '../components/group/LeaderViews.js';
+import {
+  CodeStrip,
+  LeaderCodes,
+  LeaderDetails,
+  LockControl,
+  LockLine,
+  qrOnly,
+} from '../components/group/LeaderViews.js';
 import { MismatchBlock, VersionWarnDialog } from '../components/group/MismatchViews.js';
 import { PeopleCounter, PeopleRow, RosterList } from '../components/group/People.js';
 import { JumpPrompt, LateJoinPrompt } from '../components/group/Prompts.js';
@@ -58,6 +65,7 @@ import { errorText, errorView } from './errors.js';
 import { ownNameText } from './names.js';
 import { type IndicatorKind, derivePhase, indicatorFor } from './phase.js';
 import { useBannerSlot } from './use-banner-slot.js';
+import { useLeadershipFlow } from './use-leadership-flow.js';
 import type { Messages } from '../i18n/en.js';
 import { encodePosition } from './position.js';
 import { useFollow } from './use-follow.js';
@@ -224,6 +232,8 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
   const showEnded = banners.show;
   const endedNotice = (text: keyof Messages, focus = false) =>
     showEnded({ row: 1, kind: 'ended', text, focus });
+  const locked = group?.status === 'active' && group.locked;
+  useLeadershipFlow({ isMember, isVice: vice.isVice, show: banners.show });
   // The content check runs before anything is followed (AC21, item 7 compare).
   const memberMetadata = isMember ? group.metadata : null;
   const compare = useMemo(
@@ -534,6 +544,7 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
       roster={roster}
       viceId={vice.viceId}
       stale={connection.status !== 'connected'}
+      announce={announce}
       {...(onUnmountWithFocus !== undefined ? { onUnmountWithFocus } : {})}
     />
   );
@@ -548,6 +559,8 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
       onRotate={() => setConfirm('rotate')}
       onEnd={() => setConfirm('end')}
       top={top}
+      locked={locked}
+      controls={<LockControl announce={announce} />}
       {...(people !== undefined ? { people } : {})}
       {...(sheet === 'leader' || sheet === 'ready'
         ? { peopleRow: <PeopleRow roster={roster} onShow={() => setSheet('people')} /> }
@@ -779,6 +792,8 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
               <PlainText text={ownName} dir="auto" maxLength={32} />
             </p>
           ) : null}
+          {vice.isVice ? <p className={styles.para}>{t.memberViceLine}</p> : null}
+          {locked ? <LockLine member /> : null}
           {followed.state.mode === 'browsing' &&
           followed.groupIndex !== null &&
           followed.groupIndex !== ownIndex.current ? (
@@ -905,6 +920,7 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
       <CodeStrip
         codes={leader.codes}
         pausedUntil={paused}
+        locked={locked}
         counter={
           <PeopleCounter ref={counterRef} roster={roster} onOpen={() => setSheet('people')} />
         }

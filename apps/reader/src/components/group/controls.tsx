@@ -1,5 +1,10 @@
 import { type ReactNode, type Ref, forwardRef, useEffect, useRef } from 'react';
 import styles from './group.module.css';
+import { formatLong } from '../../group/countdown.js';
+import type { ActionErrorState } from '../../group/use-retry-wait.js';
+import { useI18n } from '../../i18n/index.js';
+import { PlainText } from '../PlainText.js';
+import { Template } from './Template.js';
 
 export interface ButtonProps {
   variant?: 'primary' | 'secondary' | 'danger' | 'text';
@@ -176,5 +181,37 @@ export function NoticeBar({
         </button>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * A failed leader action, inline (#25 design 7.10, 7.11): `role="alert"`;
+ * the name is a `PlainText` node in the template, the wait an LTR isolate
+ * in words; at the end of a wait it says "You can try again now.".
+ */
+export function ActionErrorLine({ state }: { state: ActionErrorState }) {
+  const i18n = useI18n();
+  const current = state.current;
+  if (current === null) return null;
+  const { error, name } = current;
+  const waited = error.retryAfterMs !== undefined && state.waitLeft === 0;
+  return (
+    <p role="alert" className={styles.formError}>
+      {waited ? (
+        i18n.t.canTryNow
+      ) : (
+        <Template
+          text={i18n.t[error.key]}
+          values={{
+            ...(name !== undefined
+              ? { name: <PlainText text={name} dir="auto" maxLength={32} /> }
+              : {}),
+            ...(error.retryAfterMs !== undefined
+              ? { time: <bdi dir="ltr">{formatLong(state.waitLeft, i18n)}</bdi> }
+              : {}),
+          }}
+        />
+      )}
+    </p>
   );
 }

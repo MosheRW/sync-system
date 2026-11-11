@@ -712,3 +712,64 @@
   font-size: var(--text-sm);
   line-height: var(--text-sm-lh);
 }
+
+.rowToggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  inline-size: 100%;
+  min-block-size: var(--size-target);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.rowToggleText {
+  flex: 1;
+  min-inline-size: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.rowChevron {
+  inline-size: var(--space-6);
+  block-size: var(--space-6);
+  flex: none;
+  transition: transform var(--duration-fast) var(--easing);
+}
+
+.rowToggle[aria-expanded='true'] .rowChevron {
+  transform: rotate(180deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rowChevron,
+  .rowToggle[aria-expanded='true'] .rowChevron {
+    transition: none;
+    transform: none;
+  }
+}
+
+.rowActions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding-block: var(--space-2);
+}
+
+.lockLine {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin: 0;
+  inline-size: 100%;
+  color: var(--color-text);
+  font-size: var(--text-sm);
+  line-height: var(--text-sm-lh);
+}

@@ -7,6 +7,7 @@ import {
 import { type FormEvent, type Ref, forwardRef, useEffect, useId, useRef, useState } from 'react';
 import { formatShort, useCountdown } from '../../group/countdown.js';
 import { errorText } from '../../group/errors.js';
+import { useRetryWait } from '../../group/use-retry-wait.js';
 import type { JoinError } from '../../group/use-join.js';
 import { checkDisplayName } from '../../group/names.js';
 import { useI18n } from '../../i18n/index.js';
@@ -255,7 +256,8 @@ export function WaitingBody({ expiresAt }: { expiresAt: number }) {
 
 /** Milliseconds left of a server wait (JOIN_PAUSED, RATE_LIMITED), or 0. */
 export function useWaitLeft(error: JoinError | null): number {
-  return useCountdown(error?.retryAt ?? null) ?? 0;
+  // `retryAt` is a local epoch time (Date.now() + the server's wait).
+  return useRetryWait(error?.retryAt ?? null, Date.now);
 }
 
 /**
