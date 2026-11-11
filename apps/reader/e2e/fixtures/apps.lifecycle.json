@@ -1,0 +1,12 @@
+{
+  "apps": [
+    {
+      "namespace": "dev-app",
+      "apiKey": "dev-only-insecure-api-key-change-me-please",
+      "minAppVersion": "0.0.0",
+      "joinMethods": ["A", "B", "C", "D"],
+      "disconnectGraceSeconds": 5,
+      "defaultHandoff": "auto"
+    }
+  ]
+}

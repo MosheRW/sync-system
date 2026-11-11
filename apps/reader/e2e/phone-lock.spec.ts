@@ -1,5 +1,6 @@
 import {
   BOOK_PATH,
+  cutLeader,
   expect,
   indicatorIs,
   joinWithCodes,
@@ -7,14 +8,6 @@ import {
   startGroup,
   test,
 } from './helpers/fixtures.js';
-
-/** Drops the leader's connection (through the TCP proxy) for `ms` (Gate 2 Q-A3: 25 s). */
-async function cutLeader(ms: number): Promise<void> {
-  const control = process.env['E2E_PROXY_CONTROL'];
-  if (control === undefined) throw new Error('global setup did not run');
-  const response = await fetch(`${control}/cut/${ms}`, { method: 'POST' });
-  expect(response.ok).toBe(true);
-}
 
 test('a leader whose phone locks for 25 s comes back still leading, with no prompt (AC35)', async ({
   pages,
