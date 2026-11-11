@@ -8,10 +8,11 @@
 - Plan approved by user: yes (Gate 2, 2026-11-07)
 - Gate 2 decisions (2026-11-07, "Approve all"): ADR 0007 `lean-qr` 2.7.4 Accepted; ADR 0008 Playwright, Chromium only, CI job `e2e` Accepted; ADR 0009 tokens, pointer and position in `sessionStorage` per tab Accepted; Q-A1 compose reuses `dev-app`, no server change; Q-A2 per-tab storage (a new tab doesn't resume, reopen-closed-tab does); Q-A3 25 s phone-lock test, README advises `disconnectGraceSeconds` 45; security L3: a QR ticket in a tab with a group asks once "Leave your current group and join this one?"; R1-R14 mandatory.
 - Security-sensitive: yes (security plan review PASS, docs/issues/24/security.md: 0 critical, 0 high, 1 medium, 10 low; required controls R1-R14)
-- Review rounds: 1
+- Review rounds: 2
 - QA verdict (round 1, 2026-11-08): FAIL, 44/44 criteria met, checks failed on a flaky reader test; findings 1-3 (flaky `resume.test.tsx` assertion, QR takes up to 10 s to reappear on phones, `leaveFailed` never shown) and 4-6 (lint warnings, dead `announceFollowingTo`, root README compose command). PR review comment: https://github.com/MosheRW/sync-system/pull/26#pullrequestreview-5816972463
+- QA verdict (round 2, 2026-11-11): BLOCKED on CI infrastructure, no code findings. Every round-1 finding and security low verified fixed; lint 0 warnings, typecheck, build, audit pass; `pnpm test` 3/3 runs green (react 222, reader 849); e2e 4/4 locally; 44/44 criteria met; browser: QR reopen 41 ms with the same ticket and 0 `qr.issue`, re-issue at 24.1 s of a 30 s ticket, nothing issued while hidden, rotate/expiry drop the kept ticket, leaveFailed shown, L3 switch stays on the new group. CI `check` green; CI `e2e` failed 3 times at "Install Chromium" (runner DNS to the Ubuntu apt mirrors, no test ran; workflow unchanged, same image passed on 2026-11-08). Counts as PASS once `e2e` is green on the PR head, no new QA round needed. PR review comment: https://github.com/MosheRW/sync-system/pull/26#pullrequestreview-5861841587
 - Design decisions: U1-U4 accepted (2026-11-06, "Accept all"), recorded in spec.md
-- Last updated by: engineer
+- Last updated by: qa
 ## Model log
 - pm groom: opus (orchestrator: broad scope) → DONE
 - pm update-spec: sonnet (default) → DONE
@@ -22,6 +23,7 @@
 - qa validate: opus (NEXT_MODEL) → FAIL
 - security code (round 1): opus (rule) → PASS
 - engineer fix (round 1): opus (rule) → DONE
+- qa validate (round 2): opus (rule) → BLOCKED (CI e2e runner infrastructure; no code findings)
 ## Fix round 1 (2026-11-11, engineer)
 QA findings 1-6 and security lows 1-3, one commit each (plus one bug found on the way):
 - QA 1, flaky notice assertion: `c0f072a` (`getNotice()` helper queries the notice bar, not the live region; also used for "Your group has ended.").
