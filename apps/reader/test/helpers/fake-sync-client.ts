@@ -266,6 +266,14 @@ export class FakeSyncClient implements SyncClientLike {
   cancelJoin(): Promise<void> {
     return this.#call('cancelJoin', []);
   }
+  /** Tokens this tab holds; the core client's `forgetGroup` removes one. */
+  readonly storedTokens = new Set<string>([GROUP_ID]);
+  /** The core client's local token removal (not on `SyncClientLike`). */
+  forgetGroup(groupId: string): Promise<void> {
+    this.#record('forgetGroup', [groupId]);
+    this.storedTokens.delete(groupId);
+    return Promise.resolve();
+  }
   checkTokens(): Promise<readonly StoredGroupStatus[]> {
     return this.#call('checkTokens', []);
   }

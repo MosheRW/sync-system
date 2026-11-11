@@ -161,7 +161,48 @@ describe('a QR ticket in a tab that already has a group (security L3)', () => {
     });
     expect(client.count('resumeGroup')).toBe(1);
     expect(JSON.parse(storage.getItem(POINTER_KEY)!)).toMatchObject({ groupId: GROUP_ID });
+    // Left cleanly: the core client drops that token itself.
+    expect(client.count('forgetGroup')).toBe(0);
   });
+
+  it.each([
+    ['the resume fails', 'resume'],
+    ['the leave fails', 'leave'],
+  ] as const)(
+    'Join this group when %s: the old token is forgotten too (security R5)',
+    async (_, failing) => {
+      const { client, storage } = await land({ kind: 'ticket', ticket: TICKET }, withPointer());
+      client.storedTokens.add(OTHER_GROUP_ID);
+      act(() => client.setConnection(connected()));
+      client.impl.resumeGroup = () => {
+        if (failing === 'resume') throw new SyncClientError('GROUP_FULL');
+        client.follow({ groupId: OTHER_GROUP_ID });
+        return {
+          groupId: OTHER_GROUP_ID,
+          role: 'member',
+          participantId: 'p',
+          status: 'active',
+          recreated: false,
+          leaderOnline: true,
+          hasPosition: false,
+        };
+      };
+      client.impl.leaveGroup = () => {
+        throw new SyncClientError('REQUEST_TIMEOUT');
+      };
+      client.impl.joinByQr = () => joinedAs(client);
+      await act(async () => {
+        fireEvent.click(
+          within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Join this group' }),
+        );
+        for (let i = 0; i < 6; i += 1) await Promise.resolve();
+      });
+      expect(client.args('forgetGroup')).toEqual([OTHER_GROUP_ID]);
+      expect(client.storedTokens.has(OTHER_GROUP_ID)).toBe(false);
+      expect(client.args('joinByQr')).toEqual([TICKET, undefined]);
+      expect(JSON.parse(storage.getItem(POINTER_KEY)!)).toMatchObject({ groupId: GROUP_ID });
+    },
+  );
 });
 
 describe('joining from the library (#24 design F4, 6.10)', () => {

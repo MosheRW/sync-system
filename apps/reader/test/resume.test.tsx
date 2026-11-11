@@ -127,6 +127,7 @@ describe('a stored group that is gone (#24 AC37)', () => {
     'TOKEN_EXPIRED',
     'GROUP_ENDED',
     'PARTICIPANT_BLOCKED',
+    'GROUP_FULL',
   ] as const)('%s: forgotten with one notice, never retried', async (code) => {
     const { client, storage } = await reloadWith({
       resume: () => {
@@ -135,6 +136,9 @@ describe('a stored group that is gone (#24 AC37)', () => {
     });
     await connect(client);
     expect(storage.getItem(POINTER_KEY)).toBeNull();
+    // No token is left behind for a group this tab gave up on (security R5).
+    expect(client.args('forgetGroup')).toEqual([GROUP_ID]);
+    expect(client.storedTokens.has(GROUP_ID)).toBe(false);
     expect(getNotice('Your group has ended.')).toBeDefined();
     await connect(client);
     expect(client.count('resumeGroup')).toBe(1);

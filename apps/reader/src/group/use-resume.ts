@@ -18,6 +18,18 @@ const GONE = new Set([
   'GROUP_FULL',
 ]);
 
+/**
+ * Removes this tab's stored token for `groupId` (security R5). The core
+ * client drops tokens only for the codes it knows are dead; a group the
+ * reader gives up on (e.g. `GROUP_FULL`, a failed L3 switch) must not leave
+ * a token behind with no pointer and no way to leave. `forgetGroup` is on
+ * the core client, not on `SyncClientLike`, hence the narrow cast.
+ */
+export function forgetStoredGroup(client: unknown, groupId: string): void {
+  const local = client as { forgetGroup?: (groupId: string) => Promise<void> } | null;
+  void local?.forgetGroup?.(groupId).catch(() => undefined);
+}
+
 /** Network failures: retried, at most this many attempts per page load (AC37). */
 export const MAX_RESUME_ATTEMPTS = 3;
 
@@ -78,6 +90,7 @@ export function useResume(
         return;
       }
       if (GONE.has(result.error.code)) {
+        forgetStoredGroup(client, pointer.groupId);
         env.pointers.forget();
         setStatus('gone');
         return;
@@ -85,7 +98,7 @@ export function useResume(
       if (attempts.current >= MAX_RESUME_ATTEMPTS) setStatus('failed');
       else setRound((n) => n + 1);
     });
-  }, [enabled, pointer, status, connected, stored.resume, env.pointers, round]);
+  }, [enabled, pointer, status, connected, stored.resume, env.pointers, round, client]);
 
   const retry = useCallback(() => {
     attempts.current = 0;
@@ -95,10 +108,7 @@ export function useResume(
   }, [connection]);
 
   const forget = useCallback(() => {
-    if (pointer !== null) {
-      const local = client as { forgetGroup?: (groupId: string) => Promise<void> } | null;
-      void local?.forgetGroup?.(pointer.groupId).catch(() => undefined);
-    }
+    if (pointer !== null) forgetStoredGroup(client, pointer.groupId);
     env.pointers.forget();
     setStatus('none');
   }, [client, env.pointers, pointer]);

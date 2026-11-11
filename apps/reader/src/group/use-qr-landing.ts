@@ -5,9 +5,11 @@ import {
   useGroupExit,
   useJoinByQr,
   useStoredGroups,
+  useSyncClient,
 } from '@sync-system/react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { GroupEnv } from './context.js';
+import { forgetStoredGroup } from './use-resume.js';
 
 export type QrLandingState =
   | { readonly status: 'none' }
@@ -41,6 +43,7 @@ export function useQrLanding(
   const joinByQr = useJoinByQr();
   const stored = useStoredGroups();
   const exit = useGroupExit();
+  const client = useSyncClient();
   const ticket = useRef<string | null>(env.landing?.kind === 'ticket' ? env.landing.ticket : null);
   const [state, setState] = useState<QrLandingState>(() => {
     if (env.landing === null) return { status: 'none' };
@@ -73,15 +76,17 @@ export function useQrLanding(
     void (async () => {
       if (pointer !== null) {
         const resumed = await stored.resume.run(pointer.groupId);
-        if (resumed.ok) {
-          // The user chose to leave; a leader can only end the group.
-          await (resumed.value.role === 'leader' ? exit.end.run() : exit.leave.run());
-        }
+        // The user chose to leave; a leader can only end the group.
+        const left = resumed.ok
+          ? (await (resumed.value.role === 'leader' ? exit.end.run() : exit.leave.run())).ok
+          : false;
+        // Not left cleanly: drop the token too, never keep one with no pointer (R5).
+        if (!left) forgetStoredGroup(client, pointer.groupId);
         env.pointers.forget();
       }
       setState({ status: 'joining' });
     })();
-  }, [env.pointers, stored.resume, exit.end, exit.leave]);
+  }, [env.pointers, stored.resume, exit.end, exit.leave, client]);
 
   const stay = useCallback(() => {
     ticket.current = null;
