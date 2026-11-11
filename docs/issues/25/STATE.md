@@ -1,6 +1,6 @@
 # State: #25 feat: reading app leader views and lifecycle prompts (PRD item 8b)
 - Path: full
-- Phase: implementation
+- Phase: validation
 - Branch: feat/25-reading-app-leader-views
 - PR: #31
 - Spec approved at Gate 1: yes (2026-11-11, "Accept all", plus the two gap decisions)
@@ -8,8 +8,9 @@
 - Plan approved by user: yes (Gate 2, 2026-11-11, "Approve all")
 - Gate 2 decisions: no ADRs. Q-A1: a leader who drops past the grace and returns as a member sees the sticky lost-lead banner (`lostDisconnect`), then the take-back card. Q-A2: the take-back card shows only after a handoff loss (`handoff_disconnect` / `handoff_inactivity`), not after a `take_back` loss; server follow-up for M1 is #32. Security R15-R24 are mandatory (L1-L6 through them; L4: the remove dialog shows the row's details line). "Bring group here" has no pending state; a failure keeps the preview and shows the error in the banner.
 - Security-sensitive: yes (roles, removal, take-back client change, other participants' names; see architecture.md section 16)
-- Review rounds: 0
-- Last updated by: engineer
+- Review rounds: 1
+- QA verdict (round 1, head bd6b8cd): BLOCKED on CI only, no code findings. Locally green: audit, lint, typecheck, test (reader suite 3x, 1010/1010), build, e2e 5/5, real-browser pass en + he (25/25). AC 22/23 met; AC55 not verifiable because the CI jobs `check` and `e2e` never started (GitHub Actions billing / spending limit). Becomes PASS once CI re-runs green on bd6b8cd. All 21 commits signed. 102 new he strings listed in the PR #31 review for #28.
+- Last updated by: qa
 ## Model log
 - pm groom: opus (orchestrator: broad lifecycle scope, same as #24) → DONE
 - pm update-spec: sonnet (default) → DONE
@@ -19,6 +20,7 @@
 - architect plan: opus (default; NEXT_MODEL opus) → DONE
 - security plan: opus (rule) → PASS (0 critical, 0 high, 1 medium, 6 low; required controls R15-R24 in security.md)
 - engineer implement: opus (Implementer model line; security-sensitive) → DONE (chunks 1-11; lint, typecheck, test, build, audit and e2e green)
+- qa validate: opus (NEXT_MODEL) → BLOCKED (CI not run: Actions billing; no code findings)
 ## Open questions
 - Gate 2: Q-A1 and Q-A2 decided (see Gate 2 decisions).
 - Resolved by the architect: D1-D9 (architecture.md section 2); server semantics for Gap 1 and keepalive.ack during the pause confirmed (section 3).
