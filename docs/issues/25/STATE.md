@@ -2,7 +2,7 @@
 - Path: full
 - Phase: architecture
 - Branch: feat/25-reading-app-leader-views
-- PR: none
+- PR: #31
 - Spec approved at Gate 1: yes (2026-11-11, "Accept all", plus the two gap decisions)
 - Design decisions: U5-U14 accepted (2026-11-11), U8 changed: the pasted QR link notice stays until dismissed
 - Plan approved by user: no
