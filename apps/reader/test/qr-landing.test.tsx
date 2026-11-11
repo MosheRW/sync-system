@@ -155,6 +155,12 @@ describe('a QR ticket in a tab that already has a group (security L3)', () => {
     expect(client.count('leaveGroup')).toBe(1);
     expect(client.args('joinByQr')).toEqual([TICKET, undefined]);
     expect(JSON.parse(storage.getItem(POINTER_KEY)!)).toMatchObject({ groupId: GROUP_ID });
+    // The group just left isn't resumed again over the new one.
+    await act(async () => {
+      for (let i = 0; i < 6; i += 1) await Promise.resolve();
+    });
+    expect(client.count('resumeGroup')).toBe(1);
+    expect(JSON.parse(storage.getItem(POINTER_KEY)!)).toMatchObject({ groupId: GROUP_ID });
   });
 });
 

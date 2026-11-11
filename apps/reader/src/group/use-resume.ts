@@ -62,8 +62,9 @@ export function useResume(
     if (!enabled || pointer === null || status !== 'pending' || !connected || inFlight.current) {
       return;
     }
-    if (env.pointers.read() === null) {
-      // Left or replaced meanwhile (a QR switch, another flow).
+    if (env.pointers.read()?.groupId !== pointer.groupId) {
+      // Left or replaced meanwhile (a QR switch, another flow): never resume
+      // the old group over the new one.
       setStatus('none');
       return;
     }
