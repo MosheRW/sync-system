@@ -623,7 +623,12 @@ Leader API (each rejects locally with `NOT_CONNECTED`, `NOT_IN_GROUP` or
 | `getLeaderState()`                        | `LeaderState \| null`               | `{ blockList, locked, viceId?, handoff }`: kept with the token for recovery.                                                         |
 
 A member calls `takeBackLeadership()` while its group state has
-`takeBackAvailable: true` (after `takeBackOffered`).
+`takeBackAvailable: true` (after `takeBackOffered`). The offer is withdrawn
+(`takeBackAvailable: false`) on a later `leaderChanged` for the group (any
+later leader change replaces the server's take-back slot; the snapshot is
+updated before the event fires) and when the server refuses the take-back with
+`NOT_ALLOWED`. `RATE_LIMITED` keeps it. Only a new `takeBackOffered` sets it
+again.
 
 `createGroup(metadata, position?, { joinMethods?, handoff?, displayName? })`:
 `handoff` is `auto` (the lead passes on after the grace period) or `frozen`

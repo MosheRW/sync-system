@@ -1266,12 +1266,30 @@ export class SyncClient {
       if (group?.status !== 'active') throw new SyncClientError('NOT_IN_GROUP');
     });
     if (invalid) return Promise.reject(invalid);
+    const sentFor = this.#snapshot.group;
+    const groupId = sentFor?.status === 'active' ? sentFor.groupId : '';
     return this.#leaderRequest('leader.takeBack', {}, (reply) => {
       if (reply.type !== 'leader.granted') {
         throw invalidServerMessage(['type'], 'leader.takeBack');
       }
       this.#onGranted(reply);
+    }).catch((error: unknown) => {
+      // The server refused: the offer is gone. Only ever withdraws, and only
+      // for the group the request was sent for.
+      if (error instanceof SyncClientError && error.code === 'NOT_ALLOWED') {
+        this.#withdrawTakeBack(groupId);
+      }
+      throw error;
     });
+  }
+
+  /** Sets `takeBackAvailable` to false for the active group `groupId`. */
+  #withdrawTakeBack(groupId: string): void {
+    const group = this.#snapshot.group;
+    if (group?.status !== 'active' || group.groupId !== groupId || !group.takeBackAvailable) {
+      return;
+    }
+    this.#update({ group: { ...group, takeBackAvailable: false } });
   }
 
   /**
@@ -2303,6 +2321,8 @@ export class SyncClient {
       case 'leader.changed': {
         const group = this.#snapshot.group;
         if (group?.status !== 'active' || group.groupId !== message.groupId) return;
+        // Any later leader change rewrites the server's take-back slot.
+        this.#withdrawTakeBack(message.groupId);
         this.#log('info', 'leader_changed', { cause: message.reason });
         this.#events.emit(
           'leaderChanged',
