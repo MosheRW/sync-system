@@ -356,4 +356,16 @@ export const he: Messages = {
   errBlockListFull:
     'אי אפשר להסיר עוד משתתפים מהקבוצה הזו. אפשר לנעול אותה כדי שאנשים חדשים לא יצטרפו.',
   errRemoveCodes: 'לא הצלחנו ליצור קודים חדשים, ולכן אף אחד לא הוסר. כדאי לנסות שוב בעוד דקה.',
+  // #25 preview (design 7.1)
+  indPreviewing: 'תצוגה מקדימה',
+  previewStart: 'תצוגה מקדימה של עמודים',
+  previewStartHint: 'אפשר לדפדף בלי להזיז את הקבוצה.',
+  previewRegion: 'תצוגה מקדימה',
+  previewSamePage: 'התצוגה המקדימה פעילה. אפשר לדפדף, והקבוצה נשארת בעמוד {n}.',
+  previewPositions: 'הקבוצה בעמוד {group}. מוצג לך עמוד {view}.',
+  bringGroupHere: 'להעביר את הקבוצה לכאן',
+  returnToGroup: 'חזרה לעמוד הקבוצה',
+  announcePreviewOn: 'התצוגה המקדימה פעילה. הקבוצה נשארת בעמוד {n}.',
+  announcePreviewOff: 'חזרה לעמוד הקבוצה.',
+  announceGroupMoved: 'הקבוצה עברה לעמוד {n}.',
 };

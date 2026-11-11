@@ -119,6 +119,7 @@ export class FakeSyncClient implements SyncClientLike {
   /** Like the core's LeaderPreview: local only, the group position never changes. */
   readonly preview = {
     start: (position?: JsonValue) => {
+      this.#record('previewStart', [position]);
       this.#previewActive = true;
       this.#previewPosition = position;
     },
@@ -131,8 +132,22 @@ export class FakeSyncClient implements SyncClientLike {
       this.#previewActive = false;
       this.#previewPosition = undefined;
     },
-    bringGroupHere: () => undefined,
-    returnToGroup: () => undefined,
+    /** Like the core: ends the preview, then one normal position update (may throw). */
+    bringGroupHere: () => {
+      this.#record('bringGroupHere', []);
+      const target = this.#previewPosition;
+      const active = this.#previewActive;
+      this.#previewActive = false;
+      this.#previewPosition = undefined;
+      if (active && target !== undefined) this.updatePosition(target);
+    },
+    returnToGroup: () => {
+      this.#record('returnToGroup', []);
+      this.#previewActive = false;
+      this.#previewPosition = undefined;
+      const group = this.snapshot.group;
+      return group?.status === 'active' && group.hasPosition ? group.position : undefined;
+    },
     getState: () =>
       Object.freeze({
         active: this.#previewActive,
@@ -145,6 +160,11 @@ export class FakeSyncClient implements SyncClientLike {
 
   setSnapshot(change: Partial<SyncClientSnapshot>): void {
     this.snapshot = Object.freeze({ ...this.snapshot, ...change });
+    // The core ends a preview on demotion and group end (#dropLeaderOnly).
+    if (!this.#leading()) {
+      this.#previewActive = false;
+      this.#previewPosition = undefined;
+    }
     for (const listener of [...this.#subscribers]) listener();
   }
 

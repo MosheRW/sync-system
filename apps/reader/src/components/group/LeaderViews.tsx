@@ -129,6 +129,34 @@ export function LockControl({ announce }: { announce: (text: string) => void }) 
 }
 
 /**
+ * "Preview pages" with its hint, or "Return to group" while previewing
+ * (#25 design 5.2, 5.3, U6).
+ */
+export function PreviewControl({
+  active,
+  onStart,
+  onReturn,
+}: {
+  active: boolean;
+  onStart: () => void;
+  onReturn: () => void;
+}) {
+  const { t } = useI18n();
+  const hintId = useId();
+  if (active) return <Button onClick={onReturn}>{t.returnToGroup}</Button>;
+  return (
+    <>
+      <Button aria-describedby={hintId} onClick={onStart}>
+        {t.previewStart}
+      </Button>
+      <p id={hintId} className={styles.muted}>
+        {t.previewStartHint}
+      </p>
+    </>
+  );
+}
+
+/**
  * The code strip under the header, phones and tablets (design 4.2, 6.6):
  * always visible while leading, never truncated (it wraps). The QR button
  * sits at the inline end.

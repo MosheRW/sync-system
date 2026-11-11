@@ -40,8 +40,10 @@ import {
   LeaderDetails,
   LockControl,
   LockLine,
+  PreviewControl,
   qrOnly,
 } from '../components/group/LeaderViews.js';
+import { PreviewBanner } from '../components/group/PreviewBanner.js';
 import { MismatchBlock, VersionWarnDialog } from '../components/group/MismatchViews.js';
 import { PeopleCounter, PeopleRow, RosterList } from '../components/group/People.js';
 import { JumpPrompt, LateJoinPrompt } from '../components/group/Prompts.js';
@@ -66,6 +68,8 @@ import { ownNameText } from './names.js';
 import { type IndicatorKind, derivePhase, indicatorFor } from './phase.js';
 import { useBannerSlot } from './use-banner-slot.js';
 import { useLeadershipFlow } from './use-leadership-flow.js';
+import type { LeaderError } from './leader-errors.js';
+import { usePreviewMode } from './use-preview-mode.js';
 import type { Messages } from '../i18n/en.js';
 import { encodePosition } from './position.js';
 import { useFollow } from './use-follow.js';
@@ -315,7 +319,21 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
     onJump: (index) => setJumpRequest((prev) => ({ index, id: (prev?.id ?? 0) + 1 })),
     onMode: (mode) => env.pointers.update({ mode }),
   });
-  const kind = indicatorFor(phase, clientIndicator, followed.state.mode);
+  // The leader's preview (#25 architecture 7.3): routed by the core's live state.
+  const previewMode = usePreviewMode(doc.pages.length);
+  const previewing = isLeader && previewMode.active;
+  const [previewError, setPreviewError] = useState<LeaderError | null>(null);
+  const previewActive = previewMode.active;
+  useEffect(() => {
+    if (!previewActive) setPreviewError(null);
+  }, [previewActive]);
+  // The group's official page, for the leader's sends and the preview banner.
+  const groupIndex = position.hasPosition
+    ? decodePosition(position.position, doc.pages.length)
+    : null;
+  const groupIndexRef = useRef(groupIndex);
+  groupIndexRef.current = groupIndex;
+  const kind = indicatorFor(phase, clientIndicator, followed.state.mode, previewing);
   const graceEndsAt =
     group?.status === 'active' && group.leader.status !== 'online'
       ? (group.leader.graceEndsAt ?? null)
@@ -330,6 +348,7 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
     const text = indicatorAnnouncement(shownKind.current, kind, i18n, {
       graceMs: graceEndsAt === null ? null : graceEndsAt - Date.now(),
       leadingAnnounced: groupId !== null && leadingAnnounced.current === groupId,
+      groupIndex: groupIndexRef.current,
     });
     shownKind.current = kind;
     if (kind === 'leading' && groupId !== null) leadingAnnounced.current = groupId;
@@ -387,11 +406,51 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
         turnedSinceLoad.current = true;
         followed.userTurned(index);
       }
-      // The leader's page is the group's (AC25); the client throttles (trailing send).
-      if (position.canUpdate) position.updatePosition(encodePosition(index));
+      // Previewing: a preview move, never a position update (#25 AC41, R21).
+      if (previewMode.isActiveNow()) {
+        previewMode.move(index);
+        return;
+      }
+      // The leader's page is the group's (AC25); only real moves are sent
+      // (#25 7.3); the client throttles (trailing send).
+      if (position.canUpdate && groupIndexRef.current !== index) {
+        position.updatePosition(encodePosition(index));
+      }
     },
-    [onPageChange, followed, position],
+    [onPageChange, followed, position, previewMode],
   );
+
+  const startPreview = () => {
+    setSheet(null);
+    setPreviewError(null);
+    previewMode.start(ownIndex.current);
+  };
+  const returnFromPreview = () => {
+    const index = previewMode.returnToGroup();
+    setPreviewError(null);
+    if (index !== null && index !== ownIndex.current) {
+      setJumpRequest((prev) => ({ index, id: (prev?.id ?? 0) + 1 }));
+    }
+    announce(t.announcePreviewOff);
+    focusArticle();
+  };
+  const bringGroupHere = () => {
+    const view = previewMode.viewIndex ?? ownIndex.current;
+    const error = previewMode.bring(isLeader);
+    setPreviewError(error);
+    if (error !== null) return;
+    announce(i18n.format(t.announceGroupMoved, { n: view + 1 }));
+    focusArticle();
+  };
+  const previewBanner = previewing ? (
+    <PreviewBanner
+      groupIndex={groupIndex}
+      viewIndex={previewMode.viewIndex ?? ownIndex.current}
+      error={previewError}
+      onReturn={returnFromPreview}
+      onBring={bringGroupHere}
+    />
+  ) : null;
 
   // Prompts are announced once when they appear or change (design 6.13, 6.14).
   const late = followed.state.late;
@@ -560,7 +619,16 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
       onEnd={() => setConfirm('end')}
       top={top}
       locked={locked}
-      controls={<LockControl announce={announce} />}
+      controls={
+        <>
+          <PreviewControl
+            active={previewMode.active}
+            onStart={startPreview}
+            onReturn={returnFromPreview}
+          />
+          <LockControl announce={announce} />
+        </>
+      }
       {...(people !== undefined ? { people } : {})}
       {...(sheet === 'leader' || sheet === 'ready'
         ? { peopleRow: <PeopleRow roster={roster} onShow={() => setSheet('people')} /> }
@@ -977,7 +1045,9 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
         }
         belowHeader={strip}
         banner={
-          banners.shown !== null ? <BannerSlot slot={banners} onDismissed={focusArticle} /> : null
+          banners.shown !== null || previewBanner !== null ? (
+            <BannerSlot slot={banners} preview={previewBanner} onDismissed={focusArticle} />
+          ) : null
         }
         notices={large && isLeader ? null : noticeBars}
         aside={panel}

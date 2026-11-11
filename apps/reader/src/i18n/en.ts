@@ -358,6 +358,18 @@ export const en = {
   errBlockListFull:
     "You can't remove anyone else from this group. Lock it instead to keep new people out.",
   errRemoveCodes: "Couldn't make new codes, so nobody was removed. Try again in a minute.",
+  // #25 preview (design 7.1)
+  indPreviewing: 'Previewing',
+  previewStart: 'Preview pages',
+  previewStartHint: 'Turn pages without moving the group.',
+  previewRegion: 'Preview',
+  previewSamePage: 'Preview is on. Turn pages; the group stays on page {n}.',
+  previewPositions: "The group is on page {group}. You're viewing page {view}.",
+  bringGroupHere: 'Bring group here',
+  returnToGroup: 'Return to group',
+  announcePreviewOn: 'Preview on. The group stays on page {n}.',
+  announcePreviewOff: "Back on the group's page.",
+  announceGroupMoved: 'The group moved to page {n}.',
 };
 
 export type Messages = { readonly [K in keyof typeof en]: string };
