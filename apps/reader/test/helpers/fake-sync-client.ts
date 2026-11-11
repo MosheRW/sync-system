@@ -102,6 +102,10 @@ export class FakeSyncClient implements SyncClientLike {
   });
   codes: JoinCodes | null = null;
   requests: readonly JoinRequest[] = [];
+  /** What `getRoster()` returns while leading (emit `rosterChanged` after a change). */
+  roster: readonly RosterEntry[] = [];
+  /** What `getLeaderState()` returns while leading. */
+  leaderState: LeaderState | null = null;
   readonly calls = new Map<string, unknown[][]>();
   readonly impl: Partial<Record<Method, (...args: never[]) => unknown>> = {};
   readonly pending = new Map<string, Deferred<unknown>[]>();
@@ -237,11 +241,24 @@ export class FakeSyncClient implements SyncClientLike {
   }
 
   getRoster(): readonly RosterEntry[] {
-    return [];
+    return this.#leading() ? Object.freeze([...this.roster]) : [];
   }
 
   getLeaderState(): LeaderState | null {
-    return null;
+    return this.#leading() ? this.leaderState : null;
+  }
+
+  /** Sets the roster and emits `rosterChanged` (#13 AC31). */
+  setRoster(roster: readonly RosterEntry[]): void {
+    this.roster = roster;
+    const group = this.snapshot.group;
+    if (group?.status !== 'active') return;
+    this.emit('rosterChanged', { groupId: group.groupId, roster: this.getRoster() });
+  }
+
+  #leading(): boolean {
+    const group = this.snapshot.group;
+    return group?.status === 'active' && group.role === 'leader';
   }
 
   connect(): Promise<ConnectedInfo> {

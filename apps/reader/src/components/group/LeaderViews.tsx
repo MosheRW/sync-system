@@ -67,16 +67,20 @@ export function CodeStrip({
   codes,
   pausedUntil,
   qrButton,
+  counter,
 }: {
   codes: JoinCodes;
   pausedUntil: number | null;
   qrButton?: ReactNode;
+  /** The people counter (#25 design 6.1), before the QR button. */
+  counter?: ReactNode;
 }) {
   const { t } = useI18n();
   return (
     <div role="region" aria-label={t.codesRegion} className={styles.strip}>
       <div className={styles.stripInner}>
         {qrOnly(codes) ? <span>{t.qrOnlyStrip}</span> : <LeaderCodes codes={codes} />}
+        {counter}
         {qrButton !== undefined ? <span className={styles.stripQr}>{qrButton}</span> : null}
         {pausedUntil !== null ? <PauseLine retryAt={pausedUntil} /> : null}
       </div>
@@ -96,6 +100,10 @@ export interface LeaderDetailsProps {
   onEnd: () => void;
   /** Codes notice or join requests on large screens (design 4.3). */
   top?: ReactNode;
+  /** The leader sheet's People row (#25 design 5.3), before the actions. */
+  peopleRow?: ReactNode;
+  /** The panel's People section (#25 design 5.2), the last section. */
+  people?: ReactNode;
 }
 
 /** The leader's group: codes, QR, name, pause line and actions (design 4.3, 6.5). */
@@ -109,6 +117,8 @@ export function LeaderDetails({
   onRotate,
   onEnd,
   top,
+  peopleRow,
+  people,
 }: LeaderDetailsProps) {
   const { t, format } = useI18n();
   return (
@@ -128,13 +138,14 @@ export function LeaderDetails({
           <PlainText text={name} dir="auto" maxLength={32} />
         </p>
       ) : null}
-      {/* 8b (#25): members, vice-leader, lock and remove go here (design 11). */}
+      {peopleRow}
       <Button pending={rotatePending} pendingLabel={t.rotating} onClick={onRotate}>
         {t.newCodes}
       </Button>
       <Button variant="danger" pending={endPending} pendingLabel={t.ending} onClick={onEnd}>
         {t.endGroup}
       </Button>
+      {people}
     </div>
   );
 }

@@ -305,6 +305,27 @@ export const en = {
   noticeUnlocked: 'The leader unlocked the group. New people can join again.',
   noticeQrPasted:
     "That link wasn't used. To join with it, open it in a new tab or scan the QR code again.",
+  // #25 people (design 7.2)
+  peopleCounter: '{here} here, {away} away',
+  peopleCounterNoAway: '{here} here',
+  peopleCounterEmpty: 'Nobody here yet',
+  peopleCounterName: 'People: {counter}. Show people',
+  showPeople: 'Show people',
+  peopleLabel: 'People',
+  peopleTitle: 'People in the group',
+  peopleHeadingCount: 'People ({n})',
+  peopleLoading: 'Loading the people in the group…',
+  peopleEmpty: 'Nobody else is here yet. Share the codes so people can join.',
+  peopleStale: "Can't update the list while you're offline.",
+  ownRow: '{name} (you)',
+  roleLeader: 'Leader',
+  roleVice: 'Vice-leader',
+  roleMember: 'Member',
+  stateHere: 'Here',
+  stateAway: 'Away',
+  autoNameTag: 'Auto name',
+  guestNameUnknown: 'Guest',
+  recoveryMarker: 'Joined while the group was restoring',
 };
 
 export type Messages = { readonly [K in keyof typeof en]: string };

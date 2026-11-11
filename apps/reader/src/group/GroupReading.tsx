@@ -10,6 +10,7 @@ import {
   usePosition,
   useRemoved,
   useQrTicket,
+  useRoster,
   useSyncEvent,
   useSyncIndicator,
   useSyncSnapshot,
@@ -35,6 +36,7 @@ import {
 import { GroupSheet, type SheetContent, startView } from '../components/group/GroupSheet.js';
 import { CodeStrip, LeaderCodes, LeaderDetails, qrOnly } from '../components/group/LeaderViews.js';
 import { MismatchBlock, VersionWarnDialog } from '../components/group/MismatchViews.js';
+import { PeopleCounter, PeopleRow, RosterList } from '../components/group/People.js';
 import { JumpPrompt, LateJoinPrompt } from '../components/group/Prompts.js';
 import { bookHref } from '../components/LibraryScreen.js';
 import { QrCodeView } from '../components/group/QrCodeView.js';
@@ -87,7 +89,16 @@ export type GroupReadingProps = Omit<
 
 /** Which sheet view is open (design 6). */
 export type SheetView =
-  'start' | 'create' | 'ready' | 'leader' | 'qr' | 'join' | 'waiting' | 'member' | 'qr-join';
+  | 'start'
+  | 'create'
+  | 'ready'
+  | 'leader'
+  | 'qr'
+  | 'join'
+  | 'waiting'
+  | 'member'
+  | 'qr-join'
+  | 'people';
 
 /** The book a join link opens, from validated values only (R4). */
 function shareTargetOf(
@@ -138,6 +149,15 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
   const requests = useJoinRequests();
   const large = useMediaQuery(LARGE_SCREEN);
   const buttonRef = useRef<HTMLButtonElement>(null);
+  const roster = useRoster();
+  const counterRef = useRef<HTMLButtonElement>(null);
+  // Focus was in the panel's list when the window shrank: it goes to the counter (F14.4).
+  const focusCounterNext = useRef(false);
+  useEffect(() => {
+    if (large || !focusCounterNext.current) return;
+    focusCounterNext.current = false;
+    counterRef.current?.focus();
+  }, [large]);
   const [sheet, setSheet] = useState<SheetView | null>(null);
   const [formError, setFormError] = useState<SyncClientError | null>(null);
   const [confirm, setConfirm] = useState<Confirm>(null);
@@ -344,7 +364,9 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
     setNotice(null);
     setResumedNotice(false);
     setConfirm(null);
-    setSheet((view) => (view === 'ready' || view === 'leader' || view === 'create' ? null : view));
+    setSheet((view) =>
+      view === 'ready' || view === 'leader' || view === 'create' || view === 'people' ? null : view,
+    );
   }, [isLeader]);
 
   const pageChanged = useCallback(
@@ -507,7 +529,15 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
     group?.status === 'active'
       ? ownNameText(group.displayName, group.generated, t, i18n.format)
       : null;
-  const leaderDetails = (top?: ReactNode, qrPart?: ReactNode) => (
+  const rosterList = (onUnmountWithFocus?: () => void) => (
+    <RosterList
+      roster={roster}
+      viceId={vice.viceId}
+      stale={connection.status !== 'connected'}
+      {...(onUnmountWithFocus !== undefined ? { onUnmountWithFocus } : {})}
+    />
+  );
+  const leaderDetails = (top?: ReactNode, qrPart?: ReactNode, people?: ReactNode) => (
     <LeaderDetails
       codes={leader.codes}
       pausedUntil={paused}
@@ -518,6 +548,10 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
       onRotate={() => setConfirm('rotate')}
       onEnd={() => setConfirm('end')}
       top={top}
+      {...(people !== undefined ? { people } : {})}
+      {...(sheet === 'leader' || sheet === 'ready'
+        ? { peopleRow: <PeopleRow roster={roster} onShow={() => setSheet('people')} /> }
+        : {})}
     />
   );
 
@@ -844,6 +878,13 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
         hasQr ? <Button onClick={() => setSheet('qr')}>{t.showQr}</Button> : undefined,
       ),
     };
+  } else if (sheet === 'people' && isLeader) {
+    content2 = {
+      key: 'people',
+      title: t.peopleTitle,
+      onBack: () => setSheet('leader'),
+      body: rosterList(),
+    };
   } else if (sheet === 'qr' && isLeader) {
     content2 = {
       key: 'qr',
@@ -864,6 +905,9 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
       <CodeStrip
         codes={leader.codes}
         pausedUntil={paused}
+        counter={
+          <PeopleCounter ref={counterRef} roster={roster} onOpen={() => setSheet('people')} />
+        }
         {...(hasQr
           ? {
               qrButton: (
@@ -896,6 +940,9 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
               </Button>
             </>
           ) : undefined,
+          rosterList(() => {
+            focusCounterNext.current = true;
+          }),
         )}
       </aside>
     ) : null;

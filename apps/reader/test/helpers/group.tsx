@@ -1,4 +1,4 @@
-import type { JoinCodes, JoinMethod } from '@sync-system/react';
+import type { JoinCodes, JoinMethod, RosterEntry } from '@sync-system/react';
 import { act, fireEvent, screen, within } from '@testing-library/react';
 import { vi } from 'vitest';
 import { SYNC, readingReady, renderApp, testConfig } from './app.js';
@@ -91,4 +91,41 @@ export function largeScreen(): void {
     removeListener: () => undefined,
     dispatchEvent: () => false,
   }));
+}
+
+/** A `matchMedia` stub whose `(min-width: 1024px)` can be flipped live (resize). */
+export function resizableScreen(large: boolean): (next: boolean) => void {
+  let matches = large;
+  const listeners = new Set<() => void>();
+  vi.stubGlobal('matchMedia', (query: string) => ({
+    get matches() {
+      return query.includes('1024') ? matches : false;
+    },
+    media: query,
+    onchange: null,
+    addEventListener: (_: string, listener: () => void) => listeners.add(listener),
+    removeEventListener: (_: string, listener: () => void) => listeners.delete(listener),
+    addListener: () => undefined,
+    removeListener: () => undefined,
+    dispatchEvent: () => false,
+  }));
+  return (next: boolean) => {
+    matches = next;
+    act(() => {
+      for (const listener of [...listeners]) listener();
+    });
+  };
+}
+
+/** A roster entry for tests (#25). */
+export function rosterEntry(participantId: string, extra: Partial<RosterEntry> = {}): RosterEntry {
+  return Object.freeze({
+    participantId,
+    displayName: participantId,
+    generated: false,
+    role: 'member' as const,
+    connected: true,
+    joinedAt: 0,
+    ...extra,
+  });
 }

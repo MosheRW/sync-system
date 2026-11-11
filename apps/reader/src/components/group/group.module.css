@@ -607,3 +607,108 @@
 .libraryAction {
   margin-inline-start: auto;
 }
+
+/* ---- People (#25 design 6.1-6.3) ---- */
+.inlineIcon {
+  inline-size: 1em;
+  block-size: 1em;
+  flex: none;
+}
+
+.forwardIcon {
+  inline-size: 1em;
+  block-size: 1em;
+  vertical-align: middle;
+}
+
+/* The chevron points to the interface end. */
+:dir(rtl) .forwardIcon {
+  transform: scaleX(-1);
+}
+
+.counterButton {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-sm);
+  line-height: var(--text-sm-lh);
+}
+
+.peopleRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+}
+
+.peopleRow > :last-child {
+  margin-inline-start: auto;
+}
+
+.people {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  border-block-start: var(--hairline) solid var(--color-border);
+  padding-block-start: var(--space-4);
+}
+
+.peopleHeading {
+  margin: 0;
+  font-size: var(--text-md);
+  font-weight: var(--weight-strong);
+}
+
+.peopleHeading:focus {
+  outline: none;
+}
+
+.roster {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.rosterRow {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-block-size: var(--size-row-with-line);
+  padding-block: var(--space-2);
+  border-block-end: var(--hairline) solid var(--color-border);
+}
+
+.rosterName {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.generatedName {
+  color: var(--color-text-muted);
+}
+
+.rosterDetails {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  line-height: var(--text-sm-lh);
+}
+
+.awayDot {
+  inline-size: var(--size-dot);
+  block-size: var(--size-dot);
+  flex: none;
+  border: var(--hairline) solid currentColor;
+  border-radius: 50%;
+}
+
+.recoveryLine {
+  color: var(--color-warning);
+  font-size: var(--text-sm);
+  line-height: var(--text-sm-lh);
+}
