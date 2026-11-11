@@ -30,6 +30,7 @@ describe('README drift guard (AC22)', () => {
       '## Groups',
       '### Sync settings',
       '#### Group position format',
+      '### Leader views and lifecycle prompts',
       '### Reloads, phone locks and storage',
       '### End-to-end checks',
     ]) {

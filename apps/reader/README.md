@@ -470,6 +470,52 @@ loaded book. Anything else (another version, an extra key, a page outside the
 book) is ignored: no move, no prompt. A change of the format bumps `v`. This
 is the readers' contract with each other; the sync server never reads it.
 
+### Leader views and lifecycle prompts
+
+Everything here follows the server's roles; the reader only shows them (#25).
+
+- **People.** The leader sees who is in the group: a counter in the code strip
+  ("5 here, 2 away": connected people other than the leader, and those away)
+  that opens the list, and the full list as the last section of the panel from
+  1024 px. The own row comes first, then everyone in the order they joined;
+  rows never re-sort. Names are shown as text; a server-generated name reads
+  "Guest 3" with an "Auto name" tag, so a chosen "Guest 3" can't pass for one.
+  Members and the vice-leader never see the list.
+- **Vice-leader, remove, lock.** From a row: Make vice-leader (only someone
+  who is here), Remove as vice-leader, and Remove from group (with a
+  confirmation naming the person; they can't come back, and all codes and QR
+  codes change). Lock group stops all new joining until unlocked. Members get
+  a short notice when they become or stop being the vice-leader and when the
+  group is locked or unlocked.
+- **Preview.** Preview pages lets the leader turn pages without moving the
+  group: nothing is sent while previewing but a throttled "leader active"
+  signal, and the preview page is never stored. The banner offers Return to
+  group (nothing is sent) and Bring group here (one position update). A
+  reload ends the preview.
+- **Keep-alive.** When the server asks whether the leader is still there, a
+  card counts down from the server's duration and is announced once,
+  assertively. Turning a page or Keep going answers it. At zero the card says
+  the group is paused and Keep going still resumes it; a leader who got the
+  lead because the previous one was inactive is told the group would end
+  instead.
+- **Now leading, lost lead, take-back.** A member who gets the lead sees
+  "You're leading the group now" with the reason; if they were on another
+  page they start in preview there, so their next turn doesn't move everyone.
+  A leader who loses the lead (also while away past the grace) gets a notice
+  that stays until dismissed and keeps reading as a member, not following if
+  they were previewing. After a handoff the original leader is offered Take
+  the lead; the reader doesn't offer it after losing the lead to a take-back
+  (the server still allows it until #32). The offer goes away on any later
+  leader change. Members see a short notice when the leader changes, never a
+  name.
+- **Pasted QR link.** A `#t=` link pasted into an open tab is removed from the
+  address bar and never used; a notice says to open it in a new tab or scan
+  the code again.
+
+Notices share one slot at the top of the reading column (one at a time, by
+priority). Leader-changed, vice-leader and lock notices hide after 15 s of
+visible time; the others stay until dismissed. Nothing about groups is logged.
+
 ### Reloads, phone locks and storage
 
 A tab keeps its group in `sessionStorage`
@@ -495,8 +541,12 @@ built reader and sync servers on loopback: run `pnpm build` and
 `pnpm --filter @sync-system/reader exec playwright install chromium` first. It
 measures opening a QR link and typing codes until Following (target under
 15 s) and a leader move reaching members (under 1 s), reloads, a 25-second
-leader connection drop, keyboard-only use and zero CSP violations. CI runs it
-in the `e2e` job.
+leader connection drop, keyboard-only use and zero CSP violations. A second
+stack (its own sync server on `e2e/fixtures/apps.lifecycle.json`: the dev key,
+a 5 s grace and `auto` handoff) checks the leader lifecycle: preview doesn't
+move a member and Bring group here does, a 12-second drop hands the lead to
+the vice-leader, and the original leader takes it back. CI runs it in the
+`e2e` job.
 
 ## Development
 
