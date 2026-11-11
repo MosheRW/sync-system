@@ -14,6 +14,7 @@
 - pm update-spec: sonnet (default) → DONE
 - designer design: opus (NEXT_MODEL: new flows, no existing pattern) → DONE
 - designer update (U-decisions): opus (same run) → DONE
+- pm update-spec (design decisions): sonnet (default) → DONE
 ## Open questions
 - Design D1-D9 (docs/issues/25/design.md section 12) for the architect; U5-U14 decided.
 - Architect confirms server semantics for the take-back offer (Gap 1) and keepalive.ack during the pause (Q4).

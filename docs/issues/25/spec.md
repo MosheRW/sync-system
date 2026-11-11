@@ -254,6 +254,19 @@ All recommendations for Q1-Q10 were accepted as written.
 - Gap 1 (stale take-back offer): the proposed fix is accepted. A small change in `packages/client`: a later `leader.changed` clears an open take-back offer, and a `NOT_ALLOWED` reply closes the prompt with "You can't take the lead back any more". No server change. The architect confirms the server semantics (that any later leader change invalidates the old offer).
 - Gap 2 (no pause event for the leader's client when the keep-alive runs out): no new event and no package change. User: "if the leader's browser is inactive - it probably dont care about that already." The keep-alive prompt's run-out state (Q4: "The group is paused" plus "Keep going") is driven on the client by the countdown reaching zero from the server's duration.
 
+## Decisions (design, 2026-11-11: "Accept all", U8 changed)
+The recommendations in `design.md` section 13 were accepted as written, except U8.
+- U5. Phone leaders reach the full list through the counter: it opens a People view in the Group sheet with the same list and controls as the large-screen panel, so AC42 and AC43 work on phones. **This refines AC38:** "a counter below the breakpoint" describes the always-visible layout; the counter is also the entry to the full list.
+- U6. "Preview pages" lives in the leader's Group sheet and the panel (2 taps on phones); no extra button in the code strip (Q1).
+- U7. A new leader who isn't on the group's page starts in preview, on their own page; the banner offers "Bring group here" / "Return to group". **This refines AC46:** after the "you're now leading" moment they are not moved and their next page turn does not move the group until they choose.
+- U8. **Changed by the user.** Only the leader-changed (AC49), vice-leader (AC60) and lock notices hide after 15 s of visible time (paused on hover/focus and in a background tab), with Dismiss. The lost-lead (AC47), "You can't take the lead back any more" (AC48) and pasted-QR-link (AC57) notices stay until dismissed. **This refines AC49 and AC57:** AC49 auto-hides after 15 s; AC57 does not auto-hide.
+- U9. Generated names (AC39) carry an "Auto name" text tag in the row's second line plus a muted name colour; chosen names are shown verbatim with no tag.
+- U10. Roster order: the leader's own row first, then join order, never re-sorted by state.
+- U11. A participant who can't follow the group's book (different book, or an unacknowledged version warning) still becomes leader as the server decides. **This refines AC46:** the "you're now leading" dialog adds "Your copy of the book isn't the same as the group's, so pages may not match for the others."; they lead with their own book and "End group" stays available. No way to hand the lead on (out of scope).
+- U12. Hebrew for "vice-leader" is "סגן המוביל" (builds on U4); it joins #28's native-speaker review (Q9).
+- U13. The keep-alive appearance and run-out are announced assertively; every other 8b announcement is polite. The card doesn't take focus.
+- U14. **This refines AC47:** a leader who loses the lead while previewing stays on the page they were viewing, as a member who is not following, and gets the jump prompt on the next leader move.
+
 ## Open questions
 None for the user. Left to the architect / designer:
 - Confirm against the server that any later leader change invalidates the old take-back offer (Gap 1), and that `keepalive.ack` is accepted during the inactive pause (Q4).
