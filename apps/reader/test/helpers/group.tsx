@@ -1,6 +1,7 @@
 import type { JoinCodes, JoinMethod, RosterEntry } from '@sync-system/react';
 import { act, fireEvent, screen, within } from '@testing-library/react';
 import { vi } from 'vitest';
+import type { PastedLinkSignal } from '../../src/group/pasted-link.js';
 import { SYNC, readingReady, renderApp, testConfig, testLoader } from './app.js';
 import { FakeSyncClient, GROUP_ID, connected } from './fake-sync-client.js';
 import { MemoryStorage } from './storage.js';
@@ -22,6 +23,7 @@ export async function renderGroupApp(
     uiLang?: 'en' | 'he';
     config?: Parameters<typeof testConfig>[2];
     entry?: Parameters<typeof testConfig>[0];
+    pastedLinks?: PastedLinkSignal;
   } = {},
 ) {
   const client = options.client ?? new FakeSyncClient();
@@ -32,6 +34,7 @@ export async function renderGroupApp(
     storage,
     syncClient: client,
     uiLang: options.uiLang ?? 'en',
+    ...(options.pastedLinks ? { pastedLinks: options.pastedLinks } : {}),
   });
   await readingReady();
   return { client, storage, view };

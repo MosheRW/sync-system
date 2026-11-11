@@ -8,6 +8,7 @@ import { GroupLibrary } from '../group/GroupLibrary.js';
 import { GroupReading } from '../group/GroupReading.js';
 import { SyncRoot } from '../group/SyncRoot.js';
 import type { QrLanding } from '../group/deep-link.js';
+import type { PastedLinkSignal } from '../group/pasted-link.js';
 import { type PageStore, type StorageLike, createPageStore } from '../group/session-store.js';
 import { I18nProvider, type UiLanguage, useI18n } from '../i18n/index.js';
 import type { LibraryEntry } from '../library/types.js';
@@ -33,6 +34,8 @@ export interface AppProps {
    * (#24 R3). Memory only; ignored when sync is off.
    */
   qrLanding?: QrLanding | null;
+  /** Pasted QR links that were stripped and not used (#25 AC57): a counter only. */
+  pastedLinks?: PastedLinkSignal;
   /** Tests only: a scripted sync client instead of the provider-owned one. */
   syncClient?: SyncClientLike;
 }
@@ -99,6 +102,7 @@ function Routes({
   loader,
   storage = null,
   qrLanding = null,
+  pastedLinks,
   syncClient,
 }: Omit<AppProps, 'uiLang'>) {
   const pages = useMemo(() => createPageStore(storage), [storage]);
@@ -121,6 +125,7 @@ function Routes({
       sync={config.sync}
       storage={storage}
       landing={qrLanding}
+      {...(pastedLinks !== undefined ? { pastedLinks } : {})}
       libraryOn={config.library === 'on' && config.entry !== 'single-book'}
       singleBook={config.entry === 'single-book'}
       bundledIds={bundledIds}

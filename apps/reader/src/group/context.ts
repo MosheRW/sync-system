@@ -1,6 +1,7 @@
 import { createContext, useContext } from 'react';
 import type { SyncConfig } from '../config/schema.js';
 import type { QrLanding } from './deep-link.js';
+import type { PastedLinkSignal } from './pasted-link.js';
 import type { PointerStore } from './session-store.js';
 
 /** What the group features know about this deployment and page load (#24). */
@@ -10,6 +11,8 @@ export interface GroupEnv {
   readonly pointers: PointerStore;
   /** The QR ticket this page load arrived with (memory only, R3). */
   readonly landing: QrLanding | null;
+  /** Pasted QR links that were stripped and not used (#25 AC57): a counter only. */
+  readonly pastedLinks: PastedLinkSignal;
   /** "Read without a group" was chosen on an update screen (this page load only). */
   readonly groupsDisabled: boolean;
   readonly disableGroups: () => void;

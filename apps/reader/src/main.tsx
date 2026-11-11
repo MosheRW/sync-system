@@ -7,6 +7,7 @@ import { App } from './app/App.js';
 import { boot } from './app/boot.js';
 import { createContentLoader } from './content/loader.js';
 import { stripLaterTickets, takeQrTicket } from './group/deep-link.js';
+import { createPastedLinkSignal } from './group/pasted-link.js';
 import { safeSessionStorage } from './group/session-store.js';
 import './styles/tokens.css';
 import './styles/global.css';
@@ -15,7 +16,9 @@ import './styles/global.css';
 // a QR ticket out of the fragment and the session history (#24 R3). It is
 // kept only in memory and handed to the app once.
 const qrLanding = takeQrTicket(window.location, window.history);
-stripLaterTickets(window);
+// A link pasted later is stripped too; the app only learns that it happened (#25 AC57).
+const pastedLinks = createPastedLinkSignal();
+stripLaterTickets(window, pastedLinks.notify);
 
 const { config, configIssue, uiLang, route } = boot(
   document,
@@ -48,6 +51,7 @@ if (container) {
         loader={loader}
         storage={safeSessionStorage()}
         qrLanding={qrLanding}
+        pastedLinks={pastedLinks}
       />
     </StrictMode>,
   );

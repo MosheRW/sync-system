@@ -8,6 +8,7 @@ import { type ReactNode, useCallback, useMemo, useState } from 'react';
 import { UpdateScreen } from '../components/group/UpdateScreens.js';
 import type { SyncConfig } from '../config/schema.js';
 import { type GroupEnv, GroupEnvContext, useGroupEnv } from './context.js';
+import { type PastedLinkSignal, createPastedLinkSignal } from './pasted-link.js';
 import type { QrLanding } from './deep-link.js';
 import { type StorageLike, createPointerStore } from './session-store.js';
 
@@ -16,6 +17,8 @@ export interface SyncRootProps {
   /** This tab's guarded `sessionStorage` (ADR 0009); `null`: tokens in memory only. */
   storage: StorageLike | null;
   landing: QrLanding | null;
+  /** Pasted QR links that were not used (#25 AC57). */
+  pastedLinks?: PastedLinkSignal;
   libraryOn: boolean;
   singleBook: boolean;
   bundledIds: readonly string[];
@@ -54,6 +57,7 @@ export function SyncRoot({
   sync,
   storage,
   landing,
+  pastedLinks: givenPastedLinks,
   libraryOn,
   singleBook,
   bundledIds,
@@ -61,6 +65,8 @@ export function SyncRoot({
   client,
   children,
 }: SyncRootProps) {
+  const [ownPastedLinks] = useState(createPastedLinkSignal);
+  const pastedLinks = givenPastedLinks ?? ownPastedLinks;
   const pointers = useMemo(
     () => createPointerStore(storage, hostOf(sync.url)),
     [storage, sync.url],
@@ -81,6 +87,7 @@ export function SyncRoot({
       sync,
       pointers,
       landing,
+      pastedLinks,
       groupsDisabled,
       disableGroups,
       libraryOn,
@@ -92,6 +99,7 @@ export function SyncRoot({
       sync,
       pointers,
       landing,
+      pastedLinks,
       groupsDisabled,
       disableGroups,
       libraryOn,

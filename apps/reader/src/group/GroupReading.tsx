@@ -74,6 +74,7 @@ import { useBannerSlot } from './use-banner-slot.js';
 import { useLeadershipFlow } from './use-leadership-flow.js';
 import type { LeaderError } from './leader-errors.js';
 import { usePreviewMode } from './use-preview-mode.js';
+import { usePastedLinkNotice } from './pasted-link.js';
 import { countRoster } from './roster-view.js';
 import type { Messages } from '../i18n/en.js';
 import { encodePosition } from './position.js';
@@ -241,6 +242,8 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
     announce,
   );
   const showEnded = banners.show;
+  // A pasted QR link wasn't used (#25 AC57): sticky, row 6.
+  usePastedLinkNotice(env.pastedLinks, true, () => banners.show({ row: 6, kind: 'qr-pasted' }));
   const endedNotice = (text: keyof Messages, focus = false) =>
     showEnded({ row: 1, kind: 'ended', text, focus });
   const locked = group?.status === 'active' && group.locked;
@@ -1119,7 +1122,9 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
         }
         belowHeader={strip}
         banner={
-          banners.shown !== null || previewBanner !== null ? (
+          // Blocked by the content check: only the ended notice (others wait, 6.1).
+          (banners.shown !== null && (phase !== 'mismatch-block' || banners.shown.row === 1)) ||
+          previewBanner !== null ? (
             <BannerSlot slot={banners} preview={previewBanner} onDismissed={focusArticle} />
           ) : null
         }

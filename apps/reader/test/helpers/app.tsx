@@ -1,3 +1,4 @@
+import type { PastedLinkSignal } from '../../src/group/pasted-link.js';
 import { webcrypto } from 'node:crypto';
 import type { SyncClientLike } from '@sync-system/react';
 import { type RenderResult, act, render, screen } from '@testing-library/react';
@@ -95,6 +96,7 @@ export function renderApp(options: {
   storage?: StorageLike | null;
   qrLanding?: QrLanding | null;
   syncClient?: SyncClientLike;
+  pastedLinks?: PastedLinkSignal;
 }): RenderResult {
   const config = options.config === undefined ? testConfig() : options.config;
   const location = { pathname: '/', search: '', ...options.location };
@@ -116,6 +118,7 @@ export function renderApp(options: {
       storage={options.storage ?? null}
       qrLanding={options.qrLanding ?? null}
       {...(options.syncClient ? { syncClient: options.syncClient } : {})}
+      {...(options.pastedLinks ? { pastedLinks: options.pastedLinks } : {})}
     />,
   );
 }
