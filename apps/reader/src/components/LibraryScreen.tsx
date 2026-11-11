@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react';
+import { type ReactNode, useEffect, useMemo } from 'react';
 import { languageName, useI18n } from '../i18n/index.js';
 import type { LibraryEntry } from '../library/types.js';
 import styles from './LibraryScreen.module.css';
@@ -61,7 +61,17 @@ export function LibraryItem({ entry }: { entry: LibraryEntry }) {
  * The library (AC26, AC39): every bundled book that passed validation,
  * sorted by title (content ID when untitled) in the interface locale.
  */
-export function LibraryScreen({ entries }: { entries: readonly LibraryEntry[] }) {
+export function LibraryScreen({
+  entries,
+  headerAction,
+  notice,
+}: {
+  entries: readonly LibraryEntry[];
+  /** "Join a group" or the Group button (#24 design 6.10). */
+  headerAction?: ReactNode;
+  /** "You're in a group reading …" (#24 design 6.10). */
+  notice?: ReactNode;
+}) {
   const { t, lang } = useI18n();
   const sorted = useMemo(() => {
     const collator = new Intl.Collator(lang);
@@ -79,10 +89,14 @@ export function LibraryScreen({ entries }: { entries: readonly LibraryEntry[] })
       <main className={styles.main}>
         {/* The heading bar sits inside <main> (design.md 9: <main> holds the one <h1>). */}
         <div className={styles.header}>
-          <h1 className={styles.heading} tabIndex={-1}>
-            {t.libraryHeading}
-          </h1>
+          <div className={styles.headerRow}>
+            <h1 className={styles.heading} tabIndex={-1}>
+              {t.libraryHeading}
+            </h1>
+            {headerAction}
+          </div>
         </div>
+        {notice}
         <ul className={styles.list}>
           {sorted.map((entry) => (
             <LibraryItem key={entry.contentId} entry={entry} />

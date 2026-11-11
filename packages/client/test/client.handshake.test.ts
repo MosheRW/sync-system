@@ -68,6 +68,7 @@ describe('connect and handshake (AC8, AC9)', () => {
       namespace: 'app-a',
       joinMethods: ['A', 'D'],
       limits: LIMITS,
+      defaultHandoff: 'auto',
     });
     expect(client.getState()).toEqual({
       status: 'connected',
@@ -75,6 +76,7 @@ describe('connect and handshake (AC8, AC9)', () => {
       namespace: 'app-a',
       joinMethods: ['A', 'D'],
       limits: LIMITS,
+      defaultHandoff: 'auto',
     });
     expect(client.getSnapshot().connection).toBe(client.getState());
   });
@@ -87,6 +89,27 @@ describe('connect and handshake (AC8, AC9)', () => {
     const info = await first;
     await expect(client.connect()).resolves.toBe(info);
     expect(FakeWebSocket.instances).toHaveLength(1);
+  });
+
+  it("exposes the app's default handoff mode from hello.ok (#24 P1)", async () => {
+    const client = makeClient();
+    const connecting = client.connect();
+    const socket = FakeWebSocket.last;
+    socket.open();
+    socket.receive({ type: 'welcome', protocolVersion: 1, minProtocolVersion: 1 });
+    socket.receive({
+      type: 'hello.ok',
+      namespace: 'app-a',
+      reqId: 'c1',
+      participantId: PARTICIPANT_ID,
+      joinMethods: ['A'],
+      limits: LIMITS,
+      defaultHandoff: 'frozen',
+    });
+    const info = await connecting;
+    expect(info.defaultHandoff).toBe('frozen');
+    expect(client.getState()).toMatchObject({ status: 'connected', defaultHandoff: 'frozen' });
+    client.close();
   });
 
   it('connects with the checked href (R2-L3)', () => {

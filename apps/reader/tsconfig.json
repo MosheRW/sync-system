@@ -10,5 +10,14 @@
     "moduleResolution": "Bundler",
     "jsx": "react-jsx"
   },
-  "include": ["src", "test", "plugins", "server", "vite.config.ts", "vitest.config.ts"]
+  "include": [
+    "src",
+    "test",
+    "e2e",
+    "plugins",
+    "server",
+    "vite.config.ts",
+    "vitest.config.ts",
+    "playwright.config.ts"
+  ]
 }

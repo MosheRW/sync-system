@@ -12,7 +12,7 @@ export type StatusInput =
   | { kind: 'book-not-found'; contentId: string | null }
   | { kind: 'no-book' }
   | { kind: 'invalid-link' }
-  | { kind: 'not-configured' };
+  | { kind: 'not-configured'; syncInvalid?: boolean };
 
 function formatBytes(i18n: I18n, bytes: number): string {
   const mib = 1024 * 1024;
@@ -79,6 +79,8 @@ export function statusView(input: StatusInput, i18n: I18n, libraryOn: boolean): 
         tone: 'danger',
         retry: false,
         libraryLink: null,
+        // Only the sync settings were refused (#24 AC1, design F0.2).
+        ...(input.syncInvalid === true ? { details: t.syncConfigInvalidDetails } : {}),
       };
     case 'content-error':
       return errorView(input.error, i18n, back);

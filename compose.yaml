@@ -60,10 +60,10 @@ services:
       start_period: 5s
     restart: unless-stopped
 
-  # The reading app (#19): a static React app served by a small Node server.
-  # It needs nothing from the sync server in item 7. Open
-  # http://127.0.0.1:8081/ for the library. Every variable is documented in
-  # apps/reader/README.md; the values below are the defaults.
+  # The reading app (#19, #24): a static React app served by a small Node
+  # server. Open http://127.0.0.1:8081/ for the library. Every variable is
+  # documented in apps/reader/README.md; the values below are the defaults,
+  # except the sync settings, which connect it to the sync server above.
   reader:
     build:
       context: .
@@ -87,6 +87,17 @@ services:
       READER_SRC_ORIGINS: ''
       READER_FETCH_TIMEOUT_SECONDS: '15'
       READER_SRC_MAX_BYTES: '5242880'
+      # Groups (#24). The browser connects from the host to the sync server's
+      # loopback port, so the URL is the host's address, not the service name.
+      # This image runs with NODE_ENV=production, so the reader prints two
+      # startup warnings here (ws: and the public dev key): expected locally.
+      READER_SYNC_URL: ws://127.0.0.1:8080/ws
+      # The public dev key of the `dev-app` entry in config/apps.dev.json. The
+      # key ships in every page anyway (it identifies the app, it is not a
+      # secret); the sync server accepts this one only in development.
+      READER_SYNC_API_KEY: dev-only-insecure-api-key-change-me-please
+      # Late-joiner countdown in seconds (0-60, default 10).
+      # READER_SYNC_LATE_JOIN_SECONDS: '10'
     read_only: true
     cap_drop:
       - ALL

@@ -259,6 +259,13 @@ the same answer).
 
 There is no join by group ID (removed in #10).
 
+The join input rules are re-exported from the core (the same functions the
+client and server run), so a form can explain a mistake before sending:
+`normalizeJoinCode`, `classifyJoinCode`, `isDoorCode`, `isQrTicketShape`,
+`resolveDisplayName` and the caps `MAX_JOIN_CODE_INPUT_LENGTH`,
+`MAX_DISPLAY_NAME_INPUT_LENGTH`, `MAX_DISPLAY_NAME_LENGTH` and
+`MAX_QR_TICKET_LENGTH`. The server stays authoritative.
+
 `useJoinApproval().flow` follows the last join call of any join hook:
 `idle`, `joining`, `waiting` (`{ requestId, expiresAt }`, from the snapshot's
 `awaiting_approval`), `paused` (`JOIN_PAUSED`: door-code joining is paused,
@@ -330,8 +337,14 @@ It resets on group change or end.
   `JOIN_METHOD_UNAVAILABLE` (no method D):
   `unavailable`. Other errors: `error`, no automatic retry;
 - an expired ticket is never shown as `ready`;
-- the timer stops and the ticket is dropped when the last consumer unmounts
-  or is disabled.
+- the timer stops and the state drops the ticket when the last consumer
+  unmounts or is disabled: nothing is issued while the QR is hidden. The last
+  unexpired ticket is kept inside the provider (not in the state), so showing
+  the QR again on the same connection and group shows it at once and
+  re-issues on the normal schedule. It is dropped on a revoking code change,
+  a lost connection or lead, or a group switch. An expired one is discarded
+  when the QR is shown again and a new ticket is issued: a ticket is never
+  shown after its expiry.
 
 `state` is `idle`, `loading` (`ticket` or `null`), `ready` (`ticket`),
 `unavailable` or `error` (`error`, `ticket` or `null`). `idle` means no QR

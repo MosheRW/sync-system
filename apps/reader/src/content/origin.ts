@@ -4,11 +4,34 @@
  * global, available in browsers and Node.
  */
 
-/** Hosts for which `http:` is allowed (development only, security F9). */
-export const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(['localhost', '127.0.0.1', '[::1]']);
+/**
+ * Hosts for which `http:` is allowed (development only, security F9). No
+ * IPv6 literal: a CSP source can't hold one, so `isCspHostname` refuses it
+ * first (#24 R1).
+ */
+export const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(['localhost', '127.0.0.1']);
 
 export type OriginIssue =
-  'not-a-url' | 'scheme' | 'http-not-loopback' | 'credentials' | 'wildcard' | 'not-canonical';
+  | 'not-a-url'
+  | 'scheme'
+  | 'http-not-loopback'
+  | 'credentials'
+  | 'wildcard'
+  | 'host'
+  | 'not-canonical';
+
+/**
+ * A hostname that is safe as a CSP host source (#24 security L1, R1):
+ * dot-separated labels of lowercase letters, digits and hyphens (which also
+ * covers dotted IPv4 and punycode). WHATWG `URL` keeps `;`, `,` and `'` in a
+ * host, which could end a directive or start a second policy; IPv6 literals
+ * are not valid CSP host sources at all.
+ */
+const CSP_HOST_PATTERN = /^[a-z0-9-]+(?:\.[a-z0-9-]+)*$/;
+
+export function isCspHostname(hostname: string): boolean {
+  return CSP_HOST_PATTERN.test(hostname);
+}
 
 export type OriginCheck = { ok: true; origin: string } | { ok: false; issue: OriginIssue };
 
@@ -24,7 +47,8 @@ function parseUrl(value: string): URL | null {
  * Checks one allow-list entry. It must be a canonical origin, exactly as
  * `URL.origin` serialises it: `https://host[:port]` (or `http:` for a
  * loopback host), no trailing slash, path, query, fragment, credentials,
- * wildcard or default port. The returned origin is the re-serialised value,
+ * wildcard, default port or host character a CSP source can't hold (IPv6
+ * literals included). The returned origin is the re-serialised value,
  * the only form ever written into the CSP or the page.
  */
 export function checkAllowedOrigin(entry: string): OriginCheck {
@@ -34,6 +58,7 @@ export function checkAllowedOrigin(entry: string): OriginCheck {
   if (url.username !== '' || url.password !== '') return { ok: false, issue: 'credentials' };
   // WHATWG URL accepts "*" in a host; in a CSP source it is a wildcard.
   if (url.hostname.includes('*')) return { ok: false, issue: 'wildcard' };
+  if (!isCspHostname(url.hostname)) return { ok: false, issue: 'host' };
   if (url.protocol === 'http:' && !LOOPBACK_HOSTS.has(url.hostname)) {
     return { ok: false, issue: 'http-not-loopback' };
   }

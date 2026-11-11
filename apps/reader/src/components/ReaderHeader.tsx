@@ -10,8 +10,10 @@ export interface ReaderHeaderProps {
   docLang: string | undefined;
   index: number;
   total: number;
-  /** Reserved for item 8 (connection indicator, group controls). Empty in item 7. */
+  /** The Group button (#24); empty without sync. */
   endSlot?: ReactNode;
+  /** A second row inside the sticky header: the leader's code strip (#24 design 4.2). */
+  below?: ReactNode;
 }
 
 /**
@@ -19,7 +21,15 @@ export interface ReaderHeaderProps {
  * breaks collapsed) and the page counter (interface). No library link or
  * book switcher (AC24, AC36).
  */
-export function ReaderHeader({ title, docDir, docLang, index, total, endSlot }: ReaderHeaderProps) {
+export function ReaderHeader({
+  title,
+  docDir,
+  docLang,
+  index,
+  total,
+  endSlot,
+  below,
+}: ReaderHeaderProps) {
   const { t, format } = useI18n();
   return (
     <header className={styles.header}>
@@ -37,6 +47,7 @@ export function ReaderHeader({ title, docDir, docLang, index, total, endSlot }: 
         <p className={styles.counter}>{format(t.pageCounter, { n: index + 1, total })}</p>
         <div className={styles.slot}>{endSlot}</div>
       </div>
+      {below}
     </header>
   );
 }

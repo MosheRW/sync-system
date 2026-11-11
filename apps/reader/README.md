@@ -30,7 +30,7 @@ pnpm --filter @sync-system/reader preview  # vite preview with the same config a
 Docker (the `reader` service in the root `compose.yaml`, loopback port 8081):
 
 ```sh
-docker compose up --build reader
+docker compose up --build           # the reader and the sync server its groups use
 docker compose ps reader            # STATUS shows (healthy)
 open http://127.0.0.1:8081/         # the library
 ```
@@ -72,7 +72,8 @@ All settings are environment variables, all optional. Values are trimmed;
 empty means unset. The browser receives only the public part (entry, book,
 library, interface language, source origins, timeout, size cap) inside
 `index.html`; `PORT` and `HOST` never leave the server, and no reader setting
-is a secret. Never add a secret to the reader's environment.
+is a secret. Never add a secret to the reader's environment. The sync
+settings are under [Groups](#groups).
 
 | Variable                       | Values                                                  | Default                            | Example                       |
 | ------------------------------ | ------------------------------------------------------- | ---------------------------------- | ----------------------------- |
@@ -100,8 +101,9 @@ Rules (each violation is a startup error naming the variable):
   `single-book` needs it `off`; `on` with zero bundled books is an error.
 - `READER_SRC_ORIGINS` entries must be exact origins as browsers write them:
   `https://host` or `https://host:port`, lowercase, no trailing slash, path,
-  query, user name, wildcard or default port (`:443`). `http:` is accepted only
-  for `localhost`, `127.0.0.1` and `[::1]`, **for development only**: with
+  query, user name, wildcard or default port (`:443`), and a plain host name
+  or IPv4 address (no IPv6 literals, which a CSP source can't hold). `http:`
+  is accepted only for `localhost` and `127.0.0.1`, **for development only**: with
   `NODE_ENV=production` the server prints a warning, because any `?src` link
   could then make readers' browsers call that port on their own machine.
 - `READER_SRC_MAX_BYTES`: keep the default unless you need more. A large
@@ -142,7 +144,7 @@ list each content host in `READER_SRC_ORIGINS`. Then:
 
 Response headers on every response: a strict `Content-Security-Policy`
 (`default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self';
-font-src 'self'; connect-src 'self' <READER_SRC_ORIGINS>; manifest-src 'self';
+font-src 'self'; connect-src 'self' <READER_SRC_ORIGINS> <sync origin>; manifest-src 'self';
 base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src
 'none'`), `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`,
 `Cross-Origin-Opener-Policy: same-origin`,
@@ -370,6 +372,132 @@ Schema v1 has no inline markup or spans.
 The samples in `content/samples/` are public domain (Psalms in Hebrew, the
 opening of _Pride and Prejudice_) or written for this project.
 
+## Groups
+
+With a sync server configured, readers can start a group for the book they
+are reading and others join and follow the leader's page (#24). Without
+`READER_SYNC_URL` the reader is the solo reader: no group control, and it
+never connects.
+
+### Sync settings
+
+| Variable                        | Values                                              | Default                  | Example                         |
+| ------------------------------- | --------------------------------------------------- | ------------------------ | ------------------------------- |
+| `READER_SYNC_URL`               | `wss://host[:port]/path` (`ws:` only for localhost) | unset: groups off        | `wss://sync.example.org/ws`     |
+| `READER_SYNC_API_KEY`           | 32-256 visible ASCII characters                     | required with the URL    | the app's key in the apps file  |
+| `READER_SYNC_APP_VERSION`       | semantic version, at most 64 characters             | the reader's own version | `1.4.0`                         |
+| `READER_SYNC_LATE_JOIN_SECONDS` | integer 0-60                                        | `10`                     | `0` (late joiners jump at once) |
+
+Rules (each violation is a startup error naming the variable):
+
+- Sync is on exactly when `READER_SYNC_URL` is set; the other three are
+  errors without it, and the key is required with it.
+- The URL is parsed with no base: `wss:`, or `ws:` only for `localhost` and
+  `127.0.0.1`; no user name, password, query or fragment; a plain host name
+  or IPv4 address. With `NODE_ENV=production` a `ws:` URL prints a warning.
+- **The API key is public.** It ships in every page (the browser sends it in
+  the handshake), so it identifies the app; it grants nothing on its own:
+  joining needs a code or a QR ticket and every leader action needs a token.
+  Give the reader its own registration in the sync server's apps file with
+  tight per-app limits (`maxConnections`, join budgets), put per-IP
+  connection and message limits at the reverse proxy, never reuse a key meant
+  to be private, and rotate it by changing the apps file and the reader's
+  environment and restarting both (no rebuild). The key is never printed in
+  an error. With `NODE_ENV=production` the public development key prints a
+  warning: the sync server refuses it outside development.
+- `READER_SYNC_APP_VERSION` is what the sync server checks against the app's
+  `minAppVersion`; normally leave it unset.
+
+The CSP's `connect-src` gains exactly the sync server's origin (scheme, host,
+port; re-derived from the checked URL). Nothing else in the headers changes:
+`Permissions-Policy` keeps `camera=()` (the QR code is scanned with the
+phone's own camera app).
+
+### Local setup
+
+`docker compose up --build` starts the sync server and the reader wired
+together: the reader uses `READER_SYNC_URL=ws://127.0.0.1:8080/ws` (the host's
+loopback port of the sync server) and the public dev key of the `dev-app`
+entry in `config/apps.dev.json`. The reader image runs with
+`NODE_ENV=production`, so it prints the two warnings above; that is expected
+locally. `config/apps.example.json` has a reader-shaped `reading-app` entry to
+copy for a real deployment. For `pnpm --filter @sync-system/reader dev`, set
+the same variables in your shell and start the sync server with
+`docker compose up sync-server`.
+
+### Joining
+
+The leader starts a group from a book (Group, Start a group) and chooses how
+people join; every choice is preselected. The codes stay on the leader's
+screen while leading (a strip under the header, a panel from 1024 px).
+
+| Method | The joiner                                                                 |
+| ------ | -------------------------------------------------------------------------- |
+| A      | types the group code, then the door code the app asks for                  |
+| B      | types the group code and waits for the leader to let them in               |
+| C      | types one 8-character code (letters and digits; case, spaces, dashes free) |
+| D      | scans the leader's QR code with the phone camera, which opens a link       |
+
+The QR code is a link to this reader with the leader's book (`?book=<id>`, or
+the allow-listed `?src=<url>`, nothing in single-book mode) and the ticket in
+the URL **fragment**: `https://reader.example.org/?book=samples%2Fpsalms-he#t=<ticket>`.
+The ticket is a bearer credential. The reader takes it out of the address bar
+and the history entry before anything else runs and keeps it in memory for
+one join; a ticket pasted later into an open tab is removed and ignored. Keep
+the app's `qrTicketSeconds` short (default 300 s); Get new codes revokes the
+current codes and QR codes. "Join a group" on the library page joins by code
+and then opens the group's book when it is bundled.
+
+A QR link opened in a tab that is already in a group asks once: "Leave your
+current group and join this one?". Nothing is left without that answer.
+
+### Following
+
+Members on the group's page move with the leader. A member who turns a page
+browses on their own ("Not following") and gets a prompt to go to the group's
+page when the leader moves; it never moves them by itself. A joiner who was
+already reading elsewhere gets a countdown (`READER_SYNC_LATE_JOIN_SECONDS`)
+before the jump; someone who just opened the book jumps at once. Before any
+position is followed the book is compared with the leader's (content ID,
+fingerprint, schema version): a different book or format blocks following, a
+different version asks first.
+
+#### Group position format
+
+The leader sends, and members accept, exactly `{ "v": 1, "pageIndex": 3 }`:
+`v` is the payload version (`1`), `pageIndex` the zero-based page of the
+loaded book. Anything else (another version, an extra key, a page outside the
+book) is ignored: no move, no prompt. A change of the format bumps `v`. This
+is the readers' contract with each other; the sync server never reads it.
+
+### Reloads, phone locks and storage
+
+A tab keeps its group in `sessionStorage`
+([ADR 0009](../../docs/decisions/0009-reader-group-session-storage.md)): the
+sync client's tokens, a pointer `reader:v1:group@<sync host>` (group ID,
+follow mode, version-warning answer, QR shown) and the page per book
+`reader:v1:page:<contentId>:<fingerprint>`. A reload, or reopening a closed
+tab, comes back to the same group, role and page without codes; a brand-new
+tab doesn't. A stored group that is gone is forgotten with one notice. On a
+**shared device, leave the group before walking away**: a restored tab can
+otherwise resume as you while the group lives.
+
+A leader whose connection drops for less than the app's
+`disconnectGraceSeconds` (default 30) comes back still leading. Reconnecting
+takes a few seconds, so a deployment that needs a full 30-second phone lock to
+be safe sets `disconnectGraceSeconds` to 45.
+
+### End-to-end checks
+
+`pnpm --filter @sync-system/reader test:e2e` runs Playwright (Chromium only,
+[ADR 0008](../../docs/decisions/0008-end-to-end-browser-tests.md)) against the
+built reader and sync servers on loopback: run `pnpm build` and
+`pnpm --filter @sync-system/reader exec playwright install chromium` first. It
+measures opening a QR link and typing codes until Following (target under
+15 s) and a leader move reaching members (under 1 s), reloads, a 25-second
+leader connection drop, keyboard-only use and zero CSP violations. CI runs it
+in the `e2e` job.
+
 ## Development
 
 ```sh
@@ -380,7 +508,8 @@ pnpm lint
 
 Layout: `src/content` (schema, parser, fingerprint, loader, `?src` policy),
 `src/direction`, `src/navigation`, `src/config`, `src/app` (boot, routing),
-`src/components`, `src/i18n`, `plugins/library.ts` (build-time library index,
+`src/group` (sync root, follow reducer, phases, deep links, storage),
+`src/components` (`group/` for the group UI), `src/i18n`, `e2e/` (Playwright), `plugins/library.ts` (build-time library index,
 `virtual:reader-library`), `server/` (the production server). The app imports
 the sync stack only through `@sync-system/react`; ESLint enforces it and bans
 HTML sinks (`dangerouslySetInnerHTML`, `innerHTML`, ...): every external text

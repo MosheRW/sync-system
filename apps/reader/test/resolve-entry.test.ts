@@ -14,6 +14,7 @@ function config(entry: EntryMode, library: LibrarySetting): PublicConfig {
     srcOrigins: [],
     fetchTimeoutSeconds: 15,
     srcMaxBytes: 5_242_880,
+    sync: null,
   };
 }
 

@@ -92,7 +92,10 @@ export async function run(env: EnvSource, io: RunIO = {}): Promise<RunResult> {
     return { ok: false, exitCode: 1 };
   }
 
-  const headers = securityHeaders(config.srcOrigins);
+  const headers = securityHeaders({
+    srcOrigins: config.srcOrigins,
+    syncUrl: config.sync?.url ?? null,
+  });
   const timeouts = { ...DEFAULT_TIMEOUTS, ...io.timeouts };
   const server = createServer(
     { connectionsCheckingInterval: timeouts.checkIntervalMs },

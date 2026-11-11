@@ -1,6 +1,7 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import * as protocol from '@sync-system/protocol';
 import * as api from '../src/index.js';
 
 const root = join(import.meta.dirname, '..');
@@ -45,9 +46,32 @@ describe('public API (AC3)', () => {
         // #13 AC41: the preview helper.
         'LeaderPreview',
         'LEADER_ACTIVITY_MIN_INTERVAL_MS',
+        // #24 P2: the protocol's join input rules.
+        'MAX_DISPLAY_NAME_INPUT_LENGTH',
+        'MAX_DISPLAY_NAME_LENGTH',
+        'MAX_JOIN_CODE_INPUT_LENGTH',
+        'MAX_QR_TICKET_LENGTH',
+        'classifyJoinCode',
+        'isDoorCode',
+        'isQrTicketShape',
+        'normalizeJoinCode',
+        'resolveDisplayName',
       ].sort(),
     );
     expect(api.createSyncClient).toBeTypeOf('function');
+  });
+
+  it('re-exports the protocol join helpers as the same objects (#24 P2, R14)', () => {
+    expect(api.normalizeJoinCode).toBe(protocol.normalizeJoinCode);
+    expect(api.classifyJoinCode).toBe(protocol.classifyJoinCode);
+    expect(api.isDoorCode).toBe(protocol.isDoorCode);
+    expect(api.isQrTicketShape).toBe(protocol.isQrTicketShape);
+    expect(api.resolveDisplayName).toBe(protocol.resolveDisplayName);
+    expect(api.MAX_JOIN_CODE_INPUT_LENGTH).toBe(protocol.MAX_JOIN_CODE_INPUT_LENGTH);
+    expect(api.MAX_DISPLAY_NAME_INPUT_LENGTH).toBe(protocol.MAX_DISPLAY_NAME_INPUT_LENGTH);
+    expect(api.MAX_DISPLAY_NAME_LENGTH).toBe(protocol.MAX_DISPLAY_NAME_LENGTH);
+    expect(api.MAX_QR_TICKET_LENGTH).toBe(protocol.MAX_QR_TICKET_LENGTH);
+    expect(api.classifyJoinCode(api.normalizeJoinCode(' 048-213 '))).toBe('group');
   });
 
   it('points package exports at the built ESM output and types', () => {

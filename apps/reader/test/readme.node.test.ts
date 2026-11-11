@@ -27,6 +27,11 @@ describe('README drift guard (AC22)', () => {
       '## Direction rules',
       '### Writing mixed-direction text',
       '## Adding a bundled book',
+      '## Groups',
+      '### Sync settings',
+      '#### Group position format',
+      '### Reloads, phone locks and storage',
+      '### End-to-end checks',
     ]) {
       expect(readme, heading).toContain(heading);
     }
@@ -41,6 +46,10 @@ describe('README drift guard (AC22)', () => {
       'READER_SRC_ORIGINS',
       'READER_FETCH_TIMEOUT_SECONDS',
       'READER_SRC_MAX_BYTES',
+      'READER_SYNC_URL',
+      'READER_SYNC_API_KEY',
+      'READER_SYNC_APP_VERSION',
+      'READER_SYNC_LATE_JOIN_SECONDS',
       'PORT',
       'HOST',
     ]) {
@@ -74,7 +83,7 @@ describe('README drift guard (AC22)', () => {
   });
 
   it('documents the CSP the server sends', () => {
-    const csp = contentSecurityPolicy([]).replace(" connect-src 'self';", '');
+    const csp = contentSecurityPolicy({ srcOrigins: [] }).replace(" connect-src 'self';", '');
     for (const directive of csp.split('; ')) expect(flat, directive).toContain(directive);
     expect(flat).toContain("connect-src 'self' <READER_SRC_ORIGINS>");
   });

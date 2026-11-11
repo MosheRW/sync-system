@@ -193,7 +193,11 @@ export function readerLibrary(options: ReaderLibraryOptions): Plugin {
           return;
         }
         const html = renderIndexHtml(readFileSync(join(outDir, 'index.html'), 'utf8'), config);
-        for (const [name, value] of Object.entries(securityHeaders(config.srcOrigins))) {
+        const headers = securityHeaders({
+          srcOrigins: config.srcOrigins,
+          syncUrl: config.sync?.url ?? null,
+        });
+        for (const [name, value] of Object.entries(headers)) {
           res.setHeader(name, value);
         }
         res.setHeader('Content-Type', 'text/html; charset=utf-8');

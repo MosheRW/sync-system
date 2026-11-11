@@ -176,6 +176,15 @@ describe('book-not-found, no-book, invalid-link, not-configured (AC27, AC28, AC3
     show({ kind: 'not-configured' }, true);
     expect(screen.getByRole('heading').textContent).toBe("This app isn't set up");
     expect(screen.queryByRole('link')).toBeNull();
+    expect(document.querySelector('details')).toBeNull();
+  });
+
+  it('not configured because of the sync settings says so in Details (#24 AC1)', () => {
+    const { container } = show({ kind: 'not-configured', syncInvalid: true }, true);
+    expect(screen.getByRole('heading').textContent).toBe("This app isn't set up");
+    expect(container.querySelector('details')!.textContent).toContain(
+      'Sync settings are not valid.',
+    );
   });
 });
 

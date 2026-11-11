@@ -6,10 +6,18 @@ import { entries, loaders } from 'virtual:reader-library';
 import { App } from './app/App.js';
 import { boot } from './app/boot.js';
 import { createContentLoader } from './content/loader.js';
+import { stripLaterTickets, takeQrTicket } from './group/deep-link.js';
+import { safeSessionStorage } from './group/session-store.js';
 import './styles/tokens.css';
 import './styles/global.css';
 
-const { config, uiLang, route } = boot(
+// First, before the config, the book, any request or any error screen: take
+// a QR ticket out of the fragment and the session history (#24 R3). It is
+// kept only in memory and handed to the app once.
+const qrLanding = takeQrTicket(window.location, window.history);
+stripLaterTickets(window);
+
+const { config, configIssue, uiLang, route } = boot(
   document,
   navigator.languages,
   window.location,
@@ -31,7 +39,16 @@ const container = document.getElementById('root');
 if (container) {
   createRoot(container).render(
     <StrictMode>
-      <App config={config} uiLang={uiLang} route={route} entries={entries} loader={loader} />
+      <App
+        config={config}
+        configIssue={configIssue}
+        uiLang={uiLang}
+        route={route}
+        entries={entries}
+        loader={loader}
+        storage={safeSessionStorage()}
+        qrLanding={qrLanding}
+      />
     </StrictMode>,
   );
 }

@@ -161,7 +161,7 @@ describe('handler edge cases', () => {
       files: new Map(),
       indexHtml: 'x',
       libraryOn: false,
-      headers: securityHeaders([]),
+      headers: securityHeaders({ srcOrigins: [] }),
     });
     try {
       expect((await fetch(`${s.url}/library`)).status).toBe(404);
@@ -176,7 +176,12 @@ describe('handler edge cases', () => {
     files.get = () => {
       throw new Error('boom /secret/path');
     };
-    const s = await serve({ files, indexHtml: 'x', libraryOn: true, headers: securityHeaders([]) });
+    const s = await serve({
+      files,
+      indexHtml: 'x',
+      libraryOn: true,
+      headers: securityHeaders({ srcOrigins: [] }),
+    });
     try {
       const response = await fetch(`${s.url}/assets/x.js`);
       expect(response.status).toBe(500);
@@ -191,7 +196,7 @@ describe('handler edge cases', () => {
 
 describe('CSP construction (security C2, C7)', () => {
   it('has no unsafe-inline, unsafe-eval, data: or blob:', () => {
-    const csp = contentSecurityPolicy(['https://a.example']);
+    const csp = contentSecurityPolicy({ srcOrigins: ['https://a.example'] });
     for (const bad of ["'unsafe-inline'", "'unsafe-eval'", 'data:', 'blob:', '*']) {
       expect(csp).not.toContain(bad);
     }
@@ -199,8 +204,8 @@ describe('CSP construction (security C2, C7)', () => {
 
   it('refuses an injection-style origin', () => {
     expect(() =>
-      contentSecurityPolicy(["https://a.example; script-src 'unsafe-inline'"]),
+      contentSecurityPolicy({ srcOrigins: ["https://a.example; script-src 'unsafe-inline'"] }),
     ).toThrow();
-    expect(() => contentSecurityPolicy(['https://a.example/'])).toThrow();
+    expect(() => contentSecurityPolicy({ srcOrigins: ['https://a.example/'] })).toThrow();
   });
 });

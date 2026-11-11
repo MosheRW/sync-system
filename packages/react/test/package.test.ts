@@ -130,6 +130,20 @@ describe('imports (AC2)', () => {
     expect(runtime.SyncClientError).toBe(core.SyncClientError);
     expect(runtime.indicatorOf).toBe(core.indicatorOf);
   });
+
+  it('re-exports the join input helpers and limits as the same objects (#24 P2, R14)', () => {
+    expect(runtime.normalizeJoinCode).toBe(core.normalizeJoinCode);
+    expect(runtime.classifyJoinCode).toBe(core.classifyJoinCode);
+    expect(runtime.isDoorCode).toBe(core.isDoorCode);
+    expect(runtime.isQrTicketShape).toBe(core.isQrTicketShape);
+    expect(runtime.resolveDisplayName).toBe(core.resolveDisplayName);
+    expect(runtime.MAX_JOIN_CODE_INPUT_LENGTH).toBe(core.MAX_JOIN_CODE_INPUT_LENGTH);
+    expect(runtime.MAX_DISPLAY_NAME_INPUT_LENGTH).toBe(core.MAX_DISPLAY_NAME_INPUT_LENGTH);
+    expect(runtime.MAX_DISPLAY_NAME_LENGTH).toBe(core.MAX_DISPLAY_NAME_LENGTH);
+    expect(runtime.MAX_QR_TICKET_LENGTH).toBe(core.MAX_QR_TICKET_LENGTH);
+    expectTypeOf<api.ResolvedDisplayName>().toEqualTypeOf<core.ResolvedDisplayName>();
+    expectTypeOf<api.JoinCodeKind>().toEqualTypeOf<core.JoinCodeKind>();
+  });
 });
 
 describe('no logging, no HTML, no URLs (AC27, R10, L3)', () => {

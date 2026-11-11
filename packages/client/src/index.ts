@@ -54,6 +54,19 @@ export type {
   LeaderState,
 } from './state.js';
 export { CLIENT_PROTOCOL_VERSION, MIN_SERVER_PROTOCOL_VERSION } from './version.js';
+// The protocol's join input rules, so apps check input exactly as the client
+// and server do before sending (#24 P2). Same function objects, no wrappers.
+export {
+  MAX_DISPLAY_NAME_INPUT_LENGTH,
+  MAX_DISPLAY_NAME_LENGTH,
+  MAX_JOIN_CODE_INPUT_LENGTH,
+  MAX_QR_TICKET_LENGTH,
+  classifyJoinCode,
+  isDoorCode,
+  isQrTicketShape,
+  normalizeJoinCode,
+  resolveDisplayName,
+} from '@sync-system/protocol';
 export type {
   AppLimits,
   JoinMethod,
@@ -62,4 +75,6 @@ export type {
   Role,
   TokenStatus,
   HandoffMode,
+  JoinCodeKind,
+  ResolvedDisplayName,
 } from '@sync-system/protocol';

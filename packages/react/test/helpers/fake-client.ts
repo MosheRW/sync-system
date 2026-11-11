@@ -59,6 +59,7 @@ export const CONNECTED: ConnectionState = Object.freeze({
     maxLeaderUpdatesPerSecond: 5,
     maxMessageBytes: 16384,
   }) as never,
+  defaultHandoff: 'auto' as const,
 });
 
 type ActiveGroup = Extract<GroupState, { status: 'active' }>;

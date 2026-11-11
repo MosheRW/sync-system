@@ -12,17 +12,17 @@ Numbering: "item N" means PRD item N of 9, as used in the specs. GitHub issue an
 
 ## Items
 
-| Item | Scope                                                                                                                                                    | Issues   | PRs    | Status                   | Docs                               |
-| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- | ------ | ------------------------ | ---------------------------------- |
-| 1    | Sync server core and monorepo scaffold                                                                                                                   | #1       | #2     | Done (merged 2026-11-01) | `docs/issues/1/`                   |
-| 2    | Framework-free core client package                                                                                                                       | #3       | #4     | Done (merged 2026-11-01) | `docs/issues/3/`                   |
-| 3    | Participant tokens, token rejoin, restart recovery, plus hardening                                                                                       | #5, #7   | #6, #8 | Done (merged 2026-11-02) | `docs/issues/5/`, `docs/issues/7/` |
-| 4    | Join methods A-D (door code, approval, alphanumeric code, QR)                                                                                            | #10      | #11    | Done (merged 2026-11-04) | `docs/issues/10/`                  |
-| 5    | Roles, timers and group lifecycle                                                                                                                        | #13      | #14    | Done (merged 2026-11-05) | `docs/issues/13/`                  |
-| 6    | React/Next package with hooks over the core client                                                                                                       | #15      | #16    | Done (merged 2026-11-05) | `docs/issues/15/`                  |
-| 7    | Reading app content: content schema v1, fingerprint, RTL and mixed direction, library page and content selection, plus the `apps/reader` app with Docker | #19      | #20    | Done (merged 2026-11-05) | `docs/issues/19/`                  |
-| 8    | Reading app sync UX: code entry, QR, approval prompt, connection indicator, keep-alive and leader views                                                  | none yet | none   | Not started              | none yet                           |
-| 9    | Redis storage, public docs, changelog and release (health endpoint, config errors, semver)                                                               | none yet | none   | Not started              | none yet                           |
+| Item | Scope                                                                                                                                                    | Issues   | PRs    | Status                       | Docs                               |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- | ------ | ---------------------------- | ---------------------------------- |
+| 1    | Sync server core and monorepo scaffold                                                                                                                   | #1       | #2     | Done (merged 2026-11-01)     | `docs/issues/1/`                   |
+| 2    | Framework-free core client package                                                                                                                       | #3       | #4     | Done (merged 2026-11-01)     | `docs/issues/3/`                   |
+| 3    | Participant tokens, token rejoin, restart recovery, plus hardening                                                                                       | #5, #7   | #6, #8 | Done (merged 2026-11-02)     | `docs/issues/5/`, `docs/issues/7/` |
+| 4    | Join methods A-D (door code, approval, alphanumeric code, QR)                                                                                            | #10      | #11    | Done (merged 2026-11-04)     | `docs/issues/10/`                  |
+| 5    | Roles, timers and group lifecycle                                                                                                                        | #13      | #14    | Done (merged 2026-11-05)     | `docs/issues/13/`                  |
+| 6    | React/Next package with hooks over the core client                                                                                                       | #15      | #16    | Done (merged 2026-11-05)     | `docs/issues/15/`                  |
+| 7    | Reading app content: content schema v1, fingerprint, RTL and mixed direction, library page and content selection, plus the `apps/reader` app with Docker | #19      | #20    | Done (merged 2026-11-05)     | `docs/issues/19/`                  |
+| 8    | Reading app sync UX: 8a join and follow (#24); 8b leader views and lifecycle prompts (#25)                                                               | #24, #25 | #26    | 8a in review; 8b not started | `docs/issues/24/`                  |
+| 9    | Redis storage, public docs, changelog and release (health endpoint, config errors, semver)                                                               | none yet | none   | Not started                  | none yet                           |
 
 Scope of items 7-9 is taken from the PRD ("Product 1: the reading app", "Deliverables and operations") and the item 4, 5 and 6 specs, which defer work to them. The scope will be fixed in each item's own spec.
 
@@ -30,7 +30,7 @@ Scope of items 7-9 is taken from the PRD ("Product 1: the reading app", "Deliver
 
 - #9 `fix(client): harden forgetAllGroups cut-off against clock skew (follow-up to #7)`: open.
 - #12 `fix(server): limit group creation and live groups per app (follow-up to #10)`: open.
-- #21 `fix(reader): enforce trusted types in the csp (follow-up to #19)`: open.
+- #21 `fix(reader): enforce trusted types in the csp (follow-up to #19)`: open. Priority rose with #24 (the reader now holds participant tokens); the #24 e2e CSP-violation check is its test harness (security L7).
 
 ## Key accepted decisions
 

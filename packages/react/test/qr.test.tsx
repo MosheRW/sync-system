@@ -408,7 +408,11 @@ describe('QR re-issue (AC18)', () => {
     await advance(0);
     view.rerenderWith(<Probe />);
     await advance(0);
+    // Its ticket (tk-2) is still valid for 12 s: shown again at once, then dropped at expiry.
+    expect(seen.at(-1)?.state).toMatchObject({ status: 'ready', ticket: { ticket: 'tk-2' } });
+    await advance(12_000);
     expect(seen.at(-1)?.state).toEqual({ status: 'loading', ticket: null });
+    expect(other.count('issueQrTicket')).toBe(2);
   });
 
   it('a release cancelled after the scheduled issue gave up still issues', async () => {
@@ -478,6 +482,197 @@ describe('QR re-issue (AC18)', () => {
     await advance(10_000);
     expect(client.count('issueQrTicket')).toBe(2);
     expect(ticketOf(values.at(-1))).toBe('tk-2');
+  });
+});
+
+describe('hiding and showing the QR (#24 QA finding 2, AC12)', () => {
+  function toggled(client: FakeSyncClient) {
+    const values: QrTicketHook[] = [];
+    function Probe({ enabled }: { enabled: boolean }): ReactNode {
+      values.push(useQrTicket({ enabled }));
+      return null;
+    }
+    const view = renderWithProvider(<Probe enabled />, { client });
+    return {
+      values,
+      hide: async () => {
+        view.rerenderWith(<Probe enabled={false} />);
+        await advance(0);
+      },
+      show: async () => {
+        view.rerenderWith(<Probe enabled />);
+        await advance(0);
+      },
+    };
+  }
+
+  it('shows the still-valid ticket at once after a hide, with no new issue', async () => {
+    const client = leader();
+    const qr = toggled(client);
+    await advance(0);
+    await qr.hide();
+    expect(qr.values.at(-1)?.state).toEqual({ status: 'idle' });
+    await advance(3_000);
+    await qr.show();
+    expect(qr.values.at(-1)?.state.status).toBe('ready');
+    expect(ticketOf(qr.values.at(-1))).toBe('tk-1');
+    expect(client.count('issueQrTicket')).toBe(1);
+  });
+
+  it('issues nothing while hidden, and none of its timers run', async () => {
+    const client = leader();
+    const qr = toggled(client);
+    await advance(0);
+    await qr.hide();
+    expect(vi.getTimerCount()).toBe(0);
+    await advance(50_000);
+    expect(client.count('issueQrTicket')).toBe(1);
+  });
+
+  it('re-issues on the normal schedule (80 % of the lifetime) after it is shown again', async () => {
+    const client = leader(60_000);
+    const qr = toggled(client);
+    await advance(0);
+    await qr.hide();
+    await advance(20_000);
+    await qr.show();
+    await advance(27_999);
+    expect(client.count('issueQrTicket')).toBe(1);
+    await advance(1);
+    expect(client.count('issueQrTicket')).toBe(2);
+    expect(ticketOf(qr.values.at(-1))).toBe('tk-2');
+  });
+
+  it('past the re-issue mark: shows the parked ticket and re-issues at once', async () => {
+    const client = leader(60_000);
+    const qr = toggled(client);
+    await advance(0);
+    await qr.hide();
+    await advance(50_000);
+    const gate = deferred<QrTicket>();
+    client.impl.issueQrTicket = () => gate.promise;
+    await qr.show();
+    expect(client.count('issueQrTicket')).toBe(2);
+    expect(ticketOf(qr.values.at(-1))).toBe('tk-1');
+    await act(async () => {
+      gate.resolve({ ticket: 'tk-new', expiresAt: Date.now() + 60_000 });
+      await Promise.resolve();
+    });
+    expect(ticketOf(qr.values.at(-1))).toBe('tk-new');
+  });
+
+  it('an expired parked ticket is never shown; a new one is issued', async () => {
+    const client = leader(60_000);
+    const qr = toggled(client);
+    await advance(0);
+    await qr.hide();
+    await advance(60_000);
+    const gate = deferred<QrTicket>();
+    client.impl.issueQrTicket = () => gate.promise;
+    await qr.show();
+    expect(qr.values.at(-1)?.state).toEqual({ status: 'loading', ticket: null });
+    expect(client.count('issueQrTicket')).toBe(2);
+  });
+
+  it.each(['rotated', 'resumed', 'member_removed', 'superseded'] as CodesChangedReason[])(
+    'codesChanged %s while hidden drops the parked ticket (R1)',
+    async (reason) => {
+      const client = leader();
+      const qr = toggled(client);
+      await advance(0);
+      await qr.hide();
+      act(() => {
+        client.codes = { generation: 2, groupCode: '654321' };
+        client.emit('codesChanged', { groupId: 'g-1', codes: client.codes, reason });
+      });
+      expect(client.count('issueQrTicket')).toBe(1);
+      await advance(10_000);
+      const gate = deferred<QrTicket>();
+      client.impl.issueQrTicket = () => gate.promise;
+      await qr.show();
+      expect(qr.values.at(-1)?.state).toEqual({ status: 'loading', ticket: null });
+      expect(client.count('issueQrTicket')).toBe(2);
+    },
+  );
+
+  it.each(['rotated', 'resumed', 'member_removed', 'superseded'] as CodesChangedReason[])(
+    'codesChanged %s inside the release tick never parks the revoked ticket (R1)',
+    async (reason) => {
+      const values: QrTicketHook[] = [];
+      function Probe({ enabled }: { enabled: boolean }): ReactNode {
+        values.push(useQrTicket({ enabled }));
+        return null;
+      }
+      const client = leader();
+      const view = renderWithProvider(<Probe enabled />, { client });
+      await advance(0);
+      expect(ticketOf(values.at(-1))).toBe('tk-1');
+      // The last consumer goes: the release timer is armed, not run yet.
+      act(() => view.rerenderWith(<Probe enabled={false} />));
+      act(() => {
+        client.codes = { generation: 2, groupCode: '654321' };
+        client.emit('codesChanged', { groupId: 'g-1', codes: client.codes, reason });
+      });
+      await advance(0);
+      expect(values.at(-1)?.state).toEqual({ status: 'idle' });
+      await advance(10_000);
+      const gate = deferred<QrTicket>();
+      client.impl.issueQrTicket = () => gate.promise;
+      const shownFrom = values.length;
+      act(() => view.rerenderWith(<Probe enabled />));
+      await advance(0);
+      // Not even for one render.
+      expect(values.slice(shownFrom).map(ticketOf)).not.toContain('tk-1');
+      expect(values.at(-1)?.state).toEqual({ status: 'loading', ticket: null });
+      expect(client.count('issueQrTicket')).toBe(2);
+    },
+  );
+
+  it('door_failures while hidden keeps the parked ticket', async () => {
+    const client = leader();
+    const qr = toggled(client);
+    await advance(0);
+    await qr.hide();
+    act(() => {
+      client.codes = { generation: 2, groupCode: '123456', doorCode: '000111' };
+      client.emit('codesChanged', { groupId: 'g-1', codes: client.codes, reason: 'door_failures' });
+    });
+    await qr.show();
+    expect(ticketOf(qr.values.at(-1))).toBe('tk-1');
+    expect(client.count('issueQrTicket')).toBe(1);
+  });
+
+  it('a demotion or a lost connection while hidden drops the parked ticket', async () => {
+    const client = leader();
+    const qr = toggled(client);
+    await advance(0);
+    await qr.hide();
+    act(() => client.follow('g-1'));
+    act(() => client.lead('g-1'));
+    await advance(10_000);
+    const gate = deferred<QrTicket>();
+    client.impl.issueQrTicket = () => gate.promise;
+    await qr.show();
+    expect(qr.values.at(-1)?.state).toEqual({ status: 'loading', ticket: null });
+
+    const other = leader();
+    const second = toggled(other);
+    await advance(0);
+    await second.hide();
+    act(() => {
+      other.setConnection({
+        status: 'reconnecting',
+        attempt: 1,
+        delayMs: 500,
+        retryAt: 0,
+        attempting: true,
+      });
+      other.lead('g-1');
+    });
+    await advance(10_000);
+    other.impl.issueQrTicket = () => gate.promise;
+    await second.show();
+    expect(second.values.at(-1)?.state).toEqual({ status: 'loading', ticket: null });
   });
 });
 

@@ -200,6 +200,11 @@ not only from `error` events.
 | `reconnecting` | `attempt`, `delayMs`, `retryAt`, `attempting`         | Waiting for the backoff timer (`attempting: false`) or retrying (`true`).           |
 | `closed`       | `reason`, `error?`                                    | `reason` is `client` (`close()`), `fatal` or `gave_up`. Terminal until `connect()`. |
 
+`connected` (and the `ConnectedInfo` that `connect()` resolves with) also
+carries `defaultHandoff` (`auto` or `frozen`): the app's
+handoff mode for a group created without one, so a create form can preselect
+it.
+
 `GroupState` (in `snapshot.group`) is `active` (with `role`, `metadata`,
 `hasPosition`, `position`, `leaderOnline`), `rejoining` (leader or member,
 resuming after a drop), `waiting` (a member parked until its leader recreates
@@ -276,6 +281,16 @@ moment as `cancelJoin()`, the join resolves and `cancelJoin()` rejects with
 `DOOR_CODE_WRONG`, `JOIN_PAUSED` (`details.retryAfterMs`),
 `APPROVAL_QUEUE_FULL`, `QR_INVALID`, `QR_EXPIRED`, `RATE_LIMITED` (10 join
 attempts per connection per minute).
+
+The same input rules are exported, so an app can explain a mistake before
+anything is sent: `normalizeJoinCode`, `classifyJoinCode` (`'group'`,
+`'alpha'` or `undefined`), `isDoorCode`, `isQrTicketShape`,
+`resolveDisplayName` (`{ ok: true, generated: true }` for a blank name,
+`{ ok: true, generated: false, name }`, or `{ ok: false }`) and the input caps
+`MAX_JOIN_CODE_INPUT_LENGTH`, `MAX_DISPLAY_NAME_INPUT_LENGTH`,
+`MAX_DISPLAY_NAME_LENGTH` and `MAX_QR_TICKET_LENGTH`. They are the protocol's
+own functions, so the app, the client and the server agree; the server stays
+authoritative.
 
 ### Leader API
 

@@ -2,7 +2,8 @@ import { truncate } from '../content/quote.js';
 
 export interface PlainTextProps {
   text: string;
-  dir?: 'ltr' | 'rtl';
+  /** `auto`: first strong character (display names, #24 design 8). */
+  dir?: 'ltr' | 'rtl' | 'auto';
   lang?: string;
   /** Truncate to this many characters (code points), with an ellipsis. */
   maxLength?: number;

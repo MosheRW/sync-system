@@ -1933,6 +1933,8 @@ export class SyncClient {
       namespace: message.namespace,
       joinMethods: Object.freeze([...new Set(message.joinMethods)]),
       limits,
+      // Validated by the schema (an enum value); copied, never the raw object.
+      defaultHandoff: message.defaultHandoff,
     });
     this.#info = info;
     this.#phase = 'ready';
