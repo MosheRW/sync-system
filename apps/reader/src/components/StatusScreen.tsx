@@ -31,6 +31,8 @@ export interface StatusScreenProps {
   actions?: readonly StatusAction[];
   /** Render as a section inside another screen's `<main>` (the mismatch block). */
   embedded?: boolean;
+  /** An action that failed (the mismatch block's Leave group): shown after the buttons. */
+  error?: string | null;
 }
 
 function Icon({ tone }: { tone: StatusView['tone'] }) {
@@ -60,6 +62,7 @@ export function StatusScreen({
   retrying = false,
   actions = [],
   embedded = false,
+  error = null,
 }: StatusScreenProps) {
   const { t } = useI18n();
   const headingRef = useRef<HTMLHeadingElement>(null);
@@ -123,6 +126,11 @@ export function StatusScreen({
               </button>
             ))}
           </div>
+        ) : null}
+        {error !== null ? (
+          <p role="alert" className={styles.error}>
+            {error}
+          </p>
         ) : null}
         {view.details ? (
           <details className={styles.details}>

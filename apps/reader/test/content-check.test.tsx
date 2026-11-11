@@ -1,3 +1,4 @@
+import { SyncClientError } from '@sync-system/react';
 import { act, fireEvent, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { browserNavigation } from '../src/group/browser.js';
@@ -122,6 +123,41 @@ describe('content check before following (#24 AC21-AC24)', () => {
     expect(client.count('leaveGroup')).toBe(1);
     expect(storage.getItem(POINTER_KEY)).toBeNull();
     expect(screen.getByRole('navigation')).toBeDefined();
+  });
+
+  it('a failed Leave group on the block screen says so (design 7.5)', async () => {
+    const { client, storage } = await member({
+      ...(await localMetadata()),
+      contentId: 'samples/psalms-he',
+    });
+    client.impl.leaveGroup = () => {
+      throw new SyncClientError('REQUEST_TIMEOUT');
+    };
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Leave group' }));
+      await Promise.resolve();
+    });
+    expect(screen.getByRole('alert').textContent).toBe("Couldn't leave the group. Try again.");
+    expect(storage.getItem(POINTER_KEY)).not.toBeNull();
+    expect(
+      screen.getByRole('heading', { name: 'This group is reading a different book' }),
+    ).toBeDefined();
+  });
+
+  it('a failed Leave group in the version warning says so (design 7.5)', async () => {
+    const meta = { ...(await localMetadata()), fingerprint: 'f'.repeat(64) };
+    const { client } = await member(meta);
+    client.impl.leaveGroup = () => {
+      throw new SyncClientError('REQUEST_TIMEOUT');
+    };
+    const dialog = screen.getByRole('alertdialog', { name: 'Your copy is a different version' });
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Leave group' }));
+      await Promise.resolve();
+    });
+    expect(within(dialog).getByRole('alert').textContent).toBe(
+      "Couldn't leave the group. Try again.",
+    );
   });
 
   it('different version: a warning that needs an answer; Follow anyway is remembered', async () => {

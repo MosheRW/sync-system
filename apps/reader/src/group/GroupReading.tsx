@@ -207,6 +207,12 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
       : undefined;
 
   const lastExit = useRef<'end' | 'leave' | null>(null);
+  // A failed leave says so next to the Leave button used (design 7.5, F12);
+  // kept per group so a later group never shows an old failure.
+  const [leaveFailedFor, setLeaveFailedFor] = useState<string | null>(null);
+  const currentGroupId = group !== null && 'groupId' in group ? group.groupId : null;
+  const leaveError =
+    leaveFailedFor !== null && leaveFailedFor === currentGroupId ? t.leaveFailed : null;
   const leaveGroup = () => {
     if (phase === 'disconnected') {
       // Not connected: forget the group in this tab (token and pointer, R5).
@@ -217,8 +223,14 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
       return;
     }
     lastExit.current = 'leave';
+    setLeaveFailedFor(null);
+    const leaving = currentGroupId;
     void exit.leave.run().then((result) => {
-      if (!result.ok) return;
+      if (!result.ok) {
+        lastExit.current = null;
+        setLeaveFailedFor(leaving);
+        return;
+      }
       env.pointers.forget();
       join.clear();
       setSheet(null);
@@ -734,6 +746,11 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
               </Button>
             </>
           ) : null}
+          {leaveError !== null ? (
+            <p role="alert" className={styles.formError}>
+              {leaveError}
+            </p>
+          ) : null}
         </div>
       ),
       footer: (
@@ -889,6 +906,7 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
               leaderMetadata={memberMetadata}
               canOpen={localGroupBook !== undefined}
               leavePending={exit.leave.pending}
+              leaveError={leaveError}
               onLeave={leaveGroup}
               onOpen={openGroupBook}
             />
@@ -928,6 +946,7 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
       {phase === 'mismatch-warn' ? (
         <VersionWarnDialog
           leavePending={exit.leave.pending}
+          leaveError={leaveError}
           onFollow={followAnyway}
           onLeave={leaveGroup}
         />

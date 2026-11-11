@@ -29,6 +29,7 @@ export function MismatchBlock({
   leaderMetadata,
   canOpen,
   leavePending,
+  leaveError = null,
   onLeave,
   onOpen,
 }: {
@@ -37,6 +38,8 @@ export function MismatchBlock({
   /** The group's book is bundled and the app isn't single-book (U2). */
   canOpen: boolean;
   leavePending: boolean;
+  /** "Couldn't leave the group. Try again." after a failed leave (design 7.5). */
+  leaveError?: string | null;
   onLeave: () => void;
   onOpen: () => void;
 }) {
@@ -67,6 +70,7 @@ export function MismatchBlock({
             : {}),
         }}
         actions={canOpen ? [leave, { label: t.openGroupBook, onClick: onOpen }] : [leave]}
+        error={leaveError}
       />
     );
   }
@@ -88,6 +92,7 @@ export function MismatchBlock({
             : t.mismatchMalformedDetails,
       }}
       actions={[leave]}
+      error={leaveError}
     />
   );
 }
@@ -98,10 +103,13 @@ export function MismatchBlock({
  */
 export function VersionWarnDialog({
   leavePending,
+  leaveError = null,
   onFollow,
   onLeave,
 }: {
   leavePending: boolean;
+  /** "Couldn't leave the group. Try again." after a failed leave (design 7.5). */
+  leaveError?: string | null;
   onFollow: () => void;
   onLeave: () => void;
 }) {
@@ -123,6 +131,11 @@ export function VersionWarnDialog({
       }
     >
       <p className={styles.para}>{t.mismatchVersionBody}</p>
+      {leaveError !== null ? (
+        <p role="alert" className={styles.formError}>
+          {leaveError}
+        </p>
+      ) : null}
     </Dialog>
   );
 }

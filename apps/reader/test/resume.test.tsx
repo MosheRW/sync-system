@@ -190,6 +190,33 @@ describe('leaving and group end (#24 AC32, AC33)', () => {
     expect(counter()).toMatch(/^2 \//);
   });
 
+  it('a failed leave says so in the sheet and keeps the group (design 7.5)', async () => {
+    const { client, storage } = await member();
+    client.impl.leaveGroup = () => {
+      throw new SyncClientError('REQUEST_TIMEOUT');
+    };
+    fireEvent.click(screen.getByRole('button', { name: 'Following, group options' }));
+    const sheet = screen.getByRole('dialog');
+    await act(async () => {
+      fireEvent.click(within(sheet).getByRole('button', { name: 'Leave group' }));
+      await Promise.resolve();
+    });
+    expect(within(sheet).getByRole('alert').textContent).toBe(
+      "Couldn't leave the group. Try again.",
+    );
+    expect(storage.getItem(POINTER_KEY)).not.toBeNull();
+    // Trying again clears the message; a success leaves.
+    client.impl.leaveGroup = () => {
+      client.setGroup({ status: 'ended', groupId: GROUP_ID, reason: 'left' });
+    };
+    await act(async () => {
+      fireEvent.click(within(sheet).getByRole('button', { name: 'Leave group' }));
+      await Promise.resolve();
+    });
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(getNotice('You left the group.')).toBeDefined();
+  });
+
   it.each([
     ['ended_by_leader', 'The leader ended the group. You can keep reading.'],
     ['max_session', 'The group reached its time limit and ended. You can keep reading.'],
