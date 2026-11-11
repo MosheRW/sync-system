@@ -18,10 +18,27 @@
 - pm update-spec (design decisions): sonnet (default) → DONE
 - architect plan: opus (default; NEXT_MODEL opus) → DONE
 - security plan: opus (rule) → PASS (0 critical, 0 high, 1 medium, 6 low; required controls R15-R24 in security.md)
-- engineer implement: opus (Implementer model line; security-sensitive) → in progress
+- engineer implement: opus (Implementer model line; security-sensitive) → DONE (chunks 1-11; lint, typecheck, test, build, audit and e2e green)
 ## Open questions
 - Gate 2: Q-A1 and Q-A2 decided (see Gate 2 decisions).
 - Resolved by the architect: D1-D9 (architecture.md section 2); server semantics for Gap 1 and keepalive.ack during the pause confirmed (section 3).
 - Security M1 (Q-A2): server follow-up issue #32 opened by the pm (security.md R17).
+## Implementation status
+- Chunks 1-11 of architecture.md section 19 committed and pushed; PR #31 marked ready.
+- E2E (`pnpm --filter @sync-system/reader test:e2e`, 5 passed, 48 s total), measured
+  2026-11-11 on Windows/Chromium: lifecycle spec 16.9 s (budget about 40 s); handoff to the vice
+  5.47 s after the cut (5 s grace); Bring group here to the member 27 ms (limit 2 s); member held
+  still 3.0 s during preview; take-back card 14 ms after the leader's reconnect was seen. #24
+  timings unchanged: QR link to Following 199 ms, code entry 169 ms, leader move 14 ms.
 ## Deviations from plan
-- None.
+- Gate 2 decisions recorded in their own `docs(state)` commit before chunk 1 (not inside chunk 1).
+- Extra file `apps/reader/src/components/group/Template.tsx` (`Template` fills `{placeholders}` with React nodes in one pass, `Num` isolates a number): used for every template holding a name, number or time (R15).
+- Banner slot offset: `inset-block-start: var(--header-block-size)`, the header height measured with a `ResizeObserver` and set through the CSSOM, so the sticky banner sits under the sticky header instead of behind it (plan said `0`).
+- `useAnnouncer()` is used twice in `GroupReading` (polite and assertive) instead of a second setter in `announce.ts`.
+- `ActionErrorLine` (controls.tsx) and `useActionError` (use-retry-wait.ts) render and hold the inline leader errors with their clamped wait; `ConfirmDialog` also got `detail` (L4 details line), `confirmInactive` and a node `error`; `Dialog` got `describedBy` (design 6.8).
+- The last-chance hint is cleared by leader actions through `onActivity` props on `RosterList` and `LockControl`.
+- Not added: `rowOptions` (row names come from `aria-labelledby`, plan 7.1) and `bringingGroup` (no pending state, Gate 2).
+- The People list heading is "People (n)" in both the panel and the sheet view.
+- The 8b console-spy test (AC54) landed with chunk 9, after the last flow existed.
+- E2E: one loopback control for both stacks (`/cut/<ms>`, `/cut/lifecycle/<ms>`, ms a bounded integer up to 60000); `cutLeader` moved into `e2e/helpers/fixtures.ts`.
+- R16 storage after the Q-A1 path: the reader test checks the tab's storage holds no codes; the member token without recovery data is the core client's `#admitted` behaviour, not re-tested with the fake client.
