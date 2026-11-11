@@ -166,8 +166,8 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
       if (index !== null) setJumpRequest((prev) => ({ index, id: (prev?.id ?? 0) + 1 }));
     }
     void pointer;
-    // doc.pages.length is fixed for this page.
-  }, []); // eslint-disable-line
+    // No dependencies on purpose: doc.pages.length is fixed for this page.
+  }, []);
   const resume = useResume(env, landing.state.status === 'none', onResumed);
   // A QR landing opens the sheet on "Joining the group…": zero taps (F5.4).
   const landingStatus = landing.state.status;
@@ -391,8 +391,9 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
     join.clear();
     setEndedNotice(text);
     announce(text);
-    // One notice per end.
-  }, [ended, removed]); // eslint-disable-line
+    // Only `ended` and `removed` on purpose: one notice per end, not a
+    // repeat when the text, pointers or join state change.
+  }, [ended, removed]);
 
   // A stored group that is gone: one short notice, never retried (AC37).
   useEffect(() => {
