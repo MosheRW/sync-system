@@ -12,7 +12,7 @@
 - QA verdict (round 1, 2026-11-08): FAIL, 44/44 criteria met, checks failed on a flaky reader test; findings 1-3 (flaky `resume.test.tsx` assertion, QR takes up to 10 s to reappear on phones, `leaveFailed` never shown) and 4-6 (lint warnings, dead `announceFollowingTo`, root README compose command). PR review comment: https://github.com/MosheRW/sync-system/pull/26#pullrequestreview-5816972463
 - QA verdict (round 2, 2026-11-11): BLOCKED on CI infrastructure, no code findings. Every round-1 finding and security low verified fixed; lint 0 warnings, typecheck, build, audit pass; `pnpm test` 3/3 runs green (react 222, reader 849); e2e 4/4 locally; 44/44 criteria met; browser: QR reopen 41 ms with the same ticket and 0 `qr.issue`, re-issue at 24.1 s of a 30 s ticket, nothing issued while hidden, rotate/expiry drop the kept ticket, leaveFailed shown, L3 switch stays on the new group. CI `check` green; CI `e2e` failed 3 times at "Install Chromium" (runner DNS to the Ubuntu apt mirrors, no test ran; workflow unchanged, same image passed on 2026-11-08). Counts as PASS once `e2e` is green on the PR head, no new QA round needed. PR review comment: https://github.com/MosheRW/sync-system/pull/26#pullrequestreview-5861841587
 - Design decisions: U1-U4 accepted (2026-11-06, "Accept all"), recorded in spec.md
-- Last updated by: qa
+- Last updated by: engineer
 ## Model log
 - pm groom: opus (orchestrator: broad scope) → DONE
 - pm update-spec: sonnet (default) → DONE
@@ -25,6 +25,7 @@
 - engineer fix (round 1): opus (rule) → DONE
 - qa validate (round 2): opus (rule) → BLOCKED (CI e2e runner infrastructure; no code findings)
 - security code (round 2): opus (rule) → PASS (2 new lows A1, A2; advisory)
+- engineer fix (round 2, A1/A2 at user request at Gate 3): opus (rule) → DONE
 ## Fix round 1 (2026-11-11, engineer)
 QA findings 1-6 and security lows 1-3, one commit each (plus one bug found on the way):
 - QA 1, flaky notice assertion: `c0f072a` (`getNotice()` helper queries the notice bar, not the live region; also used for "Your group has ended.").
@@ -38,6 +39,11 @@ QA findings 1-6 and security lows 1-3, one commit each (plus one bug found on th
 - Security 2, password in a refused URL: `415ad74` (user info replaced by `***`).
 - Security 3, dead `[::1]`: `93f811e`.
 Checks: `pnpm lint` 0 errors 0 warnings; `pnpm typecheck` pass; `pnpm test` pass (protocol 207, sync-server 1145, client 569, react 222, reader 849), reader suite 3 more runs all green; `pnpm build` pass; `pnpm audit --audit-level=high` clean; e2e 4/4 (QR link to Following 280 ms, code submit 168 ms, leader move 17 ms, 25 s phone lock passes).
+## Fix round 2 (2026-11-11, engineer)
+At Gate 3 the user chose "Fix now" for the security round 2 lows. One commit each, each with a test:
+- A1, revoked QR ticket parked inside the release tick: `8d2be2c`. The controller keeps the latest revoking code change (group and code generation) even with no consumer; `#park()` and `#unpark()` refuse a ticket issued under an older code generation of that group. Test: each revoking reason fired between the last consumer going and the 0 ms release timer, fake timers; the old ticket is not rendered even once on show and a new one is issued. Same commit: the controller comment and `packages/react/README.md` no longer say "forgotten on expiry" (an expired parked ticket is discarded when the QR is shown again and never shown after expiry).
+- A2, password with an unencoded `/`, `?`, `#`, `\` or `@` printed in a config error: `ca426c9`. `shownUrl` replaces everything up to the last `@` of the whole value with `***` and keeps only an `http(s)`/`ws(s)` scheme (in `user:pass@host` the "scheme" is the user name). Tests: all five characters, four scheme spellings for `READER_SYNC_URL`, and `READER_SRC_ORIGINS`.
+Checks: `pnpm lint` 0 errors 0 warnings; `pnpm typecheck` pass; `pnpm test` pass (protocol 207, sync-server 1145, client 569, react 226, reader 860), react and reader suites 3 more runs all green; `pnpm build` pass; `pnpm audit --audit-level=high` clean; e2e 4/4 locally (QR link to Following 513 ms, code submit 163 ms, leader move 52 ms, 25 s phone lock passes).
 ## Measured (AC56, e2e against the real sync server)
 - Local (Windows, Chromium headless): QR deep link to Following 200-220 ms; code submit to Following (method A, door code included) 130-148 ms; leader move to both members 13-16 ms.
 - CI `e2e` job (ubuntu-latest, run 42400662557): 149 ms, 140 ms, 22 ms.
@@ -60,4 +66,5 @@ Checks: `pnpm lint` 0 errors 0 warnings; `pnpm typecheck` pass; `pnpm test` pass
 - Fix round 1: the parked QR ticket is a private field of the controller, never in the store state, so it isn't visible in React state while hidden (the #15 "ticket drop when no consumer is mounted" now means "dropped from the state"); `packages/react/README.md` updated.
 - Fix round 1: the URL redaction also covers `READER_SRC_ORIGINS` entries (same helper, same leak); the reader README's compose command was fixed too.
 - Fix round 1: `01a10ca` is outside the listed findings: a real L3 bug found while testing security finding 1.
+- Fix round 2, A1: the check is "issued under a code generation older than the latest revoking change", not the suggested `parked.codesGeneration === client.getJoinCodes()?.generation`: `door_failures` moves the code generation but keeps QR tickets valid (server D12), so strict equality would drop a valid parked ticket after a door-code rotation (the existing "door_failures while hidden keeps the parked ticket" test).
 - Extra commits between chunks: `b7d97e4` (prettier on the fake client, CI lint), `6d5e124` (flaky restore test: wait for effects), `23307d9` (a lint error pushed with chunk 16).
