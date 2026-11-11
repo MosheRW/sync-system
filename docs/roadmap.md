@@ -12,17 +12,17 @@ Numbering: "item N" means PRD item N of 9, as used in the specs. GitHub issue an
 
 ## Items
 
-| Item | Scope                                                                                                                                                    | Issues   | PRs    | Status                       | Docs                               |
-| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- | ------ | ---------------------------- | ---------------------------------- |
-| 1    | Sync server core and monorepo scaffold                                                                                                                   | #1       | #2     | Done (merged 2026-11-01)     | `docs/issues/1/`                   |
-| 2    | Framework-free core client package                                                                                                                       | #3       | #4     | Done (merged 2026-11-01)     | `docs/issues/3/`                   |
-| 3    | Participant tokens, token rejoin, restart recovery, plus hardening                                                                                       | #5, #7   | #6, #8 | Done (merged 2026-11-02)     | `docs/issues/5/`, `docs/issues/7/` |
-| 4    | Join methods A-D (door code, approval, alphanumeric code, QR)                                                                                            | #10      | #11    | Done (merged 2026-11-04)     | `docs/issues/10/`                  |
-| 5    | Roles, timers and group lifecycle                                                                                                                        | #13      | #14    | Done (merged 2026-11-05)     | `docs/issues/13/`                  |
-| 6    | React/Next package with hooks over the core client                                                                                                       | #15      | #16    | Done (merged 2026-11-05)     | `docs/issues/15/`                  |
-| 7    | Reading app content: content schema v1, fingerprint, RTL and mixed direction, library page and content selection, plus the `apps/reader` app with Docker | #19      | #20    | Done (merged 2026-11-05)     | `docs/issues/19/`                  |
-| 8    | Reading app sync UX: 8a join and follow (#24); 8b leader views and lifecycle prompts (#25)                                                               | #24, #25 | #26    | 8a in review; 8b not started | `docs/issues/24/`                  |
-| 9    | Redis storage, public docs, changelog and release (health endpoint, config errors, semver)                                                               | none yet | none   | Not started                  | none yet                           |
+| Item | Scope                                                                                                                                                    | Issues   | PRs    | Status                                      | Docs                               |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- | ------ | ------------------------------------------- | ---------------------------------- |
+| 1    | Sync server core and monorepo scaffold                                                                                                                   | #1       | #2     | Done (merged 2026-11-01)                    | `docs/issues/1/`                   |
+| 2    | Framework-free core client package                                                                                                                       | #3       | #4     | Done (merged 2026-11-01)                    | `docs/issues/3/`                   |
+| 3    | Participant tokens, token rejoin, restart recovery, plus hardening                                                                                       | #5, #7   | #6, #8 | Done (merged 2026-11-02)                    | `docs/issues/5/`, `docs/issues/7/` |
+| 4    | Join methods A-D (door code, approval, alphanumeric code, QR)                                                                                            | #10      | #11    | Done (merged 2026-11-04)                    | `docs/issues/10/`                  |
+| 5    | Roles, timers and group lifecycle                                                                                                                        | #13      | #14    | Done (merged 2026-11-05)                    | `docs/issues/13/`                  |
+| 6    | React/Next package with hooks over the core client                                                                                                       | #15      | #16    | Done (merged 2026-11-05)                    | `docs/issues/15/`                  |
+| 7    | Reading app content: content schema v1, fingerprint, RTL and mixed direction, library page and content selection, plus the `apps/reader` app with Docker | #19      | #20    | Done (merged 2026-11-05)                    | `docs/issues/19/`                  |
+| 8    | Reading app sync UX: 8a join and follow (#24); 8b leader views and lifecycle prompts (#25)                                                               | #24, #25 | #26    | 8a done (merged 2026-11-11); 8b not started | `docs/issues/24/`                  |
+| 9    | Redis storage, public docs, changelog and release (health endpoint, config errors, semver)                                                               | none yet | none   | Not started                                 | none yet                           |
 
 Scope of items 7-9 is taken from the PRD ("Product 1: the reading app", "Deliverables and operations") and the item 4, 5 and 6 specs, which defer work to them. The scope will be fixed in each item's own spec.
 
@@ -31,6 +31,8 @@ Scope of items 7-9 is taken from the PRD ("Product 1: the reading app", "Deliver
 - #9 `fix(client): harden forgetAllGroups cut-off against clock skew (follow-up to #7)`: open.
 - #12 `fix(server): limit group creation and live groups per app (follow-up to #10)`: open.
 - #21 `fix(reader): enforce trusted types in the csp (follow-up to #19)`: open. Priority rose with #24 (the reader now holds participant tokens); the #24 e2e CSP-violation check is its test harness (security L7).
+- #27 Hebrew header bidi bugs (follow-up to #19): open.
+- #28 native-speaker review of the Hebrew strings (follow-up to #24): open.
 
 ## Key accepted decisions
 
@@ -43,10 +45,16 @@ Scope of items 7-9 is taken from the PRD ("Product 1: the reading app", "Deliver
 - Content IDs are namespaced (`<namespace>/<slug>`); once uploads exist, the server assigns IDs (Q8): `docs/issues/19/spec.md`.
 - A content mismatch only warns or blocks; looking up the leader's exact version is deferred (Q7): `docs/issues/19/spec.md`.
 - Loading content from `?src` is off by default and limited to an allow-list: `docs/issues/19/spec.md`, `docs/decisions/0006-fetched-content-policy.md`.
+- Item 8 ADRs 0007-0009 are accepted: `docs/decisions/0007-qr-code-rendering-library.md` (`lean-qr` for QR codes), `0008-end-to-end-browser-tests.md` (Playwright e2e, Chromium, a separate CI job), `0009-reader-group-session-storage.md` (per-tab `sessionStorage` for tokens, the group pointer and the position).
+- Item 8 was split at Gate 1 into 8a (join and follow, #24) and 8b (leader views and lifecycle prompts, #25): `docs/issues/24/spec.md`.
+- Position payload is v1 `{v:1,pageIndex}`: `docs/issues/24/`.
+- A QR ticket goes in the URL fragment and is stripped at startup: `docs/issues/24/`.
+- The reader API key is public; production needs its own registration and per-IP proxy limits (security M1): `docs/issues/24/`.
 
-## Inherited by item 8
+## Inherited by item 8b (#25)
 
-Item 7 provides the pure compare function, the loader state API and the metadata object only. Item 8 owns the mismatch UI (spec Q1) and the metadata wiring: sending it on `createGroup` and reading it on join (spec Q2): `docs/issues/19/spec.md`.
+- The 8a design leaves a members slot and a banner slot for the leader views and lifecycle prompts: `docs/issues/24/design.md`.
+- Show a short notice when a QR ticket pasted into an already open tab is ignored (today it is stripped and dropped silently; security R3 / L2): comment on #25, `docs/issues/24/`.
 
 ## Updating this file
 
