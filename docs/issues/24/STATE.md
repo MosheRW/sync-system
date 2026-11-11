@@ -28,6 +28,7 @@
 - security code (round 2): opus (rule) → PASS (2 new lows A1, A2; advisory)
 - engineer fix (round 2, A1/A2 at user request at Gate 3): opus (rule) → DONE
 - qa validate (round 3, delta): opus (rule) → PASS
+- security code (round 3, delta): opus (rule) → PASS (A1, A2 closed; no findings)
 ## Fix round 1 (2026-11-11, engineer)
 QA findings 1-6 and security lows 1-3, one commit each (plus one bug found on the way):
 - QA 1, flaky notice assertion: `c0f072a` (`getNotice()` helper queries the notice bar, not the live region; also used for "Your group has ended.").
