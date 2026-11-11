@@ -56,9 +56,10 @@ lifecycle). Deferred here from #13 (item 5), #15 (item 6) and #24 (8a).
 | Leadership | `useLeadership()` `{role, isLeader, takeBackAvailable, lastChange, dismiss, takeBack}` | `nowLeading` (`handoff_disconnect`, `handoff_inactivity`, `take_back`), `leadershipLost` (+ `superseded`), `leaderChanged`, `takeBackOffered`, `takeBackLeadership` |
 | Leader lifecycle (members) | `useLeaderStatus()` | `LeaderLifecycle` online / offline / inactive with `graceEndsAt` |
 
-Gaps found (see Open questions): the client never withdraws `takeBackAvailable`
-when the take-back slot moves to someone else (Q3), and the leader gets no
-event when its own keep-alive countdown runs out (Q4).
+Gaps found (resolved at Gate 1, see Decisions): the client never withdraws
+`takeBackAvailable` when the take-back slot moves to someone else (fixed in
+`packages/client`, Gap 1), and the leader gets no event when its own keep-alive
+countdown runs out (no package change, Gap 2).
 
 ## User stories
 - As a **leader**, I want to always see how many people are in my group, and
@@ -138,9 +139,14 @@ event when its own keep-alive countdown runs out (Q4).
   duration (`countdownMs`) and one action to keep the group going
   (`answerKeepAlive`). Any leader activity (a page move, a preview move, a
   leader action) also clears it (`keepAliveCleared`). It is announced to screen
-  readers and stays correct after the tab was in the background. What the
-  leader sees if the countdown reaches zero unanswered follows Q4. Tested with
-  fake timers.
+  readers and stays correct after the tab was in the background. If the
+  countdown reaches zero unanswered, the prompt changes to "The group is
+  paused" with the same "Keep going" action (it still resumes the group) and,
+  in `auto` mode, says the lead will pass to someone else soon. This run-out
+  state is driven on the client by the countdown reaching zero from the
+  server's `countdownMs`; the server sends the leader no pause event and none
+  is needed (Gap 2). If the lead passes, AC47 applies. Tested with fake
+  timers.
 - [ ] AC46. A participant who becomes leader by handoff (`handoff_disconnect`,
   `handoff_inactivity`) or take-back (`take_back`) gets a clear, focused
   "you're now leading" moment that says why, which they must dismiss. After it
@@ -155,9 +161,10 @@ event when its own keep-alive countdown runs out (Q4).
   prompt asking whether to take the lead back. Accepting calls
   `takeBackLeadership` and leads to AC46 (`take_back`); declining keeps them a
   member and does not ask again for the same offer. The prompt goes away when
-  the offer is no longer valid (group ended, they left, the offer was
-  withdrawn per Q3), and a refused take-back (`NOT_ALLOWED`, `RATE_LIMITED`)
-  has its own message. Tested.
+  the offer is no longer valid (group ended, they left, or a later
+  `leader.changed` withdraws it, Gap 1: the small `packages/client` fix clears
+  `takeBackAvailable`). A `NOT_ALLOWED` reply closes the prompt with "You can't
+  take the lead back any more"; `RATE_LIMITED` has its own message. Tested.
 - [ ] AC49. Members (and the vice-leader) see a short, non-blocking notice in
   the banner slot when the leader changes (`leaderChanged`), worded per reason
   and without naming participants. Tested.
@@ -167,7 +174,7 @@ event when its own keep-alive countdown runs out (Q4).
   already open and is ignored (the `hashchange` path of #24 R3), the user sees
   a short notice telling them how to join (for example "Open the link again to
   join"), instead of nothing. The ticket is still stripped from the URL first
-  and is never stored, logged or used (behaviour per Q7). Tested.
+  and is never stored, logged or used (notice only, no join from `hashchange`; Q7). Tested.
 - [ ] AC58. Every leader action added here (vice-leader set / clear, remove,
   lock / unlock, bring group here, keep-alive answer, take-back) shows a
   pending state while in flight, never fails silently, and maps `NOT_LEADER`
@@ -180,11 +187,11 @@ event when its own keep-alive countdown runs out (Q4).
   the other member sees the leader-changed notice and follows the new leader;
   the original leader returns, gets the take-back prompt, accepts, and leads
   again. It also checks that a leader preview doesn't move a member. Scope and
-  timer settings per Q8.
-- [ ] AC60. (Proposed, Q5) A participant who is made vice-leader sees a short
+  timer settings per Q8 (decisions below).
+- [ ] AC60. (Q5) A participant who is made vice-leader sees a short
   notice that they'll lead if the leader drops, and a notice when that is
   cleared (`viceChanged`). Tested.
-- [ ] AC61. (Proposed, Q6) In the roster list, a member with
+- [ ] AC61. (Q6) In the roster list, a member with
   `admittedSinceRecovery` is marked in words (for example "joined while the
   group was restoring") so the leader can review and remove them if needed.
   Tested.
@@ -232,49 +239,22 @@ event when its own keep-alive countdown runs out (Q4).
   (`apps/reader/e2e`).
 - #13 (item 5) server behaviour and #15 (item 6) hooks listed above.
 
-## Open questions (recommendations for Gate 1)
-- Q1. **Preview mode entry.** Recommended: an explicit "Preview" control in the
-  leader's group controls; while it's on, page turns are private and the banner
-  shows; leaving it is "Return to group" or "Bring group here". Final choice to
-  the designer.
-- Q2. **Roster breakpoint.** Recommended: reuse `--bp-lg` (1024 px), where 8a
-  already shows the `GroupPanel`: list at and above, counter below. Final
-  choice to the designer.
-- Q3. **Stale take-back offer (package gap).** The client sets
-  `takeBackAvailable` on `takeback.offered` but never clears it when a later
-  leader change moves the take-back slot to someone else, so the prompt could
-  offer something the server will refuse. Recommended: a small client fix with
-  no server change: a `leader.changed` seen by a member with an open offer
-  clears `takeBackAvailable` (the architect confirms against the server that
-  any later leader change invalidates the old offer), and a `NOT_ALLOWED` reply
-  closes the prompt with "You can't take the lead back any more".
-- Q4. **Keep-alive countdown runs out while the leader is still here.** The
-  server pauses the group (members see the grace countdown) and any counted
-  leader activity resumes it until the handoff happens, but the leader's client
-  gets no event for its own pause. Recommended: when the prompt's countdown
-  reaches zero, the prompt changes to "The group is paused" with the same
-  "Keep going" action (it still resumes the group) and, in `auto` mode, says
-  the lead will pass to someone else soon; if the lead passes, AC47 applies.
-  The architect confirms `keepalive.ack` is accepted during the inactive pause.
-- Q5. **Tell the vice-leader?** The PRD is silent. Recommended: yes (AC60), a
-  short notice, since `isVice` already exists and it prepares them for "you're
-  now leading".
-- Q6. **Mark members admitted during server-restart recovery?** #13 asks the
-  leader to review them. Recommended: yes (AC61), a text marker in the list
-  view only.
-- Q7. **AC57 behaviour.** Recommended: notice only; the pasted ticket stays
-  ignored (the security-accepted R3 path, no join from `hashchange`).
-  Alternative: treat it like a landing (with the 8a L3 "leave your current
-  group?" question when in a group), which needs a new security review.
-- Q8. **E2E scope (AC59).** Recommended: handoff, now-leading, leader-changed,
-  take-back and preview-doesn't-move, against the real server with a shortened
-  grace from the e2e app config (within the server ceilings, no server change).
-  The keep-alive is tested with fake timers only (a 20-minute inactivity limit
-  is too slow for e2e). Timer values are the architect's choice.
-- Q9. **Hebrew review (#28).** Recommended: 8b doesn't wait for it; QA lists
-  the new he strings in its review comment, and at Gate 3 they are added to
-  #28's scope with a comment there. The designer picks the he term for
-  "vice-leader" in line with U4.
-- Q10. **What the counter counts.** Recommended: people connected now,
-  excluding the leader, plus the number offline when there are any, for example
-  "5 here, 2 away".
+## Decisions (Gate 1, 2026-11-11: "Accept all")
+All recommendations for Q1-Q10 were accepted as written.
+- Q1. Preview entry: an explicit "Preview" control in the leader's group controls; page turns are private while on; leave via "Return to group" or "Bring group here". Final wording and placement to the designer.
+- Q2. Roster breakpoint: reuse `--bp-lg` (1024 px); list at and above, counter below. Final choice to the designer.
+- Q3. Stale take-back offer: see Gap 1 below.
+- Q4. Keep-alive run-out: the prompt changes to "The group is paused" with the same "Keep going" action and, in `auto` mode, says the lead will pass to someone else soon; AC47 applies if the lead passes. Driven on the client, see Gap 2. The architect confirms `keepalive.ack` is accepted during the inactive pause.
+- Q5. Vice-leader is told: yes, **AC60 is in scope** (short notice on being made and cleared as vice-leader).
+- Q6. Recovery marker: yes, **AC61 is in scope** (text marker in the roster list view only).
+- Q7. AC57: a notice only; the pasted ticket stays ignored (no join from `hashchange`, no new security review).
+- Q8. E2E scope (AC59): handoff, now-leading, leader-changed, take-back and preview-doesn't-move, against the real server with a shortened grace from the e2e app config (within the server ceilings, no server change). Keep-alive is tested with fake timers only. Timer values are the architect's choice.
+- Q9. Hebrew review: 8b doesn't wait for #28; QA lists the new he strings in its review comment, and at Gate 3 they join #28's scope with a comment there. The designer picks the he term for "vice-leader" in line with U4.
+- Q10. Counter: people connected now, excluding the leader, plus the number offline when there are any, for example "5 here, 2 away".
+- Gap 1 (stale take-back offer): the proposed fix is accepted. A small change in `packages/client`: a later `leader.changed` clears an open take-back offer, and a `NOT_ALLOWED` reply closes the prompt with "You can't take the lead back any more". No server change. The architect confirms the server semantics (that any later leader change invalidates the old offer).
+- Gap 2 (no pause event for the leader's client when the keep-alive runs out): no new event and no package change. User: "if the leader's browser is inactive - it probably dont care about that already." The keep-alive prompt's run-out state (Q4: "The group is paused" plus "Keep going") is driven on the client by the countdown reaching zero from the server's duration.
+
+## Open questions
+None for the user. Left to the architect / designer:
+- Confirm against the server that any later leader change invalidates the old take-back offer (Gap 1), and that `keepalive.ack` is accepted during the inactive pause (Q4).
+- Preview entry, breakpoint and wording (designer); timer values for e2e (architect).
