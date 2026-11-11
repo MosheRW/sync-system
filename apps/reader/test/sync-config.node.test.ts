@@ -125,6 +125,46 @@ describe('READER_SYNC_* (#24 AC1)', () => {
     expect(list[0]).not.toContain('dana');
   });
 
+  const SPECIAL_PASSWORDS = ['pa/ss3cret', 'pa?ss3cret', 'pa#ss3cret', 'pa\\ss3cret', 'pa@ss3cret'];
+
+  it.each(SPECIAL_PASSWORDS)(
+    'never prints a password with an unencoded delimiter in READER_SYNC_URL (%j)',
+    (password) => {
+      for (const scheme of ['wss://', 'ws://', 'wss:', 'WSS:\\\\']) {
+        const url = `${scheme}dana:${password}@sync.example.org/ws`;
+        const list = problems({ READER_SYNC_URL: url, READER_SYNC_API_KEY: KEY });
+        expect(list, url).toHaveLength(1);
+        expect(list[0], url).toContain('***@sync.example.org/ws"');
+        expect(list[0], url).not.toContain('ss3cret');
+        expect(list[0], url).not.toContain('dana');
+      }
+    },
+  );
+
+  it.each(SPECIAL_PASSWORDS)(
+    'never prints a password with an unencoded delimiter in READER_SRC_ORIGINS (%j)',
+    (password) => {
+      const list = problems({
+        READER_SRC_ORIGINS: `https://books.example.org,https://dana:${password}@cdn.example.org`,
+      });
+      expect(list).toHaveLength(1);
+      expect(list[0]).toContain('"https://***@cdn.example.org"');
+      expect(list[0]).not.toContain('ss3cret');
+      expect(list[0]).not.toContain('dana');
+    },
+  );
+
+  it('never prints a user name taken for a scheme', () => {
+    const list = problems({
+      READER_SYNC_URL: 'dana:s3cret@sync.example.org',
+      READER_SYNC_API_KEY: KEY,
+    });
+    expect(list).toHaveLength(1);
+    expect(list[0]).toContain('"***@sync.example.org"');
+    expect(list[0]).not.toContain('dana');
+    expect(list[0]).not.toContain('s3cret');
+  });
+
   it('never prints a password in a refused READER_SRC_ORIGINS entry', () => {
     const list = problems({ READER_SRC_ORIGINS: 'https://dana:s3cret-pass@books.example.org' });
     expect(list).toHaveLength(1);

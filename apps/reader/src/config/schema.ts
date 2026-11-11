@@ -108,13 +108,20 @@ function read(env: EnvSource, name: string): string | undefined {
 const shown = (value: string) => `"${truncate(value)}"`;
 
 /**
- * A refused URL for an error line, with any user name and password replaced
- * by `***` first: a password must not reach the operator's logs (security
- * round 1, finding 2). Covers `scheme://user:pass@host` and the forms a URL
- * parser also reads that way (`scheme:user:pass@host`, backslashes).
+ * A refused URL for an error line, with everything up to the last `@`
+ * replaced by `***`: a password must not reach the operator's logs
+ * (security round 1, finding 2). User info always ends at an `@`, and a
+ * password may hold an unencoded `/`, `?`, `#`, `\` or `@` (security
+ * round 2, A2), so the cut is the last `@` of the whole value, never the
+ * first delimiter. Only an `http`, `https`, `ws` or `wss` scheme is kept:
+ * in `user:pass@host` the "scheme" is the user name.
  */
-const shownUrl = (value: string) =>
-  shown(value.replace(/^([a-z][a-z0-9+.-]*:[/\\]*)[^/?#\\]*@/i, '$1***@'));
+const shownUrl = (value: string) => {
+  const at = value.lastIndexOf('@');
+  if (at === -1) return shown(value);
+  const scheme = /^(?:https?|wss?):[/\\]*/i.exec(value)?.[0] ?? '';
+  return shown(`${scheme}***${value.slice(at)}`);
+};
 
 function parseInteger(
   env: EnvSource,
