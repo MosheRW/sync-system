@@ -241,7 +241,6 @@ export const en = {
   goNow: 'Go now',
   lateJoinCountdown: 'Going there in {time}.',
   jumpRegion: 'Group page',
-  announceFollowingTo: 'Following the group to page {n} of {total}.',
   announceLateJoin:
     'The group is on page {n}. Going there in {time}. Use Stay here to keep your page.',
   announceJump: 'The group is on page {n}.',

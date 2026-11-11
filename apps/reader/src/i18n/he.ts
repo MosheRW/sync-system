@@ -239,7 +239,6 @@ export const he: Messages = {
   goNow: 'לעבור עכשיו',
   lateJoinCountdown: 'עוברים לשם בעוד {time}.',
   jumpRegion: 'עמוד הקבוצה',
-  announceFollowingTo: 'עוברים עם הקבוצה לעמוד {n} מתוך {total}.',
   announceLateJoin:
     'הקבוצה בעמוד {n}. עוברים לשם בעוד {time}. כדי להישאר בעמוד הנוכחי יש לבחור "להישאר כאן".',
   announceJump: 'הקבוצה בעמוד {n}.',

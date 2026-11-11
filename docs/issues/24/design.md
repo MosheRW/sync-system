@@ -1077,7 +1077,6 @@ code, ticket or any server text.
 | `goNow` | Go now | לעבור עכשיו |
 | `lateJoinCountdown` | Going there in {time}. | עוברים לשם בעוד {time}. |
 | `jumpRegion` | Group page | עמוד הקבוצה |
-| `announceFollowingTo` | Following the group to page {n} of {total}. | עוברים עם הקבוצה לעמוד {n} מתוך {total}. |
 | `announceLateJoin` | The group is on page {n}. Going there in {time}. Use Stay here to keep your page. | הקבוצה בעמוד {n}. עוברים לשם בעוד {time}. כדי להישאר בעמוד הנוכחי יש לבחור "להישאר כאן". |
 | `announceJump` | The group is on page {n}. | הקבוצה בעמוד {n}. |
 
