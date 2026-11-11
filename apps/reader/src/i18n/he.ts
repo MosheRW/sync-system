@@ -382,4 +382,22 @@ export const he: Messages = {
   announceKeepAliveLast: 'הקבוצה תסתיים בעוד {time}. כדי להמשיך אפשר לדפדף או לבחור "להמשיך".',
   announcePaused: 'הקבוצה עצרה. כדי להמשיך יש לבחור "להמשיך".',
   announceKeptGoing: 'הקבוצה ממשיכה.',
+  // #25 now leading and take-back (design 7.6, 7.7)
+  nowLeadingTitle: 'הקבוצה בהובלתך עכשיו',
+  nowLeadingDisconnect: 'החיבור של המוביל נותק, וההובלה עברה אליך.',
+  nowLeadingInactive: 'המוביל לא היה פעיל זמן רב, וההובלה עברה אליך.',
+  nowLeadingTakeBack: 'ההובלה חזרה אליך.',
+  nowLeadingWhat: 'כולם עוקבים עכשיו אחרי העמוד שלך. הקודים ורשימת המשתתפים נמצאים בכפתור הקבוצה.',
+  nowLeadingOffPage:
+    'מוצג לך עמוד {view}, והקבוצה בעמוד {group}. הדפדוף לא יזיז את הקבוצה עד שבוחרים להעביר אותה.',
+  nowLeadingMismatch:
+    'העותק שלך של הספר שונה מזה של הקבוצה, ולכן ייתכן שהעמודים לא יתאימו לשאר המשתתפים.',
+  startLeading: 'להתחיל להוביל',
+  takeBackRegion: 'החזרת ההובלה',
+  takeBackTitle: 'לחזור להוביל?',
+  takeBackBody: 'ההובלה של הקבוצה הזו הייתה שלך. אפשר לחזור להוביל אותה.',
+  takeBackYes: 'לחזור להוביל',
+  takingBack: 'מחזירים את ההובלה…',
+  takeBackNo: 'להמשיך לעקוב',
+  announceTakeBack: 'אפשר לחזור להוביל. יש לבחור "לחזור להוביל" או "להמשיך לעקוב".',
 };

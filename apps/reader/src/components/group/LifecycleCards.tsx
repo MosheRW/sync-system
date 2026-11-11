@@ -1,4 +1,9 @@
-import { type HandoffMode, type KeepAliveEvent, useKeepAlive } from '@sync-system/react';
+import {
+  type HandoffMode,
+  type KeepAliveEvent,
+  useKeepAlive,
+  useLeadership,
+} from '@sync-system/react';
 import { useEffect, useLayoutEffect, useRef } from 'react';
 import { formatLong, formatShort, useCountdown } from '../../group/countdown.js';
 import { keepAliveDeadline, keepAliveView } from '../../group/keep-alive.js';
@@ -160,6 +165,67 @@ export function KeepAliveCard({
           onClick={keepGoing}
         >
           {t.keepGoing}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * "Take the lead back?" (#25 design 6.10, F21, AC48): not modal, never takes
+ * focus, announced politely once. Take the lead runs the core's take-back;
+ * `NOT_ALLOWED` closes the card (the offer is gone) and the caller shows the
+ * sticky refused banner; other errors stay inline.
+ */
+export function TakeBackCard({
+  announce,
+  onDecline,
+  onRefused,
+  onClosedWithFocus,
+}: {
+  announce: (text: string) => void;
+  onDecline: () => void;
+  onRefused: () => void;
+  onClosedWithFocus: () => void;
+}) {
+  const { t } = useI18n();
+  const { takeBack } = useLeadership();
+  const error = useActionError();
+  const cardRef = useRef<HTMLDivElement>(null);
+  useFocusOnClose(cardRef, onClosedWithFocus);
+  useEffect(() => {
+    announce(t.announceTakeBack);
+    // Once, on appearance.
+  }, []);
+  const take = () => {
+    error.clear();
+    void takeBack.run().then((result) => {
+      if (result.ok) return;
+      const failure = leaderActionError('takeBack', result.error);
+      if (failure?.refused === true) {
+        onRefused();
+        return;
+      }
+      error.set(failure);
+    });
+  };
+  return (
+    <div ref={cardRef} role="region" aria-label={t.takeBackRegion} className={styles.card}>
+      <p className={styles.cardTitle}>{t.takeBackTitle}</p>
+      <p className={styles.para}>{t.takeBackBody}</p>
+      <ActionErrorLine state={error} />
+      <div className={styles.cardActions}>
+        <Button inactive={takeBack.pending} onClick={onDecline}>
+          {t.takeBackNo}
+        </Button>
+        <Button
+          variant="primary"
+          pending={takeBack.pending}
+          pendingLabel={t.takingBack}
+          inactive={error.waitLeft > 0}
+          onClick={take}
+        >
+          {t.takeBackYes}
         </Button>
       </div>
     </div>

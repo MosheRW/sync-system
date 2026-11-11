@@ -48,7 +48,8 @@ import {
 import { PreviewBanner } from '../components/group/PreviewBanner.js';
 import { MismatchBlock, VersionWarnDialog } from '../components/group/MismatchViews.js';
 import { PeopleCounter, PeopleRow, RosterList } from '../components/group/People.js';
-import { KeepAliveCard } from '../components/group/LifecycleCards.js';
+import { KeepAliveCard, TakeBackCard } from '../components/group/LifecycleCards.js';
+import { NowLeadingDialog } from '../components/group/NowLeadingDialog.js';
 import { JumpPrompt, LateJoinPrompt } from '../components/group/Prompts.js';
 import { bookHref } from '../components/LibraryScreen.js';
 import { QrCodeView } from '../components/group/QrCodeView.js';
@@ -243,7 +244,23 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
   const endedNotice = (text: keyof Messages, focus = false) =>
     showEnded({ row: 1, kind: 'ended', text, focus });
   const locked = group?.status === 'active' && group.locked;
-  const flow = useLeadershipFlow({ isMember, isVice: vice.isVice, show: banners.show });
+  // The last member-side content check, read when the lead arrives (#25 8.4, D9).
+  const lastMemberCheck = useRef(false);
+  const flow = useLeadershipFlow({
+    groupId: group !== null && 'groupId' in group ? group.groupId : null,
+    isLeader,
+    isMember,
+    isVice: vice.isVice,
+    show: banners.show,
+    clearMemberNotices: banners.clearMemberNotices,
+    pages: () => ({ ownIndex: ownIndex.current, groupIndex: groupIndexRef.current }),
+    mismatch: () => lastMemberCheck.current,
+    onNowLeading: (id) => {
+      // The dialog speaks: no "You're leading the group." on top (8.1 step 3).
+      leadingAnnounced.current = id;
+      setSheet((view) => (view === 'member' ? null : view));
+    },
+  });
   const { leaderActivity } = flow;
   // The content check runs before anything is followed (AC21, item 7 compare).
   const memberMetadata = isMember ? group.metadata : null;
@@ -256,6 +273,12 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
   const [ack, setAck] = useState(() => env.pointers.read()?.ack ?? null);
   const leaderBook = useMemo(() => parseLeaderMetadata(memberMetadata), [memberMetadata]);
   const acknowledged = ack !== null && leaderBook !== null && ack === leaderBook.fingerprint;
+  if (isMember && compare !== null) {
+    lastMemberCheck.current =
+      compare === 'different-content' ||
+      compare === 'unsupported-schema' ||
+      (compare === 'different-version' && !acknowledged);
+  }
   const phase = derivePhase({
     enabled: true,
     connection: snapshot.connection,
@@ -323,6 +346,7 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
     fresh: () => !turnedSinceLoad.current && !restored,
     lateJoinMs: env.sync.lateJoinSeconds * 1000,
     resumedMode: () => resumedMode.current,
+    demoted: flow.consumeDemoted,
     onJump: (index) => setJumpRequest((prev) => ({ index, id: (prev?.id ?? 0) + 1 })),
     onMode: (mode) => env.pointers.update({ mode }),
   });
@@ -405,6 +429,9 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
     );
   }, [isLeader]);
 
+  // While "You're leading" is open nothing is sent (#25 L3); the user chooses after it.
+  const nowLeadingOpen = useRef(false);
+  nowLeadingOpen.current = flow.nowLeading !== null;
   const pageChanged = useCallback(
     (index: number, source: MoveSource) => {
       ownIndex.current = index;
@@ -413,6 +440,7 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
         turnedSinceLoad.current = true;
         followed.userTurned(index);
       }
+      if (nowLeadingOpen.current) return;
       // Previewing: a preview move, never a position update (#25 AC41, R21).
       if (previewMode.isActiveNow()) {
         previewMode.move(index);
@@ -664,6 +692,22 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
         onClosedWithFocus={focusArticle}
       />
     ) : null;
+
+  // The take-back card (#25 architecture 8.5): member only, under keep-alive.
+  const takeBackCard = flow.takeBackCard ? (
+    <TakeBackCard
+      announce={announce}
+      onDecline={flow.declineTakeBack}
+      onRefused={flow.takeBackRefused}
+      onClosedWithFocus={focusArticle}
+    />
+  ) : null;
+  const dismissNowLeading = () => {
+    const open = flow.nowLeading;
+    flow.dismissNowLeading();
+    // Off the group's page: preview at this page, nothing moves until chosen (U7, D3).
+    if (open?.offPage != null && isLeader) previewMode.start(ownIndex.current);
+  };
 
   // Join requests: overlay on phones, top of the panel on large screens (6.15).
   const tray =
@@ -1096,11 +1140,17 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
           ) : null
         }
         overlay={
-          keepAliveCard !== null || late !== null || jump !== null || (!large && tray !== null) ? (
+          keepAliveCard !== null ||
+          takeBackCard !== null ||
+          late !== null ||
+          jump !== null ||
+          (!large && tray !== null) ? (
             <div className={styles.overlayStack}>
-              {/* One card, by priority (#25 design 2.2): keep-alive, late-join, jump. */}
+              {/* One card, by priority (#25 design 2.2): keep-alive, take-back, late-join, jump. */}
               {keepAliveCard !== null ? (
                 keepAliveCard
+              ) : takeBackCard !== null ? (
+                takeBackCard
               ) : late !== null ? (
                 <LateJoinPrompt
                   index={late.index}
@@ -1108,7 +1158,6 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
                   totalMs={env.sync.lateJoinSeconds * 1000}
                   onGo={followed.goToGroup}
                   onStay={followed.stayHere}
-                  onExpired={followed.lateExpired}
                 />
               ) : jump !== null ? (
                 <JumpPrompt
@@ -1135,6 +1184,13 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
           leaveError={leaveError}
           onFollow={followAnyway}
           onLeave={leaveGroup}
+        />
+      ) : null}
+      {flow.nowLeading !== null ? (
+        <NowLeadingDialog
+          state={flow.nowLeading}
+          onDismiss={dismissNowLeading}
+          returnFocus={() => document.getElementById(ARTICLE_ID)}
         />
       ) : null}
       {landing.state.status === 'ask' ? (

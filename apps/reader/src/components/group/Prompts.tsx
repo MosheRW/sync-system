@@ -51,7 +51,8 @@ export function JumpPrompt({
  * The late-joiner countdown (design 6.14, AC28, AC53): a monotonic deadline
  * re-evaluated on every tick and when the tab is visible again; the bar
  * shrinks through a custom property set with the CSSOM (no `style=` in
- * markup, R12); the seconds are not announced each tick.
+ * markup, R12); the seconds are not announced each tick. The follow hook
+ * ends it at the deadline, also while a higher card hides it (#25 2.2).
  */
 export function LateJoinPrompt({
   index,
@@ -59,27 +60,20 @@ export function LateJoinPrompt({
   totalMs,
   onGo,
   onStay,
-  onExpired,
 }: {
   index: number;
   deadline: number;
   totalMs: number;
   onGo: () => void;
   onStay: () => void;
-  onExpired: () => void;
 }) {
   const i18n = useI18n();
   const { t } = i18n;
   const left = useCountdown(deadline, monotonic) ?? 0;
   const fill = useRef<HTMLDivElement>(null);
-  const expired = useRef(false);
   useEffect(() => {
     fill.current?.style.setProperty('--progress', `${Math.max(0, (left / totalMs) * 100)}%`);
-    if (left <= 0 && !expired.current) {
-      expired.current = true;
-      onExpired();
-    }
-  }, [left, totalMs, onExpired]);
+  }, [left, totalMs]);
   const [before, after] = t.lateJoinCountdown.split('{time}');
   return (
     <div role="region" aria-label={t.jumpRegion} className={styles.card}>

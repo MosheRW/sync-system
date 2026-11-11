@@ -40,6 +40,12 @@ export type FollowEvent =
       readonly ownIndex: number;
       readonly storedMode: FollowMode;
     }
+  /**
+   * This tab led the group and leads no more (#25 architecture 8.2, U14):
+   * on the group's page it follows; elsewhere (it was previewing) it is
+   * browsing with no prompt until the next move.
+   */
+  | { readonly type: 'demoted'; readonly groupIndex: number | null; readonly ownIndex: number }
   | { readonly type: 'groupMoved'; readonly index: number; readonly ownIndex: number }
   | { readonly type: 'userTurned'; readonly ownIndex: number }
   | { readonly type: 'goToGroup' }
@@ -72,6 +78,11 @@ export function follow(state: FollowState, event: FollowEvent): FollowStep {
         return step({ ...base, mode: 'browsing', jump: { index: event.groupIndex } });
       }
       return step(base, event.groupIndex === event.ownIndex ? null : event.groupIndex);
+    }
+    case 'demoted': {
+      const base = { ...INITIAL_FOLLOW, groupIndex: event.groupIndex };
+      if (event.groupIndex === null || event.groupIndex === event.ownIndex) return step(base);
+      return step({ ...base, mode: 'browsing' });
     }
     case 'groupMoved': {
       const moved = { ...state, groupIndex: event.index };

@@ -143,6 +143,7 @@ describe('the keep-alive card (#25 AC45, AC53, design F19, 6.7)', () => {
   it('last chance: "ends" wording after a handoff for inactivity, gone after any activity', async () => {
     const client = await leader();
     act(() => client.emit('nowLeading', { groupId: GROUP_ID, reason: 'handoff_inactivity' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Start leading' }));
     prompt(client);
     expect(card()!.textContent).toContain('The group ends in 1:00 unless you keep it going.');
     expect(assertive()).toBe(

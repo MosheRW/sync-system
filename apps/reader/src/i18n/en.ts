@@ -385,6 +385,25 @@ export const en = {
     'The group ends in {time}. Turn a page or use Keep going to keep it going.',
   announcePaused: 'The group is paused. Use Keep going to carry on.',
   announceKeptGoing: 'The group keeps going.',
+  // #25 now leading and take-back (design 7.6, 7.7)
+  nowLeadingTitle: "You're leading the group now",
+  nowLeadingDisconnect: 'The leader lost connection, so the lead passed to you.',
+  nowLeadingInactive: 'The leader was inactive for a long time, so the lead passed to you.',
+  nowLeadingTakeBack: 'You took the lead back.',
+  nowLeadingWhat:
+    'Everyone follows your page now. Your codes and the people in the group are under Group.',
+  nowLeadingOffPage:
+    "You're on page {view} and the group is on page {group}. Your page turns won't move the group until you choose.",
+  nowLeadingMismatch:
+    "Your copy of the book isn't the same as the group's, so pages may not match for the others.",
+  startLeading: 'Start leading',
+  takeBackRegion: 'Take the lead back',
+  takeBackTitle: 'Take the lead back?',
+  takeBackBody: 'You led this group before. You can lead it again.',
+  takeBackYes: 'Take the lead',
+  takingBack: 'Taking the lead…',
+  takeBackNo: 'Keep following',
+  announceTakeBack: 'You can take the lead back. Use Take the lead or Keep following.',
 };
 
 export type Messages = { readonly [K in keyof typeof en]: string };

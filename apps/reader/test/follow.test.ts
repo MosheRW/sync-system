@@ -116,3 +116,25 @@ describe('follow reducer (#24 architecture 7.2)', () => {
     ).toBe(5);
   });
 });
+
+describe('a demoted leader (#25 architecture 8.2, U14)', () => {
+  it('on the group page or with no position: following, no jump', () => {
+    for (const groupIndex of [3, null]) {
+      expect(follow(INITIAL_FOLLOW, { type: 'demoted', groupIndex, ownIndex: 3 })).toEqual({
+        state: { ...INITIAL_FOLLOW, groupIndex },
+        jumpTo: null,
+      });
+    }
+  });
+
+  it('elsewhere: browsing with no prompt and no jump; the next move prompts', () => {
+    const demoted = follow(INITIAL_FOLLOW, { type: 'demoted', groupIndex: 1, ownIndex: 4 });
+    expect(demoted).toEqual({
+      state: { mode: 'browsing', groupIndex: 1, jump: null, late: null },
+      jumpTo: null,
+    });
+    const moved = follow(demoted.state, { type: 'groupMoved', index: 2, ownIndex: 4 });
+    expect(moved.state.jump).toEqual({ index: 2 });
+    expect(moved.jumpTo).toBeNull();
+  });
+});
