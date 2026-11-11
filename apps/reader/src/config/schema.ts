@@ -107,6 +107,15 @@ function read(env: EnvSource, name: string): string | undefined {
 
 const shown = (value: string) => `"${truncate(value)}"`;
 
+/**
+ * A refused URL for an error line, with any user name and password replaced
+ * by `***` first: a password must not reach the operator's logs (security
+ * round 1, finding 2). Covers `scheme://user:pass@host` and the forms a URL
+ * parser also reads that way (`scheme:user:pass@host`, backslashes).
+ */
+const shownUrl = (value: string) =>
+  shown(value.replace(/^([a-z][a-z0-9+.-]*:[/\\]*)[^/?#\\]*@/i, '$1***@'));
+
 function parseInteger(
   env: EnvSource,
   name: string,
@@ -163,7 +172,7 @@ function parseSync(env: EnvSource, problems: string[], warnings: string[]): Sync
 
   const checked = checkSyncUrl(rawUrl);
   if (!checked.ok) {
-    problems.push(`READER_SYNC_URL ${shown(rawUrl)} ${SYNC_URL_ISSUES[checked.issue]}`);
+    problems.push(`READER_SYNC_URL ${shownUrl(rawUrl)} ${SYNC_URL_ISSUES[checked.issue]}`);
   }
 
   const keyOk = rawKey !== undefined && SYNC_API_KEY_PATTERN.test(rawKey);
@@ -271,7 +280,7 @@ export function parseReaderConfig(env: EnvSource, libraryIds: readonly string[])
       const checked = checkAllowedOrigin(entryValue);
       if (!checked.ok) {
         problems.push(
-          `READER_SRC_ORIGINS entry ${shown(entryValue)} ${ORIGIN_ISSUES[checked.issue]}`,
+          `READER_SRC_ORIGINS entry ${shownUrl(entryValue)} ${ORIGIN_ISSUES[checked.issue]}`,
         );
       } else if (!srcOrigins.includes(checked.origin)) {
         srcOrigins.push(checked.origin);

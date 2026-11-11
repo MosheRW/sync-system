@@ -110,6 +110,28 @@ describe('READER_SYNC_* (#24 AC1)', () => {
     expect(list.join('\n')).not.toContain(key.trim());
   });
 
+  it.each([
+    ['wss://dana:s3cret-pass@sync.example.org/ws', 'credentials'],
+    ['ws://dana:s3cret-pass@sync.example.org/ws', 'not loopback'],
+    ['wss:dana:s3cret-pass@sync.example.org', 'no slashes'],
+    ['wss:\\dana:s3cret-pass@sync.example.org', 'backslashes'],
+    ['wss://dana:s3cret@pass@sync.example.org?x=1', 'an @ in the password'],
+    ['wss://dana:s3cret-pass@a;b', 'a bad host'],
+  ])('never prints a password in a refused READER_SYNC_URL %j (%s)', (url) => {
+    const list = problems({ READER_SYNC_URL: url, READER_SYNC_API_KEY: KEY });
+    expect(list).toHaveLength(1);
+    expect(list[0]).toMatch(/^READER_SYNC_URL "wss?:[/\\]*\*\*\*@/);
+    expect(list[0]).not.toContain('s3cret');
+    expect(list[0]).not.toContain('dana');
+  });
+
+  it('never prints a password in a refused READER_SRC_ORIGINS entry', () => {
+    const list = problems({ READER_SRC_ORIGINS: 'https://dana:s3cret-pass@books.example.org' });
+    expect(list).toHaveLength(1);
+    expect(list[0]).toContain('"https://***@books.example.org"');
+    expect(list[0]).not.toContain('s3cret');
+  });
+
   it('never prints the key when another sync setting is wrong', () => {
     const list = problems({
       READER_SYNC_URL: 'wss://a;b',
