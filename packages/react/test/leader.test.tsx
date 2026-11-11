@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   type LeaderCodes,
   useGroupLock,
+  useHandoffMode,
   useJoinRequests,
   useLeaderCodes,
   useMemberRemoval,
@@ -265,6 +266,42 @@ describe('roster, vice, lock and removal (AC20)', () => {
     expect(removed).toMatchObject({ ok: false, error: { code: 'NOT_LEADER' } });
     expect(locked).toMatchObject({ ok: false, error: { code: 'NOT_LEADER' } });
     expect(values.at(-1)?.removal.blockList).toEqual([]);
+  });
+});
+
+describe('useHandoffMode (D2a)', () => {
+  it('is the led group handoff mode when created, granted or resumed, and null otherwise', () => {
+    const client = new FakeSyncClient();
+    client.leaderState = { blockList: [], locked: false, handoff: 'auto' };
+    const values = track(() => useHandoffMode(), client);
+    expect(values.at(-1)).toBeNull();
+    act(() => client.follow('g-1'));
+    expect(values.at(-1)).toBeNull();
+    // created / resumed as the leader
+    act(() => client.lead('g-1'));
+    expect(values.at(-1)).toBe('auto');
+    // demoted
+    act(() => {
+      client.follow('g-1');
+      client.emit('leadershipLost', {
+        groupId: 'g-1',
+        reason: 'take_back',
+        takeBackAvailable: true,
+      });
+    });
+    expect(values.at(-1)).toBeNull();
+    // granted the lead of a frozen group
+    client.leaderState = { blockList: [], locked: false, handoff: 'frozen' };
+    act(() => {
+      client.lead('g-1');
+      client.emit('nowLeading', { groupId: 'g-1', reason: 'handoff_disconnect' });
+    });
+    expect(values.at(-1)).toBe('frozen');
+    // resumed leading another group
+    client.leaderState = { blockList: [], locked: true, handoff: 'auto' };
+    act(() => client.lead('g-2'));
+    expect(values.at(-1)).toBe('auto');
+    for (const value of values) expect([null, 'auto', 'frozen']).toContain(value);
   });
 });
 
