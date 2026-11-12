@@ -47,7 +47,12 @@ import {
   issueCodeSet,
   rotateDoorCode,
 } from './codes.js';
-import { ApprovalQueue, type PendingRequest, type TakenRequest } from './approval-queue.js';
+import {
+  type ApprovalStore,
+  MemoryApprovals,
+  type PendingRequest,
+  type TakenRequest,
+} from './approval-store.js';
 import type { DoorStateStore } from './door-guard.js';
 import { isValidGroupMethodSet, resolveGroupMethods } from './join-methods.js';
 
@@ -69,6 +74,8 @@ export interface JoinServiceDeps {
   timers: GroupTimers;
   /** The latest a group created at `createdAt` can live: the TTL of its code claims (#35 AC24). */
   groupExpiry(namespace: string, createdAt: number): number;
+  /** Pending method B requests; defaults to the in-memory store (#35 architecture 12.9). */
+  approvals?: ApprovalStore;
 }
 
 /**
@@ -215,7 +222,7 @@ export class JoinService {
   /** Leader code rotations per group (#10 AC30). */
   private readonly rotateLimiter: SlidingWindowRateLimiter;
   /** Pending method B requests (#10 AC19-AC22). */
-  readonly approvals: ApprovalQueue;
+  readonly approvals: ApprovalStore;
   /** qr.issue per connection (#10 AC23). */
   private readonly qrLimiter: SlidingWindowRateLimiter;
 
@@ -229,7 +236,7 @@ export class JoinService {
     this.appJoinLimiter = new SlidingWindowRateLimiter(now, JOIN_WINDOW_MS);
     this.wrongDoorLimiter = new SlidingWindowRateLimiter(now, DOOR_FAILURES_APP_WINDOW_MS);
     this.rotateLimiter = new SlidingWindowRateLimiter(now, CODE_ROTATION_WINDOW_MS);
-    this.approvals = new ApprovalQueue(deps.scheduler);
+    this.approvals = deps.approvals ?? new MemoryApprovals(deps.scheduler);
     this.qrLimiter = new SlidingWindowRateLimiter(now, QR_ISSUE_WINDOW_MS);
   }
 
@@ -345,13 +352,17 @@ export class JoinService {
    * `join.requested` after its pending replies. A frozen group's request
    * waits for the leader (Q6.2).
    */
-  private requestApproval(session: Session, record: GroupRecord, name: NameChoice): ServerMessage {
+  private async requestApproval(
+    session: Session,
+    record: GroupRecord,
+    name: NameChoice,
+  ): Promise<ServerMessage> {
     // Only a chosen name is shown in join.requested; a generated one is
     // drawn at admission (#13 AC36).
     const displayName = name.generated ? undefined : name.name;
     const namespace = record.appNamespace;
     const timeoutMs = session.app.approvalTimeoutSeconds * 1000;
-    const added = this.approvals.add(
+    const added = await this.approvals.add(
       {
         groupKey: groupKey(namespace, record.id),
         groupId: record.id,
@@ -379,7 +390,7 @@ export class JoinService {
   private onApprovalTimeout(namespace: string, groupId: string, requestId: string): void {
     this.host
       .runLocked(namespace, groupId, async () => {
-        const taken = this.approvals.take(groupKey(namespace, groupId), requestId);
+        const taken = await this.approvals.take(groupKey(namespace, groupId), requestId);
         if (taken === undefined) return;
         this.settled(taken, 'timeout');
         this.host.deliverLater(taken.session, errorMessage(ErrorCode.APPROVAL_TIMEOUT));
@@ -428,12 +439,12 @@ export class JoinService {
       const groupId = record.id;
       // #13 Q4.2: while locked a request stays pending and cannot be approved.
       if (decision === 'approve' && this.host.admissionClosed(record)) {
-        const pending = this.approvals
-          .list(groupKey(namespace, groupId))
-          .some((request) => request.requestId === requestId);
+        const pending = (await this.approvals.list(groupKey(namespace, groupId))).some(
+          (request) => request.requestId === requestId,
+        );
         return pending ? GROUP_LOCKED : REQUEST_NOT_FOUND;
       }
-      const taken = this.approvals.take(groupKey(namespace, groupId), requestId);
+      const taken = await this.approvals.take(groupKey(namespace, groupId), requestId);
       if (taken === undefined) return REQUEST_NOT_FOUND;
       if (decision === 'deny') {
         this.settled(taken, 'denied');
@@ -468,7 +479,7 @@ export class JoinService {
     if (pending === undefined) return REQUEST_NOT_FOUND;
     const namespace = session.app.namespace;
     return this.host.runLocked(namespace, pending.groupId, async () => {
-      const taken = this.approvals.takeBySession(session);
+      const taken = await this.approvals.takeBySession(session);
       if (taken === undefined) return REQUEST_NOT_FOUND;
       this.settled(taken, 'cancelled');
       await this.withdrawn(namespace, taken, 'cancelled');
@@ -489,7 +500,7 @@ export class JoinService {
         retryAfterMs: paused,
       });
     }
-    for (const request of this.approvals.list(groupKey(record.appNamespace, record.id))) {
+    for (const request of await this.approvals.list(groupKey(record.appNamespace, record.id))) {
       this.host.deliverLater(leader, this.requestedMessage(request));
     }
   }
@@ -1024,7 +1035,7 @@ export class JoinService {
     groupId: string,
     record: GroupRecord | undefined,
   ): Promise<void> {
-    for (const taken of this.approvals.drain(groupKey(namespace, groupId))) {
+    for (const taken of await this.approvals.drain(groupKey(namespace, groupId))) {
       this.settled(taken, 'group_gone');
       this.host.deliverLater(taken.session, errorMessage(ErrorCode.GROUP_ENDED));
     }
@@ -1045,7 +1056,7 @@ export class JoinService {
     if (pending === undefined) return;
     const namespace = session.app.namespace;
     await this.host.runLocked(namespace, pending.groupId, async () => {
-      const taken = this.approvals.takeBySession(session);
+      const taken = await this.approvals.takeBySession(session);
       if (taken === undefined) return;
       this.settled(taken, 'disconnected');
       await this.withdrawn(namespace, taken, 'disconnected');
