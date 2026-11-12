@@ -134,6 +134,64 @@ describe('optional Redis compose override (#35 AC30, security C2, C3, C5)', () =
   });
 });
 
+describe('two-instance compose example (#35 AC23, security P2-8)', () => {
+  const multi = read('compose.multi.yaml');
+  const nginx = read('config/nginx-multi.conf');
+  /** One service block of compose.multi.yaml. */
+  const service = (name: string): string => {
+    const start = multi.indexOf(`\n  ${name}:`);
+    const rest = multi.slice(start + 1);
+    const next = rest.search(/\n {2}[a-z][a-z0-9-]*:/);
+    return next === -1 ? rest : rest.slice(0, next);
+  };
+
+  it('pins the unprivileged nginx image by digest', () => {
+    expect(service('lb')).toMatch(
+      /image: nginxinc\/nginx-unprivileged:[0-9.]+-alpine@sha256:[0-9a-f]{64}$/m,
+    );
+  });
+
+  it('publishes only the load balancer, on loopback; both servers have no host port', () => {
+    expect(service('lb')).toContain("- '127.0.0.1:8080:8080'");
+    expect(service('sync-server')).toMatch(/ports: !reset \[\]/);
+    expect(service('sync-server-2')).toMatch(/ports: !reset \[\]/);
+    expect(multi.match(/^\s+ports:/gm)).toHaveLength(3);
+    expect(multi).not.toContain('0.0.0.0:');
+  });
+
+  it('locks the load balancer down and keeps the Redis rules of compose.redis.yaml', () => {
+    const lb = service('lb');
+    expect(lb).toMatch(/read_only: true/);
+    expect(lb).toMatch(/cap_drop:\s*\n\s+- ALL/);
+    expect(lb).toContain('no-new-privileges:true');
+    expect(lb).toContain('./config/nginx-multi.conf:/etc/nginx/conf.d/default.conf:ro');
+    // Redis is not redefined here: the C3 and C5 rules above still hold.
+    expect(multi).not.toMatch(/^ {2}redis:/m);
+    const url = /REDIS_URL:\s*(\S+)/.exec(service('sync-server-2'))?.[1];
+    expect(url).toBe(`redis://:${DEV_REDIS_PASSWORD}@redis:6379`);
+    // The second instance reuses the first one's image (no second build).
+    expect(service('sync-server-2')).toMatch(/build: !reset null/);
+    expect(service('sync-server-2')).toContain('image: sync-system/sync-server:dev');
+  });
+
+  it('balances round robin with the WebSocket upgrade, no stickiness and no access log', () => {
+    expect(nginx).toMatch(/proxy_http_version 1\.1;/);
+    expect(nginx).toMatch(/proxy_set_header Upgrade \$http_upgrade;/);
+    expect(nginx).toMatch(/proxy_set_header Connection \$connection_upgrade;/);
+    expect(nginx).toMatch(/proxy_read_timeout 120s;/);
+    expect(nginx).toMatch(/access_log off;/);
+    expect(nginx).toContain('server sync-server:8080;');
+    expect(nginx).toContain('server sync-server-2:8080;');
+    const directives = nginx
+      .split(/\r?\n/)
+      .filter((line) => !line.trim().startsWith('#'))
+      .join('\n');
+    for (const sticky of [/\bip_hash\b/, /\bhash\b/, /\bsticky\b/]) {
+      expect(directives).not.toMatch(sticky);
+    }
+  });
+});
+
 describe('CI workflow (AC28, L1, L8)', () => {
   const workflow = read('.github/workflows/ci.yml');
 

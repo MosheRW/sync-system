@@ -1,0 +1,52 @@
+# Two sync server instances behind a load balancer, for local development
+# only (#35 AC23). Use it on top of compose.yaml and compose.redis.yaml:
+#
+#   docker compose -f compose.yaml -f compose.redis.yaml -f compose.multi.yaml up --build
+#
+# Both instances share the Redis, the key prefix and the dev token secret
+# (README.md, "Several instances"). Only the load balancer publishes a port,
+# on loopback; ws://127.0.0.1:8080/ws now reaches it. It balances round robin
+# with no sticky sessions, so clients of one group land on both instances.
+services:
+  sync-server:
+    # Reached through the load balancer only.
+    ports: !reset []
+
+  sync-server-2:
+    extends:
+      file: compose.yaml
+      service: sync-server
+    # The same image as sync-server: no second build.
+    build: !reset null
+    image: sync-system/sync-server:dev
+    pull_policy: never
+    ports: !reset []
+    environment:
+      # Dev-only password (public); see the header of compose.redis.yaml.
+      REDIS_URL: redis://:dev-only-insecure-redis-password-change-me@redis:6379
+      REDIS_KEY_PREFIX: sync
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  lb:
+    # nginx 1.30 (stable), unprivileged (uid 101, port 8080), pinned by digest.
+    image: nginxinc/nginx-unprivileged:1.30.6-alpine@sha256:f5116ed4606f3eb015dd4a8e28cb9b351476dc0ad4bc6e9f93b19cec130cdf03
+    ports:
+      # Loopback only, the port compose.yaml used for the single instance.
+      - '127.0.0.1:8080:8080'
+    volumes:
+      - ./config/nginx-multi.conf:/etc/nginx/conf.d/default.conf:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      sync-server:
+        condition: service_healthy
+      sync-server-2:
+        condition: service_healthy
+    restart: unless-stopped
