@@ -1,5 +1,6 @@
 import type { EndedGroupsStore, EvictionLogger } from '../../groups/ended-groups.js';
 import { endedRef } from '../../groups/ended-groups.js';
+import { TIMER_KINDS } from '../../groups/group-timers.js';
 import { MAX_ENDED_GROUPS } from '../../limits/constants.js';
 import type { CommitPlan, CommitResult, RedisContext, RedisWorkSource } from './unit-of-work.js';
 import { PRUNE_ENDED } from './scripts.js';
@@ -34,32 +35,8 @@ export class RedisEndedGroups implements EndedGroupsStore {
     deadline: number,
     guardUntil?: number,
   ): Promise<void> {
-    const now = this.ctx.now();
-    if (deadline <= now) return;
-    const { keys } = this.ctx;
-    const ref = endedRef(namespace, groupId);
-    const add = (plan: CommitPlan) => {
-      plan.raw(
-        'remember',
-        {
-          e: keys.ended(ref),
-          pl: keys.endedPlain(),
-          gu: keys.endedGuarded(),
-          cl: keys.endedClosed(),
-          sq: keys.endedSeq(),
-        },
-        {
-          ep: `${keys.base}:e:`,
-          ref,
-          ns: namespace,
-          d: String(deadline),
-          g: guardUntil === undefined ? '' : String(guardUntil),
-          x: String(Math.max(1, Math.ceil(deadline - now))),
-          cap: String(this.cap),
-          now: String(now),
-        },
-      );
-    };
+    if (deadline <= this.ctx.now()) return;
+    const add = (plan: CommitPlan) => this.addTo(plan, namespace, groupId, deadline, guardUntil);
     const running = this.work.current();
     if (running !== undefined) {
       running.addStep(add);
@@ -68,6 +45,56 @@ export class RedisEndedGroups implements EndedGroupsStore {
     }
     const plan = this.work.plan();
     add(plan);
+    this.warn(await plan.run(this.ctx.link));
+  }
+
+  /** Adds the `remember` step of an ended group to `plan` (deadline in the future). */
+  addTo(
+    plan: CommitPlan,
+    namespace: string,
+    groupId: string,
+    deadline: number,
+    guardUntil?: number,
+  ): void {
+    const now = this.ctx.now();
+    const { keys } = this.ctx;
+    const ref = endedRef(namespace, groupId);
+    plan.raw(
+      'remember',
+      {
+        e: keys.ended(ref),
+        pl: keys.endedPlain(),
+        gu: keys.endedGuarded(),
+        cl: keys.endedClosed(),
+        sq: keys.endedSeq(),
+      },
+      {
+        ep: `${keys.base}:e:`,
+        ref,
+        ns: namespace,
+        d: String(deadline),
+        g: guardUntil === undefined ? '' : String(guardUntil),
+        x: String(Math.max(1, Math.ceil(deadline - now))),
+        cap: String(this.cap),
+        now: String(now),
+      },
+    );
+  }
+
+  /**
+   * Ends a group whose stored document is invalid (#35 security C1, user
+   * decision in QA round 1): its keys and timers go and it is remembered as
+   * ended until `deadline`, so no token can recreate it. One commit.
+   */
+  async endInvalid(namespace: string, groupId: string, deadline: number): Promise<void> {
+    const { keys } = this.ctx;
+    const plan = this.work.plan();
+    this.addTo(plan, namespace, groupId, deadline);
+    plan.del(keys.group(namespace, groupId));
+    plan.del(keys.position(namespace, groupId));
+    plan.zrem(keys.live(), keys.liveMember(namespace, groupId));
+    plan.del(keys.timers(namespace, groupId));
+    for (const kind of TIMER_KINDS) plan.zrem(keys.due(), keys.dueMember(namespace, groupId, kind));
     this.warn(await plan.run(this.ctx.link));
   }
 

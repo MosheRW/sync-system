@@ -2,6 +2,7 @@ import type { AppConfig } from '../../apps/app-registry.js';
 import { END_TTL_SLACK_MS } from '../../limits/constants.js';
 import { type Logger, safeErr } from '../../logging/logger.js';
 import type { Scheduler } from '../../time/scheduler.js';
+import { StorageInvalidError } from '../errors.js';
 import { type Storage, memoryStorage } from '../storage.js';
 import type { RedisLink } from './connect.js';
 import { RedisCodeIndex } from './codes.js';
@@ -49,6 +50,7 @@ export function redisStorage(options: RedisStorageOptions): Storage {
   const memory = memoryStorage({ scheduler: options.scheduler, logger: options.logger });
   const timers = new RedisTimerBackend(ctx, work, options.scheduler);
   const epoch = new RedisEpoch(ctx, work);
+  const ended = new RedisEndedGroups(ctx, work, options.logger, options.endedGroupsCap);
   return {
     ...memory,
     kind: 'redis',
@@ -75,13 +77,27 @@ export function redisStorage(options: RedisStorageOptions): Storage {
       await timers.runDue();
       // Then every live group's attachments from before the stop (AC11).
       const live = await liveGroups(ctx);
-      for (const { namespace, groupId } of live) await sweep(namespace, groupId);
-      options.logger.info({ event: 'startup_sweep', groups: live.length }, 'restart sweep done');
+      let invalid = 0;
+      for (const { namespace, groupId } of live) {
+        try {
+          await sweep(namespace, groupId);
+        } catch (err) {
+          if (!(err instanceof StorageInvalidError)) throw err;
+          // One invalid document never blocks the start: that group ends
+          // and stays ended (fails closed, security C1).
+          invalid += 1;
+          await ended.endInvalid(namespace, groupId, ctx.expiryOf(namespace, ctx.now()));
+        }
+      }
+      options.logger.info(
+        { event: 'startup_sweep', groups: live.length, invalid },
+        'restart sweep done',
+      );
       timers.startPolling();
     },
     groups: new RedisGroupStore(ctx, work),
     codes: new RedisCodeIndex(ctx, work),
-    ended: new RedisEndedGroups(ctx, work, options.logger, options.endedGroupsCap),
+    ended,
     doors: new RedisDoorStates(work),
     work,
     status: () => ({ kind: 'redis', state: options.link.state }),

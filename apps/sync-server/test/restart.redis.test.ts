@@ -198,4 +198,36 @@ describeRedis('restart survival with Redis (#35 AC9-AC15)', () => {
     scheduler.advance(1000);
     expect(await member.next('leader.granted')).toMatchObject({ reason: 'handoff_disconnect' });
   });
+
+  it('one invalid stored group never blocks the start: that group ends, the others survive (C1)', async () => {
+    fresh();
+    const first = await start();
+    const valid = await createGroupWithMembers(first, 1, { position: { page: 2 } });
+    const broken = await createGroupWithMembers(first, 1);
+    await stop(first);
+    await inspect.client.set(`${prefix}:v1:g:app-a:${broken.groupId}`, '{"v":1,"record":{}}');
+    // Without the epoch, only the ended entry can stop a recreation.
+    await inspect.client.del(`${prefix}:v1:epoch`);
+    const second = await start();
+    expect(second.server.storage()).toEqual({ kind: 'redis', state: 'connected' });
+    expect(second.logs.find('startup_sweep')).toMatchObject({ groups: 2, invalid: 1 });
+    expect(second.logs.find('store_document_invalid')).toBeDefined();
+    for (const secret of [broken.groupId, prefix, '"record"']) {
+      expect(second.logs.text).not.toContain(secret);
+    }
+    // The valid group survives.
+    const { reply } = await resumeWith(second, valid.memberTokens[0]);
+    expect(reply).toMatchObject({
+      type: 'group.joined',
+      groupId: valid.groupId,
+      position: { page: 2 },
+    });
+    // The invalid one has ended and no token recreates it.
+    const { reply: leader } = await resumeWith(second, broken.leaderToken, { metadata: {} });
+    expect(leader).toMatchObject({ type: 'error', code: 'GROUP_ENDED' });
+    const { reply: member } = await resumeWith(second, broken.memberTokens[0]);
+    expect(member).toMatchObject({ type: 'error', code: 'GROUP_ENDED' });
+    expect(await inspect.keys(`${prefix}:v1:g:app-a:${broken.groupId}`)).toEqual([]);
+    expect(await inspect.keys(`${prefix}:v1:p:app-a:${broken.groupId}`)).toEqual([]);
+  });
 });
