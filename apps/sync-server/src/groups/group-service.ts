@@ -1983,8 +1983,7 @@ export class GroupService implements GroupActions {
               this.processStartedAt +
                 app.inactivityLimitMinutes * MINUTE_MS +
                 this.deps.refresh.maxMs +
-                END_TTL_SLACK_MS,
-              MAX_CLOCK_SKEW_MS,
+                MAX_CLOCK_SKEW_MS,
             );
       await this.deps.ended.remember(namespace, groupId, deadline, guardUntil);
     }
