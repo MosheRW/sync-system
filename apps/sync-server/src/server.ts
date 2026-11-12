@@ -157,6 +157,7 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
   });
 
   const store = options.store ?? new InMemoryGroupStore();
+  const appsByNamespace = new Map(registry.apps().map((app) => [app.namespace, app]));
   const ended = new EndedGroups(now, logger, options.endedGroupsCap);
   let sweepTimer: NodeJS.Timeout | undefined;
   // Read once, before any token is issued (#13 6.9 layer 2, RC18).
@@ -182,6 +183,7 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
     },
     ended,
     processStartedAt,
+    appOf: (namespace) => appsByNamespace.get(namespace),
     qrTickets,
     codesBlobs,
     ...(options.codeRandom === undefined ? {} : { codeRandom: options.codeRandom }),

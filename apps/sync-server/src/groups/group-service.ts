@@ -74,7 +74,13 @@ import { LeaderControls } from '../lifecycle/leader-controls.js';
 import { LifecycleService, pauseOnWire } from '../lifecycle/lifecycle-service.js';
 import { type GroupRecord, type GroupStore, connectedCount } from './group-store.js';
 import type { EndedGroups } from './ended-groups.js';
-import { GroupTimers } from './group-timers.js';
+import {
+  GroupTimers,
+  MemoryTimerBackend,
+  type TimerBackend,
+  type TimerData,
+  type TimerKind,
+} from './group-timers.js';
 import { newGroupId, newParticipantId } from './ids.js';
 import { GroupLock } from './group-lock.js';
 import type { Notifier } from './notifier.js';
@@ -110,6 +116,10 @@ export interface GroupServiceDeps {
   codesBlobs: CodesBlobService;
   /** Join code draws; injected by tests (#10 AC9). */
   codeRandom?: RandomInt;
+  /** The app of a namespace, for timers that fire without a session (#35 ADR 0013). */
+  appOf: (namespace: string) => AppConfig | undefined;
+  /** Where group timers live; defaults to `setTimeout` on the scheduler. */
+  timerBackend?: TimerBackend;
 }
 
 /**
@@ -237,12 +247,11 @@ export class GroupService implements GroupActions {
       deps.logger,
     );
     this.processStartedAt = deps.processStartedAt ?? deps.scheduler.now();
-    this.timers = new GroupTimers(deps.scheduler);
+    this.timers = new GroupTimers(deps.timerBackend ?? new MemoryTimerBackend(deps.scheduler));
     this.lifecycle = new LifecycleService({
       store: deps.store,
       timers: this.timers,
       logger: deps.logger,
-      runTimer: (namespace, groupId, task) => this.runTimer(namespace, groupId, task),
       leaderSession: (record) => this.sessionOf(record, record.leaderId),
       deliverLater: (session, message) => this.deliverLater(session, message),
       refresherActivity: (namespace, groupId, at) =>
@@ -264,6 +273,31 @@ export class GroupService implements GroupActions {
     });
     this.parking = new ParkingLot(deps.scheduler);
     this.refresher = new TokenRefresher(deps.scheduler, deps.refresh);
+    this.onTimer('maxSession', (app, groupId) => this.onMaxSession(app, groupId));
+    this.onTimer('frozenEnd', (app, groupId) => this.onFrozenEnd(app, groupId));
+    this.onTimer('keepAlivePrompt', (app, groupId) => this.lifecycle.onPrompt(app, groupId));
+    this.onTimer('keepAliveDeadline', (app, groupId) => this.lifecycle.onDeadline(app, groupId));
+    this.onTimer('grace', (app, groupId, data) =>
+      data === undefined
+        ? Promise.resolve()
+        : this.lifecycle.onGraceEnd(app, groupId, data.term, data.at),
+    );
+  }
+
+  /**
+   * Registers the handler of a timer kind: it runs under the group lock with
+   * the group's app (#35 ADR 0013). A timer of an app no longer configured
+   * does nothing.
+   */
+  private onTimer(
+    kind: TimerKind,
+    handler: (app: AppConfig, groupId: string, data: TimerData | undefined) => Promise<void>,
+  ): void {
+    this.timers.on(kind, (namespace, groupId, data) => {
+      const app = this.deps.appOf(namespace);
+      if (app === undefined) return;
+      this.runTimer(namespace, groupId, () => handler(app, groupId, data));
+    });
   }
 
   /** Cancels every group and parking timer (server shutdown). */
@@ -388,24 +422,27 @@ export class GroupService implements GroupActions {
    * `max_session` at `createdAt + maxSessionMinutes`, leader online or not.
    */
   private armMaxSession(app: AppConfig, record: GroupRecord): void {
-    const namespace = app.namespace;
-    const groupId = record.id;
-    this.timers.armMaxSession(
-      groupKey(namespace, groupId),
-      this.maxSessionEndAt(app, record),
-      () => {
-        this.runTimer(namespace, groupId, async () => {
-          const current = await this.deps.store.get(namespace, groupId);
-          if (!current) return;
-          // Re-checked against the clock under the lock (R3).
-          if (this.maxSessionEndAt(app, current) > this.now()) {
-            this.armMaxSession(app, current);
-            return;
-          }
-          await this.endGroup(app, groupId, 'max_session');
-        });
-      },
-    );
+    this.timers.arm(app.namespace, record.id, 'maxSession', this.maxSessionEndAt(app, record));
+  }
+
+  /** The max-session timer, under the group lock. */
+  private async onMaxSession(app: AppConfig, groupId: string): Promise<void> {
+    const current = await this.deps.store.get(app.namespace, groupId);
+    if (!current) return;
+    // Re-checked against the clock under the lock (R3).
+    if (this.maxSessionEndAt(app, current) > this.now()) {
+      this.armMaxSession(app, current);
+      return;
+    }
+    await this.endGroup(app, groupId, 'max_session');
+  }
+
+  /** The frozen-end timer, under the group lock. */
+  private async onFrozenEnd(app: AppConfig, groupId: string): Promise<void> {
+    const current = await this.deps.store.get(app.namespace, groupId);
+    // Stale timer: the group is gone or live again (#13 6.4).
+    if (!current || current.pause === undefined) return;
+    await this.scheduleFrozenEnd(app, current);
   }
 
   /** Runs a timer callback under the group lock; failures are logged, never thrown. */
@@ -1405,9 +1442,8 @@ export class GroupService implements GroupActions {
     current = await this.joins.commitSupersedeCodes(current, codes.codes);
 
     // Timers: a fresh period for the new leader (RC13).
-    const key = groupKey(namespace, record.id);
-    this.timers.clearKind(key, 'grace');
-    this.timers.clearFrozenEnd(key);
+    this.timers.clear(namespace, record.id, 'grace');
+    this.timers.clear(namespace, record.id, 'frozenEnd');
     this.lifecycle.stopKeepAlive(namespace, record.id);
     this.lifecycle.armKeepAlive(app, current);
     this.startRefresh(namespace, record.id, now);
@@ -1829,14 +1865,7 @@ export class GroupService implements GroupActions {
     }
     // Max session comes first: its own timer ends the group.
     if (this.maxSessionEndAt(app, record) <= at) return;
-    this.timers.armFrozenEnd(groupKey(namespace, groupId), at, () => {
-      this.runTimer(namespace, groupId, async () => {
-        const current = await this.deps.store.get(namespace, groupId);
-        // Stale timer: the group is gone or live again (#13 6.4).
-        if (!current || current.pause === undefined) return;
-        await this.scheduleFrozenEnd(app, current);
-      });
-    });
+    this.timers.arm(namespace, groupId, 'frozenEnd', at);
   }
 
   /** True when an open session owns any membership of the group (#13 RC19). */
@@ -1853,7 +1882,7 @@ export class GroupService implements GroupActions {
     const key = groupKey(namespace, groupId);
     this.deps.rateLimiter.forget(key);
     this.controls.forgetGroup(namespace, groupId);
-    this.timers.clear(key);
+    this.timers.clearGroup(namespace, groupId);
     this.refresher.clear(key);
     this.joins.onGroupGone(namespace, groupId, record);
   }

@@ -24,8 +24,6 @@ export interface LifecycleHost {
   store: GroupStore;
   timers: GroupTimers;
   logger: Logger;
-  /** Runs a timer callback under the group lock; failures are logged. */
-  runTimer(namespace: string, groupId: string, task: () => Promise<void>): void;
   /** The attached session of the group's leader, if any. */
   leaderSession(record: GroupRecord): Session | undefined;
   /** Sends `message` to `session` after the replies it is already owed. */
@@ -57,10 +55,6 @@ export interface LifecycleHost {
   /** True when an open session owns any membership of the group (#13 RC19). */
   anyoneAttached(record: GroupRecord): boolean;
   now(): number;
-}
-
-function keyOf(namespace: string, groupId: string): string {
-  return `${namespace}:${groupId}`;
 }
 
 /** A pause as members see it: the wire cause and the grace left (#13 D8, D12). */
@@ -102,21 +96,13 @@ export class LifecycleService {
   armKeepAlive(app: AppConfig, record: GroupRecord): void {
     const namespace = app.namespace;
     const groupId = record.id;
-    this.host.timers.armKind(
-      keyOf(namespace, groupId),
-      'keepAlivePrompt',
-      this.promptAt(app, record),
-      () => {
-        this.host.runTimer(namespace, groupId, () => this.onPrompt(app, groupId));
-      },
-    );
+    this.host.timers.arm(namespace, groupId, 'keepAlivePrompt', this.promptAt(app, record));
   }
 
   /** Cancels the prompt and its deadline (leader offline, handoff, end). */
   stopKeepAlive(namespace: string, groupId: string): void {
-    const key = keyOf(namespace, groupId);
-    this.host.timers.clearKind(key, 'keepAlivePrompt');
-    this.host.timers.clearKind(key, 'keepAliveDeadline');
+    this.host.timers.clear(namespace, groupId, 'keepAlivePrompt');
+    this.host.timers.clear(namespace, groupId, 'keepAliveDeadline');
   }
 
   /**
@@ -145,7 +131,7 @@ export class LifecycleService {
     if (updated.pause?.cause === 'inactive') updated = await this.unpause(app, updated);
     this.host.refresherActivity(namespace, record.id, at);
     if (answered) {
-      this.host.timers.clearKind(keyOf(namespace, record.id), 'keepAliveDeadline');
+      this.host.timers.clear(namespace, record.id, 'keepAliveDeadline');
       this.armKeepAlive(app, updated);
       if (leader !== undefined) {
         this.host.deliverLater(leader, { type: 'keepalive.cleared', groupId: record.id });
@@ -155,7 +141,7 @@ export class LifecycleService {
   }
 
   /** The prompt timer (#13 6.3). Stale if the leader went away; re-arms if activity moved it. */
-  private async onPrompt(app: AppConfig, groupId: string): Promise<void> {
+  async onPrompt(app: AppConfig, groupId: string): Promise<void> {
     const namespace = app.namespace;
     const record = await this.host.store.get(namespace, groupId);
     if (record === undefined || !record.leaderOnline || record.keepAlivePending) return;
@@ -179,13 +165,11 @@ export class LifecycleService {
       { event: 'keepalive_prompted', namespace, groupRef: groupRef(groupId) },
       'keep-alive prompt sent',
     );
-    this.host.timers.armKind(keyOf(namespace, groupId), 'keepAliveDeadline', deadline, () => {
-      this.host.runTimer(namespace, groupId, () => this.onDeadline(app, groupId));
-    });
+    this.host.timers.arm(namespace, groupId, 'keepAliveDeadline', deadline);
   }
 
   /** The countdown ended (#13 AC17, AC22). Stale if answered or the leader went away. */
-  private async onDeadline(app: AppConfig, groupId: string): Promise<void> {
+  async onDeadline(app: AppConfig, groupId: string): Promise<void> {
     const namespace = app.namespace;
     const record = await this.host.store.get(namespace, groupId);
     if (record === undefined || !record.keepAlivePending || !record.leaderOnline) return;
@@ -246,9 +230,8 @@ export class LifecycleService {
     const namespace = app.namespace;
     const updated =
       (await this.host.store.patch(namespace, record.id, { pause: undefined })) ?? record;
-    const key = keyOf(namespace, record.id);
-    this.host.timers.clearKind(key, 'grace');
-    this.host.timers.clearFrozenEnd(key);
+    this.host.timers.clear(namespace, record.id, 'grace');
+    this.host.timers.clear(namespace, record.id, 'frozenEnd');
     this.host.toMembers(updated, { type: 'leader.online', groupId: record.id });
     this.host.logger.info(
       { event: 'group_unpaused', namespace, groupRef: groupRef(record.id) },
@@ -259,24 +242,14 @@ export class LifecycleService {
 
   /** Arms the grace end of a pause (#13 6.4). Stale if the term or the pause changed. */
   private armGrace(app: AppConfig, record: GroupRecord, at: number): void {
-    const namespace = app.namespace;
-    const groupId = record.id;
-    const term = record.term;
-    this.host.timers.armKind(keyOf(namespace, groupId), 'grace', at, () => {
-      this.host.runTimer(namespace, groupId, () => this.onGraceEnd(app, groupId, term, at));
-    });
+    this.host.timers.arm(app.namespace, record.id, 'grace', at, { term: record.term, at });
   }
 
   /**
    * The pause deadline passed (#13 6.4, Q-G): the grace end, or the end of
    * an empty group's hold.
    */
-  private async onGraceEnd(
-    app: AppConfig,
-    groupId: string,
-    term: number,
-    deadline: number,
-  ): Promise<void> {
+  async onGraceEnd(app: AppConfig, groupId: string, term: number, deadline: number): Promise<void> {
     const record = await this.host.store.get(app.namespace, groupId);
     // Stale: the group is gone, live again, or a new leader leads (RC13).
     if (record === undefined || record.term !== term) return;
@@ -391,9 +364,8 @@ export class LifecycleService {
         keepAlivePending: false,
         participantIds,
       })) ?? record;
-    const key = keyOf(namespace, record.id);
-    this.host.timers.clearKind(key, 'grace');
-    this.host.timers.clearFrozenEnd(key);
+    this.host.timers.clear(namespace, record.id, 'grace');
+    this.host.timers.clear(namespace, record.id, 'frozenEnd');
     this.stopKeepAlive(namespace, record.id);
     this.armKeepAlive(app, updated);
     this.host.startRefresh(namespace, record.id, now);
