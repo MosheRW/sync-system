@@ -38,6 +38,7 @@ import { ConnectionCounter, type ConnectionStats } from './ws/connection-counter
 import { Heartbeat } from './ws/heartbeat.js';
 import { createUpgradeHandler } from './ws/upgrade.js';
 import { type Storage, type StorageStatus, memoryStorage } from './storage/storage.js';
+import { StorageStartError } from './storage/errors.js';
 
 export interface SyncServerOptions {
   env: ServerEnv;
@@ -291,7 +292,11 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
     stats: () => counter.snapshot(),
     storage: () => storage.status(),
     async listen(listenPort, host) {
-      await storage.start((namespace, groupId) => groups.sweepAfterRestart(namespace, groupId));
+      try {
+        await storage.start((namespace, groupId) => groups.sweepAfterRestart(namespace, groupId));
+      } catch (err) {
+        throw new StorageStartError(err);
+      }
       return new Promise((resolve, reject) => {
         const onError = (err: Error) => {
           httpServer.off('listening', onListening);

@@ -43,3 +43,31 @@ export class StorageConflictError extends Error {
     this.name = 'StorageConflictError';
   }
 }
+
+/**
+ * The storage failed while the server started (#35 architecture 3 step 7):
+ * epoch, past-due timers or the restart sweep. `main` prints a Redis
+ * `Startup error`, closes the storage and exits 1. Carries the original
+ * error for its class and code only.
+ */
+export class StorageStartError extends Error {
+  constructor(readonly failure: unknown) {
+    super('storage start failed');
+    this.name = 'StorageStartError';
+  }
+}
+
+/** Reply codes that mean the Redis user may not do this (#35 AC4). */
+const AUTH_CODES = new Set(['WRONGPASS', 'NOAUTH', 'NOPERM']);
+
+/**
+ * The `Startup error` text for a storage failure while starting, from the
+ * error class and reply code only: never a key, value, host or user.
+ */
+export function storageStartMessage(err: StorageStartError): string {
+  const { failure } = err;
+  if (failure instanceof StorageReplyError && AUTH_CODES.has(failure.code)) {
+    return 'Redis authentication failed (REDIS_URL)';
+  }
+  return 'Redis connection failed (REDIS_URL)';
+}

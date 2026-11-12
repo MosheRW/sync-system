@@ -8,6 +8,7 @@ import { parseRedisSettings } from './config/redis.js';
 import { parseTokenSecrets, warnAboutSecrets } from './config/token-secret.js';
 import { type Logger, createLogger } from './logging/logger.js';
 import { type SyncServer, createSyncServer } from './server.js';
+import { StorageStartError, storageStartMessage } from './storage/errors.js';
 import type { Storage } from './storage/storage.js';
 import { realScheduler } from './time/scheduler.js';
 
@@ -81,8 +82,15 @@ export async function run(env: EnvSource, io: RunIO = {}): Promise<RunResult> {
       // The port only: never the host or any address (AC24).
       logger.info({ event: 'server_listening', port, apps: apps.length }, 'sync server listening');
     } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code ?? 'unknown';
-      stderr(`Startup error: cannot listen on port ${serverEnv.port} (${code})\n`);
+      if (err instanceof StorageStartError) {
+        // Epoch, past-due timers or sweep failed (#35 AC4, architecture 3 step 7).
+        stderr(`Startup error: ${storageStartMessage(err)}\n`);
+      } else {
+        const code = (err as NodeJS.ErrnoException).code ?? 'unknown';
+        stderr(`Startup error: cannot listen on port ${serverEnv.port} (${code})\n`);
+      }
+      // Closes the Redis connection too, so nothing keeps the process alive.
+      await server.close().catch(() => undefined);
       return { ok: false, exitCode: 1 };
     }
   } catch (err) {
