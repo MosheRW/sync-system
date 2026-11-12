@@ -228,6 +228,19 @@ describe('CI workflow (AC28, L1, L8)', () => {
     expect(workflow.indexOf('name: Start Redis')).toBeLessThan(workflow.indexOf('run: pnpm test'));
   });
 
+  it('checks the three compose files and gives the check job 25 minutes (#35 AC23, AC31)', () => {
+    const check = workflow.slice(workflow.indexOf('  check:'), workflow.indexOf('  e2e:'));
+    expect(check).toMatch(/timeout-minutes: 25/);
+    const compose = check.slice(check.indexOf('name: Compose files'), check.indexOf('name: Build'));
+    for (const files of [
+      '-f compose.yaml config -q',
+      '-f compose.yaml -f compose.redis.yaml config -q',
+      '-f compose.yaml -f compose.redis.yaml -f compose.multi.yaml config -q',
+    ]) {
+      expect(compose).toContain(`docker compose ${files}`);
+    }
+  });
+
   it('installs from the lockfile, audits, then runs every check', () => {
     const steps = [
       'pnpm install --frozen-lockfile',

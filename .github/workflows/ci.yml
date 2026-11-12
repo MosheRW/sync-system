@@ -15,7 +15,8 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # The several-instance suites (#35 PR 2) need more than the old 15.
+    timeout-minutes: 25
     steps:
       # Actions are pinned to commit SHAs (L8); the comment names the release.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -59,6 +60,14 @@ jobs:
           # redis-required.test.ts fails the run if this is missing (AC31).
           CI: 'true'
           SYNC_TEST_REDIS_URL: redis://:ci-only-redis-password@127.0.0.1:6379
+
+      # The compose files stay valid (#35 AC23, AC31): the default, the Redis
+      # override and the two-instance example.
+      - name: Compose files
+        run: |
+          docker compose -f compose.yaml config -q
+          docker compose -f compose.yaml -f compose.redis.yaml config -q
+          docker compose -f compose.yaml -f compose.redis.yaml -f compose.multi.yaml config -q
 
       - name: Build
         run: pnpm build
