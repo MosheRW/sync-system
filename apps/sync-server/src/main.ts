@@ -4,9 +4,12 @@ import { loadAppsConfigFile } from './config/apps-config.js';
 import { ConfigError } from './config/config-error.js';
 import { checkDevKeys } from './config/dev-key.js';
 import { type EnvSource, parseEnv } from './config/env.js';
+import { parseRedisSettings } from './config/redis.js';
 import { parseTokenSecrets, warnAboutSecrets } from './config/token-secret.js';
 import { type Logger, createLogger } from './logging/logger.js';
 import { type SyncServer, createSyncServer } from './server.js';
+import type { Storage } from './storage/storage.js';
+import { realScheduler } from './time/scheduler.js';
 
 export interface RunIO {
   /** Where startup errors go; defaults to process.stderr. */
@@ -43,11 +46,34 @@ export async function run(env: EnvSource, io: RunIO = {}): Promise<RunResult> {
     // Never stored in ServerEnv and never logged (R4).
     const tokenSecrets = parseTokenSecrets(env, serverEnv.nodeEnv);
     warnAboutSecrets(tokenSecrets, logger);
+    const registry = new AppRegistry(apps);
+    // Never stored in ServerEnv and never logged (#35 security C9).
+    const redis = parseRedisSettings(env);
+    let storage: Storage | undefined;
+    if (redis !== undefined) {
+      const { connectRedis } = await import('./storage/redis/connect.js');
+      const connected = await connectRedis(redis, { logger, nodeEnv: serverEnv.nodeEnv });
+      if (!connected.ok) {
+        stderr(`Startup error: ${connected.message}
+`);
+        return { ok: false, exitCode: 1 };
+      }
+      const { redisStorage } = await import('./storage/redis/redis-storage.js');
+      const byNamespace = new Map(apps.map((app) => [app.namespace, app]));
+      storage = redisStorage({
+        link: connected.link,
+        keyPrefix: redis.keyPrefix,
+        scheduler: realScheduler(),
+        logger,
+        appOf: (namespace) => byNamespace.get(namespace),
+      });
+    }
     server = createSyncServer({
       env: serverEnv,
-      registry: new AppRegistry(apps),
+      registry,
       logger,
       tokenSecrets,
+      ...(storage === undefined ? {} : { storage }),
     });
 
     try {

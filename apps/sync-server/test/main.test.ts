@@ -80,6 +80,31 @@ describe('run', () => {
     expect(stderr).toMatch(/^Config error: .*apps\.json: config file not found/);
   });
 
+  it('prints a Startup error and exits 1 when Redis is unreachable (#35 AC4)', async () => {
+    const port = await freePort();
+    const { result, stderr, logs } = await runCapture({
+      SYNC_CONFIG_PATH: writeConfig(validConfig),
+      REDIS_URL: `redis://SENTINELuser:SENTINEL-redis-pw@127.0.0.1:${port}/2`,
+      REDIS_CONNECT_TIMEOUT_SECONDS: '2',
+    });
+    expect(result).toEqual({ ok: false, exitCode: 1 });
+    expect(stderr).toBe('Startup error: Redis is unreachable (REDIS_URL)\n');
+    expect(logs.text).not.toContain('SENTINEL');
+    expect(logs.text).not.toContain(String(port));
+  });
+
+  it('reports REDIS_* problems as Config error without the URL (#35 AC3)', async () => {
+    const { result, stderr } = await runCapture({
+      SYNC_CONFIG_PATH: writeConfig(validConfig),
+      REDIS_URL: 'http://SENTINELuser:SENTINEL-redis-pw@host',
+      MAX_GROUP_SIZE_CEILING: 'abc',
+    });
+    expect(result).toEqual({ ok: false, exitCode: 1 });
+    expect(stderr).toContain('MAX_GROUP_SIZE_CEILING must be a positive integer');
+    expect(stderr).toContain('REDIS_URL is not a valid redis:// or rediss:// URL');
+    expect(stderr).not.toContain('SENTINEL');
+  });
+
   it('returns exit code 1 for an invalid env variable (AC6)', async () => {
     const { result, stderr } = await runCapture({ MAX_GROUP_SIZE_CEILING: 'abc' });
     expect(result).toEqual({ ok: false, exitCode: 1 });

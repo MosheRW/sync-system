@@ -314,6 +314,7 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
       await new Promise<void>((resolve) => wss.close(() => resolve()));
       // Disconnect handling may have armed timers while sockets closed.
       groups.close();
+      await storage.close();
     },
   };
 }

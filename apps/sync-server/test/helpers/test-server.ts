@@ -5,7 +5,10 @@ import { parseEnv } from '../../src/config/env.js';
 import type { LogLevel } from '../../src/config/env.js';
 import { createLogger } from '../../src/logging/logger.js';
 import { type SyncServer, type SyncServerOptions, createSyncServer } from '../../src/server.js';
+import { redisStorage } from '../../src/storage/redis/redis-storage.js';
+import { realScheduler } from '../../src/time/scheduler.js';
 import { LogCapture } from './log-capture.js';
+import { randomPrefix, testLink } from './redis.js';
 import { TestClient } from './test-client.js';
 
 export const KEY_A = 'test-key-app-a-0123456789-0123456789-abcdef';
@@ -83,6 +86,8 @@ export interface StartOptions extends Partial<
   env?: Record<string, string>;
   apps?: TestAppInput[];
   logLevel?: LogLevel;
+  /** Runs on the test Redis under this key prefix (#35; needs SYNC_TEST_REDIS_URL). */
+  redisPrefix?: string;
 }
 
 export interface TestServer {
@@ -99,7 +104,13 @@ export interface TestServer {
 }
 
 export async function startTestServer(options: StartOptions = {}): Promise<TestServer> {
-  const { env: envOverrides, apps, logLevel, ...rest } = { ...options, ...restartClock(options) };
+  const {
+    env: envOverrides,
+    apps,
+    logLevel,
+    redisPrefix,
+    ...rest
+  } = { ...options, ...restartClock(options) };
   const env = parseEnv({ LOG_LEVEL: logLevel ?? 'trace', ...envOverrides });
   const appInputs = (apps ?? DEFAULT_TEST_APPS).map((app) => ({ minAppVersion: '1.0.0', ...app }));
   const registry = new AppRegistry(parseAppsConfig(JSON.stringify({ apps: appInputs }), env));
@@ -108,7 +119,33 @@ export async function startTestServer(options: StartOptions = {}): Promise<TestS
   // A random per-instance secret unless the test passes its own (#7 L1:
   // createSyncServer itself no longer has a fallback).
   const tokenSecrets = rest.tokenSecrets ?? { current: randomBytes(32), source: 'random' };
-  const server = createSyncServer({ env, registry, logger, ...rest, tokenSecrets });
+  let storage = rest.storage;
+  // SYNC_TEST_STORE=redis runs every server suite on the test Redis (#35 AC1, AC22).
+  const prefix =
+    redisPrefix ??
+    (process.env.SYNC_TEST_STORE === 'redis' && rest.store === undefined
+      ? randomPrefix()
+      : undefined);
+  if (prefix !== undefined && storage === undefined) {
+    const scheduler = rest.scheduler ?? realScheduler(rest.now ?? Date.now);
+    rest.scheduler = scheduler;
+    const byNamespace = new Map(registry.apps().map((app) => [app.namespace, app]));
+    storage = redisStorage({
+      link: await testLink(prefix, logger),
+      keyPrefix: prefix,
+      scheduler,
+      logger,
+      appOf: (namespace) => byNamespace.get(namespace),
+    });
+  }
+  const server = createSyncServer({
+    env,
+    registry,
+    logger,
+    ...rest,
+    ...(storage === undefined ? {} : { storage }),
+    tokenSecrets,
+  });
   const port = await server.listen(0, '127.0.0.1');
   const url = `ws://127.0.0.1:${port}/ws`;
   const clients: TestClient[] = [];

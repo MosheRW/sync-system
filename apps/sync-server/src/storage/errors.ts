@@ -32,3 +32,14 @@ export class StorageInvalidError extends Error {
     this.name = 'StorageInvalidError';
   }
 }
+
+/**
+ * A commit's precondition was false (security C7), e.g. a recreation found
+ * the group stored, ended or the epoch moved: nothing was written.
+ */
+export class StorageConflictError extends Error {
+  constructor(readonly reason: string) {
+    super('storage conflict');
+    this.name = 'StorageConflictError';
+  }
+}

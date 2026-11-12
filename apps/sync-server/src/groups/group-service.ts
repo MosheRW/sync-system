@@ -86,6 +86,7 @@ import {
 } from './group-timers.js';
 import { newGroupId, newParticipantId } from './ids.js';
 import { GroupLock, type UnitOfWorkSource } from './group-lock.js';
+import { StorageConflictError } from '../storage/errors.js';
 import type { Notifier } from './notifier.js';
 import { ParkingLot } from './parking-lot.js';
 import { canSupersede, classifyToken } from './resume.js';
@@ -489,6 +490,20 @@ export class GroupService implements GroupActions {
     if (name === undefined) return errorMessage(ErrorCode.INVALID_MESSAGE);
 
     const groupId = newGroupId();
+    // Under the new group's lock, so the group, its codes and its timers
+    // are stored in one step (#35 ADR 0011).
+    return this.lock.run(app.namespace, groupId, () =>
+      this.createLocked(session, message, groupId, name),
+    );
+  }
+
+  private async createLocked(
+    session: Session,
+    message: GroupCreateMessage,
+    groupId: string,
+    name: NameChoice,
+  ): Promise<ServerMessage> {
+    const { app } = session;
     const initial = await this.joins.initialCodes(app, groupId, message.joinMethods);
     if (!initial.ok) return initial.error;
 
@@ -1121,50 +1136,64 @@ export class GroupService implements GroupActions {
         : sizeError('position', message.position, app.maxMessageBytes));
     if (tooLarge) return tooLarge;
 
-    return this.lock.run(app.namespace, claims.gid, async () => {
-      if (this.busy(session)) return errorMessage(ErrorCode.ALREADY_IN_GROUP);
-      // The entry, the fence and the closure are read under the lock, with
-      // the record, so the classification and a recreation are one step
-      // (#13 RC17).
-      const record = await this.deps.store.get(app.namespace, claims.gid);
-      const status = classifyToken({
-        claims,
-        app,
-        record,
-        ended: await this.deps.ended.has(app.namespace, claims.gid),
-        processStartedAt: this.processStartedAt,
-        recoveryClosed: await this.deps.ended.isRecoveryClosed(app.namespace),
-        now: this.now(),
-        refreshMaxMs: this.deps.refresh.maxMs,
+    return this.lock
+      .run(app.namespace, claims.gid, () => this.resumeLocked(session, claims, message, name))
+      .catch((err: unknown) => {
+        // A recreation whose commit found the group stored or ended (#35 C7).
+        if (err instanceof StorageConflictError) return errorMessage(ErrorCode.GROUP_ENDED);
+        throw err;
       });
-      switch (status) {
-        case 'invalid':
-          return errorMessage(ErrorCode.TOKEN_INVALID);
-        case 'expired':
-          return errorMessage(ErrorCode.TOKEN_EXPIRED);
-        case 'ended':
-          return errorMessage(ErrorCode.GROUP_ENDED);
-        case 'blocked':
-          return errorMessage(ErrorCode.PARTICIPANT_BLOCKED);
-        case 'live':
-          return this.resumeLive(session, record!, claims, message, name);
-        case 'recoverable': {
-          // Slows a stock-up of recreations after a restart (#13 RC20, M5).
-          const rate = this.recreateLimiter.tryAcquire(
-            session.connectionId,
-            RECREATIONS_PER_CONNECTION_PER_MINUTE,
-          );
-          if (!rate.ok) {
-            return actionErrorMessage(ErrorCode.RATE_LIMITED, 'group.resume', {
-              details: { retryAfterMs: rate.retryAfterMs },
-            });
-          }
-          return this.recreate(session, claims, message, name);
-        }
-        case 'waiting':
-          return this.parkMember(session, claims, name);
-      }
+  }
+
+  private async resumeLocked(
+    session: Session,
+    claims: TokenClaims,
+    message: GroupResumeMessage,
+    name: NameChoice,
+  ): Promise<ServerMessage> {
+    const { app } = session;
+    if (this.busy(session)) return errorMessage(ErrorCode.ALREADY_IN_GROUP);
+    // The entry, the fence and the closure are read under the lock, with
+    // the record, so the classification and a recreation are one step
+    // (#13 RC17).
+    const record = await this.deps.store.get(app.namespace, claims.gid);
+    const status = classifyToken({
+      claims,
+      app,
+      record,
+      ended: await this.deps.ended.has(app.namespace, claims.gid),
+      processStartedAt: this.processStartedAt,
+      recoveryClosed: await this.deps.ended.isRecoveryClosed(app.namespace),
+      now: this.now(),
+      refreshMaxMs: this.deps.refresh.maxMs,
     });
+    switch (status) {
+      case 'invalid':
+        return errorMessage(ErrorCode.TOKEN_INVALID);
+      case 'expired':
+        return errorMessage(ErrorCode.TOKEN_EXPIRED);
+      case 'ended':
+        return errorMessage(ErrorCode.GROUP_ENDED);
+      case 'blocked':
+        return errorMessage(ErrorCode.PARTICIPANT_BLOCKED);
+      case 'live':
+        return this.resumeLive(session, record!, claims, message, name);
+      case 'recoverable': {
+        // Slows a stock-up of recreations after a restart (#13 RC20, M5).
+        const rate = this.recreateLimiter.tryAcquire(
+          session.connectionId,
+          RECREATIONS_PER_CONNECTION_PER_MINUTE,
+        );
+        if (!rate.ok) {
+          return actionErrorMessage(ErrorCode.RATE_LIMITED, 'group.resume', {
+            details: { retryAfterMs: rate.retryAfterMs },
+          });
+        }
+        return this.recreate(session, claims, message, name);
+      }
+      case 'waiting':
+        return this.parkMember(session, claims, name);
+    }
   }
 
   /**

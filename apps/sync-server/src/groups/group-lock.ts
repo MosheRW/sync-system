@@ -43,6 +43,14 @@ export const IMMEDIATE_WORK: UnitOfWorkSource = {
   begin: () => NO_WORK,
 };
 
+/** One context for every lock in the process, so a store finds its own unit of work. */
+const tasks = new AsyncLocalStorage<GroupTask>();
+
+/** The locked group task this code runs in, if any (any GroupLock). */
+export function currentGroupTask(): GroupTask | undefined {
+  return tasks.getStore();
+}
+
 function groupKey(namespace: string, groupId: string): string {
   return `${namespace}:${groupId}`;
 }
@@ -56,7 +64,6 @@ function groupKey(namespace: string, groupId: string): string {
  */
 export class GroupLock {
   private readonly locks = new KeyedLock();
-  private readonly context = new AsyncLocalStorage<GroupTask>();
 
   constructor(
     private readonly source: UnitOfWorkSource = IMMEDIATE_WORK,
@@ -74,7 +81,7 @@ export class GroupLock {
 
   /** The locked task this code runs in, if any. */
   current(): GroupTask | undefined {
-    return this.context.getStore();
+    return tasks.getStore();
   }
 
   /**
@@ -99,7 +106,7 @@ export class GroupLock {
     const state: GroupTask = { namespace, groupId, outbox, work };
     let result: T;
     try {
-      result = await this.context.run(state, task);
+      result = await tasks.run(state, task);
     } catch (err) {
       if (this.source.transactional) {
         outbox.drop();
