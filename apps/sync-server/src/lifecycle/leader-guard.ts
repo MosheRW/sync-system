@@ -1,5 +1,6 @@
 import { ErrorCode, type ErrorMessage } from '@sync-system/protocol';
 import type { GroupRecord } from '../groups/group-store.js';
+import type { Recipient } from '../groups/recipients.js';
 import type { Membership, Session } from '../groups/session.js';
 import { type ErrorAction, actionErrorMessage, errorMessage } from '../ws/error-messages.js';
 
@@ -54,6 +55,6 @@ export function isGuardError(value: Membership | ErrorMessage): value is ErrorMe
  * (#13 RC19): a late close of an old socket must not pause or end a group
  * whose participant has already resumed on a new one.
  */
-export function isParticipantConnected(owner: Session | undefined): boolean {
+export function isParticipantConnected(owner: Recipient | undefined): boolean {
   return owner !== undefined && owner.isOpen();
 }

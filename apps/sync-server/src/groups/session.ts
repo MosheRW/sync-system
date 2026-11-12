@@ -33,6 +33,12 @@ import type { AppConfig } from '../apps/app-registry.js';
 export interface Membership {
   readonly groupId: string;
   readonly participantId: string;
+  /**
+   * 16 random bytes (base64url), new on every attach (#35 architecture
+   * 12.3): with several instances, the attachment registry names this
+   * session by it, so a stale session never matches. Never sent or logged.
+   */
+  readonly attachId: string;
 }
 
 /**

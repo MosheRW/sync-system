@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { GroupRecord } from '../src/groups/group-store.js';
+import type { Recipient } from '../src/groups/recipients.js';
 import type { Session } from '../src/groups/session.js';
 import {
   authorizeLeader,
@@ -19,14 +20,14 @@ const plain = { parked: undefined, pendingJoin: undefined };
 
 describe('authorizeLeader (#13 D1, RC1)', () => {
   it('passes the owned leader of the live record', () => {
-    const owned = { groupId: GID, participantId: LEADER };
+    const owned = { groupId: GID, participantId: LEADER, attachId: 'a' };
     expect(
       authorizeLeader({ session: plain, owned, groupId: GID, record: record() }, 'group.end'),
     ).toBe(owned);
   });
 
   it('refuses a member, a former leader and a vice with NOT_LEADER and the action text', () => {
-    const owned = { groupId: GID, participantId: MEMBER };
+    const owned = { groupId: GID, participantId: MEMBER, attachId: 'a' };
     const result = authorizeLeader(
       { session: plain, owned, groupId: GID, record: record() },
       'codes.rotate',
@@ -37,7 +38,7 @@ describe('authorizeLeader (#13 D1, RC1)', () => {
       message: 'Only the leader can rotate the codes',
     });
     // The same participant after a handoff made someone else the leader.
-    const formerLeader = { groupId: GID, participantId: LEADER };
+    const formerLeader = { groupId: GID, participantId: LEADER, attachId: 'a' };
     expect(
       authorizeLeader(
         { session: plain, owned: formerLeader, groupId: GID, record: record(MEMBER) },
@@ -47,14 +48,16 @@ describe('authorizeLeader (#13 D1, RC1)', () => {
   });
 
   it('refuses a parked session and a pending joiner with NOT_LEADER, first', () => {
-    const parked = { parked: { groupKey: 'k', groupId: GID, participantId: LEADER } };
+    const parked = {
+      parked: { groupKey: 'k', groupId: GID, participantId: LEADER, attachId: 'a' },
+    };
     const pending = { pendingJoin: { groupKey: 'k', groupId: GID, requestId: 'r' } };
     for (const session of [parked, pending] as Array<Pick<Session, 'parked' | 'pendingJoin'>>) {
       expect(
         authorizeLeader(
           {
             session,
-            owned: { groupId: GID, participantId: LEADER },
+            owned: { groupId: GID, participantId: LEADER, attachId: 'a' },
             groupId: GID,
             record: record(),
           },
@@ -67,8 +70,16 @@ describe('authorizeLeader (#13 D1, RC1)', () => {
   it('answers NOT_IN_GROUP without an owned membership, for another group, or with no record', () => {
     const cases = [
       { owned: undefined, groupId: GID, record: record() },
-      { owned: { groupId: 'other', participantId: LEADER }, groupId: GID, record: record() },
-      { owned: { groupId: GID, participantId: LEADER }, groupId: GID, record: undefined },
+      {
+        owned: { groupId: 'other', participantId: LEADER, attachId: 'a' },
+        groupId: GID,
+        record: record(),
+      },
+      {
+        owned: { groupId: GID, participantId: LEADER, attachId: 'a' },
+        groupId: GID,
+        record: undefined,
+      },
     ];
     for (const input of cases) {
       const result = authorizeLeader({ session: plain, ...input }, 'blocklist.set');
@@ -80,7 +91,7 @@ describe('authorizeLeader (#13 D1, RC1)', () => {
 describe('isParticipantConnected (#13 RC19)', () => {
   it('is true only for an open owner', () => {
     expect(isParticipantConnected(undefined)).toBe(false);
-    expect(isParticipantConnected({ isOpen: () => false } as Session)).toBe(false);
-    expect(isParticipantConnected({ isOpen: () => true } as Session)).toBe(true);
+    expect(isParticipantConnected({ isOpen: () => false } as Recipient)).toBe(false);
+    expect(isParticipantConnected({ isOpen: () => true } as Recipient)).toBe(true);
   });
 });

@@ -14,6 +14,7 @@ import {
 } from '@sync-system/protocol';
 import type { AppConfig } from '../apps/app-registry.js';
 import type { GroupRecord, GroupStore } from '../groups/group-store.js';
+import type { Recipient, Target } from '../groups/recipients.js';
 import type { Membership, Session } from '../groups/session.js';
 import type { LeaderAction } from '../lifecycle/leader-guard.js';
 import type { NameChoice } from '../lifecycle/roster.js';
@@ -93,9 +94,9 @@ export interface JoinHost {
    * The session that owns the leader's membership (ownership-checked through
    * the notifier, M4), if the leader is attached.
    */
-  leaderOf(record: GroupRecord): Session | undefined;
-  /** Sends `message` to `session` after the replies it is already owed. */
-  deliverLater(session: Session, message: ServerMessage): void;
+  leaderOf(record: GroupRecord): Recipient | undefined;
+  /** Sends `message` to `to` after the replies it is already owed. */
+  deliverLater(to: Target, message: ServerMessage): void;
   /**
    * True while the group admits nobody new: the leader locked it (#13
    * AC29). Read under the group lock.
@@ -479,7 +480,7 @@ export class JoinService {
    * The leader is back (#10 AC21, AC29, AC34): every pending request is
    * re-sent after the reply, and `join.paused` if method A is still paused.
    */
-  async onLeaderReturn(leader: Session, record: GroupRecord): Promise<void> {
+  async onLeaderReturn(leader: Target, record: GroupRecord): Promise<void> {
     const paused = await this.pausedFor(record.appNamespace, record.id);
     if (paused > 0) {
       this.host.deliverLater(leader, {
@@ -561,7 +562,7 @@ export class JoinService {
     record: GroupRecord,
     next: GroupCodes,
     cause: 'leader' | 'member_removed' | 'superseded',
-    leader: Session | undefined,
+    leader: Target | undefined,
   ): Promise<GroupRecord | undefined> {
     const namespace = record.appNamespace;
     const groupId = record.id;
