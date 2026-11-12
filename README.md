@@ -326,6 +326,10 @@ What survives a restart of the sync server, with Redis:
   `disconnectGraceSeconds` after the restart. Deadlines that passed while the
   server was down (max session, keep-alive, frozen end, door-code pause) take
   effect once at startup.
+- A stored group that fails its check at startup (a corrupted or foreign
+  value) does not stop the server: that group alone is ended, its tokens get
+  `GROUP_ENDED` and cannot recreate it, and the server logs
+  `store_document_invalid` without the key or the value.
 - If Redis lost its data (flushed, a new server, no persistence), the server
   notices on the next missing group and recovery by token works exactly as
   after a restart without Redis.
