@@ -21,7 +21,7 @@ Numbering: "item N" means PRD item N of 9, as used in the specs. GitHub issue an
 | 5    | Roles, timers and group lifecycle                                                                                                                        | #13      | #14    | Done (merged 2026-11-05)                    | `docs/issues/13/`                  |
 | 6    | React/Next package with hooks over the core client                                                                                                       | #15      | #16    | Done (merged 2026-11-05)                    | `docs/issues/15/`                  |
 | 7    | Reading app content: content schema v1, fingerprint, RTL and mixed direction, library page and content selection, plus the `apps/reader` app with Docker | #19      | #20    | Done (merged 2026-11-05)                    | `docs/issues/19/`                  |
-| 8    | Reading app sync UX: 8a join and follow (#24); 8b leader views and lifecycle prompts (#25)                                                               | #24, #25 | #26    | 8a done (merged 2026-11-11); 8b not started | `docs/issues/24/`                  |
+| 8    | Reading app sync UX: 8a join and follow (#24); 8b leader views and lifecycle prompts (#25)                                                               | #24, #25 | #26, #31 | Done (8a merged 2026-11-11, 8b merged 2026-11-12) | `docs/issues/24/`, `docs/issues/25/` |
 | 9    | Redis storage, public docs, changelog and release (health endpoint, config errors, semver)                                                               | none yet | none   | Not started                                 | none yet                           |
 
 Scope of items 7-9 is taken from the PRD ("Product 1: the reading app", "Deliverables and operations") and the item 4, 5 and 6 specs, which defer work to them. The scope will be fixed in each item's own spec.
@@ -31,8 +31,9 @@ Scope of items 7-9 is taken from the PRD ("Product 1: the reading app", "Deliver
 - #9 `fix(client): harden forgetAllGroups cut-off against clock skew (follow-up to #7)`: open.
 - #12 `fix(server): limit group creation and live groups per app (follow-up to #10)`: open.
 - #21 `fix(reader): enforce trusted types in the csp (follow-up to #19)`: open. Priority rose with #24 (the reader now holds participant tokens); the #24 e2e CSP-violation check is its test harness (security L7).
-- #27 Hebrew header bidi bugs (follow-up to #19): open.
-- #28 native-speaker review of the Hebrew strings (follow-up to #24): open.
+- #27 Hebrew header bidi bugs (follow-up to #19): open. QA saw it again in 8b (#25).
+- #28 native-speaker review of the Hebrew strings (follow-up to #24): open. The 102 Hebrew strings added in 8b (#25) are in its scope, including the vice-leader term "סגן המוביל".
+- #32 `fix(server): offer take-back only after a handoff loss (follow-up to #25)` (security M1): open.
 
 ## Key accepted decisions
 
@@ -50,11 +51,17 @@ Scope of items 7-9 is taken from the PRD ("Product 1: the reading app", "Deliver
 - Position payload is v1 `{v:1,pageIndex}`: `docs/issues/24/`.
 - A QR ticket goes in the URL fragment and is stripped at startup: `docs/issues/24/`.
 - The reader API key is public; production needs its own registration and per-IP proxy limits (security M1): `docs/issues/24/`.
+- Item 8b adds no new ADRs: `docs/issues/25/architecture.md`.
+- The take-back card shows only after a handoff loss (Q-A2); the server-side fix is #32: `docs/issues/25/STATE.md`.
+- A leader who drops past the grace sees the lost-lead banner, then the take-back card (Q-A1): `docs/issues/25/STATE.md`.
+- The keep-alive run-out is driven by the client countdown, with no server pause event (Gate 1 Gap 2): `docs/issues/25/spec.md`.
+- Notice lifetimes (U8): the pasted QR link notice, the lost-lead banner and "can't take back" stay until dismissed: `docs/issues/25/design.md`.
+- CI for #31 was run locally in Docker in place of GitHub Actions because of a billing block (2026-11-12): `docs/issues/25/STATE.md`.
 
-## Inherited by item 8b (#25)
+## Inherited by item 8b (#25): done
 
-- The 8a design leaves a members slot and a banner slot for the leader views and lifecycle prompts: `docs/issues/24/design.md`.
-- Show a short notice when a QR ticket pasted into an already open tab is ignored (today it is stripped and dropped silently; security R3 / L2): comment on #25, `docs/issues/24/`.
+- Done: 8b used the members slot and the banner slot left by the 8a design: `docs/issues/24/design.md`, `docs/issues/25/design.md`.
+- Done: a short notice shows when a QR ticket pasted into an already open tab is ignored (AC57): `docs/issues/25/spec.md`.
 
 ## Updating this file
 
