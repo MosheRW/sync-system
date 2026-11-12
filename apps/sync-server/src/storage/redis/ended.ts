@@ -6,6 +6,7 @@ import { TIMER_KINDS } from '../../groups/group-timers.js';
 import { MAX_ENDED_GROUPS } from '../../limits/constants.js';
 import type { CommitPlan, CommitResult, RedisContext, RedisWorkSource } from './unit-of-work.js';
 import { PRUNE_ENDED } from './scripts.js';
+import { decodeRegistry, instancesOf } from './attachments.js';
 
 /** Most frequent eviction and closure warning: once per minute each (as in memory). */
 const WARN_INTERVAL_MS = 60_000;
@@ -105,7 +106,12 @@ export class RedisEndedGroups implements EndedGroupsStore {
     lease: HeldLease | undefined,
   ): Promise<void> {
     const { keys } = this.ctx;
-    const raw = await this.ctx.link.send(['GET', keys.group(namespace, groupId)]);
+    const reply = await this.ctx.link.send([
+      'MGET',
+      keys.group(namespace, groupId),
+      keys.attachments(namespace, groupId),
+    ]);
+    const [raw, registryText] = Array.isArray(reply) ? (reply as unknown[]) : [];
     const plan = this.work.plan();
     if (lease !== undefined) plan.eq(lease.key, lease.token, 'lease');
     this.addTo(plan, namespace, groupId, deadline);
@@ -121,6 +127,15 @@ export class RedisEndedGroups implements EndedGroupsStore {
     plan.zrem(keys.live(), keys.liveMember(namespace, groupId));
     plan.del(keys.timers(namespace, groupId));
     for (const kind of TIMER_KINDS) plan.zrem(keys.due(), keys.dueMember(namespace, groupId, kind));
+    // The registry goes; a valid one also names the instance sets to clean
+    // (an invalid one: those sets drop the group when the instance is forgotten).
+    plan.del(keys.attachments(namespace, groupId));
+    const registry = typeof registryText === 'string' ? decodeRegistry(registryText) : 'invalid';
+    if (registry !== 'invalid') {
+      for (const id of instancesOf(registry)) {
+        plan.srem(keys.instanceGroups(id), keys.liveMember(namespace, groupId));
+      }
+    }
     this.warn(await plan.run(this.ctx.link));
   }
 

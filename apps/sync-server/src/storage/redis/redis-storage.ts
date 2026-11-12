@@ -64,6 +64,7 @@ export function redisStorage(options: RedisStorageOptions): Storage {
   const instance = new RedisInstance(ctx, timings, options.monotonic);
   // Security C11: every group-scoped commit requires this instance's liveness.
   ctx.instanceKey = () => instance.liveKey();
+  ctx.instanceId = () => (instance.started ? instance.id : undefined);
   ctx.onFencedAbort = () => instance.fence('fenced');
   const work = new RedisWorkSource(ctx);
   const leases = new RedisLeaseSource(ctx, timings, () => instance.started && instance.fenced());
@@ -94,6 +95,14 @@ export function redisStorage(options: RedisStorageOptions): Storage {
     },
     leases,
     cluster: {
+      host: {
+        selfId: () => work.current()?.instanceId ?? ctx.instanceId?.(),
+        registry: (namespace, groupId) => work.current()?.registry(namespace, groupId),
+        looksLive: (id) => instance.looksLive(id),
+        send(target, effect) {
+          work.current()?.queueRemote(target, effect);
+        },
+      },
       fenced: () => instance.started && instance.fenced(),
       onFence(listener) {
         instance.onFence(() => listener());

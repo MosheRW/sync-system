@@ -8,6 +8,11 @@ import { KeyedLock } from './keyed-lock.js';
  * Redis store buffers the task's writes and commits them in one step.
  */
 export interface UnitOfWork {
+  /**
+   * Reads the task's own group before the task runs (Redis: document,
+   * position and attachment registry in one round trip, #35 12.1 step 3).
+   */
+  preload?(): Promise<void>;
   /** Writes every buffered change at once, or nothing. */
   commit(): Promise<void>;
   /** The task failed or its commit failed: nothing buffered is written. */
@@ -179,6 +184,7 @@ export class GroupLock {
     const state: GroupTask = { namespace, groupId, outbox, work, sessions: new Set(), lease };
     let result: T;
     try {
+      await work.preload?.();
       result = await tasks.run(state, task);
     } catch (err) {
       if (this.source.transactional) {

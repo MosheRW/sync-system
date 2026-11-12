@@ -11,6 +11,7 @@ import { KeyedLock } from '../../groups/keyed-lock.js';
 import { endedRef } from '../../groups/ended-groups.js';
 import { MAX_CLOCK_SKEW_MS } from '../../limits/constants.js';
 import type { DoorState } from '../../joins/door-guard.js';
+import type { RemoteEffect } from '../../groups/remote-effects.js';
 import type { Logger } from '../../logging/logger.js';
 import {
   InstanceFencedError,
@@ -19,6 +20,7 @@ import {
   StorageInvalidError,
 } from '../errors.js';
 import type { RedisLink } from './connect.js';
+import { AttachmentRegistry, decodeRegistry, encodeRegistry, instancesOf } from './attachments.js';
 import { decodeGroup, encodeDocument, encodePosition } from './document.js';
 import type { RedisKeys } from './keys.js';
 import { COMMIT } from './scripts.js';
@@ -38,6 +40,8 @@ export interface RedisContext {
    */
   instanceKey?: () => string | undefined;
   onFencedAbort?: () => void;
+  /** This instance's current ID (several instances); unset without. */
+  instanceId?: () => string | undefined;
 }
 
 /** The instance fence of a commit plan (#35 security C11). */
@@ -127,6 +131,14 @@ export class CommitPlan {
 
   hdel(key: string, field: string): void {
     this.writes.push({ o: 'hdel', k: this.k(key), f: field });
+  }
+
+  sadd(key: string, member: string): void {
+    this.writes.push({ o: 'sadd', k: this.k(key), m: member });
+  }
+
+  srem(key: string, member: string): void {
+    this.writes.push({ o: 'srem', k: this.k(key), m: member });
   }
 
   zadd(key: string, score: number, member: string): void {
@@ -219,6 +231,8 @@ export interface WorkEntry {
   deleted: boolean;
   /** Door state (#10 AC29), stored in the document (#35 AC7). */
   door: DoorState | undefined;
+  /** Who is attached where (#35 architecture 12.6), its own key. */
+  registry: AttachmentRegistry;
 }
 
 function keyOf(namespace: string, groupId: string): string {
@@ -243,13 +257,40 @@ export class RedisUnitOfWork implements UnitOfWork {
   private epochSeen: string | undefined;
   /** The instance this task started as (security C11): its commit requires that liveness. */
   private readonly fence: PlanFence | undefined;
+  /** The instance ID this task acts as: its registry entries name it. */
+  readonly instanceId: string | undefined;
+  /** Effects for participants on other instances, by instance, in queue order (12.7). */
+  readonly remote = new Map<string, RemoteEffect[]>();
 
   constructor(
     readonly ctx: RedisContext,
     /** The group lease this task holds (several instances): checked first by the commit. */
     private readonly lease?: HeldLease,
+    /** The task's own group, read before the task runs. */
+    private readonly home?: { namespace: string; groupId: string },
   ) {
     this.fence = fenceOf(ctx);
+    this.instanceId = ctx.instanceId?.();
+  }
+
+  /** Reads the task's own group with its registry (#35 architecture 12.1 step 3). */
+  async preload(): Promise<void> {
+    if (this.home !== undefined) await this.entry(this.home.namespace, this.home.groupId);
+  }
+
+  /** The group's registry if this work read the group, else undefined. */
+  registry(namespace: string, groupId: string): AttachmentRegistry | undefined {
+    return this.entries.get(keyOf(namespace, groupId))?.registry;
+  }
+
+  /** Queues an effect for a participant on `instance` (sent with the commit, 12.7). */
+  queueRemote(instance: string, effect: RemoteEffect): void {
+    let queue = this.remote.get(instance);
+    if (queue === undefined) {
+      queue = [];
+      this.remote.set(instance, queue);
+    }
+    queue.push(effect);
   }
 
   /** The group's entry, read from Redis on first use. */
@@ -276,6 +317,7 @@ export class RedisUnitOfWork implements UnitOfWork {
       mode: undefined,
       deleted: false,
       door: stored?.door,
+      registry: stored?.registry ?? new AttachmentRegistry(),
     };
     if (stored !== undefined) await this.cache.create(stored.record);
     this.entries.set(keyOf(namespace, groupId), entry);
@@ -335,6 +377,11 @@ export class RedisUnitOfWork implements UnitOfWork {
         plan.del(docKey);
         plan.del(posKey);
         plan.zrem(keys.live(), keys.liveMember(namespace, groupId));
+        // The registry and the instances' group sets go with the group (AC24).
+        plan.del(keys.attachments(namespace, groupId));
+        for (const id of instancesOf(entry.registry.loaded)) {
+          plan.srem(keys.instanceGroups(id), keys.liveMember(namespace, groupId));
+        }
         continue;
       }
       const expiresAt = this.ctx.expiryOf(namespace, record.createdAt);
@@ -360,12 +407,47 @@ export class RedisUnitOfWork implements UnitOfWork {
         plan.extend(keys.epoch(), expiresAt + MAX_CLOCK_SKEW_MS);
       }
       if (entry.mode !== undefined || pos !== entry.posText) plan.set(posKey, pos, expiresAt);
+      this.planRegistry(plan, entry, record, expiresAt);
     }
     const groups: PlanGroups = {
       expiry: (namespace, groupId) => ends.get(keyOf(namespace, groupId)),
     };
     for (const step of this.steps) step(plan, groups);
     return plan;
+  }
+
+  /**
+   * The registry's writes (#35 architecture 12.6). First the invariant: a
+   * pid has an entry only while it is connected in the record (in
+   * `participantIds`, or the online leader). Then `P:a` is written only if
+   * it changed, and each instance's group set gains or loses the group when
+   * its first attachment comes or its last goes.
+   */
+  private planRegistry(
+    plan: CommitPlan,
+    entry: WorkEntry,
+    record: GroupRecord,
+    expiresAt: number,
+  ): void {
+    const { keys } = this.ctx;
+    const { namespace, groupId, registry } = entry;
+    registry.retain((pid) =>
+      pid === record.leaderId ? record.leaderOnline : record.participantIds.includes(pid),
+    );
+    const text = encodeRegistry(registry.current());
+    if (text === registry.text) return;
+    const key = keys.attachments(namespace, groupId);
+    if (text === undefined) plan.del(key);
+    else plan.set(key, text, expiresAt);
+    const before = instancesOf(registry.loaded);
+    const after = instancesOf(registry.current());
+    const member = keys.liveMember(namespace, groupId);
+    for (const id of after) {
+      if (before.has(id)) continue;
+      plan.sadd(keys.instanceGroups(id), member);
+      plan.extend(keys.instanceGroups(id), expiresAt);
+    }
+    for (const id of before) if (!after.has(id)) plan.srem(keys.instanceGroups(id), member);
   }
 
   async commit(): Promise<void> {
@@ -390,12 +472,13 @@ export class RedisUnitOfWork implements UnitOfWork {
   }
 }
 
-/** A group as stored: the record, its door state and the raw texts. */
+/** A group as stored: the record, its door state, its registry and the raw texts. */
 export interface StoredGroupTexts {
   record: GroupRecord;
   door: DoorState | undefined;
   docText: string;
   posText: string;
+  registry: AttachmentRegistry;
 }
 
 /**
@@ -413,8 +496,9 @@ export async function readGroup(
     'MGET',
     keys.group(namespace, groupId),
     keys.position(namespace, groupId),
+    keys.attachments(namespace, groupId),
   ]);
-  const [docText, posText] = Array.isArray(reply) ? (reply as unknown[]) : [];
+  const [docText, posText, regText] = Array.isArray(reply) ? (reply as unknown[]) : [];
   if (docText === null || docText === undefined) return undefined;
   const decoded =
     typeof docText === 'string' && (typeof posText === 'string' || posText === null)
@@ -424,7 +508,17 @@ export async function readGroup(
     ctx.logger.error({ event: 'store_document_invalid' }, 'stored group document is invalid');
     throw new StorageInvalidError();
   }
-  return { ...decoded, docText: docText as string, posText: posText as string };
+  // A missing registry (a PR 1 group) means nobody is known attached (12.8).
+  let registry = new AttachmentRegistry();
+  if (regText !== null && regText !== undefined) {
+    const entries = typeof regText === 'string' ? decodeRegistry(regText) : 'invalid';
+    if (entries === 'invalid') {
+      ctx.logger.error({ event: 'store_document_invalid' }, 'stored registry is invalid');
+      throw new StorageInvalidError();
+    }
+    registry = new AttachmentRegistry(entries, regText as string);
+  }
+  return { ...decoded, docText: docText as string, posText: posText as string, registry };
 }
 
 /**
@@ -440,8 +534,12 @@ export class RedisWorkSource implements UnitOfWorkSource {
 
   constructor(private readonly ctx: RedisContext) {}
 
-  begin(_namespace?: string, _groupId?: string, lease?: HeldLease): RedisUnitOfWork {
-    return new RedisUnitOfWork(this.ctx, lease);
+  begin(namespace?: string, groupId?: string, lease?: HeldLease): RedisUnitOfWork {
+    return new RedisUnitOfWork(
+      this.ctx,
+      lease,
+      namespace === undefined || groupId === undefined ? undefined : { namespace, groupId },
+    );
   }
 
   /**

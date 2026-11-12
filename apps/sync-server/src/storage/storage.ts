@@ -9,6 +9,7 @@ import type { EvictionLogger } from '../groups/ended-groups.js';
 import type { Scheduler } from '../time/scheduler.js';
 import { MemoryDoorStates, MemoryEndedGroups } from './memory/memory-state.js';
 import type { EpochSource } from './redis/epoch.js';
+import type { ClusterHost } from '../groups/cluster-notifier.js';
 
 /** What `SyncServer.storage()` reports (#35 AC27). */
 export type StorageStatus =
@@ -16,6 +17,8 @@ export type StorageStatus =
 
 /** Several instances on one Redis (#35 architecture 12). */
 export interface StorageCluster {
+  /** Registry resolution and remote effects for the group layer (12.6, 12.7). */
+  readonly host: ClusterHost;
   /** This instance must not act now (security C11: the synchronous guard). */
   fenced(): boolean;
   /**

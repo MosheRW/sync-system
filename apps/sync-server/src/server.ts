@@ -6,6 +6,7 @@ import type { AppRegistry } from './apps/app-registry.js';
 import { GroupService } from './groups/group-service.js';
 import type { GroupStore } from './groups/group-store.js';
 import { LocalNotifier } from './groups/notifier.js';
+import { ClusterNotifier } from './groups/cluster-notifier.js';
 import type { ServerEnv } from './config/env.js';
 import { ConfigError } from './config/config-error.js';
 import { MIN_TOKEN_SECRET_BYTES, type TokenSecrets } from './config/token-secret.js';
@@ -189,6 +190,7 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
     env.qrTicketSecondsCeiling,
   );
   const codesBlobs = new CodesBlobService(new TokenKeyring(tokenSecrets, CODES_BLOB_INFO_PREFIX));
+  const notifier = new LocalNotifier();
   const groups = new GroupService({
     store: storage.groups,
     ...(storage.epoch === undefined ? {} : { epoch: storage.epoch }),
@@ -200,7 +202,10 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
     work: storage.work,
     ...(storage.leases === undefined ? {} : { leases: storage.leases }),
     ...(storage.cluster === undefined ? {} : { fenced: () => storage.cluster!.fenced() }),
-    notifier: new LocalNotifier(),
+    notifier,
+    ...(storage.cluster === undefined
+      ? {}
+      : { cluster: new ClusterNotifier(notifier, storage.cluster.host) }),
     logger,
     rateLimiter: new SlidingWindowRateLimiter(now),
     tokens,

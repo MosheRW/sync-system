@@ -75,8 +75,12 @@ describeRedis('an invalid stored group frees its join codes (#39, security C17)'
         record: { codes: { groupCode: broken.codes.groupCode, alphaCode: other.codes.alphaCode } },
       }),
     );
+    // The group had an attachment registry too (security C17).
+    const registryKey = `${base}:a:app-a:${broken.groupId}`;
+    expect(await inspect.client.exists(registryKey)).toBe(1);
     const second = await start();
     expect(second.logs.find('startup_sweep')).toMatchObject({ groups: 2, invalid: 1 });
+    expect(await inspect.client.exists(registryKey)).toBe(0);
     expect(await inspect.client.get(own)).toBeNull();
     expect(await inspect.client.get(foreign)).toBe(other.groupId);
     expect(await inspect.client.get(`${base}:c:app-a:g:${other.codes.groupCode}`)).toBe(

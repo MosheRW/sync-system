@@ -122,7 +122,8 @@ end
  * Checks: `absent` (key must not exist), `exists` (key must exist: this
  * instance's liveness, security C11), `eq` (GET must equal `v`).
  * Writes: `set` (SET PX), `setnx` (SET NX), `del`, `deleq`
- * (compare-and-delete), `hset`, `hdel`, `zadd`, `zrem`, `zremif` (only
+ * (compare-and-delete), `hset`, `hdel`, `sadd`, `srem` (the groups of an
+ * instance), `zadd`, `zrem`, `zremif` (only
  * while the score is still `s`), `keep` (PEXPIRE if the key exists),
  * `extend` (a shared key's expiry only moves later; a key without one gets
  * it), `remember` (an ended group, see ENDED_FUNCTIONS), `consume` (a fired
@@ -166,6 +167,10 @@ for _, w in ipairs(spec.w) do
     redis.call('HSET', k, w.f, w.v)
   elseif o == 'hdel' then
     redis.call('HDEL', k, w.f)
+  elseif o == 'sadd' then
+    redis.call('SADD', k, w.m)
+  elseif o == 'srem' then
+    redis.call('SREM', k, w.m)
   elseif o == 'zadd' then
     redis.call('ZADD', k, w.s, w.m)
   elseif o == 'zrem' then

@@ -100,7 +100,14 @@ import {
 } from '../storage/errors.js';
 import type { EpochSource } from '../storage/redis/epoch.js';
 import type { Notifier } from './notifier.js';
-import { LocalRecipient, type Recipient, type Target, isRecipient } from './recipients.js';
+import {
+  LocalRecipient,
+  type Recipient,
+  RemoteRecipient,
+  type Target,
+  isRecipient,
+} from './recipients.js';
+import type { ClusterNotifier } from './cluster-notifier.js';
 import { ParkingLot } from './parking-lot.js';
 import { canSupersede, classifyToken } from './resume.js';
 import { nextTerm } from '../lifecycle/succession.js';
@@ -160,6 +167,11 @@ export interface GroupServiceDeps {
   leases?: LeaseSource;
   /** The synchronous instance guard (#35 security C11). */
   fenced?: () => boolean;
+  /**
+   * Several instances (#35 architecture 12.6): who owns a membership comes
+   * from the group's attachment registry, read under the lease.
+   */
+  cluster?: ClusterNotifier;
 }
 
 /**
@@ -618,7 +630,11 @@ export class GroupService implements GroupActions {
    */
   private refreshLeader(record: GroupRecord, pid: string, at: number): void {
     const leader = this.recipientOf(record, pid);
-    if (leader !== undefined) leader.refresh(at);
+    if (leader instanceof RemoteRecipient) {
+      // The refresher runs where the leader's actions are counted.
+      this.refresher.clear(groupKey(record.appNamespace, record.id));
+      leader.refresh(at);
+    } else if (leader !== undefined) leader.refresh(at);
     else this.startRefresh(record.appNamespace, record.id, at);
   }
 
@@ -667,22 +683,36 @@ export class GroupService implements GroupActions {
     return this.deps.scheduler.now();
   }
 
-  /** The session's membership if the session still owns it in the notifier (M4). */
+  /**
+   * The session's membership if the session still owns it (M4). Locally
+   * that is the notifier; inside a task of its group with several
+   * instances, the registry read under the lease decides too: the local
+   * check alone may only deny (#35 security C14).
+   */
   private owned(session: Session): Membership | undefined {
     const membership = session.membership;
     if (membership === undefined) return undefined;
-    const key = membershipKey(session.app.namespace, membership.groupId, membership.participantId);
-    return this.deps.notifier.get(key) === session ? membership : undefined;
+    const namespace = session.app.namespace;
+    const key = membershipKey(namespace, membership.groupId, membership.participantId);
+    if (this.deps.notifier.get(key) !== session) return undefined;
+    if (this.deps.cluster === undefined) return membership;
+    const task = this.lock.current();
+    if (task === undefined || task.groupId !== membership.groupId) return membership;
+    const owner = this.recipient(namespace, membership.groupId, membership.participantId);
+    return owner instanceof LocalRecipient && owner.session === session ? membership : undefined;
   }
 
   /** Attaches `session` as `participantId` of the group, with a new attach ID. */
   private attach(session: Session, groupId: string, participantId: string): void {
     this.touch(session);
-    session.membership = { groupId, participantId, attachId: newAttachId() };
+    const attachId = newAttachId();
+    session.membership = { groupId, participantId, attachId };
     this.deps.notifier.register(
       membershipKey(session.app.namespace, groupId, participantId),
       session,
     );
+    // Several instances: the registry names this instance and attach ID (12.6).
+    this.deps.cluster?.attached(session.app.namespace, groupId, participantId, attachId);
   }
 
   /**
@@ -690,8 +720,20 @@ export class GroupService implements GroupActions {
    * architecture 12.6), or undefined when nobody is attached as `pid`.
    */
   private recipient(namespace: string, groupId: string, pid: string): Recipient | undefined {
-    const session = this.deps.notifier.get(membershipKey(namespace, groupId, pid));
-    return session === undefined ? undefined : this.localRecipient(session, groupId, pid);
+    const cluster = this.deps.cluster;
+    if (cluster === undefined) {
+      const session = this.deps.notifier.get(membershipKey(namespace, groupId, pid));
+      return session === undefined ? undefined : this.localRecipient(session, groupId, pid);
+    }
+    const resolved = cluster.resolve(namespace, groupId, pid);
+    if (resolved === undefined) return undefined;
+    if (resolved.kind === 'local') return this.localRecipient(resolved.session, groupId, pid);
+    return new RemoteRecipient(namespace, groupId, pid, resolved.instance, resolved.attachId, {
+      send: (instance, effect) => cluster.host.send(instance, effect),
+      forget: (participantId, attachId) =>
+        cluster.detached(namespace, groupId, participantId, attachId),
+      looksLive: (instance) => cluster.host.looksLive(instance),
+    });
   }
 
   private localRecipient(session: Session, groupId: string, pid: string): LocalRecipient {
@@ -714,6 +756,9 @@ export class GroupService implements GroupActions {
    */
   private detachLocal(session: Session, groupId: string, pid: string): void {
     this.touch(session);
+    if (session.membership?.groupId === groupId) {
+      this.deps.cluster?.detached(session.app.namespace, groupId, pid, session.membership.attachId);
+    }
     this.deps.notifier.unregister(membershipKey(session.app.namespace, groupId, pid), session);
     if (session.membership?.groupId === groupId) session.membership = undefined;
   }
@@ -2149,7 +2194,10 @@ export class GroupService implements GroupActions {
       .run(namespace, groupId, async () => {
         // #13 RC19: the participant resumed on a new socket before this close
         // was handled; that session owns the membership, so nothing changes.
-        if (isParticipantConnected(this.recipient(namespace, groupId, participantId))) return;
+        // Attached elsewhere (another instance's session owns it) or anew
+        // here: nothing changes (M4).
+        const owner = this.recipient(namespace, groupId, participantId);
+        if (owner instanceof RemoteRecipient || isParticipantConnected(owner)) return;
         const record = await this.deps.store.get(namespace, groupId);
         if (record === undefined) return;
         // The role is read from the live record, never from the session (#13 D1).

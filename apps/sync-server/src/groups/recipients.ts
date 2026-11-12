@@ -1,3 +1,4 @@
+import type { RemoteEffect } from './remote-effects.js';
 import type { Session } from './session.js';
 
 /** Why a participant's session loses its membership. */
@@ -84,5 +85,72 @@ export class LocalRecipient implements Recipient {
 
   refresh(at: number): void {
     this.host.refreshLocal(this.groupId, at);
+  }
+}
+
+/** What a remote recipient needs (#35 architecture 12.6, 12.7). */
+export interface RemoteRecipientHost {
+  /** Sends `effect` to the participant's instance with the task's commit. */
+  send(instance: string, effect: RemoteEffect): void;
+  /** The registry entry `attachId` of `pid` goes (in the task's commit). */
+  forget(pid: string, attachId: string): void;
+  /** Whether the instance looked alive at the last renewal (a hint). */
+  looksLive(instance: string): boolean;
+}
+
+/**
+ * A participant attached to another instance (#35 architecture 12.6):
+ * every frame and detach becomes a remote effect for that instance, sent in
+ * the task's commit, applied there only to the session with this attach ID.
+ */
+export class RemoteRecipient implements Recipient {
+  constructor(
+    readonly namespace: string,
+    readonly groupId: string,
+    readonly pid: string,
+    readonly instance: string,
+    readonly attachId: string,
+    private readonly host: RemoteRecipientHost,
+  ) {}
+
+  isOpen(): boolean {
+    return this.host.looksLive(this.instance);
+  }
+
+  send(text: string, later: boolean): void {
+    this.host.send(this.instance, {
+      op: 'deliver',
+      ns: this.namespace,
+      gid: this.groupId,
+      pid: this.pid,
+      att: this.attachId,
+      text,
+      later,
+    });
+  }
+
+  detach(reason: DetachReason, text?: string, close?: number): void {
+    this.host.forget(this.pid, this.attachId);
+    this.host.send(this.instance, {
+      op: 'detach',
+      ns: this.namespace,
+      gid: this.groupId,
+      pid: this.pid,
+      att: this.attachId,
+      reason,
+      ...(text === undefined ? {} : { text }),
+      ...(close === 4004 ? { close: 4004 as const } : {}),
+    });
+  }
+
+  refresh(at: number): void {
+    this.host.send(this.instance, {
+      op: 'refresh',
+      ns: this.namespace,
+      gid: this.groupId,
+      pid: this.pid,
+      att: this.attachId,
+      at,
+    });
   }
 }
