@@ -308,10 +308,12 @@ export class GroupService implements GroupActions {
     kind: TimerKind,
     handler: (app: AppConfig, groupId: string, data: TimerData | undefined) => Promise<void>,
   ): void {
-    this.timers.on(kind, (namespace, groupId, data) => {
+    this.timers.on(kind, (namespace, groupId, data, claim) => {
       const app = this.deps.appOf(namespace);
-      if (app === undefined) return;
-      this.runTimer(namespace, groupId, () => handler(app, groupId, data));
+      this.runTimer(namespace, groupId, async () => {
+        claim?.();
+        if (app !== undefined) await handler(app, groupId, data);
+      });
     });
   }
 

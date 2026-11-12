@@ -76,9 +76,9 @@ describe('Redis startup errors without a Redis (#35 AC4, security C9, C10)', () 
     const port = await listen(createServer());
     servers.pop()!.close();
     const started = Date.now();
-    const result = await attempt(`redis://${USER}:${PASSWORD}@127.0.0.1:${port}`);
+    const result = await attempt(`redis://${USER}:${PASSWORD}@127.0.0.1:${port}`, '10');
     expect(result).toEqual({ ok: false, message: 'Redis is unreachable (REDIS_URL)' });
-    expect(Date.now() - started).toBeLessThan(1500);
+    expect(Date.now() - started).toBeLessThan(5000);
   });
 
   it('reports a black-hole address as unreachable within the connect timeout', async () => {

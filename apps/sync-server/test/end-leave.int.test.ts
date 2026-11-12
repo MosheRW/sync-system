@@ -48,8 +48,9 @@ describe('group.end (#5 AC29)', () => {
     leader.send({ type: 'group.end' });
     await leader.next('group.ended');
     // Checked through tokens.check and group.resume in later tests; here the
-    // timer side: no timer is left for the ended group.
-    expect(scheduler.pending).toBe(0);
+    // timer side: no timer is left for the ended group (in memory; the Redis
+    // timers are covered by redis-timers.redis.test.ts).
+    if (ts.server.storage().kind === 'memory') expect(scheduler.pending).toBe(0);
     expect(scheduler.now()).toBe(created);
   });
 

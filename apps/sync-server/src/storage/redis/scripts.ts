@@ -124,7 +124,8 @@ end
  * (compare-and-delete), `hset`, `hdel`, `zadd`, `zrem`, `zremif` (only
  * while the score is still `s`), `keep` (PEXPIRE if the key exists),
  * `extend` (a shared key's expiry only moves later; a key without one gets
- * it), `remember` (an ended group, see ENDED_FUNCTIONS).
+ * it), `remember` (an ended group, see ENDED_FUNCTIONS), `consume` (a fired
+ * timer: removed from the due set and its hash only while still leased).
  * Returns `{'ok', evicted, closedNamespaces}` (the ended-groups warnings).
  */
 export const COMMIT = new LuaScript(
@@ -179,6 +180,12 @@ for _, w in ipairs(spec.w) do
     end
   elseif o == 'remember' then
     remember(w, now)
+  elseif o == 'consume' then
+    local s = redis.call('ZSCORE', k, w.m)
+    if s and tonumber(s) == tonumber(w.s) then
+      redis.call('ZREM', k, w.m)
+      redis.call('HDEL', KEYS[w.h], w.f)
+    end
   else
     return redis.error_reply('ERR unknown write')
   end
@@ -238,4 +245,36 @@ for i = 1, #fields, 2 do
   if untilAt ~= nil and untilAt <= now then redis.call('HDEL', cl, fields[i]) end
 end
 return dropped
+`);
+
+/**
+ * Claims due timers (#35 ADR 0013): every member of the due set with a
+ * score at or before `now` whose timer still exists gets the lease end as
+ * its score; members whose group's timer hash entry is gone are dropped,
+ * and live-group members past their end bound too (F13). KEYS: due, live;
+ * ARGV: timer hash key base, now, lease end, batch size. Returns
+ * `{member, timerJson, ...}`. Hash keys are built from members of the due
+ * set, which only ever hold checked `ns:gid:kind` members.
+ */
+export const CLAIM_DUE = new LuaScript(`
+local due, live = KEYS[1], KEYS[2]
+local tp, now, lease, limit = ARGV[1], ARGV[2], ARGV[3], tonumber(ARGV[4])
+redis.call('ZREMRANGEBYSCORE', live, '-inf', '(' .. now)
+local out = {}
+for _, m in ipairs(redis.call('ZRANGEBYSCORE', due, '-inf', now, 'LIMIT', 0, limit)) do
+  local i = string.find(m, ':[^:]*$')
+  if i == nil then
+    redis.call('ZREM', due, m)
+  else
+    local data = redis.call('HGET', tp .. string.sub(m, 1, i - 1), string.sub(m, i + 1))
+    if not data then
+      redis.call('ZREM', due, m)
+    else
+      redis.call('ZADD', due, 'XX', lease, m)
+      table.insert(out, m)
+      table.insert(out, data)
+    end
+  end
+end
+return out
 `);

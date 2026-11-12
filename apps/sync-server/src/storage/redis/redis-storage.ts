@@ -9,6 +9,7 @@ import { RedisDoorStates } from './doors.js';
 import { RedisEndedGroups } from './ended.js';
 import { RedisGroupStore } from './group-store.js';
 import { RedisKeys } from './keys.js';
+import { RedisTimerBackend } from './timers.js';
 import { type RedisContext, RedisWorkSource } from './unit-of-work.js';
 
 const MINUTE_MS = 60_000;
@@ -44,9 +45,16 @@ export function redisStorage(options: RedisStorageOptions): Storage {
   const ctx = redisContext(options);
   const work = new RedisWorkSource(ctx);
   const memory = memoryStorage({ scheduler: options.scheduler, logger: options.logger });
+  const timers = new RedisTimerBackend(ctx, work, options.scheduler);
   return {
     ...memory,
     kind: 'redis',
+    timers,
+    async start() {
+      // Deadlines that passed while the server was down take effect once (AC12).
+      await timers.runDue();
+      timers.startPolling();
+    },
     groups: new RedisGroupStore(ctx, work),
     codes: new RedisCodeIndex(ctx, work),
     ended: new RedisEndedGroups(ctx, work, options.logger, options.endedGroupsCap),

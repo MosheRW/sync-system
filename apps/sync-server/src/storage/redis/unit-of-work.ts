@@ -108,6 +108,18 @@ export class CommitPlan {
     this.writes.push({ o: 'zremif', k: this.k(key), m: member, s: String(score) });
   }
 
+  /** A fired timer is done, unless it was armed again or claimed anew. */
+  consume(due: string, member: string, lease: number, hash: string, field: string): void {
+    this.writes.push({
+      o: 'consume',
+      k: this.k(due),
+      m: member,
+      s: String(lease),
+      h: this.k(hash),
+      f: field,
+    });
+  }
+
   keep(key: string, expiresAt: number): void {
     this.writes.push({ o: 'keep', k: this.k(key), x: this.ttl(expiresAt) });
   }
@@ -145,6 +157,12 @@ export class CommitPlan {
   }
 }
 
+/** The groups of a commit as the steps see them. */
+export interface PlanGroups {
+  /** The group's end bound E if it is stored after this commit, else undefined. */
+  expiry(namespace: string, groupId: string): number | undefined;
+}
+
 /** One group as the unit of work knows it. */
 export interface WorkEntry {
   readonly namespace: string;
@@ -175,7 +193,7 @@ export class RedisUnitOfWork implements UnitOfWork {
   readonly cache = new InMemoryGroupStore();
   private readonly entries = new Map<string, WorkEntry>();
   private readonly loading = new Map<string, Promise<WorkEntry>>();
-  private readonly steps: Array<(plan: CommitPlan) => void> = [];
+  private readonly steps: Array<(plan: CommitPlan, groups: PlanGroups) => void> = [];
   private readonly abandoned: Array<() => Promise<void>> = [];
   private readonly committed: Array<(result: CommitResult) => void> = [];
 
@@ -228,7 +246,7 @@ export class RedisUnitOfWork implements UnitOfWork {
   }
 
   /** Adds writes to this commit (codes, timers, ended groups), in call order. */
-  addStep(step: (plan: CommitPlan) => void): void {
+  addStep(step: (plan: CommitPlan, groups: PlanGroups) => void): void {
     this.steps.push(step);
   }
 
@@ -246,6 +264,7 @@ export class RedisUnitOfWork implements UnitOfWork {
   async plan(): Promise<CommitPlan> {
     const plan = new CommitPlan(this.ctx.now());
     const { keys } = this.ctx;
+    const ends = new Map<string, number>();
     for (const entry of this.entries.values()) {
       const { namespace, groupId } = entry;
       const docKey = keys.group(namespace, groupId);
@@ -259,6 +278,7 @@ export class RedisUnitOfWork implements UnitOfWork {
         continue;
       }
       const expiresAt = this.ctx.expiryOf(namespace, record.createdAt);
+      ends.set(keyOf(namespace, groupId), expiresAt);
       const doc = encodeDocument(record, entry.door);
       const pos = encodePosition(record);
       if (entry.mode !== undefined) plan.absent(docKey, 'exists');
@@ -269,7 +289,10 @@ export class RedisUnitOfWork implements UnitOfWork {
       }
       if (entry.mode !== undefined || pos !== entry.posText) plan.set(posKey, pos, expiresAt);
     }
-    for (const step of this.steps) step(plan);
+    const groups: PlanGroups = {
+      expiry: (namespace, groupId) => ends.get(keyOf(namespace, groupId)),
+    };
+    for (const step of this.steps) step(plan, groups);
     return plan;
   }
 

@@ -136,13 +136,15 @@ describe('leader return (#5 AC19)', () => {
     const group = await createGroupWithMembers(ts, 1);
     await group.leader.close();
     await group.members[0]!.next('leader.offline');
-    // Max session, frozen end and the grace end (#13 6.4).
-    expect(scheduler.pending).toBe(3);
+    // Max session, frozen end and the grace end (#13 6.4). Counted in memory;
+    // Redis keeps one local wake-up (redis-timers.redis.test.ts).
+    const memory = ts.server.storage().kind === 'memory';
+    if (memory) expect(scheduler.pending).toBe(3);
     const { client: back } = await resumeWith(ts, group.leaderToken);
     group.leader = back;
     await group.members[0]!.next('leader.online');
     // Max session and the leader's keep-alive prompt (#13 6.3); no frozen end.
-    expect(scheduler.pending).toBe(2);
+    if (memory) expect(scheduler.pending).toBe(2);
     // The leader stays active, so no keep-alive pause comes in between (#13).
     scheduler.advance(15 * MINUTE);
     group.leader.send({ type: 'leader.activity' });

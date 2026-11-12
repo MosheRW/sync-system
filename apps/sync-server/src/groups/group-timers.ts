@@ -21,19 +21,31 @@ export interface TimerData {
   readonly at: number;
 }
 
-/** Runs a due timer. Handlers take the group lock and re-read the group: a timer may be stale. */
+/**
+ * Runs a due timer. Handlers take the group lock and re-read the group: a
+ * timer may be stale. `claim`, when given, must run inside the handler's
+ * locked task: it marks the stored timer done in that task's commit.
+ */
 export type TimerHandler = (
   namespace: string,
   groupId: string,
   data: TimerData | undefined,
+  claim?: () => void,
+) => void;
+
+/** How a backend fires a due timer. */
+export type TimerFire = (
+  namespace: string,
+  groupId: string,
+  kind: TimerKind,
+  data: TimerData | undefined,
+  claim?: () => void,
 ) => void;
 
 /** Where timers live: `setTimeout` in memory, a due set in Redis (#35 ADR 0013). */
 export interface TimerBackend {
   /** Starts calling `fire` for due timers. */
-  start(
-    fire: (namespace: string, groupId: string, kind: TimerKind, data?: TimerData) => void,
-  ): void;
+  start(fire: TimerFire): void;
   arm(namespace: string, groupId: string, kind: TimerKind, at: number, data?: TimerData): void;
   clear(namespace: string, groupId: string, kind: TimerKind): void;
   clearGroup(namespace: string, groupId: string): void;
@@ -60,8 +72,7 @@ function keyOf(namespace: string, groupId: string): string {
  */
 export class MemoryTimerBackend implements TimerBackend {
   private readonly groups = new Map<string, MemoryEntry>();
-  private fire: (namespace: string, groupId: string, kind: TimerKind, data?: TimerData) => void =
-    () => undefined;
+  private fire: TimerFire = () => undefined;
 
   constructor(private readonly scheduler: Scheduler) {}
 
@@ -69,9 +80,7 @@ export class MemoryTimerBackend implements TimerBackend {
     return this.groups.size;
   }
 
-  start(
-    fire: (namespace: string, groupId: string, kind: TimerKind, data?: TimerData) => void,
-  ): void {
+  start(fire: TimerFire): void {
     this.fire = fire;
   }
 
@@ -132,8 +141,10 @@ export class GroupTimers {
   private readonly handlers = new Map<TimerKind, TimerHandler>();
 
   constructor(private readonly backend: TimerBackend) {
-    backend.start((namespace, groupId, kind, data) => {
-      this.handlers.get(kind)?.(namespace, groupId, data);
+    backend.start((namespace, groupId, kind, data, claim) => {
+      const handler = this.handlers.get(kind);
+      if (handler !== undefined) handler(namespace, groupId, data, claim);
+      else this.orphan?.(namespace, groupId, claim);
     });
   }
 
@@ -141,6 +152,9 @@ export class GroupTimers {
   get size(): number {
     return this.backend.size;
   }
+
+  /** Called for a due timer of a kind without a handler (it is only marked done). */
+  orphan: ((namespace: string, groupId: string, claim?: () => void) => void) | undefined;
 
   /** Registers the handler of `kind` (once, at construction of the services). */
   on(kind: TimerKind, handler: TimerHandler): void {

@@ -1,6 +1,28 @@
 import { describe, expect, it } from 'vitest';
+import { GroupLock } from '../src/groups/group-lock.js';
 import { GroupTimers, MemoryTimerBackend } from '../src/groups/group-timers.js';
+import { timerBackendContract } from './contracts/timers.js';
 import { ManualScheduler } from './helpers/manual-scheduler.js';
+
+timerBackendContract('memory', {
+  make: () => {
+    const scheduler = new ManualScheduler(1_000_000);
+    const timers = new GroupTimers(new MemoryTimerBackend(scheduler));
+    const lock = new GroupLock();
+    return Promise.resolve({
+      timers,
+      inTask: (step: () => void | Promise<void>) =>
+        lock.run('app-a', 'T'.repeat(43), async () => {
+          await step();
+        }),
+      advance: async (ms: number) => {
+        scheduler.advance(ms);
+        await new Promise((resolve) => setImmediate(resolve));
+      },
+      now: () => scheduler.now(),
+    });
+  },
+});
 
 function setup() {
   const scheduler = new ManualScheduler(0);

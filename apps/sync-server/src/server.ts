@@ -277,7 +277,8 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
     httpServer,
     stats: () => counter.snapshot(),
     storage: () => storage.status(),
-    listen(listenPort, host) {
+    async listen(listenPort, host) {
+      await storage.start();
       return new Promise((resolve, reject) => {
         const onError = (err: Error) => {
           httpServer.off('listening', onListening);

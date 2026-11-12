@@ -28,6 +28,11 @@ export interface Storage {
   readonly timers: TimerBackend;
   readonly work: UnitOfWorkSource;
   status(): StorageStatus;
+  /**
+   * Runs before the server listens (Redis: past-due timers, then the timer
+   * poll, #35 AC12). The group service exists by then.
+   */
+  start(): Promise<void>;
   /** Releases connections (Redis). Stored data stays. */
   close(): Promise<void>;
 }
@@ -55,6 +60,7 @@ export function memoryStorage(options: MemoryStorageOptions): Storage {
     timers: new MemoryTimerBackend(scheduler),
     work: IMMEDIATE_WORK,
     status: () => ({ kind: 'memory' }),
+    start: () => Promise.resolve(),
     close: () => Promise.resolve(),
   };
 }
