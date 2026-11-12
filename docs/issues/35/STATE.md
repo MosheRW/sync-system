@@ -1,8 +1,15 @@
 # State: #35 feat: redis storage with restart survival and several instances (PRD item 9a)
 - Path: full
-- Phase: ready-to-merge
-- Branch: feat/35-redis-docs-release
-- PR: #38 (ready)
+- Phase: architecture (PR 2)
+- Branch: feat/35-redis-multi-instance
+- PR: none yet (PR 2 draft to come; PR 1 #38 merged 2026-11-12 as 46f4af3)
+- Plan approved by user: no (PR 2 plan revision needs its own Gate 2; PR 1 plan approved 2026-11-12)
+- Review rounds: 0 (for PR 2; PR 1 had 2)
+- Last updated by: pm
+- Issue #35 stays open after PR 1 (`Refs #35`); board card moved back to In Progress.
+
+## PR 1 (#38, merged 2026-11-12)
+- Final PR 1 state: ready-to-merge, branch feat/35-redis-docs-release, PR #38 merged as 46f4af3, review rounds 2. Entries below are PR 1 history (the Review rounds and Last updated lines below are PR 1's).
 - Spec approved at Gate 1: yes (2026-11-12, with the edits below)
 - Gate 1 decisions (2026-11-12): all recommended defaults accepted except Q1, Q3, Q4 and Q13.
   - Q1: user's 3-way split: 9a #35 = all Redis storage (restart survival, server-side block lists, several instances; AC1-AC32; the architect may plan it as two PRs on this issue), 9b #36 = health, readiness and config errors (AC33-AC42), 9c #37 = docs, changelog, release (AC43-AC56). Order 9a, 9b, 9c.
@@ -63,6 +70,7 @@
 - qa validate (round 2): opus (rule: round 2) → PASS
 - security code (round 2, delta): opus (rule) → PASS (1 low L4 → follow-up #39, 1 info)
 - pm follow-up issue: sonnet (default) → DONE (#39)
+- pm update (PR #38 merge): sonnet (default: mechanical doc update) → DONE
 ## Open questions
 - Follow-up #39 (security round 2 L4, user decision at Gate 3, 2026-11-12): `fix(storage): delete join-code keys when an invalid stored group ends at startup`; not in PR #38; may be folded into PR 2 of #35.
 - 9a Gate 2: Q-A1 two PRs, Q-A2 TTL slack 5 s, Q-A3 restart grace for running pauses, Q-A4 PR 1 body Refs vs Closes, Q-A5 approvals in PR 2, Q-A6 eviction policy warning; ADRs 0010-0014 (architecture.md section 18).
