@@ -152,6 +152,24 @@ describe('CI workflow (AC28, L1, L8)', () => {
     expect(workflow).not.toContain('secrets.');
   });
 
+  it('runs the Redis suites against a pinned, loopback, password-only Redis (#35 AC31, F15)', () => {
+    const start = workflow.slice(
+      workflow.indexOf('name: Start Redis'),
+      workflow.indexOf('name: Audit'),
+    );
+    expect(start).toMatch(/redis:7\.2\.\d+-alpine@sha256:[0-9a-f]{64}/);
+    expect(start).toContain('-p 127.0.0.1:6379:6379');
+    expect(start).toContain('--requirepass ci-only-redis-password');
+    expect(start).toContain('--save "" --appendonly no');
+    const test = workflow.slice(
+      workflow.indexOf('run: pnpm test'),
+      workflow.indexOf('name: Build'),
+    );
+    expect(test).toContain('SYNC_TEST_REDIS_URL: redis://:ci-only-redis-password@127.0.0.1:6379');
+    expect(test).toMatch(/CI: 'true'/);
+    expect(workflow.indexOf('name: Start Redis')).toBeLessThan(workflow.indexOf('run: pnpm test'));
+  });
+
   it('installs from the lockfile, audits, then runs every check', () => {
     const steps = [
       'pnpm install --frozen-lockfile',
