@@ -8,7 +8,7 @@ Scope: PRD item 9 of 9. **Split agreed at Gate 1 (2026-11-12, Q1):**
 | --- | --- | --- | --- | --- |
 | **9a** Redis storage | Optional Redis store: restart survival, server-side block lists, several instances on one Redis, Redis config validation and startup errors | **#35 (this issue)** | AC1-AC32 (32) | first |
 | **9b** Health and config errors | `/health` storage kind and server version, `GET /ready`, review of all config and env validation, startup-error list with fixes | #36 | AC33-AC42 (10) | second |
-| **9c** Public docs, changelog, release | Docs in the repo and a GitHub wiki, versioning policy, changelog, license, packages under `@mosherw`, server image, release process without GitHub Actions | #37 | AC43-AC56 (14) | third |
+| **9c** Public docs, changelog, release | Docs in the repo (Markdown, no wiki), versioning policy, changelog, license, packages under `@mosherw`, server image, release process without GitHub Actions | #37 | AC43-AC56 (14) | third |
 
 The acceptance criteria for all three sub-items are numbered once, so the numbers stay stable in #36 and #37. 9a is large: 32 criteria, and it combines restart survival with distributed concurrency. **The architect decides at Gate 2 whether to plan it as two PRs on this issue and branch** (for example, one PR for the store and restart survival, then one for several instances).
 
@@ -138,7 +138,7 @@ Docs
   - the wire protocol v1 reference
   - the client API and the React API
   - an integration guide that walks through the reading app as the worked example
-- [ ] AC44. The same docs appear in the repo's GitHub wiki (Q13). The repo Markdown is the source of truth, and a documented sync step produces the wiki pages from it.
+- AC44. Withdrawn (2026-11-12, Q19): no GitHub wiki for now. The numbering is kept so other documents' AC references stay valid. The repo Markdown is the only docs location; a wiki may be reconsidered later.
 - [ ] AC45. The env reference lists every server env variable with its default, minimum and maximum. A test fails if a variable in the code is missing from the reference or its values differ.
 - [ ] AC46. The PRD open question on default values and env ceilings is answered by the documented v1 defaults and ceilings. The phone-lock question is closed with the #24 Gate 2 answer (a 30 s lock works when `disconnectGraceSeconds` is 45 or more). The PRD and `docs/roadmap.md` record both (Q14).
 
@@ -152,21 +152,21 @@ Versioning and changelog
 - [ ] AC49. A changelog made with Changesets (Q6), with the protocol, client and React packages in one fixed version group. The first entry summarises v1 and includes notes for anyone who ran pre-release builds: the removal of join by group ID (#10), token format 2 (#13) and the `MAX_BUFFERED_BYTES` minimum.
 
 Packages, license and release
-- [ ] AC50. The protocol, client and React packages are published under the `@mosherw` npm scope (exact names per the 9c Gate 1 question Q16). They are no longer `private`, and carry the license, repository and public-access fields. Their published contents are only the build output, README, changelog and license (a check runs `pnpm pack` and lists the tarball contents).
+- [ ] AC50. The protocol, client and React packages are published under the `@mosherw` npm scope (three packages: `@mosherw/sync-system-protocol`, `@mosherw/sync-system-client` and `@mosherw/sync-system-react`; Q16 decided 2026-11-12). They are no longer `private`, and carry the license, repository and public-access fields. Their published contents are only the build output, README, changelog and license (a check runs `pnpm pack` and lists the tarball contents).
 - [ ] AC51. A smoke test installs the packed tarballs into a clean temporary project, then imports each package (ESM), type-checks against its types, and renders the React provider on the server (SSR safety, #15).
 - [ ] AC52. The server ships as a Docker image tagged with its semver, in the registry chosen in 9c's Gate 1 (Q17). The reader and the server stay `private` on npm.
 - [ ] AC53. The license is GPL-3.0 with SPDX identifier `GPL-3.0-only` (Q3):
   - The full text is in a root `LICENSE` file and in each published package.
   - Every `package.json` has `"license": "GPL-3.0-only"`.
   - The docs state that the GPL also covers the client and React packages. An app that bundles them and ships that bundle (including browser bundles) is bound by the GPL's terms.
-- [ ] AC54. A release process document (for example `RELEASING.md`) gives the steps to release from a clean clone inside a `node:24` Docker container, without GitHub Actions: checks, version bump, changelog, tag, `pnpm publish`, image push, wiki sync, and GitHub release notes. A dry run of those steps (no publish, no push) succeeds, and QA runs it.
-- [ ] AC55. Agents never publish packages, push images, push to the wiki repo (`<repo>.wiki.git`) or create releases. The plan ends at a release candidate on the branch, and the human runs or approves each outward step after the merge.
+- [ ] AC54. A release process document (for example `RELEASING.md`) gives the steps to release from a clean clone inside a `node:24` Docker container, without GitHub Actions: checks, version bump, changelog, tag, `pnpm publish`, image push, and GitHub release notes. A dry run of those steps (no publish, no push) succeeds, and QA runs it.
+- [ ] AC55. Agents never publish packages, push images or create releases. The plan ends at a release candidate on the branch, and the human runs or approves each outward step after the merge.
 - [ ] AC56. CI as in AC31, with the pack and smoke checks added to `ci.yml`.
 
 ## Out of scope
 
 - Any reader UI change (no designer phase).
-- A hosted offering, self-service app registration, and a docs-site generator (Q13 chose repo Markdown plus the wiki).
+- A hosted offering, self-service app registration, and a docs-site generator (Q13 chose repo Markdown only; no wiki for now, Q19).
 - Persisting anything beyond a group's life (PRD), session history, analytics.
 - Redis Cluster or Sentinel topologies: a single Redis endpoint only (Q5).
 - Global connection or rate limits across instances (Q12): a possible follow-up.
@@ -188,7 +188,7 @@ The user accepted every recommended default except Q1, Q3, Q4 and Q13, which wer
   - The user may relicense to MIT later. That stays simple only while the user is the sole copyright holder: after outside contributions it needs every contributor's consent, or a contributor agreement in place before they contribute.
   - The GPL also binds apps that bundle the client and React packages.
   - It is the GPL, not the AGPL: running a modified server as a network service does not require offering its source.
-- **Q4. Registries and repo visibility (changed, partly open):** the packages are published under the user's npm scope `@mosherw` (`@mosherw/sync-system`), not `@sync-system`. The exact package names, the server image registry and the repo visibility are open for 9c's own Gate 1 (Q16-Q18).
+- **Q4. Registries and repo visibility (changed, partly open):** the packages are published under the user's npm scope `@mosherw` (`@mosherw/sync-system`), not `@sync-system`. The package names are decided (Q16: `@mosherw/sync-system-protocol`, `-client` and `-react`, 2026-11-12). The server image registry and the repo visibility stay open for 9c's own Gate 1 (Q17, Q18).
 - **Q5. Redis client (accepted):** the official `redis` (node-redis), loaded only when configured; Redis 7.2+ and Valkey; a single endpoint. Confirmed by an ADR at Gate 2.
 - **Q6. Changelog tooling (accepted):** Changesets, with protocol, client and React in one fixed version group.
 - **Q7. Versions (accepted):** 1.0.0 for everything; protocol version 1, minimum 1.
@@ -197,7 +197,9 @@ The user accepted every recommended default except Q1, Q3, Q4 and Q13, which wer
 - **Q10. Error when storage is unavailable (accepted):** an existing retryable code if one fits, otherwise a new one before the first release (AC26).
 - **Q11. Health and readiness (accepted):** `/health` stays liveness and adds the storage kind and server version, plus a new `GET /ready` (9b: AC33-AC35).
 - **Q12. Limits across instances (accepted):** per instance, documented (AC22).
-- **Q13. Docs format (changed):** Markdown in the repo and a GitHub wiki (AC43, AC44). The details are open for 9c's Gate 1 (Q18, Q19).
+- **Q13. Docs format (changed twice):** Markdown in the repo; no wiki for now (AC43; AC44 withdrawn). A wiki may be reconsidered later.
+- **Q16. Package names (decided 2026-11-12):** three packages, `@mosherw/sync-system-protocol`, `@mosherw/sync-system-client` and `@mosherw/sync-system-react`.
+- **Q19. Wiki (decided 2026-11-12):** no GitHub wiki for now; docs are Markdown in the repo only.
 - **Q14. PRD open questions (accepted):** AC46.
 - **Q15. Parked follow-ups (accepted):** #32, #12 (after 9a, so its counters are written for Redis once) and #21 are fixed as their own issues before 9c. #9, #27 and #28 don't block the release.
 
@@ -210,7 +212,6 @@ The user accepted every recommended default except Q1, Q3, Q4 and Q13, which wer
 - Q20. Unknown env variables. Recommended: at startup, warn (don't fail) about set variables that look like the server's own but aren't known (a likely typo, such as `MAX_GROUP_SIZE_CIELING`). This needs a naming rule to tell which variables are the server's. Alternative: no check.
 
 ### 9c (#37): for its own Gate 1
-- Q16. Package names under `@mosherw`. Recommended: three packages, `@mosherw/sync-system-protocol`, `@mosherw/sync-system-client` and `@mosherw/sync-system-react`: separate versions and dependencies, and React apps only pull React. Alternative: one package `@mosherw/sync-system` with subpath exports (`/protocol`, `/client`, `/react`), where React becomes an optional peer dependency.
+- Q16 and Q19 are decided (see Decisions). Still open:
 - Q17. Server image registry. Recommended: GitHub Container Registry (`ghcr.io/mosherw/sync-system-server`). Alternative: Docker Hub.
-- Q18. Repo visibility. Recommended: make the repo public at the first release, so that the docs links, the `repository` field and the wiki work for users. Alternative: keep it private. Then the wiki needs a paid GitHub plan, and npm users can't follow the source links.
-- Q19. Wiki source and publishing. Recommended: the repo Markdown is the source of truth, and a script copies it into a local clone of `<repo>.wiki.git` (renaming files and links for the wiki). The human reviews and pushes that clone as an outward step, like `npm publish`. Hand edits in the wiki are overwritten at the next sync. Note that a wiki on a private repo needs a paid plan or the repo going public (Q18). Alternative: the wiki as the source, with the repo docs generated from it (not recommended: wiki edits bypass review).
+- Q18. Repo visibility. Recommended: make the repo public at the first release, so that the docs links and the `repository` field work for users. Alternative: keep it private. Then npm users can't follow the source links. (The paid-plan/wiki argument no longer applies, since there is no wiki, Q19.)

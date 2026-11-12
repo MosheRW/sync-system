@@ -59,8 +59,8 @@ Scope of items 7-9 is taken from the PRD ("Product 1: the reading app", "Deliver
 - CI for #31 was run locally in Docker in place of GitHub Actions because of a billing block (2026-11-12): `docs/issues/25/STATE.md`.
 - Item 9 was split at Gate 1 (2026-11-12) into 9a Redis storage including several instances (#35, AC1-AC32), 9b health, readiness and config errors (#36, AC33-AC42) and 9c docs, changelog and release (#37, AC43-AC56), run in that order: `docs/issues/35/spec.md`.
 - License: GPL-3.0, SPDX `GPL-3.0-only`; it also covers the client and React packages; a later relicense to MIT stays simple only while the user is the sole copyright holder (Q3): `docs/issues/35/spec.md`.
-- Packages are published under the user's npm scope `@mosherw` (`@mosherw/sync-system`), not `@sync-system`; exact names, image registry and repo visibility are 9c Gate 1 questions (Q4): `docs/issues/35/spec.md`.
-- Docs: Markdown in the repo plus a GitHub wiki; the source of truth and wiki publishing are 9c Gate 1 questions (Q13): `docs/issues/35/spec.md`.
+- Packages are published under the user's npm scope `@mosherw` (three packages `@mosherw/sync-system-protocol`, `@mosherw/sync-system-client` and `@mosherw/sync-system-react` (Q4, Q16); image registry and repo visibility are 9c Gate 1 questions (Q17, Q18): `docs/issues/35/spec.md`.
+- Docs: Markdown in the repo only; no GitHub wiki for now, may be reconsidered later (Q13, Q19): `docs/issues/35/spec.md`.
 - Item 9 defaults accepted at Gate 1: Redis client `redis` (node-redis, ADR at Gate 2), Changesets with one fixed version group, first release 1.0.0 with protocol version 1 (minimum 1), a full grace after a restart, per-instance limits, `/health` liveness plus `GET /ready`; #32, #12 and #21 are fixed before 9c: `docs/issues/35/spec.md`.
 
 ## Inherited by item 8b (#25): done
