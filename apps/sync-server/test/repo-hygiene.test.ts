@@ -220,6 +220,38 @@ describe('README documents the lifecycle (#13 AC4, AC38, RC14)', () => {
     }
   });
 
+  it('documents every REDIS_* variable and the one-instance limit (#35 AC32, AC6 interim)', () => {
+    const readme = read('README.md');
+    const table = readme.slice(
+      readme.indexOf('### Environment variables'),
+      readme.indexOf('### Storage (Redis)'),
+    );
+    for (const name of [
+      'REDIS_URL',
+      'REDIS_KEY_PREFIX',
+      'REDIS_CONNECT_TIMEOUT_SECONDS',
+      'REDIS_COMMAND_TIMEOUT_MS',
+    ]) {
+      expect(table, name).toContain(`| \`${name}\``);
+    }
+    const storage = readme
+      .slice(readme.indexOf('### Storage (Redis)'), readme.indexOf('### Joining'))
+      .replace(/\s+/g, ' ');
+    for (const text of [
+      'One instance only, for now.',
+      'one sync server per Redis key prefix',
+      'noeviction',
+      'No persistence',
+      'ACL SETUSER',
+      'Startup error: Redis is unreachable (REDIS_URL)',
+      '`1001`',
+      'HTTP 503',
+      'Limits stay per instance',
+    ]) {
+      expect(storage, text).toContain(text);
+    }
+  });
+
   it('states the token rules after #13: no lifelong take-back, supersede kills stale codes', () => {
     const readme = read('README.md').replace(/\s+/g, ' ');
     // Before #13 any leader token could take the lead back until the end.
