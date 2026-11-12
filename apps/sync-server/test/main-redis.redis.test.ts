@@ -9,6 +9,7 @@ import { afterEach, expect, it } from 'vitest';
 import { run } from '../src/main.js';
 import type { SyncServer } from '../src/server.js';
 import { LogCapture } from './helpers/log-capture.js';
+import { waitUntil } from './helpers/wait.js';
 import { TEST_REDIS_URL, describeRedis, inspector, randomPrefix } from './helpers/redis.js';
 
 const TOKEN_SECRET = 'SENTINEL-tok-8f3Kq2Lp9Zx7Vb4Nm1Rt6Yw0Ue5Io3Aa';
@@ -159,7 +160,8 @@ describeRedis('run() with REDIS_URL (#35 AC2, AC4, AC27)', () => {
         expect(stderr).not.toContain(secret);
         expect(logs.text).not.toContain(secret);
       }
-      expect(await user.connections()).toBe(0);
+      // The server closes the link; Redis drops the client soon after.
+      await waitUntil(async () => (await user.connections()) === 0, 5000, 'link closed');
       // Nothing listens on the port.
       await new Promise<void>((resolve, reject) => {
         const probe = createServer();
