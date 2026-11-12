@@ -38,6 +38,7 @@ import {
 import type { AppConfig } from '../apps/app-registry.js';
 import { jsonByteLength } from '../limits/json-size.js';
 import {
+  END_TTL_SLACK_MS,
   MAX_CLOCK_SKEW_MS,
   RECREATIONS_PER_CONNECTION_PER_MINUTE,
   RECREATION_WINDOW_MS,
@@ -73,7 +74,9 @@ import {
 import { LeaderControls } from '../lifecycle/leader-controls.js';
 import { LifecycleService, pauseOnWire } from '../lifecycle/lifecycle-service.js';
 import { type GroupRecord, type GroupStore, connectedCount } from './group-store.js';
-import type { EndedGroups } from './ended-groups.js';
+import type { EndedGroupsStore } from './ended-groups.js';
+import type { CodeIndexStore } from '../joins/code-index.js';
+import type { DoorStateStore } from '../joins/door-guard.js';
 import {
   GroupTimers,
   MemoryTimerBackend,
@@ -82,7 +85,7 @@ import {
   type TimerKind,
 } from './group-timers.js';
 import { newGroupId, newParticipantId } from './ids.js';
-import { GroupLock } from './group-lock.js';
+import { GroupLock, type UnitOfWorkSource } from './group-lock.js';
 import type { Notifier } from './notifier.js';
 import { ParkingLot } from './parking-lot.js';
 import { canSupersede, classifyToken } from './resume.js';
@@ -102,8 +105,12 @@ export interface GroupServiceDeps {
   tokens: TokenService;
   /** Leader token refresh policy (#5 AC12); `maxMs` is also the recovery slack (Q10). */
   refresh: RefreshPolicy;
-  /** Groups that ended in this process (Q8). */
-  ended: EndedGroups;
+  /** Groups that ended (Q8), in memory or in Redis (#35 AC13). */
+  ended: EndedGroupsStore;
+  /** Code -> group lookup (#10 D1, #35 AC7). */
+  codes: CodeIndexStore;
+  /** Door-code failure state (#10 AC29, #35 AC7). */
+  doors: DoorStateStore;
   /**
    * When this process started, from the injected clock, read before any
    * token was issued (#13 6.9 layer 2). Defaults to the clock at
@@ -120,6 +127,8 @@ export interface GroupServiceDeps {
   appOf: (namespace: string) => AppConfig | undefined;
   /** Where group timers live; defaults to `setTimeout` on the scheduler. */
   timerBackend?: TimerBackend;
+  /** The storage's unit of work (#35 ADR 0011); defaults to the in-memory one. */
+  work?: UnitOfWorkSource;
 }
 
 /**
@@ -197,7 +206,8 @@ export class GroupService implements GroupActions {
   private readonly processStartedAt: number;
 
   constructor(private readonly deps: GroupServiceDeps) {
-    this.lock = new GroupLock();
+    this.lock = new GroupLock(deps.work);
+    this.timers = new GroupTimers(deps.timerBackend ?? new MemoryTimerBackend(deps.scheduler));
     this.joins = new JoinService(
       {
         store: deps.store,
@@ -206,6 +216,10 @@ export class GroupService implements GroupActions {
         qrTickets: deps.qrTickets,
         codesBlobs: deps.codesBlobs,
         ...(deps.codeRandom === undefined ? {} : { random: deps.codeRandom }),
+        codes: deps.codes,
+        doors: deps.doors,
+        timers: this.timers,
+        groupExpiry: (namespace, createdAt) => this.groupExpiry(namespace, createdAt),
       },
       {
         busy: (session) => this.busy(session),
@@ -247,7 +261,6 @@ export class GroupService implements GroupActions {
       deps.logger,
     );
     this.processStartedAt = deps.processStartedAt ?? deps.scheduler.now();
-    this.timers = new GroupTimers(deps.timerBackend ?? new MemoryTimerBackend(deps.scheduler));
     this.lifecycle = new LifecycleService({
       store: deps.store,
       timers: this.timers,
@@ -277,6 +290,7 @@ export class GroupService implements GroupActions {
     this.onTimer('frozenEnd', (app, groupId) => this.onFrozenEnd(app, groupId));
     this.onTimer('keepAlivePrompt', (app, groupId) => this.lifecycle.onPrompt(app, groupId));
     this.onTimer('keepAliveDeadline', (app, groupId) => this.lifecycle.onDeadline(app, groupId));
+    this.onTimer('doorPauseEnd', (app, groupId) => this.joins.pauseEnded(app.namespace, groupId));
     this.onTimer('grace', (app, groupId, data) =>
       data === undefined
         ? Promise.resolve()
@@ -313,9 +327,14 @@ export class GroupService implements GroupActions {
     this.joins.close();
   }
 
-  /** Number of indexed join codes in every app. For tests only. */
-  get codeCount(): number {
-    return this.joins.index.size;
+  /**
+   * The latest a group created at `createdAt` can live: its max-session
+   * deadline plus the slack its end needs (#35 AC24, Gate 2 Q-A2).
+   */
+  private groupExpiry(namespace: string, createdAt: number): number {
+    const app = this.deps.appOf(namespace);
+    if (app === undefined) return createdAt + END_TTL_SLACK_MS;
+    return createdAt + app.maxSessionMinutes * MINUTE_MS + END_TTL_SLACK_MS;
   }
 
   /**
@@ -470,7 +489,7 @@ export class GroupService implements GroupActions {
     if (name === undefined) return errorMessage(ErrorCode.INVALID_MESSAGE);
 
     const groupId = newGroupId();
-    const initial = this.joins.initialCodes(app, groupId, message.joinMethods);
+    const initial = await this.joins.initialCodes(app, groupId, message.joinMethods);
     if (!initial.ok) return initial.error;
 
     const participantId = newParticipantId();
@@ -508,7 +527,7 @@ export class GroupService implements GroupActions {
     try {
       await this.deps.store.create(record);
     } catch (err) {
-      this.joins.releaseCodes(app.namespace, groupId, initial.codes);
+      await this.joins.releaseCodes(app.namespace, groupId, initial.codes);
       throw err;
     }
     this.armMaxSession(app, record);
@@ -909,9 +928,9 @@ export class GroupService implements GroupActions {
         claims,
         app,
         record: await this.deps.store.get(app.namespace, claims.gid),
-        ended: this.deps.ended.has(app.namespace, claims.gid),
+        ended: await this.deps.ended.has(app.namespace, claims.gid),
         processStartedAt: this.processStartedAt,
-        recoveryClosed: this.deps.ended.isRecoveryClosed(app.namespace),
+        recoveryClosed: await this.deps.ended.isRecoveryClosed(app.namespace),
         now,
         refreshMaxMs: this.deps.refresh.maxMs,
       });
@@ -1112,9 +1131,9 @@ export class GroupService implements GroupActions {
         claims,
         app,
         record,
-        ended: this.deps.ended.has(app.namespace, claims.gid),
+        ended: await this.deps.ended.has(app.namespace, claims.gid),
         processStartedAt: this.processStartedAt,
-        recoveryClosed: this.deps.ended.isRecoveryClosed(app.namespace),
+        recoveryClosed: await this.deps.ended.isRecoveryClosed(app.namespace),
         now: this.now(),
         refreshMaxMs: this.deps.refresh.maxMs,
       });
@@ -1221,7 +1240,7 @@ export class GroupService implements GroupActions {
     // The roster, then pending approval requests and a running pause, are
     // sent after the reply (#13 AC31, #10 AC21, AC29, AC34).
     this.deliverLater(session, this.rosterSnapshot(updated));
-    this.joins.onLeaderReturn(session, updated);
+    await this.joins.onLeaderReturn(session, updated);
     this.deps.logger.info(
       { event: 'group_resumed', namespace, groupRef: groupRef(record.id), recreated: false },
       'leader resumed',
@@ -1249,7 +1268,7 @@ export class GroupService implements GroupActions {
     const now = this.now();
     // The same codes if the leader's blob is valid and every code is free,
     // else a full new set; CODES_EXHAUSTED recreates nothing (#10 AC33).
-    const initial = this.joins.restoreCodes(app, claims.gid, message.joinCodes);
+    const initial = await this.joins.restoreCodes(app, claims.gid, claims.gct, message.joinCodes);
     if (!initial.ok) return initial.error;
     // A new roster: names are not in tokens (#13 AC36, AC37).
     const roster = admitToRoster(EMPTY_ROSTER, claims.pid, name, now);
@@ -1299,7 +1318,7 @@ export class GroupService implements GroupActions {
       nextGuestNumber: roster.nextGuestNumber,
     };
     if ((await this.deps.store.createIfAbsent(record)) === 'exists') {
-      this.joins.releaseCodes(namespace, claims.gid, initial.codes);
+      await this.joins.releaseCodes(namespace, claims.gid, initial.codes);
       // Impossible under the in-process lock; with a shared store, the token
       // is classified again against the group someone else just recreated
       // (#13 L9, RC15): another pid never gets a leader return.
@@ -1389,7 +1408,7 @@ export class GroupService implements GroupActions {
     const namespace = app.namespace;
     const now = this.now();
     const stale = record.leaderId;
-    const codes = this.joins.supersedeCodes(record, message.joinCodes);
+    const codes = await this.joins.supersedeCodes(record, message.joinCodes);
     if (codes === 'exhausted') return errorMessage(ErrorCode.CODES_EXHAUSTED);
 
     // Step 1: the requester's list, as given (the stale list never applies to it).
@@ -1471,7 +1490,7 @@ export class GroupService implements GroupActions {
         codes: this.joins.payload(current),
       });
     }
-    this.joins.onLeaderReturn(session, current);
+    await this.joins.onLeaderReturn(session, current);
     for (const pid of current.participantIds) {
       if (pid === claims.pid || pid === stale) continue;
       const member = this.sessionOf(current, pid);
@@ -1878,13 +1897,17 @@ export class GroupService implements GroupActions {
   }
 
   /** Clears every per-group structure; frees the group's join codes (#10 AC11). */
-  private forgetGroup(namespace: string, groupId: string, record: GroupRecord | undefined): void {
+  private async forgetGroup(
+    namespace: string,
+    groupId: string,
+    record: GroupRecord | undefined,
+  ): Promise<void> {
     const key = groupKey(namespace, groupId);
     this.deps.rateLimiter.forget(key);
     this.controls.forgetGroup(namespace, groupId);
     this.timers.clearGroup(namespace, groupId);
     this.refresher.clear(key);
-    this.joins.onGroupGone(namespace, groupId, record);
+    await this.joins.onGroupGone(namespace, groupId, record);
   }
 
   /**
@@ -1914,7 +1937,7 @@ export class GroupService implements GroupActions {
       return;
     }
     await this.deps.store.delete(namespace, groupId);
-    this.forgetGroup(namespace, groupId, record);
+    await this.forgetGroup(namespace, groupId, record);
     // Remembered until its max-session deadline, as a hashed ref only (Q8),
     // for every end including `empty` (#13 D15). A group recreated in this
     // process gets a guard: its pre-restart leader tokens are not covered
@@ -1929,9 +1952,10 @@ export class GroupService implements GroupActions {
               this.processStartedAt +
                 app.inactivityLimitMinutes * MINUTE_MS +
                 this.deps.refresh.maxMs +
-                MAX_CLOCK_SKEW_MS,
+                END_TTL_SLACK_MS,
+              MAX_CLOCK_SKEW_MS,
             );
-      this.deps.ended.remember(namespace, groupId, deadline, guardUntil);
+      await this.deps.ended.remember(namespace, groupId, deadline, guardUntil);
     }
     const keys = (record?.participantIds ?? []).map((id) => membershipKey(namespace, groupId, id));
     let notified = 0;

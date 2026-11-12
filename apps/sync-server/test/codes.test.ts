@@ -77,25 +77,25 @@ describe('nextGeneration (D4, R3)', () => {
 });
 
 describe('issueCodeSet (AC6-AC9, D12)', () => {
-  it('issues exactly the codes of the methods and claims them', () => {
+  it('issues exactly the codes of the methods and claims them', async () => {
     const index = new CodeIndex();
-    const a = issueCodeSet(index, 'app-a', GID, ['A', 'D'], 0, NOW) as GroupCodes;
+    const a = (await issueCodeSet(index, 'app-a', GID, ['A', 'D'], 0, NOW)) as GroupCodes;
     expect(a.groupCode).toMatch(GROUP_CODE_PATTERN);
     expect(a.doorCode).toMatch(GROUP_CODE_PATTERN);
     expect(a.doorCode).not.toBe(a.groupCode);
     expect(a.alphaCode).toBeUndefined();
-    expect(index.lookup('app-a', 'group', a.groupCode!)).toBe(GID);
+    expect(await index.lookup('app-a', 'group', a.groupCode!)).toBe(GID);
 
-    const b = issueCodeSet(index, 'app-a', GID2, ['B'], 0, NOW) as GroupCodes;
+    const b = (await issueCodeSet(index, 'app-a', GID2, ['B'], 0, NOW)) as GroupCodes;
     expect(b.groupCode).toMatch(GROUP_CODE_PATTERN);
     expect(b.doorCode).toBeUndefined();
 
-    const c = issueCodeSet(index, 'app-b', GID, ['C', 'D'], 0, NOW) as GroupCodes;
+    const c = (await issueCodeSet(index, 'app-b', GID, ['C', 'D'], 0, NOW)) as GroupCodes;
     expect(c.alphaCode).toMatch(ALPHA_CODE_PATTERN);
     expect(c.groupCode).toBeUndefined();
-    expect(index.lookup('app-b', 'alpha', c.alphaCode!)).toBe(GID);
+    expect(await index.lookup('app-b', 'alpha', c.alphaCode!)).toBe(GID);
 
-    const d = issueCodeSet(index, 'app-b', GID2, ['D'], 0, NOW) as GroupCodes;
+    const d = (await issueCodeSet(index, 'app-b', GID2, ['D'], 0, NOW)) as GroupCodes;
     expect(d).toEqual({
       generation: NOW,
       ticketGeneration: NOW,
@@ -105,52 +105,77 @@ describe('issueCodeSet (AC6-AC9, D12)', () => {
     });
   });
 
-  it('sets the ticket generation to the new code generation (D12)', () => {
+  it('sets the ticket generation to the new code generation (D12)', async () => {
     const index = new CodeIndex();
-    const first = issueCodeSet(index, 'app-a', GID, ['A'], 0, NOW) as GroupCodes;
+    const first = (await issueCodeSet(index, 'app-a', GID, ['A'], 0, NOW)) as GroupCodes;
     expect(first.ticketGeneration).toBe(first.generation);
-    const second = issueCodeSet(index, 'app-a', GID, ['A'], first.generation, NOW) as GroupCodes;
+    const second = (await issueCodeSet(
+      index,
+      'app-a',
+      GID,
+      ['A'],
+      first.generation,
+      NOW,
+    )) as GroupCodes;
     expect(second.generation).toBe(NOW + 1);
     expect(second.ticketGeneration).toBe(second.generation);
   });
 
-  it('redraws a taken code and keeps the same code free in another app (AC9)', () => {
+  it('redraws a taken code and keeps the same code free in another app (AC9)', async () => {
     const index = new CodeIndex();
-    index.claim('app-a', GID2, { groupCode: '000007' });
-    const codes = issueCodeSet(index, 'app-a', GID, ['B'], 0, NOW, sequence(7, 8)) as GroupCodes;
+    await index.claim('app-a', GID2, { groupCode: '000007' });
+    const codes = (await issueCodeSet(
+      index,
+      'app-a',
+      GID,
+      ['B'],
+      0,
+      NOW,
+      sequence(7, 8),
+    )) as GroupCodes;
     expect(codes.groupCode).toBe('000008');
-    const other = issueCodeSet(index, 'app-b', GID, ['B'], 0, NOW, () => 7) as GroupCodes;
+    const other = (await issueCodeSet(index, 'app-b', GID, ['B'], 0, NOW, () => 7)) as GroupCodes;
     expect(other.groupCode).toBe('000007');
   });
 
-  it('treats the group own current codes as taken, so a new set replaces every code', () => {
+  it('treats the group own current codes as taken, so a new set replaces every code', async () => {
     const index = new CodeIndex();
-    index.claim('app-a', GID, { groupCode: '000007' });
-    const codes = issueCodeSet(index, 'app-a', GID, ['B'], 0, NOW, sequence(7, 9)) as GroupCodes;
+    await index.claim('app-a', GID, { groupCode: '000007' });
+    const codes = (await issueCodeSet(
+      index,
+      'app-a',
+      GID,
+      ['B'],
+      0,
+      NOW,
+      sequence(7, 9),
+    )) as GroupCodes;
     expect(codes.groupCode).toBe('000009');
   });
 
-  it('gives up after MAX_CODE_DRAWS taken draws and claims nothing (CODES_EXHAUSTED)', () => {
+  it('gives up after MAX_CODE_DRAWS taken draws and claims nothing (CODES_EXHAUSTED)', async () => {
     const index = new CodeIndex();
-    index.claim('app-a', GID2, { groupCode: '000007', alphaCode: '22222222' });
+    await index.claim('app-a', GID2, { groupCode: '000007', alphaCode: '22222222' });
     let draws = 0;
     const always7: RandomInt = () => {
       draws += 1;
       return 7;
     };
-    expect(issueCodeSet(index, 'app-a', GID, ['A'], 0, NOW, always7)).toBe('exhausted');
+    expect(await issueCodeSet(index, 'app-a', GID, ['A'], 0, NOW, always7)).toBe('exhausted');
     expect(draws).toBe(MAX_CODE_DRAWS);
-    expect(issueCodeSet(index, 'app-a', GID, ['C'], 0, NOW, () => 0)).toBe('exhausted');
+    expect(await issueCodeSet(index, 'app-a', GID, ['C'], 0, NOW, () => 0)).toBe('exhausted');
     // The group code drawn for a B+C set is not left claimed when C fails.
-    expect(issueCodeSet(index, 'app-a', GID, ['B', 'C'], 0, NOW, sequence(5, 0))).toBe('exhausted');
+    expect(await issueCodeSet(index, 'app-a', GID, ['B', 'C'], 0, NOW, sequence(5, 0))).toBe(
+      'exhausted',
+    );
     expect(index.size).toBe(2);
   });
 });
 
 describe('rotateDoorCode (AC29, D12)', () => {
-  it('replaces only the door code, bumps the code generation and keeps the ticket generation', () => {
+  it('replaces only the door code, bumps the code generation and keeps the ticket generation', async () => {
     const index = new CodeIndex();
-    const codes = issueCodeSet(index, 'app-a', GID, ['A', 'C', 'D'], 0, NOW) as GroupCodes;
+    const codes = (await issueCodeSet(index, 'app-a', GID, ['A', 'C', 'D'], 0, NOW)) as GroupCodes;
     const rotated = rotateDoorCode(codes, NOW + 10) as GroupCodes;
     expect(rotated.groupCode).toBe(codes.groupCode);
     expect(rotated.alphaCode).toBe(codes.alphaCode);
@@ -166,9 +191,9 @@ describe('rotateDoorCode (AC29, D12)', () => {
     );
   });
 
-  it('keeps the invariants over any sequence of changes (D12)', () => {
+  it('keeps the invariants over any sequence of changes (D12)', async () => {
     const index = new CodeIndex();
-    let codes = issueCodeSet(index, 'app-a', GID, ['A', 'D'], 0, NOW) as GroupCodes;
+    let codes = (await issueCodeSet(index, 'app-a', GID, ['A', 'D'], 0, NOW)) as GroupCodes;
     let previous = codes;
     let clock = NOW;
     for (let i = 0; i < 200; i++) {
@@ -176,7 +201,7 @@ describe('rotateDoorCode (AC29, D12)', () => {
       if (i % 7 === 0) clock += 1;
       const next =
         i % 3 === 0
-          ? issueCodeSet(index, 'app-a', GID, ['A', 'D'], codes.generation, clock)
+          ? await issueCodeSet(index, 'app-a', GID, ['A', 'D'], codes.generation, clock)
           : rotateDoorCode(codes, clock);
       expect(next).not.toBe('exhausted');
       codes = next as GroupCodes;

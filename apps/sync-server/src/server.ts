@@ -3,10 +3,8 @@ import type { AddressInfo } from 'node:net';
 import { CloseCode } from '@sync-system/protocol';
 import { type ServerOptions, WebSocketServer } from 'ws';
 import type { AppRegistry } from './apps/app-registry.js';
-import { EndedGroups } from './groups/ended-groups.js';
 import { GroupService } from './groups/group-service.js';
 import type { GroupStore } from './groups/group-store.js';
-import { InMemoryGroupStore } from './groups/in-memory-group-store.js';
 import { LocalNotifier } from './groups/notifier.js';
 import type { ServerEnv } from './config/env.js';
 import { ConfigError } from './config/config-error.js';
@@ -39,6 +37,7 @@ import { Connection } from './ws/connection.js';
 import { ConnectionCounter, type ConnectionStats } from './ws/connection-counter.js';
 import { Heartbeat } from './ws/heartbeat.js';
 import { createUpgradeHandler } from './ws/upgrade.js';
+import { type Storage, memoryStorage } from './storage/storage.js';
 
 export interface SyncServerOptions {
   env: ServerEnv;
@@ -51,7 +50,12 @@ export interface SyncServerOptions {
    * scheduler). Defaults to real, unref()ed timers on `now`.
    */
   scheduler?: Scheduler;
-  /** Defaults to a new InMemoryGroupStore. */
+  /**
+   * Where groups live (#35). Defaults to the in-memory storage; `store`
+   * replaces only its group store (tests).
+   */
+  storage?: Storage;
+  /** Defaults to a new InMemoryGroupStore. Ignored when `storage` is given. */
   store?: GroupStore;
   /** Defaults to HEARTBEAT_INTERVAL_MS; shortened by tests. */
   heartbeatMs?: number;
@@ -156,9 +160,15 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
     logger.error({ event: 'wss_error', err: safeErr(err) }, 'websocket server error');
   });
 
-  const store = options.store ?? new InMemoryGroupStore();
+  const storage =
+    options.storage ??
+    memoryStorage({
+      scheduler,
+      logger,
+      ...(options.store === undefined ? {} : { groups: options.store }),
+      ...(options.endedGroupsCap === undefined ? {} : { endedGroupsCap: options.endedGroupsCap }),
+    });
   const appsByNamespace = new Map(registry.apps().map((app) => [app.namespace, app]));
-  const ended = new EndedGroups(now, logger, options.endedGroupsCap);
   let sweepTimer: NodeJS.Timeout | undefined;
   // Read once, before any token is issued (#13 6.9 layer 2, RC18).
   const processStartedAt = scheduler.now();
@@ -170,7 +180,11 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
   );
   const codesBlobs = new CodesBlobService(new TokenKeyring(tokenSecrets, CODES_BLOB_INFO_PREFIX));
   const groups = new GroupService({
-    store,
+    store: storage.groups,
+    codes: storage.codes,
+    doors: storage.doors,
+    timerBackend: storage.timers,
+    work: storage.work,
     notifier: new LocalNotifier(),
     logger,
     rateLimiter: new SlidingWindowRateLimiter(now),
@@ -181,7 +195,7 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
       minMs: env.tokenRefreshMinSeconds * 1000,
       maxMs: env.tokenRefreshMaxSeconds * 1000,
     },
-    ended,
+    ended: storage.ended,
     processStartedAt,
     appOf: (namespace) => appsByNamespace.get(namespace),
     qrTickets,
@@ -267,7 +281,7 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
           httpServer.off('error', onError);
           port = (httpServer.address() as AddressInfo).port;
           heartbeat.start();
-          sweepTimer = setInterval(() => ended.sweep(), ENDED_SWEEP_MS);
+          sweepTimer = setInterval(() => storage.ended.sweep(), ENDED_SWEEP_MS);
           sweepTimer.unref();
           resolve(port);
         };

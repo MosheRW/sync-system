@@ -197,3 +197,10 @@ export const CODE_ROTATION_WINDOW_MS = 60_000;
  * AC9). Each draw is checked against the app's live codes.
  */
 export const MAX_CODE_DRAWS = 20;
+
+/**
+ * Slack after a group's max-session deadline before Redis drops its keys
+ * (#35 AC24, Gate 2 Q-A2): the max-session timer can still read the group,
+ * tell its participants and record the end.
+ */
+export const END_TTL_SLACK_MS = 5_000;

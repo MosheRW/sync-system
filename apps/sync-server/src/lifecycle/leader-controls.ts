@@ -62,7 +62,7 @@ export interface LeaderControlsHost {
     pids: readonly string[],
   ): Promise<ErrorMessage | undefined>;
   /** Claims a full new code set (codes and QR ticket generation). */
-  claimFullSet(record: GroupRecord): GroupCodes | 'exhausted';
+  claimFullSet(record: GroupRecord): Promise<GroupCodes | 'exhausted'>;
   /** Stores a claimed set and frees the old codes. */
   commitFullSet(
     record: GroupRecord,
@@ -70,7 +70,7 @@ export interface LeaderControlsHost {
     leader: Session | undefined,
   ): Promise<GroupRecord | undefined>;
   /** Releases a claimed set that was not committed. */
-  releaseClaim(record: GroupRecord, claimed: GroupCodes): void;
+  releaseClaim(record: GroupRecord, claimed: GroupCodes): Promise<void>;
   /** The leader-only codes payload. */
   codesPayload(record: GroupRecord): JoinCodesPayload;
   /** Re-reads the record. */
@@ -214,11 +214,11 @@ export class LeaderControls {
           details: { retryAfterMs: rate.retryAfterMs },
         });
       }
-      const next = this.host.claimFullSet(record);
+      const next = await this.host.claimFullSet(record);
       if (next === 'exhausted') return errorMessage(ErrorCode.CODES_EXHAUSTED);
       const refused = await this.host.block(session.app, record, [target]);
       if (refused !== undefined) {
-        this.host.releaseClaim(record, next);
+        await this.host.releaseClaim(record, next);
         return refused;
       }
       const blocked = (await this.host.get(record)) ?? record;

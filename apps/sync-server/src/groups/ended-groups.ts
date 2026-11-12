@@ -6,6 +6,24 @@ function refOf(namespace: string, groupId: string): string {
   return createHash('sha256').update(`${namespace}:${groupId}`, 'utf8').digest('hex').slice(0, 32);
 }
 
+/**
+ * Ended groups as hashed refs (#13 6.9), async so the Redis store can keep
+ * them across a restart (#35 AC13). `remember` follows the layer 3 eviction
+ * and closure rules of `EndedGroups` in both stores.
+ */
+export interface EndedGroupsStore {
+  remember(
+    namespace: string,
+    groupId: string,
+    deadline: number,
+    guardUntil?: number,
+  ): Promise<void>;
+  has(namespace: string, groupId: string): Promise<boolean>;
+  isRecoveryClosed(namespace: string): Promise<boolean>;
+  /** Drops passed entries (memory; Redis keys expire by TTL). */
+  sweep(): void;
+}
+
 export interface EvictionLogger {
   warn(obj: object, msg: string): void;
 }

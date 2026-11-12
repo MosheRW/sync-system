@@ -45,7 +45,7 @@ export interface LifecycleHost {
   /** The whole roster for the leader. */
   rosterSnapshot(record: GroupRecord): ServerMessage;
   /** Re-sends pending approval requests and a running door pause to a new leader. */
-  onLeaderReturn(leader: Session, record: GroupRecord): void;
+  onLeaderReturn(leader: Session, record: GroupRecord): Promise<void>;
   /** Restarts the leader-token refresh for the group's online leader. */
   startRefresh(namespace: string, groupId: string, at: number): void;
   /** Ends the group for everyone with `inactivity` (#13 AC22). */
@@ -369,7 +369,7 @@ export class LifecycleService {
     this.stopKeepAlive(namespace, record.id);
     this.armKeepAlive(app, updated);
     this.host.startRefresh(namespace, record.id, now);
-    const granted = this.announce(
+    const granted = await this.announce(
       updated,
       successor,
       old,
@@ -388,13 +388,13 @@ export class LifecycleService {
    * Returns `leader.granted`; a take-back sends it as the reply instead of
    * an event (the roster and the pending requests follow either way).
    */
-  private announce(
+  private async announce(
     record: GroupRecord,
     successor: string,
     old: string,
     reason: 'handoff_disconnect' | 'handoff_inactivity' | 'take_back',
     oldSession: Session | undefined,
-  ): ServerMessage {
+  ): Promise<ServerMessage> {
     const granted: ServerMessage = {
       type: 'leader.granted',
       groupId: record.id,
@@ -408,7 +408,7 @@ export class LifecycleService {
     if (leader !== undefined) {
       if (reason !== 'take_back') this.host.deliverLater(leader, granted);
       this.host.deliverLater(leader, this.host.rosterSnapshot(record));
-      this.host.onLeaderReturn(leader, record);
+      await this.host.onLeaderReturn(leader, record);
     }
     if (oldSession !== undefined) {
       this.host.deliverLater(oldSession, {
