@@ -4,6 +4,9 @@ import type { Logger } from '../../logging/logger.js';
 import type { Scheduler } from '../../time/scheduler.js';
 import { type Storage, memoryStorage } from '../storage.js';
 import type { RedisLink } from './connect.js';
+import { RedisCodeIndex } from './codes.js';
+import { RedisDoorStates } from './doors.js';
+import { RedisEndedGroups } from './ended.js';
 import { RedisGroupStore } from './group-store.js';
 import { RedisKeys } from './keys.js';
 import { type RedisContext, RedisWorkSource } from './unit-of-work.js';
@@ -17,6 +20,8 @@ export interface RedisStorageOptions {
   logger: Logger;
   /** The app of a namespace: its max session bounds every key's TTL (#35 AC24). */
   appOf(namespace: string): AppConfig | undefined;
+  /** Cap of the ended groups; defaults to MAX_ENDED_GROUPS. Tests lower it. */
+  endedGroupsCap?: number;
 }
 
 /** The parts every Redis component shares. */
@@ -43,6 +48,9 @@ export function redisStorage(options: RedisStorageOptions): Storage {
     ...memory,
     kind: 'redis',
     groups: new RedisGroupStore(ctx, work),
+    codes: new RedisCodeIndex(ctx, work),
+    ended: new RedisEndedGroups(ctx, work, options.logger, options.endedGroupsCap),
+    doors: new RedisDoorStates(work),
     work,
     status: () => ({ kind: 'redis', state: options.link.state }),
     close: () => options.link.close(),

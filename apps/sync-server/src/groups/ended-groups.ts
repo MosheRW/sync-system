@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { MAX_ENDED_GROUPS } from '../limits/constants.js';
 
 /** Hashed ref of a group: 16 bytes of sha256 as hex (L4). Never the raw ID. */
-function refOf(namespace: string, groupId: string): string {
+export function endedRef(namespace: string, groupId: string): string {
   return createHash('sha256').update(`${namespace}:${groupId}`, 'utf8').digest('hex').slice(0, 32);
 }
 
@@ -20,8 +20,8 @@ export interface EndedGroupsStore {
   ): Promise<void>;
   has(namespace: string, groupId: string): Promise<boolean>;
   isRecoveryClosed(namespace: string): Promise<boolean>;
-  /** Drops passed entries (memory; Redis keys expire by TTL). */
-  sweep(): void;
+  /** Drops passed entries and closures. */
+  sweep(): Promise<void>;
 }
 
 export interface EvictionLogger {
@@ -90,7 +90,7 @@ export class EndedGroups {
   remember(namespace: string, groupId: string, deadline: number, guardUntil?: number): void {
     const now = this.now();
     if (deadline <= now) return;
-    const ref = refOf(namespace, groupId);
+    const ref = endedRef(namespace, groupId);
     this.drop(ref);
     while (this.size >= this.cap) {
       if (!this.evictOne(now)) break;
@@ -107,7 +107,7 @@ export class EndedGroups {
   }
 
   has(namespace: string, groupId: string): boolean {
-    const ref = refOf(namespace, groupId);
+    const ref = endedRef(namespace, groupId);
     const entry = this.plain.get(ref) ?? this.guarded.get(ref);
     if (entry === undefined) return false;
     if (entry.deadline <= this.now()) {

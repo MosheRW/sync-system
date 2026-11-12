@@ -287,7 +287,11 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
           httpServer.off('error', onError);
           port = (httpServer.address() as AddressInfo).port;
           heartbeat.start();
-          sweepTimer = setInterval(() => storage.ended.sweep(), ENDED_SWEEP_MS);
+          sweepTimer = setInterval(() => {
+            storage.ended.sweep().catch((err: unknown) => {
+              logger.warn({ event: 'ended_sweep_failed', err: safeErr(err) }, 'ended sweep failed');
+            });
+          }, ENDED_SWEEP_MS);
           sweepTimer.unref();
           resolve(port);
         };

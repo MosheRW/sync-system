@@ -136,6 +136,7 @@ export async function startTestServer(options: StartOptions = {}): Promise<TestS
       scheduler,
       logger,
       appOf: (namespace) => byNamespace.get(namespace),
+      ...(rest.endedGroupsCap === undefined ? {} : { endedGroupsCap: rest.endedGroupsCap }),
     });
   }
   const server = createSyncServer({

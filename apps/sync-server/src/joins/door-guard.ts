@@ -123,6 +123,30 @@ export class DoorGuard {
     this.groups.clear();
   }
 
+  /** A copy of the group's state, or undefined (the Redis store keeps it in the document). */
+  exportState(key: string): DoorState | undefined {
+    const state = this.groups.get(key);
+    if (state === undefined) return undefined;
+    return {
+      failures: state.failures,
+      rotations: [...state.rotations],
+      ...(state.pausedUntil === undefined ? {} : { pausedUntil: state.pausedUntil }),
+    };
+  }
+
+  /** Replaces the group's state with a copy of `state`. */
+  importState(key: string, state: DoorState | undefined): void {
+    if (state === undefined) {
+      this.groups.delete(key);
+      return;
+    }
+    this.groups.set(key, {
+      failures: state.failures,
+      rotations: [...state.rotations],
+      pausedUntil: state.pausedUntil,
+    });
+  }
+
   /** Number of groups with door state. For tests only. */
   get size(): number {
     return this.groups.size;

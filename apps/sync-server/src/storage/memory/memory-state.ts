@@ -61,7 +61,8 @@ export class MemoryEndedGroups implements EndedGroupsStore {
     return Promise.resolve(this.groups.isRecoveryClosed(namespace));
   }
 
-  sweep(): void {
+  sweep(): Promise<void> {
     this.groups.sweep();
+    return Promise.resolve();
   }
 }

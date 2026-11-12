@@ -26,6 +26,12 @@ export interface RedisContext {
 
 type Op = Record<string, string | number>;
 
+/** What the ended-group writes of a commit evicted (#13 6.9 layer 3). */
+export interface CommitResult {
+  evicted: number;
+  closed: string[];
+}
+
 /**
  * The checks and writes of one commit, for the COMMIT script. Expiry times
  * are given in the server's clock and sent as time-to-live from `now`.
@@ -118,15 +124,24 @@ export class CommitPlan {
     this.writes.push(entry);
   }
 
-  /** Runs the commit; throws StorageConflictError when a check failed. */
-  async run(link: RedisLink): Promise<void> {
-    if (this.empty) return;
+  /**
+   * Runs the commit; throws StorageConflictError when a check failed.
+   * Returns what `remember` did (evictions, closed namespaces).
+   */
+  async run(link: RedisLink): Promise<CommitResult> {
+    if (this.empty) return { evicted: 0, closed: [] };
     const reply = await link.script(COMMIT, this.keys, [
       JSON.stringify({ c: this.checks, w: this.writes }),
     ]);
     if (Array.isArray(reply) && reply[0] === 'abort') {
       throw new StorageConflictError(String(reply[1]));
     }
+    const [, evicted, closed] = Array.isArray(reply) ? (reply as unknown[]) : [];
+    const count = Number(evicted);
+    return {
+      evicted: Number.isSafeInteger(count) && count > 0 ? count : 0,
+      closed: typeof closed === 'string' && closed !== '' ? closed.split(',') : [],
+    };
   }
 }
 
@@ -162,6 +177,7 @@ export class RedisUnitOfWork implements UnitOfWork {
   private readonly loading = new Map<string, Promise<WorkEntry>>();
   private readonly steps: Array<(plan: CommitPlan) => void> = [];
   private readonly abandoned: Array<() => Promise<void>> = [];
+  private readonly committed: Array<(result: CommitResult) => void> = [];
 
   constructor(readonly ctx: RedisContext) {}
 
@@ -216,6 +232,11 @@ export class RedisUnitOfWork implements UnitOfWork {
     this.steps.push(step);
   }
 
+  /** Runs `then` with the commit's result once it succeeded. */
+  afterCommit(then: (result: CommitResult) => void): void {
+    this.committed.push(then);
+  }
+
   /** Runs `undo` if the task fails or its commit fails (release claims, best effort). */
   onAbandon(undo: () => Promise<void>): void {
     this.abandoned.push(undo);
@@ -254,7 +275,8 @@ export class RedisUnitOfWork implements UnitOfWork {
 
   async commit(): Promise<void> {
     const plan = await this.plan();
-    await plan.run(this.ctx.link);
+    const result = await plan.run(this.ctx.link);
+    for (const then of this.committed) then(result);
   }
 
   async abandon(): Promise<void> {
@@ -323,6 +345,11 @@ export class RedisWorkSource implements UnitOfWorkSource {
 
   begin(): RedisUnitOfWork {
     return new RedisUnitOfWork(this.ctx);
+  }
+
+  /** An empty commit plan, for a step outside any unit of work. */
+  plan(): CommitPlan {
+    return new CommitPlan(this.ctx.now());
   }
 
   /** The running task's work if it belongs to this storage. */
