@@ -2,8 +2,9 @@ import type { Cancel, Scheduler } from '../time/scheduler.js';
 
 /**
  * Timer kinds (#13 D7, #35 ADR 0013): max session, the frozen bound, the
- * keep-alive prompt and its deadline, the grace end of a pause, and the end
- * of a door-code pause.
+ * keep-alive prompt and its deadline, the grace end of a pause, the end of
+ * a door-code pause, and (Redis, #35 architecture 12.9) the earliest
+ * deadline of a pending method B request.
  */
 export const TIMER_KINDS = [
   'maxSession',
@@ -12,6 +13,7 @@ export const TIMER_KINDS = [
   'keepAliveDeadline',
   'grace',
   'doorPauseEnd',
+  'approvalDue',
 ] as const;
 export type TimerKind = (typeof TIMER_KINDS)[number];
 

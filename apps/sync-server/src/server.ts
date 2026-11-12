@@ -201,6 +201,7 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
     timerBackend: storage.timers,
     work: storage.work,
     ...(storage.leases === undefined ? {} : { leases: storage.leases }),
+    ...(storage.approvals === undefined ? {} : { approvals: storage.approvals }),
     ...(storage.cluster === undefined ? {} : { fenced: () => storage.cluster!.fenced() }),
     notifier,
     ...(storage.cluster === undefined

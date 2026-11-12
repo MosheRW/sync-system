@@ -109,6 +109,7 @@ import {
 } from './recipients.js';
 import type { ClusterNotifier } from './cluster-notifier.js';
 import type { RemoteEffect } from './remote-effects.js';
+import type { ApprovalStore } from '../joins/approval-store.js';
 import { ParkingLot } from './parking-lot.js';
 import { canSupersede, classifyToken } from './resume.js';
 import { nextTerm } from '../lifecycle/succession.js';
@@ -173,6 +174,8 @@ export interface GroupServiceDeps {
    * from the group's attachment registry, read under the lease.
    */
   cluster?: ClusterNotifier;
+  /** Pending method B requests (Redis, #35 architecture 12.9); defaults to memory. */
+  approvals?: ApprovalStore;
 }
 
 /**
@@ -282,6 +285,7 @@ export class GroupService implements GroupActions {
         doors: deps.doors,
         timers: this.timers,
         groupExpiry: (namespace, createdAt) => this.groupExpiry(namespace, createdAt),
+        ...(deps.approvals === undefined ? {} : { approvals: deps.approvals }),
       },
       {
         busy: (session) => this.busy(session),
@@ -291,6 +295,22 @@ export class GroupService implements GroupActions {
         deliverLater: (session, message) => this.deliverLater(session, message),
         admissionClosed: (record) => this.admissionClosed(record),
         asLeader: (session, action, task) => this.asLeader(session, action, task),
+        ...(deps.cluster === undefined
+          ? {}
+          : {
+              admitRemote: (app, groupId, name, instance, requestId) =>
+                this.admitRemote(app, groupId, name, instance, requestId),
+              settleRemote: (instance, namespace, groupId, requestId, message) =>
+                deps.cluster!.host.send(instance, {
+                  op: 'settle',
+                  ns: namespace,
+                  gid: groupId,
+                  rid: requestId,
+                  text: JSON.stringify(message),
+                }),
+              instanceLive: async (instance) =>
+                (await deps.cluster!.host.liveOf([instance])).has(instance),
+            }),
       },
     );
     this.checkLimiter = new SlidingWindowRateLimiter(() => this.now(), TOKENS_CHECK_WINDOW_MS);
@@ -352,6 +372,7 @@ export class GroupService implements GroupActions {
     this.onTimer('keepAlivePrompt', (app, groupId) => this.lifecycle.onPrompt(app, groupId));
     this.onTimer('keepAliveDeadline', (app, groupId) => this.lifecycle.onDeadline(app, groupId));
     this.onTimer('doorPauseEnd', (app, groupId) => this.joins.pauseEnded(app.namespace, groupId));
+    this.onTimer('approvalDue', (app, groupId) => this.joins.approvalDue(app.namespace, groupId));
     this.onTimer('grace', (app, groupId, data) =>
       data === undefined
         ? Promise.resolve()
@@ -612,6 +633,34 @@ export class GroupService implements GroupActions {
         }
         return;
       }
+      case 'admit': {
+        // An approved joiner (12.9): attach it as the registry already says.
+        const joiner = this.joins.approvals.releaseJoiner(effect.rid);
+        if (
+          joiner === undefined ||
+          !joiner.isOpen() ||
+          joiner.app.namespace !== effect.ns ||
+          this.busy(joiner)
+        ) {
+          // Gone meanwhile (Gate 2 Q-B3): removed with the usual rules.
+          this.disconnectStale(effect.ns, effect.gid, effect.pid, effect.att);
+          return;
+        }
+        this.attach(joiner, effect.gid, effect.pid, effect.att);
+        const { text } = effect;
+        joiner.afterPending(() => joiner.deliver(text));
+        return;
+      }
+      case 'settle': {
+        const joiner = this.joins.approvals.releaseJoiner(effect.rid);
+        if (joiner === undefined || joiner.app.namespace !== effect.ns) {
+          dropped();
+          return;
+        }
+        const { text } = effect;
+        joiner.afterPending(() => joiner.deliver(text));
+        return;
+      }
       case 'forget': {
         const key = groupKey(effect.ns, effect.gid);
         this.deps.rateLimiter.forget(key);
@@ -858,9 +907,13 @@ export class GroupService implements GroupActions {
   }
 
   /** Attaches `session` as `participantId` of the group, with a new attach ID. */
-  private attach(session: Session, groupId: string, participantId: string): void {
+  private attach(
+    session: Session,
+    groupId: string,
+    participantId: string,
+    attachId = newAttachId(),
+  ): void {
     this.touch(session);
-    const attachId = newAttachId();
     session.membership = { groupId, participantId, attachId };
     this.deps.notifier.register(
       membershipKey(session.app.namespace, groupId, participantId),
@@ -2321,6 +2374,93 @@ export class GroupService implements GroupActions {
     );
     const token = this.issueToken(app.namespace, entered, claims.pid, 'member', this.now());
     return this.joinedMessage(entered, claims.pid, token);
+  }
+
+  /**
+   * Admits an approved joiner that waits on another instance (#35
+   * architecture 12.9): the store-side admission (lock, size, block list,
+   * roster), a registry entry naming that instance with a new attach ID,
+   * and `group.joined` sent there in this commit. Under the group lock.
+   */
+  private async admitRemote(
+    app: AppConfig,
+    groupId: string,
+    name: NameChoice,
+    instance: string,
+    requestId: string,
+  ): Promise<ServerMessage> {
+    const namespace = app.namespace;
+    const current = await this.deps.store.get(namespace, groupId);
+    if (current !== undefined && this.admissionClosed(current)) return GROUP_LOCKED;
+    const participantId = newParticipantId();
+    const added = await this.deps.store.addParticipant(
+      namespace,
+      groupId,
+      participantId,
+      app.maxGroupSize,
+    );
+    if (added.status === 'not_found') return errorMessage(ErrorCode.CODE_NOT_FOUND);
+    if (added.status === 'blocked') return errorMessage(ErrorCode.PARTICIPANT_BLOCKED);
+    if (added.status === 'full') {
+      return errorMessage(ErrorCode.GROUP_FULL, { details: { maxGroupSize: app.maxGroupSize } });
+    }
+    const record = await this.enterRoster(
+      added.group,
+      participantId,
+      name,
+      added.group.recoveryMarking,
+    );
+    const attachId = newAttachId();
+    this.deps.cluster!.attachedElsewhere(namespace, groupId, participantId, instance, attachId);
+    const joined = this.joinedMessage(
+      record,
+      participantId,
+      this.issueToken(namespace, record, participantId, 'member', this.now()),
+    );
+    this.deps.cluster!.host.send(instance, {
+      op: 'admit',
+      ns: namespace,
+      gid: groupId,
+      pid: participantId,
+      att: attachId,
+      rid: requestId,
+      text: JSON.stringify(joined),
+    });
+    this.deps.logger.info(
+      { event: 'group_joined', namespace, groupRef: groupRef(groupId), method: 'B' },
+      'group joined',
+    );
+    return joined;
+  }
+
+  /**
+   * An approved joiner was gone when its admission arrived (#35 Gate 2
+   * Q-B3): under the lease, the member-disconnect rules run for `pid`, only
+   * while the registry still names that attachment. Busy or failed: the
+   * group is replayed (security C13).
+   */
+  private disconnectStale(namespace: string, groupId: string, pid: string, attachId: string): void {
+    const app = this.deps.appOf(namespace);
+    if (app === undefined) return;
+    this.lock
+      .run(namespace, groupId, async () => {
+        if (this.deps.cluster?.entries(namespace, groupId).get(pid)?.t !== attachId) return;
+        // A session here that holds that attachment is attached: nothing to do.
+        const held = this.deps.notifier.get(membershipKey(namespace, groupId, pid));
+        if (held?.membership?.attachId === attachId && held.isOpen()) return;
+        const record = await this.deps.store.get(namespace, groupId);
+        if (record === undefined || record.leaderId === pid) return;
+        const result = await this.deps.store.removeParticipant(namespace, groupId, pid);
+        await this.leaveRosterOnDisconnect(app, record, pid);
+        if (result && result.connected === 0) await this.emptied(app, groupId);
+      })
+      .catch((err: unknown) => {
+        if (err instanceof StorageUnavailableError || err instanceof StorageBusyError) {
+          this.queueReplay(namespace, groupId);
+          return;
+        }
+        this.deps.logger.error({ event: 'remote_effect_error', err: safeErr(err) }, 'stale failed');
+      });
   }
 
   async disconnect(session: Session): Promise<void> {

@@ -1,4 +1,8 @@
-import { ALPHA_CODE_PATTERN, GROUP_CODE_PATTERN } from '@sync-system/protocol';
+import {
+  ALPHA_CODE_PATTERN,
+  GROUP_CODE_PATTERN,
+  JOIN_REQUEST_ID_PATTERN,
+} from '@sync-system/protocol';
 import type { EndedGroupsStore, EvictionLogger } from '../../groups/ended-groups.js';
 import { endedRef } from '../../groups/ended-groups.js';
 import type { HeldLease } from '../../groups/group-lock.js';
@@ -112,6 +116,13 @@ export class RedisEndedGroups implements EndedGroupsStore {
       keys.attachments(namespace, groupId),
     ]);
     const [raw, registryText] = Array.isArray(reply) ? (reply as unknown[]) : [];
+    // The pending requests the queue lists, by checked ID only (no pattern scan, C6).
+    const queued = await this.ctx.link.send([
+      'ZRANGE',
+      keys.approvalQueue(namespace, groupId),
+      '0',
+      '-1',
+    ]);
     const plan = this.work.plan();
     if (lease !== undefined) plan.eq(lease.key, lease.token, 'lease');
     this.addTo(plan, namespace, groupId, deadline);
@@ -130,6 +141,12 @@ export class RedisEndedGroups implements EndedGroupsStore {
     // The registry goes; a valid one also names the instance sets to clean
     // (an invalid one: those sets drop the group when the instance is forgotten).
     plan.del(keys.attachments(namespace, groupId));
+    plan.del(keys.highWater(namespace, groupId));
+    plan.del(keys.approvalQueue(namespace, groupId));
+    for (const member of Array.isArray(queued) ? (queued as unknown[]).map(String) : []) {
+      const rid = member.split('.')[0] ?? '';
+      if (JOIN_REQUEST_ID_PATTERN.test(rid)) plan.del(keys.approval(namespace, groupId, rid));
+    }
     const registry = typeof registryText === 'string' ? decodeRegistry(registryText) : 'invalid';
     if (registry !== 'invalid') {
       for (const id of instancesOf(registry)) {

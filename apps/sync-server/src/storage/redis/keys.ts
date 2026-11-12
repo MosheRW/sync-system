@@ -2,6 +2,7 @@ import {
   ALPHA_CODE_PATTERN,
   GROUP_CODE_PATTERN,
   GROUP_ID_PATTERN,
+  JOIN_REQUEST_ID_PATTERN,
   NAMESPACE_PATTERN,
 } from '@sync-system/protocol';
 import { REDIS_KEY_PREFIX_PATTERN } from '../../config/redis.js';
@@ -87,6 +88,16 @@ export class RedisKeys {
   /** The last commit sequence that published anything (deployment metadata). */
   sequence(): string {
     return `${this.base}:seq`;
+  }
+
+  /** The group's pending method B requests (#35 architecture 12.9): `<rid>.<instance>` by deadline. */
+  approvalQueue(namespace: string, groupId: string): string {
+    return `${this.base}:aq:${this.group_(namespace, groupId)}`;
+  }
+
+  /** One pending request `{i, n?, d}`, until its deadline (#35 AC20). */
+  approval(namespace: string, groupId: string, requestId: string): string {
+    return `${this.base}:ap:${this.group_(namespace, groupId)}:${check(JOIN_REQUEST_ID_PATTERN, requestId, 'requestId')}`;
   }
 
   /** The group's lease (#35 architecture 12.4): a random token, PX 10 s, renewed. */

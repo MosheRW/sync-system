@@ -421,6 +421,7 @@ export class RedisUnitOfWork implements UnitOfWork {
         // The registry and the instances' group sets go with the group (AC24).
         plan.del(keys.attachments(namespace, groupId));
         plan.del(keys.highWater(namespace, groupId));
+        plan.del(keys.approvalQueue(namespace, groupId));
         for (const id of instancesOf(entry.registry.loaded)) {
           plan.srem(keys.instanceGroups(id), keys.liveMember(namespace, groupId));
         }

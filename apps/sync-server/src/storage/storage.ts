@@ -11,6 +11,7 @@ import { MemoryDoorStates, MemoryEndedGroups } from './memory/memory-state.js';
 import type { EpochSource } from './redis/epoch.js';
 import type { ClusterHost } from '../groups/cluster-notifier.js';
 import type { RemoteReceiver } from './redis/pubsub.js';
+import type { ApprovalStore } from '../joins/approval-store.js';
 
 /** What `SyncServer.storage()` reports (#35 AC27). */
 export type StorageStatus =
@@ -61,6 +62,8 @@ export interface Storage {
   readonly cluster?: StorageCluster;
   /** The group leases across instances (#35 architecture 12.4); memory has none. */
   readonly leases?: LeaseSource;
+  /** Pending method B requests in Redis (#35 architecture 12.9); memory: the service's own. */
+  readonly approvals?: ApprovalStore;
   /**
    * Runs before the server listens (Redis, #35 architecture 7, 12.8): the
    * epoch, this instance's registration and channel, the timers that came

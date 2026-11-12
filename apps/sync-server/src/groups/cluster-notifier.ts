@@ -72,6 +72,17 @@ export class ClusterNotifier {
     );
   }
 
+  /** `pid` was admitted for a session on `instance` with `attachId` (12.9). */
+  attachedElsewhere(
+    namespace: string,
+    groupId: string,
+    pid: string,
+    instance: string,
+    attachId: string,
+  ): void {
+    this.host.registry(namespace, groupId)?.set(pid, { i: instance, t: attachId });
+  }
+
   /** The attachment `attachId` of `pid` ends (only while the registry still names it). */
   detached(namespace: string, groupId: string, pid: string, attachId: string | undefined): void {
     if (attachId === undefined) return;

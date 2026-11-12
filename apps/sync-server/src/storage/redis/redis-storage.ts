@@ -15,6 +15,7 @@ import { INSTANCE_TIMINGS, type InstanceTimings, RedisInstance } from './instanc
 import { LEASE_TIMINGS, type LeaseTimings, RedisLeaseSource } from './lease-lock.js';
 import { RedisPubSub } from './pubsub.js';
 import { OrphanSweeper } from './sweeper.js';
+import { RedisApprovals } from './approvals.js';
 import { type RedisContext, RedisWorkSource } from './unit-of-work.js';
 
 const MINUTE_MS = 60_000;
@@ -115,6 +116,7 @@ export function redisStorage(options: RedisStorageOptions): Storage {
       });
     },
     leases,
+    approvals: new RedisApprovals(ctx, work),
     cluster: {
       host: {
         selfId: () => work.current()?.instanceId ?? ctx.instanceId?.(),
