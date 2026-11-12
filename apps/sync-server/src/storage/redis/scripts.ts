@@ -119,7 +119,8 @@ end
  * in ms from now (`x`), turned into Redis time with TIME here, so the
  * server's and Redis's clocks never need to agree.
  *
- * Checks: `absent` (key must not exist), `eq` (GET must equal `v`).
+ * Checks: `absent` (key must not exist), `exists` (key must exist: this
+ * instance's liveness, security C11), `eq` (GET must equal `v`).
  * Writes: `set` (SET PX), `setnx` (SET NX), `del`, `deleq`
  * (compare-and-delete), `hset`, `hdel`, `zadd`, `zrem`, `zremif` (only
  * while the score is still `s`), `keep` (PEXPIRE if the key exists),
@@ -142,6 +143,8 @@ for _, c in ipairs(spec.c) do
   local k = KEYS[c.k]
   if c.o == 'absent' then
     if redis.call('EXISTS', k) == 1 then return {'abort', c.r} end
+  elseif c.o == 'exists' then
+    if redis.call('EXISTS', k) == 0 then return {'abort', c.r} end
   elseif c.o == 'eq' then
     if redis.call('GET', k) ~= c.v then return {'abort', c.r} end
   else
@@ -277,4 +280,90 @@ for _, m in ipairs(redis.call('ZRANGEBYSCORE', due, '-inf', now, 'LIMIT', 0, lim
   end
 end
 return out
+`);
+
+/** Redis time in ms, for the instance scripts (instance clocks never decide liveness). */
+const REDIS_NOW = `
+local time = redis.call('TIME')
+local now = tonumber(time[1]) * 1000 + math.floor(tonumber(time[2]) / 1000)
+`;
+
+/**
+ * Registers an instance (#35 architecture 12.5): its liveness key (only if
+ * new), its deadline in the instance list, and the list's expiry moved
+ * later. KEYS: liveness key, instance list; ARGV: ID, liveness ms, list
+ * retention ms. Returns 1, or 0 when the ID is taken.
+ */
+export const INSTANCE_REGISTER = new LuaScript(
+  REDIS_NOW +
+    `
+if not redis.call('SET', KEYS[1], '1', 'NX', 'PX', ARGV[2]) then return 0 end
+redis.call('ZADD', KEYS[2], now + tonumber(ARGV[2]), ARGV[1])
+local target = now + tonumber(ARGV[3])
+local current = redis.call('PEXPIRETIME', KEYS[2])
+if current == -1 or (current >= 0 and target > current) then
+  redis.call('PEXPIREAT', KEYS[2], target)
+end
+return 1
+`,
+);
+
+/**
+ * Renews an instance's liveness (#35 architecture 12.5, P2-3): only while
+ * the key still exists (`XX`), so a swept instance can never come back
+ * under its old ID. KEYS: liveness key, instance list; ARGV: ID, liveness
+ * ms. Returns `{0}` when fenced, else `{1, liveId...}` (instances whose
+ * deadline has not passed, for the live cache).
+ */
+export const INSTANCE_HEARTBEAT = new LuaScript(
+  REDIS_NOW +
+    `
+if not redis.call('SET', KEYS[1], '1', 'XX', 'PX', ARGV[2]) then return {0} end
+redis.call('ZADD', KEYS[2], now + tonumber(ARGV[2]), ARGV[1])
+local out = {1}
+for _, id in ipairs(redis.call('ZRANGEBYSCORE', KEYS[2], now, '+inf')) do
+  table.insert(out, id)
+end
+return out
+`,
+);
+
+/**
+ * A clean stop (#35 architecture 12.5): the liveness key goes and the
+ * deadline moves to 0, so peers sweep the instance at their next tick.
+ * KEYS: liveness key, instance list; ARGV: ID.
+ */
+export const INSTANCE_STOP = new LuaScript(`
+redis.call('DEL', KEYS[1])
+if redis.call('ZSCORE', KEYS[2], ARGV[1]) then redis.call('ZADD', KEYS[2], 0, ARGV[1]) end
+return 1
+`);
+
+/**
+ * Instances whose deadline passed and whose liveness key is gone (#35
+ * architecture 12.8). KEYS: instance list; ARGV: liveness key base, limit.
+ * Liveness keys are built from list members, which only ever hold checked
+ * instance IDs (the caller checks each returned ID again).
+ */
+export const DEAD_INSTANCES = new LuaScript(
+  REDIS_NOW +
+    `
+local out = {}
+for _, id in ipairs(redis.call('ZRANGEBYSCORE', KEYS[1], '-inf', now, 'LIMIT', 0, tonumber(ARGV[2]))) do
+  if redis.call('EXISTS', ARGV[1] .. id) == 0 then table.insert(out, id) end
+end
+return out
+`,
+);
+
+/**
+ * Forgets a swept instance (#35 architecture 12.8): its group set and its
+ * list entry, only while its liveness key is still absent. KEYS: liveness
+ * key, group set, instance list; ARGV: ID. Returns 1 if forgotten.
+ */
+export const FORGET_INSTANCE = new LuaScript(`
+if redis.call('EXISTS', KEYS[1]) == 1 then return 0 end
+redis.call('DEL', KEYS[2])
+redis.call('ZREM', KEYS[3], ARGV[1])
+return 1
 `);

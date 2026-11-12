@@ -34,7 +34,10 @@ describeRedis('while Redis is unreachable (#35 AC26, AC27, ADR 0014, security C4
     await inspect.flush(prefix);
   });
 
-  async function start(replayCap?: number): Promise<TestServer> {
+  async function start(
+    replayCap?: number,
+    redisTimings?: { livenessMs: number; heartbeatMs: number; selfFenceMs: number },
+  ): Promise<TestServer> {
     const target = new URL(TEST_REDIS_URL!);
     proxy = await TcpProxy.start(target.hostname, Number(target.port || 6379));
     const url = new URL(TEST_REDIS_URL!);
@@ -57,9 +60,38 @@ describeRedis('while Redis is unreachable (#35 AC26, AC27, ADR 0014, security C4
       redisPrefix: prefix,
       redisLink: link,
       ...(replayCap === undefined ? {} : { replayCap }),
+      ...(redisTimings === undefined ? {} : { redisTimings }),
     });
     return ts;
   }
+
+  it('an outage longer than the self-fence closes the group sessions quietly; a new ID serves after (Q-B5)', async () => {
+    const server = await start(undefined, { livenessMs: 900, heartbeatMs: 100, selfFenceMs: 600 });
+    const group = await createGroupWithMembers(server, 1);
+    const docKey = `${prefix}:v1:g:app-a:${group.groupId}`;
+    const before = await inspect.client.get(docKey);
+    const idle = await server.connectReady();
+    proxy.cut();
+    // Nobody sent anything: the silence alone fences the instance.
+    expect(await group.leader.closed()).toMatchObject({ code: 1001 });
+    expect(await group.members[0]!.closed()).toMatchObject({ code: 1001 });
+    expect(server.logs.find('instance_fenced')).toMatchObject({ cause: 'silence' });
+    // A session in no group stays open.
+    expect(idle.isClosed).toBe(false);
+    proxy.restore();
+    await waitUntil(
+      () => server.logs.records().filter((r) => r.event === 'instance_registered').length === 2,
+      10_000,
+    );
+    await waitUntil(() => {
+      const status = server.server.storage();
+      return status.kind === 'redis' && status.state === 'connected';
+    }, 10_000);
+    // The fence ran no disconnect rule and queued no replay (security C13).
+    expect(await inspect.client.get(docKey)).toBe(before);
+    const { reply } = await resumeWith(server, group.memberTokens[0]);
+    expect(reply).toMatchObject({ type: 'group.joined', groupId: group.groupId });
+  });
 
   it('closes the group with 1001, refuses upgrades with 503, then serves again (AC26, AC27)', async () => {
     const server = await start();

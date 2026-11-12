@@ -1063,6 +1063,16 @@ export class JoinService {
     });
   }
 
+  /**
+   * The session stops waiting without the leader being told (#35 security
+   * C13: a self-fence). In memory the request goes too; in Redis it
+   * expires at its deadline, and an approve after that finds nothing.
+   */
+  forgetPending(session: Session): void {
+    void this.approvals.takeBySession(session).catch(() => undefined);
+    session.pendingJoin = undefined;
+  }
+
   /** Server shutdown: forgets every code and budget (AC31). */
   close(): void {
     this.deps.codes.clear();

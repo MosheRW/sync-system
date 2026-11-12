@@ -14,6 +14,18 @@ export class StorageUnavailableError extends Error {
 }
 
 /**
+ * This instance's liveness key was gone when a commit ran (#35 security
+ * C11): others may already treat it as dead, so nothing was written and
+ * the instance fences itself (its sessions close with 1001).
+ */
+export class InstanceFencedError extends StorageUnavailableError {
+  constructor() {
+    super();
+    this.name = 'InstanceFencedError';
+  }
+}
+
+/**
  * Any other Redis reply error (a script error, `WRONGTYPE`, a bug): it is
  * `INTERNAL_ERROR` to the requester only and never closes other sessions
  * (#35 security C8). Carries the reply's first word only, never its text.

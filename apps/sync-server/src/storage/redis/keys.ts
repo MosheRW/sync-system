@@ -17,6 +17,9 @@ export class KeyPartError extends Error {
 
 const REF_PATTERN = /^[0-9a-f]{32}$/;
 
+/** An instance ID: 16 random bytes, hex (#35 architecture 12.3, 12.5). */
+export const INSTANCE_ID_PATTERN = /^[0-9a-f]{32}$/;
+
 function check(pattern: RegExp, value: string, part: string): string {
   if (!pattern.test(value)) throw new KeyPartError(part);
   return value;
@@ -111,6 +114,26 @@ export class RedisKeys {
 
   endedSeq(): string {
     return `${this.base}:e:seq`;
+  }
+
+  /** Liveness of an instance (#35 architecture 12.5): `1`, PX 15 s, renewed. */
+  instance(id: string): string {
+    return `${this.base}:inst:${check(INSTANCE_ID_PATTERN, id, 'instance')}`;
+  }
+
+  /** Instance IDs, score = liveness deadline in Redis time. */
+  instances(): string {
+    return `${this.base}:insts`;
+  }
+
+  /** The groups with an attachment on instance `id` (`ns:gid` members). */
+  instanceGroups(id: string): string {
+    return `${this.base}:ig:${check(INSTANCE_ID_PATTERN, id, 'instance')}`;
+  }
+
+  /** The pub/sub channel of instance `id` (#35 architecture 12.7). */
+  channel(id: string): string {
+    return `${this.base}:ch:${check(INSTANCE_ID_PATTERN, id, 'instance')}`;
   }
 }
 

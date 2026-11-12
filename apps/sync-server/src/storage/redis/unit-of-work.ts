@@ -10,7 +10,7 @@ import { endedRef } from '../../groups/ended-groups.js';
 import { MAX_CLOCK_SKEW_MS } from '../../limits/constants.js';
 import type { DoorState } from '../../joins/door-guard.js';
 import type { Logger } from '../../logging/logger.js';
-import { StorageConflictError, StorageInvalidError } from '../errors.js';
+import { InstanceFencedError, StorageConflictError, StorageInvalidError } from '../errors.js';
 import type { RedisLink } from './connect.js';
 import { decodeGroup, encodeDocument, encodePosition } from './document.js';
 import type { RedisKeys } from './keys.js';
@@ -24,6 +24,27 @@ export interface RedisContext {
   /** The group's end bound E: max-session deadline + slack (#35 AC24). */
   expiryOf(namespace: string, createdAt: number): number;
   now(): number;
+  /**
+   * With several instances (#35 security C11): the liveness key of this
+   * instance, which every group-scoped commit requires, and what to do when
+   * a commit found it gone. Unset in tests that use no instance.
+   */
+  instanceKey?: () => string | undefined;
+  onFencedAbort?: () => void;
+}
+
+/** The instance fence of a commit plan (#35 security C11). */
+export interface PlanFence {
+  /** The liveness key that must exist. */
+  key: string;
+  /** Called when it did not (the instance fences itself). */
+  onAbort?: (() => void) | undefined;
+}
+
+/** The fence for a commit of this instance now, if it runs with instances. */
+export function fenceOf(ctx: RedisContext): PlanFence | undefined {
+  const key = ctx.instanceKey?.();
+  return key === undefined ? undefined : { key, onAbort: ctx.onFencedAbort };
 }
 
 type Op = Record<string, string | number>;
@@ -41,7 +62,10 @@ export interface CommitResult {
 export class CommitPlan {
   readonly keys: string[] = [];
 
-  constructor(private readonly now: number) {}
+  constructor(
+    private readonly now: number,
+    private readonly fence?: PlanFence,
+  ) {}
 
   /** Time to live in ms, at least 1 (a passed end makes the key vanish at once). */
   private ttl(expiresAt: number): string {
@@ -144,10 +168,19 @@ export class CommitPlan {
    */
   async run(link: RedisLink): Promise<CommitResult> {
     if (this.empty) return { evicted: 0, closed: [] };
+    // Security C11: a fenced instance never writes; this check comes first.
+    const checks =
+      this.fence === undefined
+        ? this.checks
+        : [{ o: 'exists', k: this.k(this.fence.key), r: 'fenced' }, ...this.checks];
     const reply = await link.script(COMMIT, this.keys, [
-      JSON.stringify({ c: this.checks, w: this.writes }),
+      JSON.stringify({ c: checks, w: this.writes }),
     ]);
     if (Array.isArray(reply) && reply[0] === 'abort') {
+      if (reply[1] === 'fenced') {
+        this.fence?.onAbort?.();
+        throw new InstanceFencedError();
+      }
       throw new StorageConflictError(String(reply[1]));
     }
     const [, evicted, closed] = Array.isArray(reply) ? (reply as unknown[]) : [];
@@ -200,8 +233,12 @@ export class RedisUnitOfWork implements UnitOfWork {
   private readonly committed: Array<(result: CommitResult) => void> = [];
   /** The epoch this task classified tokens with (re-checked by a recreation, C7). */
   private epochSeen: string | undefined;
+  /** The instance this task started as (security C11): its commit requires that liveness. */
+  private readonly fence: PlanFence | undefined;
 
-  constructor(readonly ctx: RedisContext) {}
+  constructor(readonly ctx: RedisContext) {
+    this.fence = fenceOf(ctx);
+  }
 
   /** The group's entry, read from Redis on first use. */
   entry(namespace: string, groupId: string): Promise<WorkEntry> {
@@ -271,7 +308,7 @@ export class RedisUnitOfWork implements UnitOfWork {
 
   /** The commit plan of this task. */
   async plan(): Promise<CommitPlan> {
-    const plan = new CommitPlan(this.ctx.now());
+    const plan = new CommitPlan(this.ctx.now(), this.fence);
     const { keys } = this.ctx;
     const ends = new Map<string, number>();
     for (const entry of this.entries.values()) {
@@ -391,9 +428,13 @@ export class RedisWorkSource implements UnitOfWorkSource {
     return new RedisUnitOfWork(this.ctx);
   }
 
-  /** An empty commit plan, for a step outside any unit of work. */
-  plan(): CommitPlan {
-    return new CommitPlan(this.ctx.now());
+  /**
+   * An empty commit plan, for a step outside any unit of work. Fenced by
+   * this instance's liveness (security C11) unless `fenced` is false (only
+   * compare-and-delete code releases).
+   */
+  plan(fenced = true): CommitPlan {
+    return new CommitPlan(this.ctx.now(), fenced ? fenceOf(this.ctx) : undefined);
   }
 
   /** The running task's work if it belongs to this storage. */

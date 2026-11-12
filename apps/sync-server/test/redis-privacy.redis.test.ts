@@ -128,7 +128,11 @@ describeRedis('Redis keys, values and logs (#35 AC5, AC8, AC24, AC25, F13)', () 
     for (const key of await inspect.keys(prefix)) {
       const ttl = await inspect.client.pTTL(key);
       expect(ttl, key).toBeGreaterThan(0);
-      expect(ttl, key).toBeLessThanOrEqual(key.endsWith(':epoch') ? end + 5 * MINUTE : end);
+      // Instance metadata holds no group data (#35 architecture 12.3): the
+      // liveness key lives 15 s, the instance list 24 h after a registration.
+      if (key.endsWith(':insts')) expect(ttl, key).toBeLessThanOrEqual(24 * 60 * MINUTE);
+      else if (key.includes(':inst:')) expect(ttl, key).toBeLessThanOrEqual(15_000);
+      else expect(ttl, key).toBeLessThanOrEqual(key.endsWith(':epoch') ? end + 5 * MINUTE : end);
     }
     const leader = (await resumeWith(ts, group.leaderToken)).client;
     leader.send({ type: 'group.end' });

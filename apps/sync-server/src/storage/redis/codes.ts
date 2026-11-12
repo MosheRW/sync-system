@@ -78,8 +78,9 @@ export class RedisCodeIndex implements CodeIndexStore {
     await plan.run(this.ctx.link);
   }
 
+  /** Compare-and-delete releases need no instance fence (security C11). */
   private planFor(): CommitPlan {
-    return this.work.plan();
+    return this.work.plan(false);
   }
 
   /** Nothing local to forget: the index lives in Redis. */

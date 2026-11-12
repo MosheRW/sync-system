@@ -5,7 +5,7 @@ import { parseEnv } from '../../src/config/env.js';
 import type { LogLevel } from '../../src/config/env.js';
 import { createLogger } from '../../src/logging/logger.js';
 import { type SyncServer, type SyncServerOptions, createSyncServer } from '../../src/server.js';
-import { redisStorage } from '../../src/storage/redis/redis-storage.js';
+import { type ClusterTimings, redisStorage } from '../../src/storage/redis/redis-storage.js';
 import { realScheduler } from '../../src/time/scheduler.js';
 import { LogCapture } from './log-capture.js';
 import { randomPrefix, testLink } from './redis.js';
@@ -91,6 +91,10 @@ export interface StartOptions extends Partial<
   redisPrefix?: string;
   /** The Redis connection to use with `redisPrefix` (e.g. through a TCP proxy). */
   redisLink?: RedisLink;
+  /** Shorter several-instance timings (#35 architecture 12.13). */
+  redisTimings?: Partial<ClusterTimings>;
+  /** The monotonic clock of the self-fence (#35 security C11 tests). */
+  monotonic?: () => number;
 }
 
 export interface TestServer {
@@ -113,6 +117,8 @@ export async function startTestServer(options: StartOptions = {}): Promise<TestS
     logLevel,
     redisPrefix,
     redisLink,
+    redisTimings,
+    monotonic,
     ...rest
   } = { ...options, ...restartClock(options) };
   const env = parseEnv({ LOG_LEVEL: logLevel ?? 'trace', ...envOverrides });
@@ -141,6 +147,8 @@ export async function startTestServer(options: StartOptions = {}): Promise<TestS
       logger,
       appOf: (namespace) => byNamespace.get(namespace),
       ...(rest.endedGroupsCap === undefined ? {} : { endedGroupsCap: rest.endedGroupsCap }),
+      ...(redisTimings === undefined ? {} : { timings: redisTimings }),
+      ...(monotonic === undefined ? {} : { monotonic }),
     });
   }
   const server = createSyncServer({

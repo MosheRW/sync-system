@@ -457,6 +457,45 @@ export class GroupService implements GroupActions {
     }
   }
 
+  /**
+   * This instance fenced itself (#35 architecture 12.5, security C13): a
+   * session in a group, parked or waiting for approval leaves it here
+   * without any disconnect rule (the orphan sweep of a peer, or of this
+   * instance under its new ID, runs them). Returns whether it was in one;
+   * the caller then closes it with 1001.
+   */
+  quietDetach(session: Session): boolean {
+    let busy = false;
+    const membership = session.membership;
+    if (membership !== undefined) {
+      busy = true;
+      this.deps.notifier.unregister(
+        membershipKey(session.app.namespace, membership.groupId, membership.participantId),
+        session,
+      );
+      session.membership = undefined;
+    }
+    if (session.parked !== undefined) {
+      busy = true;
+      this.parking.unpark(session);
+    }
+    if (session.pendingJoin !== undefined) {
+      busy = true;
+      this.joins.forgetPending(session);
+    }
+    return busy;
+  }
+
+  /**
+   * After a self-fence (#35 architecture 12.5, C13): queued disconnect
+   * replays, refreshers and parking go; the sweep takes over.
+   */
+  onFenced(): void {
+    this.replay.clear();
+    this.refresher.clearAll();
+    this.parking.clearAll();
+  }
+
   /** Number of groups waiting for a disconnect replay. For tests only. */
   get replayCount(): number {
     return this.replay.size;

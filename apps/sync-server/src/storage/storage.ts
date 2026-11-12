@@ -14,6 +14,18 @@ import type { EpochSource } from './redis/epoch.js';
 export type StorageStatus =
   { kind: 'memory' } | { kind: 'redis'; state: 'connected' | 'unreachable' };
 
+/** Several instances on one Redis (#35 architecture 12). */
+export interface StorageCluster {
+  /** This instance must not act now (security C11: the synchronous guard). */
+  fenced(): boolean;
+  /**
+   * Called when this instance fences itself (#35 architecture 12.5): every
+   * session in a group, parked or pending is closed with 1001, without the
+   * disconnect rules (security C13).
+   */
+  onFence(listener: () => void): void;
+}
+
 /**
  * Everything the group layer keeps (#35 architecture 5): groups, the code
  * index, ended groups, door state and timers, plus the unit of work that
@@ -33,6 +45,8 @@ export interface Storage {
   readonly epoch?: EpochSource;
   /** Keep stored attachments on a clean stop (Redis, #35 AC11). */
   readonly keepAttachmentsOnClose: boolean;
+  /** Set with Redis: this process is one of several instances (#35 architecture 12). */
+  readonly cluster?: StorageCluster;
   /**
    * Runs before the server listens (Redis, #35 architecture 7): the epoch,
    * the timers that came due while the server was down (AC12), `sweep` for

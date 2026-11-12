@@ -138,3 +138,28 @@ describe('parseMember (#35 security C1, C6)', () => {
     expect(parseMember(member)).toBeUndefined();
   });
 });
+
+describe('RedisKeys for several instances (#35 architecture 12.3, security C6)', () => {
+  const keys = new RedisKeys('sync');
+  const INSTANCE = 'ab'.repeat(16);
+
+  it('builds the instance keys and channel', () => {
+    expect(keys.instance(INSTANCE)).toBe(`sync:v1:inst:${INSTANCE}`);
+    expect(keys.instances()).toBe('sync:v1:insts');
+    expect(keys.instanceGroups(INSTANCE)).toBe(`sync:v1:ig:${INSTANCE}`);
+    expect(keys.channel(INSTANCE)).toBe(`sync:v1:ch:${INSTANCE}`);
+  });
+
+  it.each(['', 'AB'.repeat(16), 'ab'.repeat(15), 'ab'.repeat(17), `${'ab'.repeat(15)}a:`, '*'])(
+    'rejects the instance ID %j',
+    (id) => {
+      for (const build of [
+        () => keys.instance(id),
+        () => keys.instanceGroups(id),
+        () => keys.channel(id),
+      ]) {
+        expect(build).toThrow(KeyPartError);
+      }
+    },
+  );
+});

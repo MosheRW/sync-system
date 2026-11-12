@@ -219,6 +219,19 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
   storage.onRecovered(() => groups.replayDisconnects());
   const counter = new ConnectionCounter();
   const connections = new Set<Connection>();
+  // A self-fence (#35 architecture 12.5): every session in a group, parked
+  // or pending closes with 1001, with no disconnect rule (security C13).
+  storage.cluster?.onFence(() => {
+    let closed = 0;
+    for (const connection of connections) {
+      const session = connection.session;
+      if (session === undefined || !groups.quietDetach(session)) continue;
+      closed += 1;
+      connection.ws.close(CloseCode.GOING_AWAY, 'temporarily unavailable');
+    }
+    groups.onFenced();
+    logger.info({ event: 'fence_closed', sessions: closed }, 'sessions closed after a fence');
+  });
 
   httpServer.on(
     'upgrade',

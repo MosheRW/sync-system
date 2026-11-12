@@ -12,6 +12,7 @@ import { RedisGroupStore } from './group-store.js';
 import { RedisKeys } from './keys.js';
 import { RedisTimerBackend } from './timers.js';
 import { RedisEpoch } from './epoch.js';
+import { INSTANCE_TIMINGS, type InstanceTimings, RedisInstance } from './instance.js';
 import { parseMember } from './keys.js';
 import { type RedisContext, RedisWorkSource } from './unit-of-work.js';
 
@@ -26,6 +27,18 @@ export interface RedisStorageOptions {
   appOf(namespace: string): AppConfig | undefined;
   /** Cap of the ended groups; defaults to MAX_ENDED_GROUPS. Tests lower it. */
   endedGroupsCap?: number;
+  /** Test-only: shorter instance and lease timings (#35 architecture 12.13). */
+  timings?: Partial<ClusterTimings>;
+  /** Test-only: the monotonic clock of the self-fence (default `performance.now`). */
+  monotonic?: () => number;
+}
+
+/** Every several-instance timing (#35 architecture 12.4, 12.5; Gate 2 Q-B5). */
+export type ClusterTimings = InstanceTimings;
+
+/** The fixed timings, merged with test overrides. */
+export function clusterTimings(overrides: Partial<ClusterTimings> = {}): ClusterTimings {
+  return { ...INSTANCE_TIMINGS, ...overrides };
 }
 
 /** The parts every Redis component shares. */
@@ -46,6 +59,11 @@ export function redisContext(options: RedisStorageOptions): RedisContext {
 /** Storage on one Redis (#35): groups and their unit of work in Redis. */
 export function redisStorage(options: RedisStorageOptions): Storage {
   const ctx = redisContext(options);
+  const timings = clusterTimings(options.timings);
+  const instance = new RedisInstance(ctx, timings, options.monotonic);
+  // Security C11: every group-scoped commit requires this instance's liveness.
+  ctx.instanceKey = () => instance.liveKey();
+  ctx.onFencedAbort = () => instance.fence('fenced');
   const work = new RedisWorkSource(ctx);
   const memory = memoryStorage({ scheduler: options.scheduler, logger: options.logger });
   const timers = new RedisTimerBackend(ctx, work, options.scheduler);
@@ -71,8 +89,17 @@ export function redisStorage(options: RedisStorageOptions): Storage {
           });
       });
     },
+    cluster: {
+      fenced: () => instance.fenced(),
+      onFence(listener) {
+        instance.onFence(() => listener());
+      },
+    },
     async start(sweep) {
       await epoch.current();
+      // Before the sweep and before any commit (#35 architecture 12.8).
+      await instance.register();
+      instance.start();
       // Deadlines that passed while the server was down take effect once (AC12).
       await timers.runDue();
       // Then every live group's attachments from before the stop (AC11).
@@ -100,8 +127,15 @@ export function redisStorage(options: RedisStorageOptions): Storage {
     ended,
     doors: new RedisDoorStates(work),
     work,
-    status: () => ({ kind: 'redis', state: options.link.state }),
-    close: () => options.link.close(),
+    status: () => ({
+      kind: 'redis',
+      // A fenced instance refuses upgrades like an unreachable one (12.5).
+      state: instance.started && instance.fenced() ? 'unreachable' : options.link.state,
+    }),
+    async close() {
+      await instance.stop();
+      await options.link.close();
+    },
   };
 }
 

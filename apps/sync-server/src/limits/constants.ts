@@ -219,3 +219,23 @@ export const TIMER_POLL_MS = 1_000;
 
 /** How long a claimed Redis timer is leased to the claiming instance (#35 ADR 0013). */
 export const TIMER_LEASE_MS = 30_000;
+
+/**
+ * How long an instance's liveness key lives after each renewal (#35
+ * architecture 12.5, Gate 2 Q-B5). Peers treat an instance as dead only
+ * once this key is gone (Redis time).
+ */
+export const INSTANCE_LIVENESS_MS = 15_000;
+
+/** How often an instance renews its liveness key (#35 architecture 12.5). */
+export const INSTANCE_HEARTBEAT_MS = 5_000;
+
+/**
+ * An instance whose last successful renewal was sent this long ago fences
+ * itself: it closes its group sessions before peers may sweep it (#35
+ * security P2-3). Below INSTANCE_LIVENESS_MS, so the margin is 5 s.
+ */
+export const INSTANCE_SELF_FENCE_MS = 10_000;
+
+/** How long the instance list keeps an instance ID after its last registration (24 h). */
+export const INSTANCE_LIST_RETENTION_MS = 86_400_000;
