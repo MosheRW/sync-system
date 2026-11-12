@@ -33,8 +33,20 @@
 - architect plan: opus (default; NEXT_MODEL opus) → DONE
 - pm update-spec (9c follow-up decisions): sonnet (default) → DONE
 - security plan: opus (rule) → PASS (0 critical, 0 high, 9 medium, 6 low; required controls C1-C10 in docs/issues/35/security.md)
+- engineer implement: opus (Implementer model line; security-sensitive) → DONE
 ## Open questions
 - 9a Gate 2: Q-A1 two PRs, Q-A2 TTL slack 5 s, Q-A3 restart grace for running pauses, Q-A4 PR 1 body Refs vs Closes, Q-A5 approvals in PR 2, Q-A6 eviction policy warning; ADRs 0010-0014 (architecture.md section 18).
 - 9b (#36): Q20 for its own Gate 1. 9c (#37): Q17, Q18 for its own Gate 1 (Q16, Q19 decided). See spec.md.
 ## Deviations from plan
 - Gate 2 additions to the section 17 chunks: F10 (position key), F12 (epoch expiry), F13 (pruning), F14 (README ACL advice), F15 (CI Redis via `docker run`) are folded into the matching chunks (8, 11, 10/11, 16 and 15).
+- F10: a new key `P:p:<ns>:<gid>` holds the position and the last leader activity; the document is rewritten only when it changes (fixed field order). Measured at MAX_GROUP_SIZE_CEILING 100 with the longest names, a 256-ID block list and 4 KiB metadata: document about 44.6 KB, position key about 4.1 KB at maxMessageBytes 4096. Every task still reads the document once.
+- P2-1 done: the commit is one Lua script (`COMMIT`, a small op interpreter over KEYS/ARGV), so C7's re-checks are atomic and PR 2 can add the lease check there.
+- Expiries are sent as TTLs relative to Redis `TIME` (not `PXAT` absolute), so the server and Redis clocks need not agree; deadlines are still compared with the server clock.
+- `P:e:gns` (guarded count per namespace) is not stored: the busiest namespace is computed in the Lua eviction from the guarded entries (no drifting counter). Ended entries carry their deadline and are checked against the server clock.
+- Replay queue (C4) is a bounded, deduplicated set of groups (cap MAX_CONNECTIONS, oldest dropped) rather than per-session entries: on recovery each group is reconciled under its lock (every participant without an open local session is disconnected), which covers the per-session cases.
+- node-redis's command timeout stops once a command is written, so the link adds its own timeout and replaces a stalled connection (a late reply would answer the wrong command).
+- `compose.redis.yaml` runs Redis as the image's `redis` user (999:1000), read-only, cap_drop ALL, `/data` on tmpfs, `noeviction`. The ACL example in the README adds `+time` (the commit script calls TIME); verified against Redis with that ACL user.
+- Two existing tests were made storage-neutral (pending-timer counts are memory-only; a join racing a disconnect may also get GROUP_LOCKED from the empty-group hold). The whole server suite also passes with `SYNC_TEST_STORE=redis` (every server test on Redis).
+- Bug introduced and fixed within this PR: chunk 6 broke the ended-group guard term (`fix(server): restore the clock-skew term of the ended-group guard`, with a regression test).
+- C10: the self-signed TLS test generates its certificate with the `openssl` CLI at test time (no key committed).
+- Local note: `docker compose up` hangs at "Creating" on this Windows machine for the plain compose.yaml too (environment); the image was checked by hand against a Redis run with the override's flags (connects, sweeps, listens; the dev password is refused with NODE_ENV=production). `docker compose -f compose.yaml -f compose.redis.yaml config` is valid.
