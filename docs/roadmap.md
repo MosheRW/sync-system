@@ -34,6 +34,7 @@ Scope of items 7-9 is taken from the PRD ("Product 1: the reading app", "Deliver
 - #27 Hebrew header bidi bugs (follow-up to #19): open. QA saw it again in 8b (#25).
 - #28 native-speaker review of the Hebrew strings (follow-up to #24): open. The 102 Hebrew strings added in 8b (#25) are in its scope, including the vice-leader term "סגן המוביל".
 - #32 `fix(server): offer take-back only after a handoff loss (follow-up to #25)` (security M1): open.
+- #39 `fix(storage): delete join-code keys when an invalid stored group ends at startup (follow-up to #35)` (security L4, low): open. May be folded into PR 2 of #35.
 
 ## Key accepted decisions
 
