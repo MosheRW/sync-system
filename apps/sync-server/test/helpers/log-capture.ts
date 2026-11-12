@@ -21,4 +21,9 @@ export class LogCapture implements DestinationStream {
   events(): unknown[] {
     return this.records().map((record) => record.event);
   }
+
+  /** The first record with `event`, if any. */
+  find(event: string): Record<string, unknown> | undefined {
+    return this.records().find((record) => record.event === event);
+  }
 }

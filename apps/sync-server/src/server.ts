@@ -37,7 +37,7 @@ import { Connection } from './ws/connection.js';
 import { ConnectionCounter, type ConnectionStats } from './ws/connection-counter.js';
 import { Heartbeat } from './ws/heartbeat.js';
 import { createUpgradeHandler } from './ws/upgrade.js';
-import { type Storage, memoryStorage } from './storage/storage.js';
+import { type Storage, type StorageStatus, memoryStorage } from './storage/storage.js';
 
 export interface SyncServerOptions {
   env: ServerEnv;
@@ -86,6 +86,11 @@ export interface SyncServer {
   readonly httpServer: Server;
   /** Connection counts. For tests only; never exposed over HTTP. */
   stats(): ConnectionStats;
+  /**
+   * Which storage serves groups and, for Redis, whether it is reachable
+   * (#35 AC27). Not exposed over HTTP in 9a.
+   */
+  storage(): StorageStatus;
 }
 
 /** How long close() waits for clients to complete the close handshake. */
@@ -271,6 +276,7 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
     },
     httpServer,
     stats: () => counter.snapshot(),
+    storage: () => storage.status(),
     listen(listenPort, host) {
       return new Promise((resolve, reject) => {
         const onError = (err: Error) => {

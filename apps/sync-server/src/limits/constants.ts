@@ -204,3 +204,18 @@ export const MAX_CODE_DRAWS = 20;
  * tell its participants and record the end.
  */
 export const END_TTL_SLACK_MS = 5_000;
+
+/** Redis connection errors are logged at most once per this window (#35 AC25). */
+export const REDIS_ERROR_LOG_INTERVAL_MS = 30_000;
+
+/** While Redis is unreachable, a PING probe runs this often (#35 security C4). */
+export const REDIS_PROBE_INTERVAL_MS = 1_000;
+
+/** Longest wait between Redis reconnect attempts (#35 architecture 3). */
+export const REDIS_RECONNECT_MAX_MS = 5_000;
+
+/** Safety poll of the Redis timer due set (#35 ADR 0013). */
+export const TIMER_POLL_MS = 1_000;
+
+/** How long a claimed Redis timer is leased to the claiming instance (#35 ADR 0013). */
+export const TIMER_LEASE_MS = 30_000;
