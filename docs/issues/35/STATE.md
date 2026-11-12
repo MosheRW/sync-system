@@ -2,10 +2,11 @@
 - Path: full
 - Phase: architecture (PR 2)
 - Branch: feat/35-redis-multi-instance
-- PR: none yet (PR 2 draft to come; PR 1 #38 merged 2026-11-12 as 46f4af3)
-- Plan approved by user: no (PR 2 plan revision needs its own Gate 2; PR 1 plan approved 2026-11-12)
+- PR: #40 (PR 2, draft, `Closes #35`, `Refs #39`; PR 1 #38 merged 2026-11-12 as 46f4af3)
+- Plan approved by user: no (PR 2 plan revision: architecture.md section 12, Gate 2 questions Q-B1-Q-B9 in 12.22; PR 1 plan approved 2026-11-12)
+- Security-sensitive: yes (PR 2: architecture 12.19; security plan review of section 12 due, P2-3/P2-4/P2-6/P2-7/P2-8 blocking)
 - Review rounds: 0 (for PR 2; PR 1 had 2)
-- Last updated by: pm
+- Last updated by: architect
 - Issue #35 stays open after PR 1 (`Refs #35`); board card moved back to In Progress.
 
 ## PR 1 (#38, merged 2026-11-12)
@@ -71,11 +72,14 @@
 - security code (round 2, delta): opus (rule) → PASS (1 low L4 → follow-up #39, 1 info)
 - pm follow-up issue: sonnet (default) → DONE (#39)
 - pm update (PR #38 merge): sonnet (default: mechanical doc update) → DONE
+- architect plan revision (PR 2): opus (rule: default for architect; pm NEXT_MODEL opus; security-sensitive concurrency) → DONE (draft PR #40)
 ## Open questions
-- Follow-up #39 (security round 2 L4, user decision at Gate 3, 2026-11-12): `fix(storage): delete join-code keys when an invalid stored group ends at startup`; not in PR #38; may be folded into PR 2 of #35.
+- PR 2 Gate 2 (architecture 12.22, recommendation first): Q-B1 fold #39 in as chunk 1 (yes), Q-B2 refinements inside ADRs 0011/0012 (registry in its own key, PUBLISH inside COMMIT, lease-wait timeout closes the requester only), Q-B3 approve racing a joiner disconnect (accept), Q-B4 busy closes requester only (yes), Q-B5 fixed timings (lease 10/3/5/30 s, liveness 15 s, heartbeat 5 s, self-fence 10 s, sweep 5 s; outage > 10 s closes group sessions), Q-B6 follow-up issue for a global join-attempt limiter, Q-B7 stop all PR 1 instances before upgrading, Q-B8 nginx-unprivileged image, Q-B9 config consistency documented only.
+- Follow-up #39 (security round 2 L4, user decision at Gate 3, 2026-11-12): `fix(storage): delete join-code keys when an invalid stored group ends at startup`; not in PR #38. Architect recommends folding it into PR 2 as chunk 1 (Gate 2 Q-B1); PR #40 says `Refs #39` until the user decides.
 - 9a Gate 2: Q-A1 two PRs, Q-A2 TTL slack 5 s, Q-A3 restart grace for running pauses, Q-A4 PR 1 body Refs vs Closes, Q-A5 approvals in PR 2, Q-A6 eviction policy warning; ADRs 0010-0014 (architecture.md section 18).
 - 9b (#36): Q20 for its own Gate 1. 9c (#37): Q17, Q18 for its own Gate 1 (Q16, Q19 decided). See spec.md.
 ## Deviations from plan
+- PR 2 plan (architecture 12.1) refines the section 12 outline: the attachment registry is its own key `P:a:<ns>:<gid>` (not in the document), remote effects are PUBLISHed inside the COMMIT script, the lease-wait timeout closes only the requester (`StorageBusyError`), pending approvals are one key per request plus an index (per-request expiry on Redis 7.2), parking uses a set of instance IDs `P:pk`. Gate 2 Q-B2.
 - Gate 2 additions to the section 17 chunks: F10 (position key), F12 (epoch expiry), F13 (pruning), F14 (README ACL advice), F15 (CI Redis via `docker run`) are folded into the matching chunks (8, 11, 10/11, 16 and 15).
 - F10: a new key `P:p:<ns>:<gid>` holds the position and the last leader activity; the document is rewritten only when it changes (fixed field order). Measured at MAX_GROUP_SIZE_CEILING 100 with the longest names, a 256-ID block list and 4 KiB metadata: document about 44.6 KB, position key about 4.1 KB at maxMessageBytes 4096. Every task still reads the document once.
 - P2-1 done: the commit is one Lua script (`COMMIT`, a small op interpreter over KEYS/ARGV), so C7's re-checks are atomic and PR 2 can add the lease check there.
