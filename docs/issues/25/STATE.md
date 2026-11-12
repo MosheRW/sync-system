@@ -8,9 +8,10 @@
 - Plan approved by user: yes (Gate 2, 2026-11-11, "Approve all")
 - Gate 2 decisions: no ADRs. Q-A1: a leader who drops past the grace and returns as a member sees the sticky lost-lead banner (`lostDisconnect`), then the take-back card. Q-A2: the take-back card shows only after a handoff loss (`handoff_disconnect` / `handoff_inactivity`), not after a `take_back` loss; server follow-up for M1 is #32. Security R15-R24 are mandatory (L1-L6 through them; L4: the remove dialog shows the row's details line). "Bring group here" has no pending state; a failure keeps the preview and shows the error in the banner.
 - Security-sensitive: yes (roles, removal, take-back client change, other participants' names; see architecture.md section 16)
-- Review rounds: 1
+- Review rounds: 2
 - QA verdict (round 1, head bd6b8cd): BLOCKED on CI only, no code findings. Locally green: audit, lint, typecheck, test (reader suite 3x, 1010/1010), build, e2e 5/5, real-browser pass en + he (25/25). AC 22/23 met; AC55 not verifiable because the CI jobs `check` and `e2e` never started (GitHub Actions billing / spending limit). Becomes PASS once CI re-runs green on bd6b8cd. All 21 commits signed. 102 new he strings listed in the PR #31 review for #28.
-- Last updated by: engineer
+- QA verdict (round 2, head 704fb96): PASS. Local CI run in place of GitHub Actions (user decision 2026-11-12; Actions billing): fresh clone of 704fb96, each job in its own `node:24` container (Debian 12), Node 24.22.3, pnpm 10.28.0. `check` 6/6 green (audit clean; tests 3163: protocol 207, sync-server 1145, client 574, react 227, reader 1010), `e2e` 4/4 green (5/5 Playwright, 47.3 s; handoff 5.38 s, bring 36 ms, QR 200 ms). AC 23/23 met (AC55 via the local run). Fix-round delta verified: the client R16 test fails under the member-keeps-recovery mutation (reverted); the reader Q-A1 test asserts on the injected MemoryStorage. All 25 commits signed.
+- Last updated by: qa
 ## Model log
 - pm groom: opus (orchestrator: broad lifecycle scope, same as #24) → DONE
 - pm update-spec: sonnet (default) → DONE
@@ -23,6 +24,7 @@
 - qa validate: opus (NEXT_MODEL) → BLOCKED (CI not run: Actions billing; no code findings)
 - security code (round 1): opus (rule) → PASS (1 low)
 - engineer fix (round 1, security low at user request): opus (rule) → DONE
+- qa validate (round 2, delta + local CI): opus (rule: round 2) → PASS
 ## Fix round 1
 - Input: security code review round 1 PASS with one low (R16, Q-A1 storage check could not fail), fixed at the user's request. QA round 1: BLOCKED on CI only, no code findings.
 - `9c9eaf9 test(client)`: `packages/client/test/client.rejoin.test.ts`, a leader with stored recovery data drops, rejoins, and the server answers `group.joined` as member; the stored entry is the member token only, with no `recovery` and no codes blob. Put in the rejoin file (not resume) because Q-A1 is the automatic reconnect path. Checked to fail when the token store keeps recovery for member tokens (mutation reverted).
