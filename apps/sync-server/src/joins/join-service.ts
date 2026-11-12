@@ -24,6 +24,7 @@ import {
   CODE_ROTATIONS_PER_GROUP_PER_MINUTE,
   CODE_ROTATION_WINDOW_MS,
   DOOR_FAILURES_APP_WINDOW_MS,
+  DOOR_PAUSE_MS,
   DOOR_FAILURES_PER_APP_PER_MINUTE,
   JOIN_ATTEMPTS_PER_APP_PER_MINUTE,
   JOIN_ATTEMPTS_PER_CONNECTION_PER_MINUTE,
@@ -35,7 +36,8 @@ import type { Scheduler } from '../time/scheduler.js';
 import type { CodesBlobService } from '../tokens/codes-blob.js';
 import type { QrTicketService } from '../tokens/qr-tickets.js';
 import { actionErrorMessage, errorMessage } from '../ws/error-messages.js';
-import { CodeIndex } from './code-index.js';
+import type { GroupTimers } from '../groups/group-timers.js';
+import type { CodeIndexStore } from './code-index.js';
 import {
   type GroupCodes,
   type RandomInt,
@@ -45,7 +47,7 @@ import {
   rotateDoorCode,
 } from './codes.js';
 import { ApprovalQueue, type PendingRequest, type TakenRequest } from './approval-queue.js';
-import { DoorGuard } from './door-guard.js';
+import type { DoorStateStore } from './door-guard.js';
 import { isValidGroupMethodSet, resolveGroupMethods } from './join-methods.js';
 
 export interface JoinServiceDeps {
@@ -58,6 +60,14 @@ export interface JoinServiceDeps {
   codesBlobs: CodesBlobService;
   /** CSPRNG integer source; injected by tests to force code collisions. */
   random?: RandomInt;
+  /** Code -> group lookup per app (#10 D1; in Redis with #35). */
+  codes: CodeIndexStore;
+  /** Door-code failures, rotations and pauses per method A group (#10 AC29, R1a). */
+  doors: DoorStateStore;
+  /** Group timers (the door-pause end, #35 ADR 0013). */
+  timers: GroupTimers;
+  /** The latest a group created at `createdAt` can live: the TTL of its code claims (#35 AC24). */
+  groupExpiry(namespace: string, createdAt: number): number;
 }
 
 /**
@@ -192,8 +202,6 @@ export type RestoredCodesResult =
  * code, ticket, blob, display name or request ID.
  */
 export class JoinService {
-  /** Code -> group lookup per app. */
-  readonly index = new CodeIndex();
   private readonly random: RandomInt;
   /** Join attempts per connection (#10 AC27). */
   private readonly joinLimiter: SlidingWindowRateLimiter;
@@ -203,8 +211,6 @@ export class JoinService {
   private readonly warnedAt = new Map<string, number>();
   /** Wrong door codes per app, checked before the compare (#10 R1b). */
   private readonly wrongDoorLimiter: SlidingWindowRateLimiter;
-  /** Door-code failures, rotations and pauses per method A group (#10 AC29, R1a). */
-  readonly doors: DoorGuard;
   /** Leader code rotations per group (#10 AC30). */
   private readonly rotateLimiter: SlidingWindowRateLimiter;
   /** Pending method B requests (#10 AC19-AC22). */
@@ -221,7 +227,6 @@ export class JoinService {
     this.joinLimiter = new SlidingWindowRateLimiter(now, JOIN_WINDOW_MS);
     this.appJoinLimiter = new SlidingWindowRateLimiter(now, JOIN_WINDOW_MS);
     this.wrongDoorLimiter = new SlidingWindowRateLimiter(now, DOOR_FAILURES_APP_WINDOW_MS);
-    this.doors = new DoorGuard(deps.scheduler);
     this.rotateLimiter = new SlidingWindowRateLimiter(now, CODE_ROTATION_WINDOW_MS);
     this.approvals = new ApprovalQueue(deps.scheduler);
     this.qrLimiter = new SlidingWindowRateLimiter(now, QR_ISSUE_WINDOW_MS);
@@ -474,8 +479,8 @@ export class JoinService {
    * The leader is back (#10 AC21, AC29, AC34): every pending request is
    * re-sent after the reply, and `join.paused` if method A is still paused.
    */
-  onLeaderReturn(leader: Session, record: GroupRecord): void {
-    const paused = this.pausedFor(record.appNamespace, record.id);
+  async onLeaderReturn(leader: Session, record: GroupRecord): Promise<void> {
+    const paused = await this.pausedFor(record.appNamespace, record.id);
     if (paused > 0) {
       this.host.deliverLater(leader, {
         type: 'join.paused',
@@ -507,7 +512,7 @@ export class JoinService {
           details: { retryAfterMs: rate.retryAfterMs },
         });
       }
-      const next = this.claimFullSet(record);
+      const next = await this.claimFullSet(record);
       if (next === 'exhausted') return errorMessage(ErrorCode.CODES_EXHAUSTED);
       const updated = await this.commitFullSet(record, next, 'leader', session);
       if (updated === undefined) return errorMessage(ErrorCode.NOT_IN_GROUP);
@@ -526,16 +531,24 @@ export class JoinService {
    * every older QR ticket stops working (D12). Nothing changes until
    * `commitFullSet`; on `exhausted` nothing was claimed.
    */
-  claimFullSet(record: GroupRecord): GroupCodes | 'exhausted' {
+  claimFullSet(record: GroupRecord): Promise<GroupCodes | 'exhausted'> {
     return issueCodeSet(
-      this.index,
+      this.deps.codes,
       record.appNamespace,
       record.id,
       record.joinMethods,
       record.codes.generation,
       this.now(),
       this.random,
+      this.deps.groupExpiry(record.appNamespace, record.createdAt),
     );
+  }
+
+  /** Clears door state; a lifted pause's timer goes too. Under the group lock. */
+  private async resetDoor(namespace: string, groupId: string): Promise<boolean> {
+    const lifted = await this.deps.doors.reset(namespace, groupId, this.now());
+    this.deps.timers.clear(namespace, groupId, 'doorPauseEnd');
+    return lifted;
   }
 
   /**
@@ -554,12 +567,12 @@ export class JoinService {
     const groupId = record.id;
     const updated = await this.deps.store.setCodes(namespace, groupId, next);
     if (updated === undefined) {
-      this.index.release(namespace, groupId, next);
+      await this.deps.codes.release(namespace, groupId, next);
       return undefined;
     }
     // The new codes differ from the old ones, which are freed now.
-    this.index.release(namespace, groupId, record.codes);
-    const lifted = this.doors.reset(groupKey(namespace, groupId), this.now());
+    await this.deps.codes.release(namespace, groupId, record.codes);
+    const lifted = await this.resetDoor(namespace, groupId);
     this.deps.logger.info(
       { event: 'codes_rotated', namespace, groupRef: groupRef(groupId), cause },
       'codes rotated',
@@ -584,10 +597,10 @@ export class JoinService {
    * rotation keeps the stale ticket generation and group code, so it is
    * rotated (#13 security L-2). Returns the codes to store, or `exhausted`.
    */
-  supersedeCodes(
+  async supersedeCodes(
     record: GroupRecord,
     blob: string | undefined,
-  ): { codes: GroupCodes; rotated: boolean } | 'exhausted' {
+  ): Promise<{ codes: GroupCodes; rotated: boolean } | 'exhausted'> {
     const namespace = record.appNamespace;
     const verified =
       blob === undefined ? undefined : this.deps.codesBlobs.verify(blob, namespace, record.id);
@@ -596,11 +609,16 @@ export class JoinService {
       sharesNothing(verified.codes, record.codes) &&
       verified.methods.length === record.joinMethods.length &&
       verified.methods.every((m) => record.joinMethods.includes(m)) &&
-      this.index.claim(namespace, record.id, verified.codes)
+      (await this.deps.codes.claim(
+        namespace,
+        record.id,
+        verified.codes,
+        this.deps.groupExpiry(namespace, record.createdAt),
+      ))
     ) {
       return { codes: { ...verified.codes }, rotated: false };
     }
-    const next = this.claimFullSet(record);
+    const next = await this.claimFullSet(record);
     return next === 'exhausted' ? next : { codes: next, rotated: true };
   }
 
@@ -609,7 +627,7 @@ export class JoinService {
     const namespace = record.appNamespace;
     const updated = (await this.deps.store.setCodes(namespace, record.id, codes)) ?? record;
     const old = record.codes;
-    this.index.release(namespace, record.id, {
+    await this.deps.codes.release(namespace, record.id, {
       ...(old.groupCode !== undefined && old.groupCode !== codes.groupCode
         ? { groupCode: old.groupCode }
         : {}),
@@ -617,7 +635,7 @@ export class JoinService {
         ? { alphaCode: old.alphaCode }
         : {}),
     });
-    this.doors.reset(groupKey(namespace, record.id), this.now());
+    await this.resetDoor(namespace, record.id);
     this.deps.logger.info(
       { event: 'codes_rotated', namespace, groupRef: groupRef(record.id), cause: 'superseded' },
       'codes replaced on supersede',
@@ -626,8 +644,8 @@ export class JoinService {
   }
 
   /** Releases a claimed set that was never committed. */
-  releaseClaim(record: GroupRecord, claimed: GroupCodes): void {
-    this.index.release(record.appNamespace, record.id, claimed);
+  releaseClaim(record: GroupRecord, claimed: GroupCodes): Promise<void> {
+    return this.deps.codes.release(record.appNamespace, record.id, claimed);
   }
 
   /**
@@ -706,7 +724,7 @@ export class JoinService {
     const parsed = parseCodeJoin(message);
     if (parsed === undefined) return INVALID_MESSAGE;
 
-    const groupId = this.index.lookup(namespace, parsed.kind, parsed.joinCode);
+    const groupId = await this.deps.codes.lookup(namespace, parsed.kind, parsed.joinCode);
     if (groupId === undefined) {
       this.rejected(namespace, 'not_found');
       return CODE_NOT_FOUND;
@@ -716,7 +734,7 @@ export class JoinService {
       const record = await this.deps.store.get(namespace, groupId);
       if (
         record === undefined ||
-        this.index.lookup(namespace, parsed.kind, parsed.joinCode) !== groupId
+        (await this.deps.codes.lookup(namespace, parsed.kind, parsed.joinCode)) !== groupId
       ) {
         this.rejected(namespace, 'not_found');
         return CODE_NOT_FOUND;
@@ -750,10 +768,12 @@ export class JoinService {
    * 4. constant-time compare (R6). Wrong: one event in the app budget and
    *    one group failure; every 5th failure rotates the door code (R1a).
    *
-   * N2: steps 3 and 4 and the two records run in one synchronous block, with
-   * no `await` inside. The group lock is per group but the budget is per
-   * app, so an `await` there would let attempts on other groups of the same
-   * app peek past the cap. The rotation's store write starts after it.
+   * N2: steps 3 and 4 and the app budget record run in one synchronous
+   * block, with no `await` inside. The group lock is per group but the
+   * budget is per app, so an `await` there would let attempts on other
+   * groups of the same app peek past the cap. The group's own failure count
+   * is per group, so it is recorded after the block, still under the group
+   * lock; the rotation's store write follows.
    */
   private async doorJoin(
     session: Session,
@@ -761,8 +781,7 @@ export class JoinService {
     parsed: ParsedCodeJoin,
   ): Promise<ServerMessage> {
     const namespace = record.appNamespace;
-    const key = groupKey(namespace, record.id);
-    const paused = this.doors.pausedFor(key, this.now());
+    const paused = await this.deps.doors.pausedFor(namespace, record.id, this.now());
     if (paused > 0) {
       this.rejected(namespace, 'paused', record.id);
       return errorMessage(ErrorCode.JOIN_PAUSED, { details: { retryAfterMs: paused } });
@@ -791,8 +810,8 @@ export class JoinService {
       return this.host.admit(session, record.id, 'A', parsed.name);
     }
     this.wrongDoorLimiter.record(namespace);
-    const outcome = this.doors.recordFailure(key);
     // --- end of the synchronous block ---
+    const outcome = await this.deps.doors.recordFailure(namespace, record.id);
 
     this.rejected(namespace, 'door_wrong', record.id);
     if (outcome === 'rotate') await this.rotateDoor(record);
@@ -808,15 +827,14 @@ export class JoinService {
    */
   private async rotateDoor(record: GroupRecord): Promise<void> {
     const namespace = record.appNamespace;
-    const key = groupKey(namespace, record.id);
     const now = this.now();
     const next = rotateDoorCode(record.codes, now, this.random);
     if (next === 'exhausted') return;
     const updated = await this.deps.store.setCodes(namespace, record.id, next);
     if (updated === undefined) return;
-    const pause = this.doors.recordRotation(key, now, () => {
-      this.onPauseEnd(namespace, record.id);
-    });
+    const pause = await this.deps.doors.recordRotation(namespace, record.id, now);
+    if (pause.paused)
+      this.deps.timers.arm(namespace, record.id, 'doorPauseEnd', now + DOOR_PAUSE_MS);
     this.deps.logger.info(
       { event: 'codes_rotated', namespace, groupRef: groupRef(record.id), cause: 'door_failures' },
       'door code rotated',
@@ -845,32 +863,26 @@ export class JoinService {
     }
   }
 
-  /** The pause timer fired: under the group lock, end the pause and tell the leader. */
-  private onPauseEnd(namespace: string, groupId: string): void {
-    this.host
-      .runLocked(namespace, groupId, async () => {
-        if (!this.doors.endPause(groupKey(namespace, groupId), this.now())) return;
-        this.deps.logger.info(
-          { event: 'join_resumed', namespace, groupRef: groupRef(groupId) },
-          'door code joining resumed',
-        );
-        const record = await this.deps.store.get(namespace, groupId);
-        const leader = record === undefined ? undefined : this.host.leaderOf(record);
-        if (leader !== undefined) {
-          this.host.deliverLater(leader, { type: 'join.resumed', groupId });
-        }
-      })
-      .catch((err: unknown) => {
-        this.deps.logger.error(
-          { event: 'timer_error', err: safeErr(err) },
-          'join pause timer failed',
-        );
-      });
+  /**
+   * The `doorPauseEnd` timer (runs under the group lock): end the pause and
+   * tell the leader. Stale if the pause was lifted or moved.
+   */
+  async pauseEnded(namespace: string, groupId: string): Promise<void> {
+    if (!(await this.deps.doors.endPause(namespace, groupId, this.now()))) return;
+    this.deps.logger.info(
+      { event: 'join_resumed', namespace, groupRef: groupRef(groupId) },
+      'door code joining resumed',
+    );
+    const record = await this.deps.store.get(namespace, groupId);
+    const leader = record === undefined ? undefined : this.host.leaderOf(record);
+    if (leader !== undefined) {
+      this.host.deliverLater(leader, { type: 'join.resumed', groupId });
+    }
   }
 
   /** The remaining door-code pause of a group, or 0. */
-  pausedFor(namespace: string, groupId: string): number {
-    return this.doors.pausedFor(groupKey(namespace, groupId), this.now());
+  pausedFor(namespace: string, groupId: string): Promise<number> {
+    return this.deps.doors.pausedFor(namespace, groupId, this.now());
   }
 
   private now(): number {
@@ -882,17 +894,23 @@ export class JoinService {
    * JOIN_METHOD_NOT_ALLOWED for a bad method set, CODES_EXHAUSTED when no
    * free code was found; nothing is claimed in either case.
    */
-  initialCodes(app: AppConfig, groupId: string, requested?: JoinMethod[]): InitialCodesResult {
+  async initialCodes(
+    app: AppConfig,
+    groupId: string,
+    requested?: JoinMethod[],
+  ): Promise<InitialCodesResult> {
     const resolved = resolveGroupMethods(app.joinMethods, requested);
     if (!resolved.ok) return { ok: false, error: errorMessage(ErrorCode.JOIN_METHOD_NOT_ALLOWED) };
-    const codes = issueCodeSet(
-      this.index,
+    const now = this.now();
+    const codes = await issueCodeSet(
+      this.deps.codes,
       app.namespace,
       groupId,
       resolved.methods,
       0,
-      this.now(),
+      now,
       this.random,
+      this.deps.groupExpiry(app.namespace, now),
     );
     if (codes === 'exhausted') return { ok: false, error: errorMessage(ErrorCode.CODES_EXHAUSTED) };
     return { ok: true, methods: resolved.methods, codes };
@@ -909,12 +927,18 @@ export class JoinService {
    * generation and the ticket generation set to it, so older tickets stop
    * working. The server never accepts codes it did not sign for the group.
    */
-  restoreCodes(app: AppConfig, groupId: string, blob: string | undefined): RestoredCodesResult {
+  async restoreCodes(
+    app: AppConfig,
+    groupId: string,
+    createdAt: number,
+    blob: string | undefined,
+  ): Promise<RestoredCodesResult> {
     const namespace = app.namespace;
+    const expiresAt = this.deps.groupExpiry(namespace, createdAt);
     const verified =
       blob === undefined ? undefined : this.deps.codesBlobs.verify(blob, namespace, groupId);
     if (verified !== undefined && verified.methods.every((m) => app.joinMethods.includes(m))) {
-      if (this.index.claim(namespace, groupId, verified.codes)) {
+      if (await this.deps.codes.claim(namespace, groupId, verified.codes, expiresAt)) {
         this.deps.logger.info(
           { event: 'codes_restored', namespace, groupRef: groupRef(groupId), changed: false },
           'join codes restored',
@@ -939,14 +963,15 @@ export class JoinService {
       }
       methods = resolved.methods;
     }
-    const codes = issueCodeSet(
-      this.index,
+    const codes = await issueCodeSet(
+      this.deps.codes,
       namespace,
       groupId,
       methods,
       verified?.codes.generation ?? 0,
       this.now(),
       this.random,
+      expiresAt,
     );
     if (codes === 'exhausted') return { ok: false, error: errorMessage(ErrorCode.CODES_EXHAUSTED) };
     this.deps.logger.info(
@@ -983,8 +1008,8 @@ export class JoinService {
   }
 
   /** Frees a claimed code set that was never stored (a failed create). */
-  releaseCodes(namespace: string, groupId: string, codes: GroupCodes): void {
-    this.index.release(namespace, groupId, codes);
+  releaseCodes(namespace: string, groupId: string, codes: GroupCodes): Promise<void> {
+    return this.deps.codes.release(namespace, groupId, codes);
   }
 
   /**
@@ -993,13 +1018,17 @@ export class JoinService {
    * joiner gets GROUP_ENDED without a group ID or details (D9, R13). Runs
    * under the group lock.
    */
-  onGroupGone(namespace: string, groupId: string, record: GroupRecord | undefined): void {
+  async onGroupGone(
+    namespace: string,
+    groupId: string,
+    record: GroupRecord | undefined,
+  ): Promise<void> {
     for (const taken of this.approvals.drain(groupKey(namespace, groupId))) {
       this.settled(taken, 'group_gone');
       this.host.deliverLater(taken.session, errorMessage(ErrorCode.GROUP_ENDED));
     }
-    if (record !== undefined) this.index.release(namespace, groupId, record.codes);
-    this.doors.clear(groupKey(namespace, groupId));
+    if (record !== undefined) await this.deps.codes.release(namespace, groupId, record.codes);
+    await this.deps.doors.clear(namespace, groupId);
     this.rotateLimiter.forget(groupKey(namespace, groupId));
   }
 
@@ -1024,14 +1053,14 @@ export class JoinService {
 
   /** Server shutdown: forgets every code and budget (AC31). */
   close(): void {
-    this.index.clear();
+    this.deps.codes.clear();
     this.joinLimiter.clear();
     this.appJoinLimiter.clear();
     this.wrongDoorLimiter.clear();
     this.rotateLimiter.clear();
     this.qrLimiter.clear();
     this.approvals.clearAll();
-    this.doors.clearAll();
+    this.deps.doors.clearAll();
     this.warnedAt.clear();
   }
 

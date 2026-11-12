@@ -1,6 +1,7 @@
 import { JOIN_METHODS, type JoinMethod } from '@sync-system/protocol';
 import { z } from 'zod';
 import { ConfigError } from './config-error.js';
+import { collectRedisSettings } from './redis.js';
 import {
   ROSTER_SNAPSHOT_HEADROOM_BYTES,
   TOKENS_CHECK_MAX_FRAME_BYTES,
@@ -207,6 +208,10 @@ export function parseEnv(env: EnvSource): ServerEnv {
 
   const configPath = env.SYNC_CONFIG_PATH ?? './config/apps.json';
   if (configPath.trim() === '') errors.push('SYNC_CONFIG_PATH must not be empty');
+
+  // REDIS_* problems are reported with the rest (#35 AC3). The settings
+  // themselves are built by parseRedisSettings and never kept in ServerEnv.
+  collectRedisSettings(env, errors);
 
   if (errors.length === 0) {
     const n = numbers as Record<keyof ServerEnv, number>;

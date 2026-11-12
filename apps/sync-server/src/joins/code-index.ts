@@ -12,13 +12,39 @@ interface AppCodes {
 }
 
 /**
+ * The code -> group lookup (#10 D1, #35): per app, so the same code value
+ * can be live in two apps. Async, so the Redis index can implement it.
+ */
+export interface CodeIndexStore {
+  /** The group ID a code belongs to in `namespace`, if any. */
+  lookup(namespace: string, kind: JoinCodeKind, code: string): Promise<string | undefined>;
+  /** True when no live group of `namespace` holds `code`. */
+  isFree(namespace: string, kind: JoinCodeKind, code: string): Promise<boolean>;
+  /**
+   * Registers every code of `codes` for `groupId`, or none (R14). A code
+   * the group already holds counts as free for it. `expiresAt` (epoch ms) is
+   * the latest the claim may live: the group's end bound (#35 AC24).
+   */
+  claim(
+    namespace: string,
+    groupId: string,
+    codes: IndexedCodes,
+    expiresAt: number,
+  ): Promise<boolean>;
+  /** Frees the codes of `codes` that `groupId` still holds (AC11). */
+  release(namespace: string, groupId: string, codes: IndexedCodes): Promise<void>;
+  /** Forgets local state (server shutdown). */
+  clear(): void;
+}
+
+/**
  * Code -> group lookup per app (#10 D1, AC9, AC13). Codes resolve only
  * within one app, so the same code value can be live in two apps at once.
  * Door codes are not indexed: they are checked against the group the group
- * code found. Every method is synchronous, so a claim is atomic in-process
- * (R14). Never logged.
+ * code found. Every method body is synchronous, so a claim is atomic
+ * in-process (R14). Never logged.
  */
-export class CodeIndex {
+export class CodeIndex implements CodeIndexStore {
   private readonly apps = new Map<string, AppCodes>();
 
   private app(namespace: string): AppCodes {
@@ -31,23 +57,37 @@ export class CodeIndex {
   }
 
   /** The group ID a code belongs to in `namespace`, if any. */
-  lookup(namespace: string, kind: JoinCodeKind, code: string): string | undefined {
+  lookup(namespace: string, kind: JoinCodeKind, code: string): Promise<string | undefined> {
+    return Promise.resolve(this.find(namespace, kind, code));
+  }
+
+  private find(namespace: string, kind: JoinCodeKind, code: string): string | undefined {
     const codes = this.apps.get(namespace);
     if (codes === undefined) return undefined;
     return (kind === 'group' ? codes.group : codes.alpha).get(code);
   }
 
   /** True when no live group of `namespace` holds `code`. */
-  isFree(namespace: string, kind: JoinCodeKind, code: string): boolean {
-    return this.lookup(namespace, kind, code) === undefined;
+  isFree(namespace: string, kind: JoinCodeKind, code: string): Promise<boolean> {
+    return Promise.resolve(this.find(namespace, kind, code) === undefined);
   }
 
   /**
    * Registers every code of `codes` for `groupId`, or none of them (R14):
    * false when any code is held by another group. A code the group already
-   * holds counts as free for it.
+   * holds counts as free for it. In memory there is no expiry: the group's
+   * end releases its codes.
    */
-  claim(namespace: string, groupId: string, codes: IndexedCodes): boolean {
+  claim(
+    namespace: string,
+    groupId: string,
+    codes: IndexedCodes,
+    _expiresAt?: number,
+  ): Promise<boolean> {
+    return Promise.resolve(this.claimNow(namespace, groupId, codes));
+  }
+
+  private claimNow(namespace: string, groupId: string, codes: IndexedCodes): boolean {
     const app = this.app(namespace);
     const groupHolder = codes.groupCode === undefined ? undefined : app.group.get(codes.groupCode);
     const alphaHolder = codes.alphaCode === undefined ? undefined : app.alpha.get(codes.alphaCode);
@@ -59,7 +99,12 @@ export class CodeIndex {
   }
 
   /** Frees the codes of `codes` that `groupId` still holds (AC11). */
-  release(namespace: string, groupId: string, codes: IndexedCodes): void {
+  release(namespace: string, groupId: string, codes: IndexedCodes): Promise<void> {
+    this.releaseNow(namespace, groupId, codes);
+    return Promise.resolve();
+  }
+
+  private releaseNow(namespace: string, groupId: string, codes: IndexedCodes): void {
     const app = this.apps.get(namespace);
     if (app === undefined) return;
     if (codes.groupCode !== undefined && app.group.get(codes.groupCode) === groupId) {

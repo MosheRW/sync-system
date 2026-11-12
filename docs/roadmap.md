@@ -12,17 +12,17 @@ Numbering: "item N" means PRD item N of 9, as used in the specs. GitHub issue an
 
 ## Items
 
-| Item | Scope                                                                                                                                                    | Issues   | PRs      | Status                                            | Docs                                 |
-| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- | -------- | ------------------------------------------------- | ------------------------------------ |
-| 1    | Sync server core and monorepo scaffold                                                                                                                   | #1       | #2       | Done (merged 2026-11-01)                          | `docs/issues/1/`                     |
-| 2    | Framework-free core client package                                                                                                                       | #3       | #4       | Done (merged 2026-11-01)                          | `docs/issues/3/`                     |
-| 3    | Participant tokens, token rejoin, restart recovery, plus hardening                                                                                       | #5, #7   | #6, #8   | Done (merged 2026-11-02)                          | `docs/issues/5/`, `docs/issues/7/`   |
-| 4    | Join methods A-D (door code, approval, alphanumeric code, QR)                                                                                            | #10      | #11      | Done (merged 2026-11-04)                          | `docs/issues/10/`                    |
-| 5    | Roles, timers and group lifecycle                                                                                                                        | #13      | #14      | Done (merged 2026-11-05)                          | `docs/issues/13/`                    |
-| 6    | React/Next package with hooks over the core client                                                                                                       | #15      | #16      | Done (merged 2026-11-05)                          | `docs/issues/15/`                    |
-| 7    | Reading app content: content schema v1, fingerprint, RTL and mixed direction, library page and content selection, plus the `apps/reader` app with Docker | #19      | #20      | Done (merged 2026-11-05)                          | `docs/issues/19/`                    |
-| 8    | Reading app sync UX: 8a join and follow (#24); 8b leader views and lifecycle prompts (#25)                                                               | #24, #25 | #26, #31 | Done (8a merged 2026-11-11, 8b merged 2026-11-12) | `docs/issues/24/`, `docs/issues/25/` |
-| 9    | Redis storage, public docs, changelog and release (health endpoint, config errors, semver)                                                               | none yet | none     | Not started                                       | none yet                             |
+| Item | Scope                                                                                                                                                                                 | Issues        | PRs      | Status                                                           | Docs                                 |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------- | -------- | ---------------------------------------------------------------- | ------------------------------------ |
+| 1    | Sync server core and monorepo scaffold                                                                                                                                                | #1            | #2       | Done (merged 2026-11-01)                                         | `docs/issues/1/`                     |
+| 2    | Framework-free core client package                                                                                                                                                    | #3            | #4       | Done (merged 2026-11-01)                                         | `docs/issues/3/`                     |
+| 3    | Participant tokens, token rejoin, restart recovery, plus hardening                                                                                                                    | #5, #7        | #6, #8   | Done (merged 2026-11-02)                                         | `docs/issues/5/`, `docs/issues/7/`   |
+| 4    | Join methods A-D (door code, approval, alphanumeric code, QR)                                                                                                                         | #10           | #11      | Done (merged 2026-11-04)                                         | `docs/issues/10/`                    |
+| 5    | Roles, timers and group lifecycle                                                                                                                                                     | #13           | #14      | Done (merged 2026-11-05)                                         | `docs/issues/13/`                    |
+| 6    | React/Next package with hooks over the core client                                                                                                                                    | #15           | #16      | Done (merged 2026-11-05)                                         | `docs/issues/15/`                    |
+| 7    | Reading app content: content schema v1, fingerprint, RTL and mixed direction, library page and content selection, plus the `apps/reader` app with Docker                              | #19           | #20      | Done (merged 2026-11-05)                                         | `docs/issues/19/`                    |
+| 8    | Reading app sync UX: 8a join and follow (#24); 8b leader views and lifecycle prompts (#25)                                                                                            | #24, #25      | #26, #31 | Done (8a merged 2026-11-11, 8b merged 2026-11-12)                | `docs/issues/24/`, `docs/issues/25/` |
+| 9    | 9a Redis storage: restart survival, server-side block lists, several instances (#35); 9b health, readiness and config errors (#36); 9c public docs, changelog and first release (#37) | #35, #36, #37 | none     | 9a in grooming (Gate 1 passed 2026-11-12); 9b and 9c not started | `docs/issues/35/`                    |
 
 Scope of items 7-9 is taken from the PRD ("Product 1: the reading app", "Deliverables and operations") and the item 4, 5 and 6 specs, which defer work to them. The scope will be fixed in each item's own spec.
 
@@ -34,6 +34,7 @@ Scope of items 7-9 is taken from the PRD ("Product 1: the reading app", "Deliver
 - #27 Hebrew header bidi bugs (follow-up to #19): open. QA saw it again in 8b (#25).
 - #28 native-speaker review of the Hebrew strings (follow-up to #24): open. The 102 Hebrew strings added in 8b (#25) are in its scope, including the vice-leader term "סגן המוביל".
 - #32 `fix(server): offer take-back only after a handoff loss (follow-up to #25)` (security M1): open.
+- #39 `fix(storage): delete join-code keys when an invalid stored group ends at startup (follow-up to #35)` (security L4, low): open. May be folded into PR 2 of #35.
 
 ## Key accepted decisions
 
@@ -57,6 +58,11 @@ Scope of items 7-9 is taken from the PRD ("Product 1: the reading app", "Deliver
 - The keep-alive run-out is driven by the client countdown, with no server pause event (Gate 1 Gap 2): `docs/issues/25/spec.md`.
 - Notice lifetimes (U8): the pasted QR link notice, the lost-lead banner and "can't take back" stay until dismissed: `docs/issues/25/design.md`.
 - CI for #31 was run locally in Docker in place of GitHub Actions because of a billing block (2026-11-12): `docs/issues/25/STATE.md`.
+- Item 9 was split at Gate 1 (2026-11-12) into 9a Redis storage including several instances (#35, AC1-AC32), 9b health, readiness and config errors (#36, AC33-AC42) and 9c docs, changelog and release (#37, AC43-AC56), run in that order: `docs/issues/35/spec.md`.
+- License: GPL-3.0, SPDX `GPL-3.0-only`; it also covers the client and React packages; a later relicense to MIT stays simple only while the user is the sole copyright holder (Q3): `docs/issues/35/spec.md`.
+- Packages are published under the user's npm scope `@mosherw` (three packages `@mosherw/sync-system-protocol`, `@mosherw/sync-system-client` and `@mosherw/sync-system-react` (Q4, Q16); image registry and repo visibility are 9c Gate 1 questions (Q17, Q18): `docs/issues/35/spec.md`.
+- Docs: Markdown in the repo only; no GitHub wiki for now, may be reconsidered later (Q13, Q19): `docs/issues/35/spec.md`.
+- Item 9 defaults accepted at Gate 1: Redis client `redis` (node-redis, ADR at Gate 2), Changesets with one fixed version group, first release 1.0.0 with protocol version 1 (minimum 1), a full grace after a restart, per-instance limits, `/health` liveness plus `GET /ready`; #32, #12 and #21 are fixed before 9c: `docs/issues/35/spec.md`.
 
 ## Inherited by item 8b (#25): done
 

@@ -6,7 +6,7 @@ import {
   type JoinMethod,
 } from '@sync-system/protocol';
 import { MAX_CODE_DRAWS } from '../limits/constants.js';
-import type { CodeIndex } from './code-index.js';
+import type { CodeIndexStore } from './code-index.js';
 import { usesGroupCode } from './join-methods.js';
 
 /**
@@ -88,15 +88,15 @@ export function nextGeneration(previous: number, nowMs: number): number {
 }
 
 /** A code of `kind` free in `namespace` (also not held by this group), or undefined. */
-function drawFree(
-  index: CodeIndex,
+async function drawFree(
+  index: CodeIndexStore,
   namespace: string,
   kind: 'group' | 'alpha',
   random: RandomInt,
-): string | undefined {
+): Promise<string | undefined> {
   for (let i = 0; i < MAX_CODE_DRAWS; i++) {
     const code = kind === 'group' ? drawSixDigits(random) : drawAlphaCode(random);
-    if (index.isFree(namespace, kind, code)) return code;
+    if (await index.isFree(namespace, kind, code)) return code;
   }
   return undefined;
 }
@@ -110,20 +110,21 @@ function drawFree(
  * found within MAX_CODE_DRAWS draws; nothing is claimed then. The caller
  * releases the group's previous codes after a success.
  */
-export function issueCodeSet(
-  index: CodeIndex,
+export async function issueCodeSet(
+  index: CodeIndexStore,
   namespace: string,
   groupId: string,
   methods: readonly JoinMethod[],
   previousGeneration: number,
   nowMs: number,
   random: RandomInt = cryptoRandomInt,
-): GroupCodes | 'exhausted' {
+  expiresAt: number = Number.MAX_SAFE_INTEGER,
+): Promise<GroupCodes | 'exhausted'> {
   let groupCode: string | undefined;
   let doorCode: string | undefined;
   let alphaCode: string | undefined;
   if (usesGroupCode(methods)) {
-    groupCode = drawFree(index, namespace, 'group', random);
+    groupCode = await drawFree(index, namespace, 'group', random);
     if (groupCode === undefined) return 'exhausted';
     if (methods.includes('A')) {
       doorCode = drawDoorCode(groupCode, undefined, random);
@@ -131,11 +132,13 @@ export function issueCodeSet(
     }
   }
   if (methods.includes('C')) {
-    alphaCode = drawFree(index, namespace, 'alpha', random);
+    alphaCode = await drawFree(index, namespace, 'alpha', random);
     if (alphaCode === undefined) return 'exhausted';
   }
-  // Synchronous since the draws, so the codes are still free (R14).
-  if (!index.claim(namespace, groupId, { groupCode, alphaCode })) return 'exhausted';
+  // All or none (R14): a code taken since its draw fails the whole claim.
+  if (!(await index.claim(namespace, groupId, { groupCode, alphaCode }, expiresAt))) {
+    return 'exhausted';
+  }
   const generation = nextGeneration(previousGeneration, nowMs);
   return { generation, ticketGeneration: generation, groupCode, doorCode, alphaCode };
 }

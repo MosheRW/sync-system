@@ -33,6 +33,17 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
+      # Redis for the *.redis.test.ts suites (#35 AC31, security F15): pinned
+      # by digest, a CI-only password (not a secret), no persistence, bound to
+      # loopback. Started here because a services container cannot take the
+      # server flags.
+      - name: Start Redis
+        run: >-
+          docker run -d --name ci-redis -p 127.0.0.1:6379:6379
+          redis:7.2.17-alpine@sha256:2f66de68111e64c3927859f158f8e666066dae2b97d9f82770a6f37a5aa1c335
+          redis-server --requirepass ci-only-redis-password --save "" --appendonly no
+          --maxmemory-policy noeviction
+
       - name: Audit (high and critical)
         run: pnpm audit --audit-level=high
 
@@ -44,6 +55,10 @@ jobs:
 
       - name: Test
         run: pnpm test
+        env:
+          # redis-required.test.ts fails the run if this is missing (AC31).
+          CI: 'true'
+          SYNC_TEST_REDIS_URL: redis://:ci-only-redis-password@127.0.0.1:6379
 
       - name: Build
         run: pnpm build

@@ -1,3 +1,4 @@
+import { StorageUnavailableError } from '../storage/errors.js';
 import {
   type ClientMessage,
   CloseCode,
@@ -217,6 +218,17 @@ export class Connection implements HeartbeatTarget {
         await this.handleReady(message);
       }
     } catch (err) {
+      if (err instanceof StorageUnavailableError) {
+        // Redis is down (#35 ADR 0014): nothing was stored; the client
+        // resumes later. Going away / temporarily unavailable.
+        this.deps.logger.info(
+          { event: 'storage_unavailable_closed', type: message.type },
+          'closed: storage unavailable',
+        );
+        this.state = 'closing';
+        this.ws.close(CloseCode.GOING_AWAY, 'temporarily unavailable');
+        return;
+      }
       this.deps.logger.error(
         { event: 'internal_error', type: message.type, err: safeErr(err) },
         'handler failed',

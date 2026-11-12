@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { GroupRecord } from '../src/groups/group-store.js';
 import { InMemoryGroupStore } from '../src/groups/in-memory-group-store.js';
 import { CodeIndex } from '../src/joins/code-index.js';
+import { RedisCodeIndex } from '../src/storage/redis/codes.js';
 import * as codesModule from '../src/joins/codes.js';
 import type { GroupCodes } from '../src/joins/codes.js';
 import { CodesBlobService } from '../src/tokens/codes-blob.js';
@@ -483,7 +484,9 @@ describe('wrong door codes per app (#10 R1b, N2)', () => {
 describe('join attempts per app (#10 AC28)', () => {
   it('allows 600 attempts per app per minute across connections; other apps are not affected', async () => {
     const { server, clock } = await start();
-    const lookup = vi.spyOn(CodeIndex.prototype, 'lookup');
+    // The memory index, or the Redis one when the suite runs on Redis (#35).
+    const memoryLookup = vi.spyOn(CodeIndex.prototype, 'lookup');
+    const redisLookup = vi.spyOn(RedisCodeIndex.prototype, 'lookup');
     const clients: TestClient[] = [];
     for (let c = 0; c < 60; c++) {
       const client = await server.connectReady();
@@ -495,7 +498,7 @@ describe('join attempts per app (#10 AC28)', () => {
         expect(await client.next('error')).toMatchObject({ code: 'CODE_NOT_FOUND' });
       }
     }
-    expect(lookup).toHaveBeenCalledTimes(600);
+    expect(memoryLookup.mock.calls.length + redisLookup.mock.calls.length).toBe(600);
     const extra = await server.connectReady();
     expect(await attempt(extra, { joinCode: '000000' })).toEqual({
       type: 'error',
@@ -504,7 +507,7 @@ describe('join attempts per app (#10 AC28)', () => {
       message: 'Too many join attempts',
       details: { retryAfterMs: 60_000 },
     });
-    expect(lookup).toHaveBeenCalledTimes(600);
+    expect(memoryLookup.mock.calls.length + redisLookup.mock.calls.length).toBe(600);
     const warnings = server.logs
       .records()
       .filter((record) => record.event === 'join_app_budget_exhausted');

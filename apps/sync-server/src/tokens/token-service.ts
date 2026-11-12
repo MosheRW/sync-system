@@ -75,8 +75,11 @@ function plausible(claims: TokenClaims, now: number): boolean {
  * and never throws or returns anything that contains token content.
  */
 export class TokenService {
-  /** `iat` floor in epoch seconds: the second this process started (#13 RC18). */
-  private readonly minIat: number;
+  /**
+   * `iat` floor in epoch seconds: the second this process started (#13
+   * RC18), raised to the store's epoch when that moves later (#35 4.5).
+   */
+  private minIat: number;
 
   /**
    * `processStartedAt` (epoch ms) floors every issued `iat` (#13 RC18): a
@@ -90,6 +93,11 @@ export class TokenService {
     processStartedAt = 0,
   ) {
     this.minIat = Math.floor(processStartedAt / 1000);
+  }
+
+  /** A new store epoch: tokens issued from now on are never older than it. */
+  raiseIatFloor(epochMs: number): void {
+    this.minIat = Math.max(this.minIat, Math.floor(epochMs / 1000));
   }
 
   issue(input: IssueInput): string {

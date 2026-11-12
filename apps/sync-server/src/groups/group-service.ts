@@ -38,6 +38,7 @@ import {
 import type { AppConfig } from '../apps/app-registry.js';
 import { jsonByteLength } from '../limits/json-size.js';
 import {
+  END_TTL_SLACK_MS,
   MAX_CLOCK_SKEW_MS,
   RECREATIONS_PER_CONNECTION_PER_MINUTE,
   RECREATION_WINDOW_MS,
@@ -72,11 +73,27 @@ import {
 } from '../lifecycle/roster.js';
 import { LeaderControls } from '../lifecycle/leader-controls.js';
 import { LifecycleService, pauseOnWire } from '../lifecycle/lifecycle-service.js';
-import { type GroupRecord, type GroupStore, connectedCount } from './group-store.js';
-import type { EndedGroups } from './ended-groups.js';
-import { GroupTimers } from './group-timers.js';
+import {
+  type GroupPause,
+  type GroupRecord,
+  type GroupStore,
+  connectedCount,
+  pauseDeadline,
+} from './group-store.js';
+import type { EndedGroupsStore } from './ended-groups.js';
+import type { CodeIndexStore } from '../joins/code-index.js';
+import type { DoorStateStore } from '../joins/door-guard.js';
+import {
+  GroupTimers,
+  MemoryTimerBackend,
+  type TimerBackend,
+  type TimerData,
+  type TimerKind,
+} from './group-timers.js';
 import { newGroupId, newParticipantId } from './ids.js';
-import { KeyedLock } from './keyed-lock.js';
+import { GroupLock, type UnitOfWorkSource } from './group-lock.js';
+import { StorageConflictError, StorageUnavailableError } from '../storage/errors.js';
+import type { EpochSource } from '../storage/redis/epoch.js';
 import type { Notifier } from './notifier.js';
 import { ParkingLot } from './parking-lot.js';
 import { canSupersede, classifyToken } from './resume.js';
@@ -96,20 +113,43 @@ export interface GroupServiceDeps {
   tokens: TokenService;
   /** Leader token refresh policy (#5 AC12); `maxMs` is also the recovery slack (Q10). */
   refresh: RefreshPolicy;
-  /** Groups that ended in this process (Q8). */
-  ended: EndedGroups;
+  /** Groups that ended (Q8), in memory or in Redis (#35 AC13). */
+  ended: EndedGroupsStore;
+  /** Code -> group lookup (#10 D1, #35 AC7). */
+  codes: CodeIndexStore;
+  /** Door-code failure state (#10 AC29, #35 AC7). */
+  doors: DoorStateStore;
   /**
    * When this process started, from the injected clock, read before any
    * token was issued (#13 6.9 layer 2). Defaults to the clock at
-   * construction.
+   * construction. The epoch of the in-memory store.
    */
   processStartedAt?: number;
+  /** The store's epoch (Redis, #35 architecture 4.5); defaults to `processStartedAt`. */
+  epoch?: EpochSource;
+  /**
+   * Keep the stored attachments when the server stops (Redis): the restart
+   * grace then counts from when the server is back (#35 AC11).
+   */
+  keepAttachmentsOnClose?: boolean;
+  /**
+   * Most groups whose disconnects wait for Redis to come back (#35 security
+   * C4); defaults to 10 000. Over it, the oldest group is dropped (its
+   * sessions re-check on their next resume).
+   */
+  replayCap?: number;
   /** Signs and verifies QR tickets (#10). */
   qrTickets: QrTicketService;
   /** Signs and verifies codes blobs (#10). */
   codesBlobs: CodesBlobService;
   /** Join code draws; injected by tests (#10 AC9). */
   codeRandom?: RandomInt;
+  /** The app of a namespace, for timers that fire without a session (#35 ADR 0013). */
+  appOf: (namespace: string) => AppConfig | undefined;
+  /** Where group timers live; defaults to `setTimeout` on the scheduler. */
+  timerBackend?: TimerBackend;
+  /** The storage's unit of work (#35 ADR 0011); defaults to the in-memory one. */
+  work?: UnitOfWorkSource;
 }
 
 /**
@@ -150,6 +190,14 @@ function nameChoice(raw: string | undefined): NameChoice | undefined {
   return resolved.generated ? { generated: true } : { generated: false, name: resolved.name };
 }
 
+/** A task's local changes, undone when its commit fails (#35 security L1). */
+interface Rollback {
+  /** Each touched session as it was before the task: membership and whether it owned it. */
+  sessions: Map<Session, { membership: Membership | undefined; attached: boolean }>;
+  /** Groups whose refresh state this task created. */
+  refresh: Set<string>;
+}
+
 /**
  * Group business rules. Never reads the fields of `position` or `metadata`:
  * they are stored and relayed as the parsed references (AC14).
@@ -161,8 +209,11 @@ function nameChoice(raw: string | undefined): NameChoice | undefined {
  * callbacks included; those re-read the group, since a timer may be stale.
  */
 export class GroupService implements GroupActions {
-  /** Serializes join and teardown per group (namespace + ID). */
-  private readonly locks = new KeyedLock();
+  /**
+   * Serializes every state change per group (namespace + ID), with its
+   * unit of work and effect outbox (#35 ADR 0011).
+   */
+  private readonly lock: GroupLock;
   private readonly timers: GroupTimers;
   private readonly parking: ParkingLot;
   private readonly refresher: TokenRefresher;
@@ -184,6 +235,10 @@ export class GroupService implements GroupActions {
   private readonly processStartedAt: number;
 
   constructor(private readonly deps: GroupServiceDeps) {
+    this.lock = new GroupLock(deps.work, (namespace, groupId, err, sessions) => {
+      this.failedCommit(namespace, groupId, err, sessions as ReadonlySet<Session>);
+    });
+    this.timers = new GroupTimers(deps.timerBackend ?? new MemoryTimerBackend(deps.scheduler));
     this.joins = new JoinService(
       {
         store: deps.store,
@@ -192,10 +247,14 @@ export class GroupService implements GroupActions {
         qrTickets: deps.qrTickets,
         codesBlobs: deps.codesBlobs,
         ...(deps.codeRandom === undefined ? {} : { random: deps.codeRandom }),
+        codes: deps.codes,
+        doors: deps.doors,
+        timers: this.timers,
+        groupExpiry: (namespace, createdAt) => this.groupExpiry(namespace, createdAt),
       },
       {
         busy: (session) => this.busy(session),
-        runLocked: (namespace, groupId, task) => this.locks.run(groupKey(namespace, groupId), task),
+        runLocked: (namespace, groupId, task) => this.lock.run(namespace, groupId, task),
         admit: (session, groupId, method, name) => this.admitMember(session, groupId, method, name),
         leaderOf: (record) =>
           this.deps.notifier.get(membershipKey(record.appNamespace, record.id, record.leaderId)),
@@ -227,25 +286,21 @@ export class GroupService implements GroupActions {
           const swapped = await this.lifecycle.handoff(session.app, record, pid, 'take_back');
           return swapped.granted;
         },
-        toMembers: (record, message) =>
-          this.deps.notifier.broadcast(this.memberKeys(record), message),
+        toMembers: (record, message) => this.toMembers(record, message),
         now: () => this.now(),
       },
       deps.logger,
     );
     this.processStartedAt = deps.processStartedAt ?? deps.scheduler.now();
-    this.timers = new GroupTimers(deps.scheduler);
     this.lifecycle = new LifecycleService({
       store: deps.store,
       timers: this.timers,
       logger: deps.logger,
-      runTimer: (namespace, groupId, task) => this.runTimer(namespace, groupId, task),
       leaderSession: (record) => this.sessionOf(record, record.leaderId),
       deliverLater: (session, message) => this.deliverLater(session, message),
       refresherActivity: (namespace, groupId, at) =>
         this.refresher.activity(groupKey(namespace, groupId), at),
-      toMembers: (record, message) =>
-        this.deps.notifier.broadcast(this.memberKeys(record), message),
+      toMembers: (record, message) => this.toMembers(record, message),
       scheduleFrozenEnd: (app, record) => this.scheduleFrozenEnd(app, record),
       sessionOf: (record, pid) => this.sessionOf(record, pid),
       issueToken: (record, pid, role) =>
@@ -262,10 +317,204 @@ export class GroupService implements GroupActions {
     });
     this.parking = new ParkingLot(deps.scheduler);
     this.refresher = new TokenRefresher(deps.scheduler, deps.refresh);
+    this.onTimer('maxSession', (app, groupId) => this.onMaxSession(app, groupId));
+    this.onTimer('frozenEnd', (app, groupId) => this.onFrozenEnd(app, groupId));
+    this.onTimer('keepAlivePrompt', (app, groupId) => this.lifecycle.onPrompt(app, groupId));
+    this.onTimer('keepAliveDeadline', (app, groupId) => this.lifecycle.onDeadline(app, groupId));
+    this.onTimer('doorPauseEnd', (app, groupId) => this.joins.pauseEnded(app.namespace, groupId));
+    this.onTimer('grace', (app, groupId, data) =>
+      data === undefined
+        ? Promise.resolve()
+        : this.lifecycle.onGraceEnd(app, groupId, data.term, data.at),
+    );
+  }
+
+  /**
+   * Registers the handler of a timer kind: it runs under the group lock with
+   * the group's app (#35 ADR 0013). A timer of an app no longer configured
+   * does nothing.
+   */
+  private onTimer(
+    kind: TimerKind,
+    handler: (app: AppConfig, groupId: string, data: TimerData | undefined) => Promise<void>,
+  ): void {
+    this.timers.on(kind, (namespace, groupId, data, claim) => {
+      const app = this.deps.appOf(namespace);
+      this.runTimer(namespace, groupId, async () => {
+        claim?.();
+        if (app !== undefined) await handler(app, groupId, data);
+      });
+    });
+  }
+
+  /** Set once the server stops: disconnects then keep stored attachments (Redis). */
+  private closing = false;
+
+  /**
+   * Groups whose disconnects could not be stored (Redis unreachable), in
+   * arrival order, replayed under the group lock when Redis is back
+   * (#35 architecture 8, security C4).
+   */
+  private readonly replay = new Set<string>();
+
+  /**
+   * A task's commit failed (#35 ADR 0014, security C8). Only when Redis is
+   * unavailable: every local session of the group is closed with 1001, so
+   * clients resume later; other errors close nobody.
+   */
+  private failedCommit(
+    namespace: string,
+    groupId: string,
+    err: unknown,
+    touched: ReadonlySet<Session>,
+  ): void {
+    if (!(err instanceof StorageUnavailableError)) {
+      // Nothing was stored, and nobody is closed (C8): the attachments this
+      // task made or dropped go back to how they were (security L1).
+      const undo = this.rollbacks.get(touched);
+      if (undo !== undefined) this.rollBack(undo);
+      return;
+    }
+    const sessions = new Set([...this.deps.notifier.sessionsOf(namespace, groupId), ...touched]);
+    for (const session of sessions) {
+      session.close(CloseCode.GOING_AWAY, 'temporarily unavailable');
+    }
+  }
+
+  /**
+   * What a task changed locally, to undo when its commit fails with anything
+   * but "unavailable" (#35 security L1). Keyed by the task's session set.
+   */
+  private readonly rollbacks = new WeakMap<object, Rollback>();
+
+  /** The running task's rollback record, created on first use. */
+  private rollback(): Rollback | undefined {
+    const task = this.lock.current();
+    if (task === undefined) return undefined;
+    let undo = this.rollbacks.get(task.sessions);
+    if (undo === undefined) {
+      undo = { sessions: new Map(), refresh: new Set() };
+      this.rollbacks.set(task.sessions, undo);
+    }
+    return undo;
+  }
+
+  /** Restores every touched session's membership and attachment; drops new refresh state. */
+  private rollBack(undo: Rollback): void {
+    for (const session of undo.sessions.keys()) {
+      const membership = session.membership;
+      if (membership === undefined) continue;
+      this.deps.notifier.unregister(
+        membershipKey(session.app.namespace, membership.groupId, membership.participantId),
+        session,
+      );
+    }
+    for (const [session, before] of undo.sessions) {
+      session.membership = before.membership;
+      if (before.membership !== undefined && before.attached) {
+        this.deps.notifier.register(
+          membershipKey(
+            session.app.namespace,
+            before.membership.groupId,
+            before.membership.participantId,
+          ),
+          session,
+        );
+      }
+    }
+    for (const key of undo.refresh) this.refresher.clear(key);
+  }
+
+  /** Notes a session whose attachment this task changed (closed if the commit fails). */
+  private touch(session: Session): void {
+    const task = this.lock.current();
+    if (task === undefined) return;
+    const undo = this.rollback();
+    if (undo !== undefined && !undo.sessions.has(session)) {
+      const membership = session.membership;
+      undo.sessions.set(session, {
+        membership,
+        attached:
+          membership !== undefined &&
+          this.deps.notifier.get(
+            membershipKey(session.app.namespace, membership.groupId, membership.participantId),
+          ) === session,
+      });
+    }
+    task.sessions.add(session);
+  }
+
+  /** Remembers a group whose disconnect waits for Redis (bounded, deduplicated). */
+  private queueReplay(namespace: string, groupId: string): void {
+    const key = `${namespace}:${groupId}`;
+    this.replay.delete(key);
+    this.replay.add(key);
+    const cap = this.deps.replayCap ?? 10_000;
+    while (this.replay.size > cap) {
+      const oldest = this.replay.values().next().value;
+      if (oldest === undefined) break;
+      this.replay.delete(oldest);
+    }
+  }
+
+  /** Number of groups waiting for a disconnect replay. For tests only. */
+  get replayCount(): number {
+    return this.replay.size;
+  }
+
+  /**
+   * Redis is back (#35 architecture 8): for each queued group, under its
+   * lock, every participant without an open local session is disconnected
+   * with the usual rules. A group that failed again stays queued.
+   */
+  async replayDisconnects(): Promise<void> {
+    for (const key of [...this.replay]) {
+      this.replay.delete(key);
+      const at = key.indexOf(':');
+      const namespace = key.slice(0, at);
+      const groupId = key.slice(at + 1);
+      const app = this.deps.appOf(namespace);
+      if (app === undefined) continue;
+      try {
+        await this.lock.run(namespace, groupId, () => this.reconcile(app, groupId));
+      } catch (err) {
+        if (err instanceof StorageUnavailableError) {
+          this.queueReplay(namespace, groupId);
+          return;
+        }
+        this.deps.logger.error({ event: 'replay_error', err: safeErr(err) }, 'replay failed');
+      }
+    }
+  }
+
+  /** Disconnects every participant with no open local session. Under the group lock. */
+  private async reconcile(app: AppConfig, groupId: string): Promise<void> {
+    const namespace = app.namespace;
+    const record = await this.deps.store.get(namespace, groupId);
+    if (record === undefined) return;
+    const open = (pid: string) =>
+      isParticipantConnected(this.deps.notifier.get(membershipKey(namespace, groupId, pid)));
+    for (const pid of record.participantIds) {
+      if (pid === record.leaderId || open(pid)) continue;
+      const result = await this.deps.store.removeParticipant(namespace, groupId, pid);
+      const current = await this.deps.store.get(namespace, groupId);
+      if (current !== undefined) await this.leaveRosterOnDisconnect(app, current, pid);
+      if (result && result.connected === 0) await this.emptied(app, groupId);
+    }
+    const current = await this.deps.store.get(namespace, groupId);
+    if (current !== undefined && current.leaderOnline && !open(current.leaderId)) {
+      await this.leaderOffline(app, groupId);
+    }
+  }
+
+  /** The store's epoch: the Redis epoch, or this process's start (#35 4.5). */
+  private epoch(): Promise<number> {
+    return this.deps.epoch?.current() ?? Promise.resolve(this.processStartedAt);
   }
 
   /** Cancels every group and parking timer (server shutdown). */
   close(): void {
+    this.closing = true;
     this.timers.clearAll();
     this.parking.clearAll();
     this.refresher.clearAll();
@@ -277,9 +526,14 @@ export class GroupService implements GroupActions {
     this.joins.close();
   }
 
-  /** Number of indexed join codes in every app. For tests only. */
-  get codeCount(): number {
-    return this.joins.index.size;
+  /**
+   * The latest a group created at `createdAt` can live: its max-session
+   * deadline plus the slack its end needs (#35 AC24, Gate 2 Q-A2).
+   */
+  private groupExpiry(namespace: string, createdAt: number): number {
+    const app = this.deps.appOf(namespace);
+    if (app === undefined) return createdAt + END_TTL_SLACK_MS;
+    return createdAt + app.maxSessionMinutes * MINUTE_MS + END_TTL_SLACK_MS;
   }
 
   /**
@@ -287,7 +541,10 @@ export class GroupService implements GroupActions {
    * leader token was issued at `at` (create, return, recreation).
    */
   private startRefresh(namespace: string, groupId: string, at: number): void {
-    this.refresher.reset(groupKey(namespace, groupId), at, () => {
+    const key = groupKey(namespace, groupId);
+    // Refresh state this task creates goes if its commit fails (L1).
+    if (!this.refresher.has(key)) this.rollback()?.refresh.add(key);
+    this.refresher.reset(key, at, () => {
       this.runTimer(namespace, groupId, () => this.sendRefreshedToken(namespace, groupId));
     });
   }
@@ -302,9 +559,12 @@ export class GroupService implements GroupActions {
     const leader = this.deps.notifier.get(membershipKey(namespace, groupId, record.leaderId));
     if (leader === undefined) return;
     const token = this.issueToken(namespace, record, record.leaderId, 'leader', this.now());
-    leader.deliver(
-      JSON.stringify({ type: 'token.refreshed', groupId, token } satisfies ServerMessage),
-    );
+    const text = JSON.stringify({
+      type: 'token.refreshed',
+      groupId,
+      token,
+    } satisfies ServerMessage);
+    this.lock.effect(() => leader.deliver(text));
     this.deps.logger.debug(
       { event: 'token_refreshed', namespace, groupRef: groupRef(groupId) },
       'leader token refreshed',
@@ -343,6 +603,7 @@ export class GroupService implements GroupActions {
   }
 
   private attach(session: Session, membership: Membership): void {
+    this.touch(session);
     session.membership = membership;
     this.deps.notifier.register(
       membershipKey(session.app.namespace, membership.groupId, membership.participantId),
@@ -383,29 +644,32 @@ export class GroupService implements GroupActions {
    * `max_session` at `createdAt + maxSessionMinutes`, leader online or not.
    */
   private armMaxSession(app: AppConfig, record: GroupRecord): void {
-    const namespace = app.namespace;
-    const groupId = record.id;
-    this.timers.armMaxSession(
-      groupKey(namespace, groupId),
-      this.maxSessionEndAt(app, record),
-      () => {
-        this.runTimer(namespace, groupId, async () => {
-          const current = await this.deps.store.get(namespace, groupId);
-          if (!current) return;
-          // Re-checked against the clock under the lock (R3).
-          if (this.maxSessionEndAt(app, current) > this.now()) {
-            this.armMaxSession(app, current);
-            return;
-          }
-          await this.endGroup(app, groupId, 'max_session');
-        });
-      },
-    );
+    this.timers.arm(app.namespace, record.id, 'maxSession', this.maxSessionEndAt(app, record));
+  }
+
+  /** The max-session timer, under the group lock. */
+  private async onMaxSession(app: AppConfig, groupId: string): Promise<void> {
+    const current = await this.deps.store.get(app.namespace, groupId);
+    if (!current) return;
+    // Re-checked against the clock under the lock (R3).
+    if (this.maxSessionEndAt(app, current) > this.now()) {
+      this.armMaxSession(app, current);
+      return;
+    }
+    await this.endGroup(app, groupId, 'max_session');
+  }
+
+  /** The frozen-end timer, under the group lock. */
+  private async onFrozenEnd(app: AppConfig, groupId: string): Promise<void> {
+    const current = await this.deps.store.get(app.namespace, groupId);
+    // Stale timer: the group is gone or live again (#13 6.4).
+    if (!current || current.pause === undefined) return;
+    await this.scheduleFrozenEnd(app, current);
   }
 
   /** Runs a timer callback under the group lock; failures are logged, never thrown. */
   private runTimer(namespace: string, groupId: string, task: () => Promise<void>): void {
-    this.locks.run(groupKey(namespace, groupId), task).catch((err: unknown) => {
+    this.lock.run(namespace, groupId, task).catch((err: unknown) => {
       this.deps.logger.error({ event: 'timer_error', err: safeErr(err) }, 'group timer failed');
     });
   }
@@ -428,7 +692,21 @@ export class GroupService implements GroupActions {
     if (name === undefined) return errorMessage(ErrorCode.INVALID_MESSAGE);
 
     const groupId = newGroupId();
-    const initial = this.joins.initialCodes(app, groupId, message.joinMethods);
+    // Under the new group's lock, so the group, its codes and its timers
+    // are stored in one step (#35 ADR 0011).
+    return this.lock.run(app.namespace, groupId, () =>
+      this.createLocked(session, message, groupId, name),
+    );
+  }
+
+  private async createLocked(
+    session: Session,
+    message: GroupCreateMessage,
+    groupId: string,
+    name: NameChoice,
+  ): Promise<ServerMessage> {
+    const { app } = session;
+    const initial = await this.joins.initialCodes(app, groupId, message.joinMethods);
     if (!initial.ok) return initial.error;
 
     const participantId = newParticipantId();
@@ -466,7 +744,7 @@ export class GroupService implements GroupActions {
     try {
       await this.deps.store.create(record);
     } catch (err) {
-      this.joins.releaseCodes(app.namespace, groupId, initial.codes);
+      await this.joins.releaseCodes(app.namespace, groupId, initial.codes);
       throw err;
     }
     this.armMaxSession(app, record);
@@ -520,7 +798,7 @@ export class GroupService implements GroupActions {
     }
     const { groupId } = membership;
     const namespace = session.app.namespace;
-    return this.locks.run(groupKey(namespace, groupId), async () => {
+    return this.lock.run(namespace, groupId, async () => {
       const record = await this.deps.store.get(namespace, groupId);
       const auth = authorizeLeader(
         { session, owned: this.owned(session), groupId, record },
@@ -560,7 +838,7 @@ export class GroupService implements GroupActions {
     const membership = this.owned(session);
     if (membership === undefined) return errorMessage(ErrorCode.NOT_IN_GROUP);
     const namespace = session.app.namespace;
-    return this.locks.run(groupKey(namespace, membership.groupId), async () => {
+    return this.lock.run(namespace, membership.groupId, async () => {
       const current = this.owned(session);
       if (current === undefined || current.groupId !== membership.groupId) {
         return errorMessage(ErrorCode.NOT_IN_GROUP);
@@ -795,7 +1073,7 @@ export class GroupService implements GroupActions {
       if (!stored) return errorMessage(ErrorCode.NOT_IN_GROUP);
 
       // Members only: the leader gets position.ack, not the broadcast (AC13).
-      this.deps.notifier.broadcast(this.memberKeys(record), {
+      this.toMembers(record, {
         type: 'position.updated',
         groupId,
         position: message.position,
@@ -867,9 +1145,9 @@ export class GroupService implements GroupActions {
         claims,
         app,
         record: await this.deps.store.get(app.namespace, claims.gid),
-        ended: this.deps.ended.has(app.namespace, claims.gid),
-        processStartedAt: this.processStartedAt,
-        recoveryClosed: this.deps.ended.isRecoveryClosed(app.namespace),
+        ended: await this.deps.ended.has(app.namespace, claims.gid),
+        epoch: await this.epoch(),
+        recoveryClosed: await this.deps.ended.isRecoveryClosed(app.namespace),
         now,
         refreshMaxMs: this.deps.refresh.maxMs,
       });
@@ -962,6 +1240,7 @@ export class GroupService implements GroupActions {
     const key = membershipKey(record.appNamespace, record.id, participantId);
     const member = this.deps.notifier.get(key);
     if (member === undefined) return;
+    this.touch(member);
     this.deps.notifier.unregister(key, member);
     if (member.membership?.groupId === record.id) member.membership = undefined;
     const text = JSON.stringify({
@@ -969,9 +1248,11 @@ export class GroupService implements GroupActions {
       groupId: record.id,
       reason: 'removed',
     } satisfies ServerMessage);
-    member.afterPending(() => {
-      member.deliver(text);
-      member.close(CloseCode.REMOVED, 'removed');
+    this.lock.effect(() => {
+      member.afterPending(() => {
+        member.deliver(text);
+        member.close(CloseCode.REMOVED, 'removed');
+      });
     });
   }
 
@@ -1000,12 +1281,13 @@ export class GroupService implements GroupActions {
     if (membership === undefined) return errorMessage(ErrorCode.NOT_IN_GROUP);
     const { app } = session;
     const { groupId, participantId } = membership;
-    return this.locks.run(groupKey(app.namespace, groupId), async () => {
+    return this.lock.run(app.namespace, groupId, async () => {
       if (this.owned(session) !== membership) return errorMessage(ErrorCode.NOT_IN_GROUP);
       // Decided under the lock against the live record (#13 L3): right after
       // a handoff the old leader may leave and the new one may not.
       const current = await this.deps.store.get(app.namespace, groupId);
       if (current?.leaderId === participantId) return errorMessage(ErrorCode.LEADER_CANNOT_LEAVE);
+      this.touch(session);
       this.deps.notifier.unregister(membershipKey(app.namespace, groupId, participantId), session);
       session.membership = undefined;
       const result = await this.deps.store.removeParticipant(app.namespace, groupId, participantId);
@@ -1058,50 +1340,64 @@ export class GroupService implements GroupActions {
         : sizeError('position', message.position, app.maxMessageBytes));
     if (tooLarge) return tooLarge;
 
-    return this.locks.run(groupKey(app.namespace, claims.gid), async () => {
-      if (this.busy(session)) return errorMessage(ErrorCode.ALREADY_IN_GROUP);
-      // The entry, the fence and the closure are read under the lock, with
-      // the record, so the classification and a recreation are one step
-      // (#13 RC17).
-      const record = await this.deps.store.get(app.namespace, claims.gid);
-      const status = classifyToken({
-        claims,
-        app,
-        record,
-        ended: this.deps.ended.has(app.namespace, claims.gid),
-        processStartedAt: this.processStartedAt,
-        recoveryClosed: this.deps.ended.isRecoveryClosed(app.namespace),
-        now: this.now(),
-        refreshMaxMs: this.deps.refresh.maxMs,
+    return this.lock
+      .run(app.namespace, claims.gid, () => this.resumeLocked(session, claims, message, name))
+      .catch((err: unknown) => {
+        // A recreation whose commit found the group stored or ended (#35 C7).
+        if (err instanceof StorageConflictError) return errorMessage(ErrorCode.GROUP_ENDED);
+        throw err;
       });
-      switch (status) {
-        case 'invalid':
-          return errorMessage(ErrorCode.TOKEN_INVALID);
-        case 'expired':
-          return errorMessage(ErrorCode.TOKEN_EXPIRED);
-        case 'ended':
-          return errorMessage(ErrorCode.GROUP_ENDED);
-        case 'blocked':
-          return errorMessage(ErrorCode.PARTICIPANT_BLOCKED);
-        case 'live':
-          return this.resumeLive(session, record!, claims, message, name);
-        case 'recoverable': {
-          // Slows a stock-up of recreations after a restart (#13 RC20, M5).
-          const rate = this.recreateLimiter.tryAcquire(
-            session.connectionId,
-            RECREATIONS_PER_CONNECTION_PER_MINUTE,
-          );
-          if (!rate.ok) {
-            return actionErrorMessage(ErrorCode.RATE_LIMITED, 'group.resume', {
-              details: { retryAfterMs: rate.retryAfterMs },
-            });
-          }
-          return this.recreate(session, claims, message, name);
-        }
-        case 'waiting':
-          return this.parkMember(session, claims, name);
-      }
+  }
+
+  private async resumeLocked(
+    session: Session,
+    claims: TokenClaims,
+    message: GroupResumeMessage,
+    name: NameChoice,
+  ): Promise<ServerMessage> {
+    const { app } = session;
+    if (this.busy(session)) return errorMessage(ErrorCode.ALREADY_IN_GROUP);
+    // The entry, the fence and the closure are read under the lock, with
+    // the record, so the classification and a recreation are one step
+    // (#13 RC17).
+    const record = await this.deps.store.get(app.namespace, claims.gid);
+    const status = classifyToken({
+      claims,
+      app,
+      record,
+      ended: await this.deps.ended.has(app.namespace, claims.gid),
+      epoch: await this.epoch(),
+      recoveryClosed: await this.deps.ended.isRecoveryClosed(app.namespace),
+      now: this.now(),
+      refreshMaxMs: this.deps.refresh.maxMs,
     });
+    switch (status) {
+      case 'invalid':
+        return errorMessage(ErrorCode.TOKEN_INVALID);
+      case 'expired':
+        return errorMessage(ErrorCode.TOKEN_EXPIRED);
+      case 'ended':
+        return errorMessage(ErrorCode.GROUP_ENDED);
+      case 'blocked':
+        return errorMessage(ErrorCode.PARTICIPANT_BLOCKED);
+      case 'live':
+        return this.resumeLive(session, record!, claims, message, name);
+      case 'recoverable': {
+        // Slows a stock-up of recreations after a restart (#13 RC20, M5).
+        const rate = this.recreateLimiter.tryAcquire(
+          session.connectionId,
+          RECREATIONS_PER_CONNECTION_PER_MINUTE,
+        );
+        if (!rate.ok) {
+          return actionErrorMessage(ErrorCode.RATE_LIMITED, 'group.resume', {
+            details: { retryAfterMs: rate.retryAfterMs },
+          });
+        }
+        return this.recreate(session, claims, message, name);
+      }
+      case 'waiting':
+        return this.parkMember(session, claims, name);
+    }
   }
 
   /**
@@ -1118,6 +1414,7 @@ export class GroupService implements GroupActions {
     const key = membershipKey(namespace, groupId, participantId);
     const older = this.deps.notifier.get(key);
     if (older === undefined || older === by) return;
+    this.touch(older);
     this.deps.notifier.unregister(key, older);
     if (older.membership?.groupId === groupId) older.membership = undefined;
     const text = JSON.stringify({
@@ -1125,7 +1422,7 @@ export class GroupService implements GroupActions {
       groupId,
       reason: 'replaced',
     } satisfies ServerMessage);
-    older.afterPending(() => older.deliver(text));
+    this.lock.effect(() => older.afterPending(() => older.deliver(text)));
     this.deps.logger.info(
       { event: 'session_replaced', namespace, groupRef: groupRef(groupId) },
       'session replaced',
@@ -1177,7 +1474,7 @@ export class GroupService implements GroupActions {
     // The roster, then pending approval requests and a running pause, are
     // sent after the reply (#13 AC31, #10 AC21, AC29, AC34).
     this.deliverLater(session, this.rosterSnapshot(updated));
-    this.joins.onLeaderReturn(session, updated);
+    await this.joins.onLeaderReturn(session, updated);
     this.deps.logger.info(
       { event: 'group_resumed', namespace, groupRef: groupRef(record.id), recreated: false },
       'leader resumed',
@@ -1205,7 +1502,7 @@ export class GroupService implements GroupActions {
     const now = this.now();
     // The same codes if the leader's blob is valid and every code is free,
     // else a full new set; CODES_EXHAUSTED recreates nothing (#10 AC33).
-    const initial = this.joins.restoreCodes(app, claims.gid, message.joinCodes);
+    const initial = await this.joins.restoreCodes(app, claims.gid, claims.gct, message.joinCodes);
     if (!initial.ok) return initial.error;
     // A new roster: names are not in tokens (#13 AC36, AC37).
     const roster = admitToRoster(EMPTY_ROSTER, claims.pid, name, now);
@@ -1255,7 +1552,7 @@ export class GroupService implements GroupActions {
       nextGuestNumber: roster.nextGuestNumber,
     };
     if ((await this.deps.store.createIfAbsent(record)) === 'exists') {
-      this.joins.releaseCodes(namespace, claims.gid, initial.codes);
+      await this.joins.releaseCodes(namespace, claims.gid, initial.codes);
       // Impossible under the in-process lock; with a shared store, the token
       // is classified again against the group someone else just recreated
       // (#13 L9, RC15): another pid never gets a leader return.
@@ -1266,7 +1563,7 @@ export class GroupService implements GroupActions {
         app,
         record: existing,
         ended: false,
-        processStartedAt: this.processStartedAt,
+        epoch: await this.epoch(),
         recoveryClosed: false,
         now: this.now(),
         refreshMaxMs: this.deps.refresh.maxMs,
@@ -1345,7 +1642,7 @@ export class GroupService implements GroupActions {
     const namespace = app.namespace;
     const now = this.now();
     const stale = record.leaderId;
-    const codes = this.joins.supersedeCodes(record, message.joinCodes);
+    const codes = await this.joins.supersedeCodes(record, message.joinCodes);
     if (codes === 'exhausted') return errorMessage(ErrorCode.CODES_EXHAUSTED);
 
     // Step 1: the requester's list, as given (the stale list never applies to it).
@@ -1398,9 +1695,8 @@ export class GroupService implements GroupActions {
     current = await this.joins.commitSupersedeCodes(current, codes.codes);
 
     // Timers: a fresh period for the new leader (RC13).
-    const key = groupKey(namespace, record.id);
-    this.timers.clearKind(key, 'grace');
-    this.timers.clearFrozenEnd(key);
+    this.timers.clear(namespace, record.id, 'grace');
+    this.timers.clear(namespace, record.id, 'frozenEnd');
     this.lifecycle.stopKeepAlive(namespace, record.id);
     this.lifecycle.armKeepAlive(app, current);
     this.startRefresh(namespace, record.id, now);
@@ -1428,7 +1724,7 @@ export class GroupService implements GroupActions {
         codes: this.joins.payload(current),
       });
     }
-    this.joins.onLeaderReturn(session, current);
+    await this.joins.onLeaderReturn(session, current);
     for (const pid of current.participantIds) {
       if (pid === claims.pid || pid === stale) continue;
       const member = this.sessionOf(current, pid);
@@ -1479,7 +1775,7 @@ export class GroupService implements GroupActions {
               groupId: claims.gid,
               reason,
             } satisfies ServerMessage);
-            session.afterPending(() => session.deliver(text));
+            this.lock.effect(() => session.afterPending(() => session.deliver(text)));
           }
           return Promise.resolve();
         });
@@ -1493,7 +1789,7 @@ export class GroupService implements GroupActions {
         groupId: claims.gid,
         reason: 'replaced',
       } satisfies ServerMessage);
-      older.afterPending(() => older.deliver(text));
+      this.lock.effect(() => older.afterPending(() => older.deliver(text)));
     }
     this.deps.logger.info(
       {
@@ -1638,9 +1934,29 @@ export class GroupService implements GroupActions {
     return { displayName: entry?.name ?? '', generated: entry?.generated ?? true };
   }
 
+  /**
+   * Sends `message` to `session` after the replies it is already owed. In a
+   * locked task it waits in the outbox until the task's state is committed.
+   */
   private deliverLater(session: Session, message: ServerMessage): void {
     const text = JSON.stringify(message);
-    session.afterPending(() => session.deliver(text));
+    this.lock.effect(() => session.afterPending(() => session.deliver(text)));
+  }
+
+  /**
+   * Sends `message` to every attached member (not the leader). The members
+   * are resolved now, so a later detach in the same task does not change
+   * who gets it; the frames go out with the task's other effects.
+   */
+  private toMembers(record: GroupRecord, message: ServerMessage): void {
+    const members = this.memberKeys(record)
+      .map((key) => this.deps.notifier.get(key))
+      .filter((session) => session !== undefined);
+    if (members.length === 0) return;
+    const text = JSON.stringify(message);
+    this.lock.effect(() => {
+      for (const member of members) member.deliver(text);
+    });
   }
 
   private resumedMessage(
@@ -1733,25 +2049,33 @@ export class GroupService implements GroupActions {
     if (!this.deps.notifier.unregister(membershipKey(namespace, groupId, participantId), session)) {
       return;
     }
+    // A clean stop with Redis leaves the stored attachments: the restart
+    // sweep disconnects them with a full grace from the restart (#35 AC11).
+    if (this.closing && this.deps.keepAttachmentsOnClose === true) return;
 
     // Under the group lock, so a join cannot land between the removal and
-    // the delete.
-    await this.locks.run(groupKey(namespace, groupId), async () => {
-      // #13 RC19: the participant resumed on a new socket before this close
-      // was handled; that session owns the membership, so nothing changes.
-      const owner = this.deps.notifier.get(membershipKey(namespace, groupId, participantId));
-      if (isParticipantConnected(owner)) return;
-      const record = await this.deps.store.get(namespace, groupId);
-      if (record === undefined) return;
-      // The role is read from the live record, never from the session (#13 D1).
-      if (record.leaderId === participantId) {
-        await this.leaderOffline(app, groupId);
-        return;
-      }
-      const result = await this.deps.store.removeParticipant(namespace, groupId, participantId);
-      await this.leaveRosterOnDisconnect(app, record, participantId);
-      if (result && result.connected === 0) await this.emptied(app, groupId);
-    });
+    // the delete. If Redis is down, the group is replayed when it is back.
+    await this.lock
+      .run(namespace, groupId, async () => {
+        // #13 RC19: the participant resumed on a new socket before this close
+        // was handled; that session owns the membership, so nothing changes.
+        const owner = this.deps.notifier.get(membershipKey(namespace, groupId, participantId));
+        if (isParticipantConnected(owner)) return;
+        const record = await this.deps.store.get(namespace, groupId);
+        if (record === undefined) return;
+        // The role is read from the live record, never from the session (#13 D1).
+        if (record.leaderId === participantId) {
+          await this.leaderOffline(app, groupId);
+          return;
+        }
+        const result = await this.deps.store.removeParticipant(namespace, groupId, participantId);
+        await this.leaveRosterOnDisconnect(app, record, participantId);
+        if (result && result.connected === 0) await this.emptied(app, groupId);
+      })
+      .catch((err: unknown) => {
+        if (!(err instanceof StorageUnavailableError)) throw err;
+        this.queueReplay(namespace, groupId);
+      });
   }
 
   /**
@@ -1802,13 +2126,44 @@ export class GroupService implements GroupActions {
     }
     // Max session comes first: its own timer ends the group.
     if (this.maxSessionEndAt(app, record) <= at) return;
-    this.timers.armFrozenEnd(groupKey(namespace, groupId), at, () => {
-      this.runTimer(namespace, groupId, async () => {
+    this.timers.arm(namespace, groupId, 'frozenEnd', at);
+  }
+
+  /**
+   * After a restart with Redis (#35 architecture 1.2 item 6, 7; AC11; Gate 2
+   * Q-A3), under the group lock: every participant the previous process had
+   * attached is disconnected now. A pause or hold already running ends no
+   * earlier than `disconnectGraceSeconds` from now; a leader online at the
+   * stop gets the normal grace from now; members leave and are marked
+   * disconnected; a group left empty is held. Nobody is connected yet, so
+   * nobody is told anything.
+   */
+  async sweepAfterRestart(namespace: string, groupId: string): Promise<void> {
+    const app = this.deps.appOf(namespace);
+    if (app === undefined) return;
+    await this.lock.run(namespace, groupId, async () => {
+      let record = await this.deps.store.get(namespace, groupId);
+      if (record === undefined) return;
+      const floor = this.now() + app.disconnectGraceSeconds * 1000;
+      const running = pauseDeadline(record.pause);
+      if (record.pause !== undefined && running !== undefined && running < floor) {
+        const pause: GroupPause =
+          record.pause.graceEndsAt !== undefined
+            ? { ...record.pause, graceEndsAt: floor }
+            : { ...record.pause, holdEndsAt: floor };
+        record = (await this.deps.store.patch(namespace, groupId, { pause })) ?? record;
+        this.lifecycle.armPauseEnd(app, record, floor);
+      }
+      for (const pid of record.participantIds) {
+        if (pid === record.leaderId) continue;
+        await this.deps.store.removeParticipant(namespace, groupId, pid);
         const current = await this.deps.store.get(namespace, groupId);
-        // Stale timer: the group is gone or live again (#13 6.4).
-        if (!current || current.pause === undefined) return;
-        await this.scheduleFrozenEnd(app, current);
-      });
+        if (current !== undefined) await this.leaveRosterOnDisconnect(app, current, pid);
+      }
+      const current = await this.deps.store.get(namespace, groupId);
+      if (current === undefined) return;
+      if (current.leaderOnline) await this.leaderOffline(app, groupId);
+      else if (connectedCount(current) === 0) await this.emptied(app, groupId);
     });
   }
 
@@ -1822,13 +2177,17 @@ export class GroupService implements GroupActions {
   }
 
   /** Clears every per-group structure; frees the group's join codes (#10 AC11). */
-  private forgetGroup(namespace: string, groupId: string, record: GroupRecord | undefined): void {
+  private async forgetGroup(
+    namespace: string,
+    groupId: string,
+    record: GroupRecord | undefined,
+  ): Promise<void> {
     const key = groupKey(namespace, groupId);
     this.deps.rateLimiter.forget(key);
     this.controls.forgetGroup(namespace, groupId);
-    this.timers.clear(key);
+    this.timers.clearGroup(namespace, groupId);
     this.refresher.clear(key);
-    this.joins.onGroupGone(namespace, groupId, record);
+    await this.joins.onGroupGone(namespace, groupId, record);
   }
 
   /**
@@ -1858,24 +2217,25 @@ export class GroupService implements GroupActions {
       return;
     }
     await this.deps.store.delete(namespace, groupId);
-    this.forgetGroup(namespace, groupId, record);
+    await this.forgetGroup(namespace, groupId, record);
     // Remembered until its max-session deadline, as a hashed ref only (Q8),
     // for every end including `empty` (#13 D15). A group recreated in this
     // process gets a guard: its pre-restart leader tokens are not covered
     // by the `iat` fence until their `lat` window passed (#13 6.9 layer 1).
     if (record) {
       const deadline = this.maxSessionEndAt(app, record);
+      const epoch = record.recoveredAt === undefined ? 0 : await this.epoch();
       const guardUntil =
         record.recoveredAt === undefined
           ? undefined
           : Math.min(
               deadline,
-              this.processStartedAt +
+              epoch +
                 app.inactivityLimitMinutes * MINUTE_MS +
                 this.deps.refresh.maxMs +
                 MAX_CLOCK_SKEW_MS,
             );
-      this.deps.ended.remember(namespace, groupId, deadline, guardUntil);
+      await this.deps.ended.remember(namespace, groupId, deadline, guardUntil);
     }
     const keys = (record?.participantIds ?? []).map((id) => membershipKey(namespace, groupId, id));
     let notified = 0;
@@ -1890,10 +2250,13 @@ export class GroupService implements GroupActions {
         const participant = this.deps.notifier.get(key);
         if (participant === undefined) continue;
         notified += 1;
+        this.touch(participant);
         this.deps.notifier.unregister(key, participant);
         if (participant.membership?.groupId === groupId) participant.membership = undefined;
         // The requester gets group.ended as its direct reply instead.
-        if (participant !== requester) participant.afterPending(() => participant.deliver(ended));
+        if (participant !== requester) {
+          this.lock.effect(() => participant.afterPending(() => participant.deliver(ended)));
+        }
       }
     }
     this.deps.logger.info(

@@ -21,7 +21,8 @@ result. Change a choice with a new ADR, never by editing this file alone.
 
 Commit scopes in use: `protocol`, `server`, `client`, `react`, `reader`,
 `adr`, `spec`, `design`, `architecture`, `security`, `state`, `docs`,
-`compose`, `ci` (also used without a scope: `ci: ...`).
+`compose`, `ci` (also used without a scope: `ci: ...`), `storage` (the sync
+server's storage layer, `apps/sync-server/src/storage`).
 
 ## Reading app (`apps/reader`, #19)
 
@@ -64,3 +65,24 @@ Rules that follow from these choices:
 - A QR ticket lives only in memory: stripped from the URL fragment before
   anything else runs, never stored, logged or put in another URL.
 - The CSP widens only `connect-src`, by the sync server's origin.
+
+## Sync server storage (`apps/sync-server`, #35)
+
+| Decision                       | Choice                                                                                                                                                                                                            | ADR                                                             |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| Redis client and servers       | `@redis/client` 6.3.1, pinned exactly, loaded only by a dynamic `import()` when `REDIS_URL` is set; Redis 7.2+ and Valkey 7.2+, one endpoint                                                                      | [0010](decisions/0010-redis-client-and-supported-servers.md)    |
+| Group atomicity                | One unit of work per locked group task (read once, commit once) plus an effect outbox flushed after the commit, for both stores; a fenced Redis lease lock is added for several instances                         | [0011](decisions/0011-group-atomicity-with-redis.md)            |
+| Cross-instance delivery        | One pub/sub channel per instance plus an attachment registry in the group document (applied with several instances)                                                                                               | [0012](decisions/0012-cross-instance-event-delivery.md)         |
+| Group timers                   | A due-time sorted set, a Lua lease claim, a 1 s poll and a 30 s lease; dispatch by timer kind with plain data; `setTimeout` behind the same interface in memory                                                   | [0013](decisions/0013-persistent-group-timers.md)               |
+| While Redis is unreachable     | The group's local sessions close with `1001`, upgrades get 503, disconnects are replayed on reconnect; no protocol change, no fallback to memory                                                                  | [0014](decisions/0014-behaviour-while-redis-is-unreachable.md)  |
+| Delivery and Gate 2 rules (9a) | Two PRs (one instance first); key TTL = max-session deadline + 5 s; a restart never shortens a running grace or hold below `disconnectGraceSeconds`; eviction policy other than `noeviction` is a startup warning | [architecture.md](issues/35/architecture.md) (Gate 2 Q-A1-Q-A6) |
+
+Rules that follow from these choices:
+
+- Every Redis key is built in `storage/redis/keys.ts`, which checks the format
+  of each part; Lua scripts are constant strings with every dynamic value in
+  `KEYS`/`ARGV`.
+- Every value read from Redis is schema-checked; on the recovery path an
+  invalid value fails closed (treated as ended or closed).
+- `REDIS_URL` and its parts never appear in a log line, `Config error`,
+  `Startup error` or inspect output.

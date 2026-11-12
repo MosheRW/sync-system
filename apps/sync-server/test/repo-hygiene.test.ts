@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { DEV_REDIS_PASSWORD } from '../src/config/redis.js';
 import { DEV_TOKEN_SECRET } from '../src/config/token-secret.js';
 
 const repoRoot = fileURLToPath(new URL('../../../', import.meta.url));
@@ -93,6 +94,46 @@ describe('pinned supply chain (L8)', () => {
   });
 });
 
+describe('optional Redis compose override (#35 AC30, security C2, C3, C5)', () => {
+  const override = read('compose.redis.yaml');
+  const redis = override.slice(override.indexOf('  redis:'), override.indexOf('  sync-server:'));
+
+  it('leaves the default compose file on the memory store', () => {
+    const compose = read('compose.yaml');
+    expect(compose).not.toMatch(/^\s+redis:/m);
+    expect(compose).not.toContain('REDIS_URL');
+  });
+
+  it('pins the Redis image by digest and publishes no host port', () => {
+    expect(redis).toMatch(/image: redis:7\.2\.\d+-alpine@sha256:[0-9a-f]{64}$/m);
+    expect(redis).not.toMatch(/^\s+ports:/m);
+  });
+
+  it('requires a password, keeps nothing on disk and never evicts', () => {
+    const lines = redis.split(/\r?\n/).map((line) => line.trim());
+    const flag = (name: string) => lines[lines.indexOf(`- ${name}`) + 1];
+    expect(flag('--requirepass')).toBe(`- ${DEV_REDIS_PASSWORD}`);
+    expect(flag('--save')).toBe("- ''");
+    expect(flag('--appendonly')).toBe("- 'no'");
+    expect(flag('--maxmemory-policy')).toBe('- noeviction');
+    expect(redis).not.toMatch(/^\s+volumes:/m);
+    expect(redis).toMatch(/tmpfs:\s*\n\s+- \/data/);
+  });
+
+  it('gives the sync server the dev password, which only development accepts (C5)', () => {
+    const url = /REDIS_URL:\s*(\S+)/.exec(override)?.[1];
+    expect(url).toBe(`redis://:${DEV_REDIS_PASSWORD}@redis:6379`);
+    expect(read('compose.yaml')).toMatch(/NODE_ENV: development/);
+  });
+
+  it('pins @redis/client exactly (#35 AC28, ADR 0010)', () => {
+    const pkg = JSON.parse(read('apps/sync-server/package.json')) as {
+      dependencies: Record<string, string>;
+    };
+    expect(pkg.dependencies['@redis/client']).toBe('6.3.1');
+  });
+});
+
 describe('CI workflow (AC28, L1, L8)', () => {
   const workflow = read('.github/workflows/ci.yml');
 
@@ -109,6 +150,24 @@ describe('CI workflow (AC28, L1, L8)', () => {
     expect(workflow).not.toContain('pull_request_target');
     expect(workflow).toMatch(/^permissions:\n {2}contents: read$/m);
     expect(workflow).not.toContain('secrets.');
+  });
+
+  it('runs the Redis suites against a pinned, loopback, password-only Redis (#35 AC31, F15)', () => {
+    const start = workflow.slice(
+      workflow.indexOf('name: Start Redis'),
+      workflow.indexOf('name: Audit'),
+    );
+    expect(start).toMatch(/redis:7\.2\.\d+-alpine@sha256:[0-9a-f]{64}/);
+    expect(start).toContain('-p 127.0.0.1:6379:6379');
+    expect(start).toContain('--requirepass ci-only-redis-password');
+    expect(start).toContain('--save "" --appendonly no');
+    const test = workflow.slice(
+      workflow.indexOf('run: pnpm test'),
+      workflow.indexOf('name: Build'),
+    );
+    expect(test).toContain('SYNC_TEST_REDIS_URL: redis://:ci-only-redis-password@127.0.0.1:6379');
+    expect(test).toMatch(/CI: 'true'/);
+    expect(workflow.indexOf('name: Start Redis')).toBeLessThan(workflow.indexOf('run: pnpm test'));
   });
 
   it('installs from the lockfile, audits, then runs every check', () => {
@@ -158,6 +217,38 @@ describe('README documents the lifecycle (#13 AC4, AC38, RC14)', () => {
       'Automatic handoff gives full control',
     ]) {
       expect(readme.toLowerCase(), text).toContain(text.toLowerCase());
+    }
+  });
+
+  it('documents every REDIS_* variable and the one-instance limit (#35 AC32, AC6 interim)', () => {
+    const readme = read('README.md');
+    const table = readme.slice(
+      readme.indexOf('### Environment variables'),
+      readme.indexOf('### Storage (Redis)'),
+    );
+    for (const name of [
+      'REDIS_URL',
+      'REDIS_KEY_PREFIX',
+      'REDIS_CONNECT_TIMEOUT_SECONDS',
+      'REDIS_COMMAND_TIMEOUT_MS',
+    ]) {
+      expect(table, name).toContain(`| \`${name}\``);
+    }
+    const storage = readme
+      .slice(readme.indexOf('### Storage (Redis)'), readme.indexOf('### Joining'))
+      .replace(/\s+/g, ' ');
+    for (const text of [
+      'One instance only, for now.',
+      'one sync server per Redis key prefix',
+      'noeviction',
+      'No persistence',
+      'ACL SETUSER',
+      'Startup error: Redis is unreachable (REDIS_URL)',
+      '`1001`',
+      'HTTP 503',
+      'Limits stay per instance',
+    ]) {
+      expect(storage, text).toContain(text);
     }
   });
 

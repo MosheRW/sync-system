@@ -226,13 +226,14 @@ describe('robustness (H4)', () => {
       const joiner = await ts.connectReady();
       joiner.send({ type: 'group.joinByCode', ...join });
       leader.terminate();
-      // Either joined then told the leader is offline, or not found
-      // (the empty group was dropped): never a crash.
+      // Either joined then told the leader is offline, or refused: the
+      // empty group is held and admits nobody new (#13 RC21), or is gone.
+      // Never a crash.
       const first = await joiner.next();
       if (first.type === 'group.joined') {
         expect((await joiner.next('leader.offline')).groupId).toBe(groupId);
       } else {
-        expect(first).toMatchObject({ code: 'GROUP_NOT_FOUND' });
+        expect(['GROUP_NOT_FOUND', 'GROUP_LOCKED']).toContain((first as { code?: string }).code);
       }
       joiner.terminate();
     }

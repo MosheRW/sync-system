@@ -3,10 +3,8 @@ import type { AddressInfo } from 'node:net';
 import { CloseCode } from '@sync-system/protocol';
 import { type ServerOptions, WebSocketServer } from 'ws';
 import type { AppRegistry } from './apps/app-registry.js';
-import { EndedGroups } from './groups/ended-groups.js';
 import { GroupService } from './groups/group-service.js';
 import type { GroupStore } from './groups/group-store.js';
-import { InMemoryGroupStore } from './groups/in-memory-group-store.js';
 import { LocalNotifier } from './groups/notifier.js';
 import type { ServerEnv } from './config/env.js';
 import { ConfigError } from './config/config-error.js';
@@ -39,6 +37,8 @@ import { Connection } from './ws/connection.js';
 import { ConnectionCounter, type ConnectionStats } from './ws/connection-counter.js';
 import { Heartbeat } from './ws/heartbeat.js';
 import { createUpgradeHandler } from './ws/upgrade.js';
+import { type Storage, type StorageStatus, memoryStorage } from './storage/storage.js';
+import { StorageStartError } from './storage/errors.js';
 
 export interface SyncServerOptions {
   env: ServerEnv;
@@ -51,7 +51,12 @@ export interface SyncServerOptions {
    * scheduler). Defaults to real, unref()ed timers on `now`.
    */
   scheduler?: Scheduler;
-  /** Defaults to a new InMemoryGroupStore. */
+  /**
+   * Where groups live (#35). Defaults to the in-memory storage; `store`
+   * replaces only its group store (tests).
+   */
+  storage?: Storage;
+  /** Defaults to a new InMemoryGroupStore. Ignored when `storage` is given. */
   store?: GroupStore;
   /** Defaults to HEARTBEAT_INTERVAL_MS; shortened by tests. */
   heartbeatMs?: number;
@@ -69,6 +74,8 @@ export interface SyncServerOptions {
   codeRandom?: RandomInt;
   /** Cap of the ended-groups memory; defaults to MAX_ENDED_GROUPS. Tests lower it. */
   endedGroupsCap?: number;
+  /** Groups waiting for a disconnect replay; defaults to MAX_CONNECTIONS. Tests lower it. */
+  replayCap?: number;
 }
 
 export interface SyncServer {
@@ -82,6 +89,11 @@ export interface SyncServer {
   readonly httpServer: Server;
   /** Connection counts. For tests only; never exposed over HTTP. */
   stats(): ConnectionStats;
+  /**
+   * Which storage serves groups and, for Redis, whether it is reachable
+   * (#35 AC27). Not exposed over HTTP in 9a.
+   */
+  storage(): StorageStatus;
 }
 
 /** How long close() waits for clients to complete the close handshake. */
@@ -156,12 +168,21 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
     logger.error({ event: 'wss_error', err: safeErr(err) }, 'websocket server error');
   });
 
-  const store = options.store ?? new InMemoryGroupStore();
-  const ended = new EndedGroups(now, logger, options.endedGroupsCap);
+  const storage =
+    options.storage ??
+    memoryStorage({
+      scheduler,
+      logger,
+      ...(options.store === undefined ? {} : { groups: options.store }),
+      ...(options.endedGroupsCap === undefined ? {} : { endedGroupsCap: options.endedGroupsCap }),
+    });
+  const appsByNamespace = new Map(registry.apps().map((app) => [app.namespace, app]));
   let sweepTimer: NodeJS.Timeout | undefined;
   // Read once, before any token is issued (#13 6.9 layer 2, RC18).
   const processStartedAt = scheduler.now();
   const tokens = new TokenService(new TokenKeyring(tokenSecrets), processStartedAt);
+  // The iat floor follows the store's epoch (#35 architecture 4.5).
+  storage.epoch?.follow((epoch) => tokens.raiseIatFloor(epoch));
   // One keyring per purpose, so the keys can never be mixed up (#10 R4).
   const qrTickets = new QrTicketService(
     new TokenKeyring(tokenSecrets, QR_TICKET_INFO_PREFIX),
@@ -169,7 +190,14 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
   );
   const codesBlobs = new CodesBlobService(new TokenKeyring(tokenSecrets, CODES_BLOB_INFO_PREFIX));
   const groups = new GroupService({
-    store,
+    store: storage.groups,
+    ...(storage.epoch === undefined ? {} : { epoch: storage.epoch }),
+    keepAttachmentsOnClose: storage.keepAttachmentsOnClose,
+    replayCap: options.replayCap ?? env.maxConnections,
+    codes: storage.codes,
+    doors: storage.doors,
+    timerBackend: storage.timers,
+    work: storage.work,
     notifier: new LocalNotifier(),
     logger,
     rateLimiter: new SlidingWindowRateLimiter(now),
@@ -180,12 +208,15 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
       minMs: env.tokenRefreshMinSeconds * 1000,
       maxMs: env.tokenRefreshMaxSeconds * 1000,
     },
-    ended,
+    ended: storage.ended,
     processStartedAt,
+    appOf: (namespace) => appsByNamespace.get(namespace),
     qrTickets,
     codesBlobs,
     ...(options.codeRandom === undefined ? {} : { codeRandom: options.codeRandom }),
   });
+  // Redis back after an outage: queued disconnects, then due timers (#35 8).
+  storage.onRecovered(() => groups.replayDisconnects());
   const counter = new ConnectionCounter();
   const connections = new Set<Connection>();
 
@@ -196,6 +227,10 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
       counter,
       env,
       logger,
+      available: () => {
+        const status = storage.status();
+        return status.kind === 'memory' || status.state === 'connected';
+      },
       onConnection(ws) {
         const connection = new Connection(ws, {
           logger,
@@ -255,7 +290,13 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
     },
     httpServer,
     stats: () => counter.snapshot(),
-    listen(listenPort, host) {
+    storage: () => storage.status(),
+    async listen(listenPort, host) {
+      try {
+        await storage.start((namespace, groupId) => groups.sweepAfterRestart(namespace, groupId));
+      } catch (err) {
+        throw new StorageStartError(err);
+      }
       return new Promise((resolve, reject) => {
         const onError = (err: Error) => {
           httpServer.off('listening', onListening);
@@ -265,7 +306,11 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
           httpServer.off('error', onError);
           port = (httpServer.address() as AddressInfo).port;
           heartbeat.start();
-          sweepTimer = setInterval(() => ended.sweep(), ENDED_SWEEP_MS);
+          sweepTimer = setInterval(() => {
+            storage.ended.sweep().catch((err: unknown) => {
+              logger.warn({ event: 'ended_sweep_failed', err: safeErr(err) }, 'ended sweep failed');
+            });
+          }, ENDED_SWEEP_MS);
           sweepTimer.unref();
           resolve(port);
         };
@@ -292,6 +337,7 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
       await new Promise<void>((resolve) => wss.close(() => resolve()));
       // Disconnect handling may have armed timers while sockets closed.
       groups.close();
+      await storage.close();
     },
   };
 }

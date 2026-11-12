@@ -88,6 +88,19 @@ and exits 1. Compose also sets the public development token secret
 `dev_token_secret`), so tokens survive `docker compose restart` and restart
 recovery can be tried locally. It is refused outside `development`/`test`.
 
+With Redis storage (groups survive a restart of the sync server, see
+[Storage (Redis)](#storage-redis)), add the override:
+
+```sh
+docker compose -f compose.yaml -f compose.redis.yaml up --build sync-server
+```
+
+`compose.redis.yaml` adds a `redis` service (Redis 7.2 pinned by digest, no
+host port, no RDB or AOF persistence, `/data` on a tmpfs, `noeviction`) and
+points the sync server at it with a public development password
+(`dev-only-insecure-redis-password-change-me`). The server refuses that
+password unless `NODE_ENV` is `development` or `test`.
+
 To run the image yourself, mount your own registry and point
 `SYNC_CONFIG_PATH` at it. The image never contains a config file:
 
@@ -203,6 +216,10 @@ Numeric variables must be positive integers; anything else (empty, `0`, `-1`,
 | `APPROVAL_TIMEOUT_SECONDS_CEILING`     | `600`                | Ceiling for `approvalTimeoutSeconds`; 15-3600.                           |
 | `DISCONNECT_GRACE_SECONDS_CEILING`     | `120`                | Ceiling for `disconnectGraceSeconds`; 1-3600.                            |
 | `KEEP_ALIVE_COUNTDOWN_SECONDS_CEILING` | `120`                | Ceiling for `keepAliveCountdownSeconds`; 1-3600.                         |
+| `REDIS_URL`                            | unset                | Redis storage, `redis://` or `rediss://`; unset: memory. Never logged.   |
+| `REDIS_KEY_PREFIX`                     | `sync`               | Key prefix, `[a-z0-9][a-z0-9_-]`, at most 32 characters.                 |
+| `REDIS_CONNECT_TIMEOUT_SECONDS`        | `10`                 | Bound for the startup connection and each reconnect attempt; 1-120.      |
+| `REDIS_COMMAND_TIMEOUT_MS`             | `2000`               | A Redis command not answered in time counts as unreachable; 100-30000.   |
 
 `MAX_BUFFERED_BYTES` must be at least `4 x MAX_MESSAGE_SIZE_CEILING`, at least
 45056 (the largest `tokens.result`), and at least the largest roster snapshot
@@ -240,6 +257,110 @@ the frame being handled); a frame over either cap closes the socket with
 `MAX_CONNECTIONS` (10000 x 224 KiB) inbound queues alone can reach about
 2.1 GiB (2.3 GB), on top of the outbound buffers above. Size the machine for
 both, or lower `MAX_CONNECTIONS`.
+
+### Storage (Redis)
+
+By default the server keeps groups in memory, and a restart forgets them
+(clients then recover their groups by token, see
+[Recovery and tokens](#recovery-and-tokens)). Set `REDIS_URL` to keep them in
+Redis instead; nothing else changes for clients (same protocol, same
+messages).
+
+**One instance only, for now.** This release supports **one sync server per
+Redis key prefix**. Never run two instances on the same Redis and prefix:
+their writes to one group can interleave and break the "exactly one wins"
+rules. Running several instances on one Redis comes with the next release.
+
+Turning it on:
+
+- `REDIS_URL=redis://[user]:password@host:6379/0` (database 0-15, default 0)
+  or `rediss://...` for TLS. TLS always verifies the certificate and the host
+  name; there is no option to turn that off. A query string or fragment in the
+  URL is refused, so no option is ever silently ignored.
+- Supported servers: Redis 7.2 or later and Valkey 7.2 or later, one
+  endpoint (no Cluster, no Sentinel). The client library is loaded only when
+  `REDIS_URL` is set.
+- `REDIS_KEY_PREFIX` (default `sync`) separates deployments sharing one Redis:
+  every key is `<prefix>:v1:...`, and two prefixes never see each other's
+  groups.
+- Every Redis problem at startup prints one line and exits 1, without the
+  URL, host, user or password: `Startup error: Redis is unreachable
+(REDIS_URL)`, `Redis authentication failed (REDIS_URL)`, `Redis TLS
+handshake failed (REDIS_URL)`, `Redis connection failed (REDIS_URL)` or
+  `Redis 7.2 or later is required`.
+
+Run Redis like this:
+
+- **A password, a private network and `rediss://`** beyond one machine.
+  Anyone who can write under the prefix can rewrite any group.
+- **A Redis ACL user limited to the prefix** with only the commands the
+  server uses, for example
+  `ACL SETUSER sync on >password resetkeys ~sync:* resetchannels -@all +@read +@write +@scripting +@connection +time -@dangerous +info`
+  (adjust `sync` to your prefix). Several deployments on one Redis then
+  cannot read each other's groups.
+- **`maxmemory-policy noeviction`**, with a `maxmemory` that fits. Any other
+  policy lets Redis silently drop live groups, and dropping the epoch or
+  ended-group entries voids the "an ended group stays ended" guarantee: an
+  old leader token could then recreate a group that ended. The server logs a
+  `redis_eviction_policy` warning at startup when the policy is not
+  `noeviction`.
+- **No persistence (no RDB snapshots, no AOF)** unless groups must survive a
+  restart of Redis itself: the stored groups hold display names, possibly of
+  minors. Without persistence, a Redis restart is like the server losing its
+  data (below).
+
+What survives a restart of the sync server, with Redis:
+
+- Every group: its record (leader, members, roster with names, vice, lock,
+  pause, term, handoff mode, block list), its join codes and the code index,
+  its timers, its door-code failure count and pause, and ended groups (so
+  their tokens keep getting `GROUP_ENDED`). Pending method B approval
+  requests do not survive (the joiner's socket is gone; it asks again).
+- A member resumes at once with the current position; a leader resumes its
+  group (not recreated, same codes and term). A removed or blocked member is
+  refused (`PARTICIPANT_BLOCKED`) even before the leader returns.
+- Nobody is counted as gone during the restart: everyone connected at the
+  stop is treated as disconnected when the server is back, so a leader online
+  at the stop gets the full `disconnectGraceSeconds` from the restart before
+  any handoff, and a grace or hold that was running ends no earlier than
+  `disconnectGraceSeconds` after the restart. Deadlines that passed while the
+  server was down (max session, keep-alive, frozen end, door-code pause) take
+  effect once at startup.
+- A stored group that fails its check at startup (a corrupted or foreign
+  value) does not stop the server: that group alone is ended, its tokens get
+  `GROUP_ENDED` and cannot recreate it, and the server logs
+  `store_document_invalid` without the key or the value.
+- If Redis lost its data (flushed, a new server, no persistence), the server
+  notices on the next missing group and recovery by token works exactly as
+  after a restart without Redis.
+
+Data lifetime: every key of a group expires no later than its max-session
+deadline plus 5 seconds and is deleted when the group ends; an ended group is
+kept only as a hash until its max-session deadline. Nothing in Redis holds a
+token, the token secret, a QR ticket, a codes blob or an API key. Redis TTLs
+run on Redis's clock and deadlines on the server's; keep both right (NTP).
+
+While Redis is unreachable (or answers nothing for `REDIS_COMMAND_TIMEOUT_MS`):
+
+- The sessions of an affected group are closed with `1001` (going away /
+  temporarily unavailable); clients resume once it is back. Nothing half
+  done is stored.
+- New WebSocket upgrades get HTTP 503; `/health` stays 200 (readiness comes
+  with a later release).
+- The server never falls back to memory and stays up. When a `PING`
+  answers again, it replays the disconnects it could not store, runs the
+  timers that came due, and accepts connections again. Redis errors that
+  are not outages are `INTERNAL_ERROR` to the one request.
+
+Limits stay per instance: `MAX_CONNECTIONS`, the per-app connection cap, the
+join and token-check budgets and the leader update rate are counted by the
+process, as without Redis.
+
+Sizing: the group document is about 45 KB at `MAX_GROUP_SIZE_CEILING` 100 with
+the longest names, a full block list and 4 KiB of metadata. A position update
+writes only a small separate key (the position and the last activity, at most
+about `maxMessageBytes`), but every request of a group reads the document
+once.
 
 ### Joining (methods A to D)
 
@@ -459,15 +580,18 @@ Durations go on the wire as remaining milliseconds (`graceMs`, `countdownMs`,
 
 ### Recovery and tokens
 
-The server still keeps nothing on disk; the leader's client is the group's
-database (block list, lock, vice and handoff mode travel with its token).
+Without Redis the server keeps nothing on disk, and the leader's client is
+the group's database (block list, lock, vice and handoff mode travel with its
+token). With Redis (see [Storage (Redis)](#storage-redis)) groups survive a
+restart, and the recovery below is only needed when Redis lost its data.
 
 - A leader disconnect **pauses** the group (see above). A paused group ends
   with `leader_timeout` when `inactivityLimitMinutes` +
   `TOKEN_REFRESH_MAX_SECONDS` have passed since the leader's last activity.
 - Every group ends with `max_session` at `maxSessionMinutes` after it was
   created, leader online or not.
-- **After a server restart** only: the leader's `group.resume` with its
+- **After a server restart** without Redis, or after Redis lost its data,
+  only: the leader's `group.resume` with its
   token **recreates** the group with the same ID, creation time and leader,
   plus the metadata, position, block list, lock, vice and handoff mode its
   client sends. Members that resumed first wait (`group.waiting`) and are
@@ -480,8 +604,8 @@ database (block list, lock, vice and handoff mode travel with its token).
   are flagged `admittedSinceRecovery` in the roster.
 - The leader can `group.end` the group; a member can `group.leave`. Ended
   groups are remembered (as hashes) until their max-session deadline, so their
-  tokens get `GROUP_ENDED`; a restart forgets that (accepted: the leader's
-  client deletes its token on end).
+  tokens get `GROUP_ENDED`. Without Redis a restart forgets that (accepted:
+  the leader's client deletes its token on end); with Redis it is kept.
 - Leader tokens are refreshed (`token.refreshed`) after activity; member
   tokens are not.
 - The block list binds token identities: a blocked participant cannot come
@@ -528,6 +652,8 @@ and the types are exported by `@sync-system/protocol`.
 6. `group.ended` reasons: `ended_by_leader`, `leader_timeout`, `max_session`,
    `inactivity`, `replaced` (the same participant resumed on another
    connection) and `removed` (blocked; the socket then closes with 4004).
+   Close code `1001` means the server is going away **or temporarily
+   unavailable** (its storage is unreachable): resume later.
 7. Roles and lifecycle (#13): leader requests `vice.set`, `vice.clear`
    (reply `vice.updated`), `group.lock`, `group.unlock` (reply
    `lock.changed`), `member.remove` (reply `member.removed`, then
@@ -558,7 +684,8 @@ group).
 - **Run one instance per token secret, and restart it as an operator
   action.** The recovery and supersede rules assume one process at a time
   on a keyring: stop the old instance before starting the new one; no
-  replicas or rolling deploys on one secret.
+  replicas or rolling deploys on one secret. With Redis, also one instance
+  per Redis key prefix (see [Storage (Redis)](#storage-redis)).
 - **Keep the clock right (NTP).** A server clock that steps back across a
   restart can let a stale displaced leader keep the lead for good (the real
   leader's token then looks granted after the restart), and can make the

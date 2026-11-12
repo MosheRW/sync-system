@@ -1,0 +1,58 @@
+# Optional Redis storage for local development (#35). Use it on top of
+# compose.yaml:
+#
+#   docker compose -f compose.yaml -f compose.redis.yaml up --build
+#
+# Groups then survive a restart of the sync server (one instance only for
+# now; see README.md, "Storage (Redis)"). The Redis password below is public
+# and committed, so the sync server accepts it only with NODE_ENV=development
+# or test (compose.yaml sets development). Never use it for real.
+services:
+  redis:
+    # Redis 7.2, pinned by digest.
+    image: redis:7.2.17-alpine@sha256:2f66de68111e64c3927859f158f8e666066dae2b97d9f82770a6f37a5aa1c335
+    # Password required; no RDB snapshots and no AOF: display names of
+    # possible minors never reach a disk (#35 security C3). noeviction, so
+    # Redis never silently drops a live group or an ended entry (C2).
+    command:
+      - redis-server
+      - --requirepass
+      - dev-only-insecure-redis-password-change-me
+      - --save
+      - ''
+      - --appendonly
+      - 'no'
+      - --maxmemory-policy
+      - noeviction
+    # No host port: only the sync server reaches Redis, on the compose network.
+    # The image declares a /data volume; a tmpfs keeps it off the disk.
+    tmpfs:
+      - /data
+    # The image's own redis user, so its entrypoint needs no chown or setuid.
+    user: '999:1000'
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        - CMD
+        - redis-cli
+        - --no-auth-warning
+        - -a
+        - dev-only-insecure-redis-password-change-me
+        - ping
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  sync-server:
+    environment:
+      # Dev-only password (public); see the header of this file.
+      REDIS_URL: redis://:dev-only-insecure-redis-password-change-me@redis:6379
+      REDIS_KEY_PREFIX: sync
+    depends_on:
+      redis:
+        condition: service_healthy

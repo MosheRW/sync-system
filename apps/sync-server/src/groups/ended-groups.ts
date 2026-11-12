@@ -2,8 +2,26 @@ import { createHash } from 'node:crypto';
 import { MAX_ENDED_GROUPS } from '../limits/constants.js';
 
 /** Hashed ref of a group: 16 bytes of sha256 as hex (L4). Never the raw ID. */
-function refOf(namespace: string, groupId: string): string {
+export function endedRef(namespace: string, groupId: string): string {
   return createHash('sha256').update(`${namespace}:${groupId}`, 'utf8').digest('hex').slice(0, 32);
+}
+
+/**
+ * Ended groups as hashed refs (#13 6.9), async so the Redis store can keep
+ * them across a restart (#35 AC13). `remember` follows the layer 3 eviction
+ * and closure rules of `EndedGroups` in both stores.
+ */
+export interface EndedGroupsStore {
+  remember(
+    namespace: string,
+    groupId: string,
+    deadline: number,
+    guardUntil?: number,
+  ): Promise<void>;
+  has(namespace: string, groupId: string): Promise<boolean>;
+  isRecoveryClosed(namespace: string): Promise<boolean>;
+  /** Drops passed entries and closures. */
+  sweep(): Promise<void>;
 }
 
 export interface EvictionLogger {
@@ -72,7 +90,7 @@ export class EndedGroups {
   remember(namespace: string, groupId: string, deadline: number, guardUntil?: number): void {
     const now = this.now();
     if (deadline <= now) return;
-    const ref = refOf(namespace, groupId);
+    const ref = endedRef(namespace, groupId);
     this.drop(ref);
     while (this.size >= this.cap) {
       if (!this.evictOne(now)) break;
@@ -89,7 +107,7 @@ export class EndedGroups {
   }
 
   has(namespace: string, groupId: string): boolean {
-    const ref = refOf(namespace, groupId);
+    const ref = endedRef(namespace, groupId);
     const entry = this.plain.get(ref) ?? this.guarded.get(ref);
     if (entry === undefined) return false;
     if (entry.deadline <= this.now()) {

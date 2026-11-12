@@ -1,0 +1,82 @@
+# State: #35 feat: redis storage with restart survival and several instances (PRD item 9a)
+- Path: full
+- Phase: ready-to-merge
+- Branch: feat/35-redis-docs-release
+- PR: #38 (ready)
+- Spec approved at Gate 1: yes (2026-11-12, with the edits below)
+- Gate 1 decisions (2026-11-12): all recommended defaults accepted except Q1, Q3, Q4 and Q13.
+  - Q1: user's 3-way split: 9a #35 = all Redis storage (restart survival, server-side block lists, several instances; AC1-AC32; the architect may plan it as two PRs on this issue), 9b #36 = health, readiness and config errors (AC33-AC42), 9c #37 = docs, changelog, release (AC43-AC56). Order 9a, 9b, 9c.
+  - Q3: license GPL-3.0, SPDX `GPL-3.0-only` (keeps future terms under the owner's control); the user may relicense to MIT later, simple only while sole copyright holder.
+  - Q4: publish under the user's npm scope `@mosherw` (`@mosherw/sync-system`), not `@sync-system`; exact package names, image registry and repo visibility are open for 9c's Gate 1.
+  - Q13: Markdown in the repo and a GitHub wiki; source of truth and wiki publishing are open for 9c's Gate 1.
+  - Follow-ups for 9c / #37 (2026-11-12): Q16 decided: three packages `@mosherw/sync-system-protocol`, `-client`, `-react`. Q19/Q13 decided: no GitHub wiki for now, docs are Markdown in the repo only (AC44 withdrawn; a wiki may be reconsidered later). Q17 (image registry) and Q18 (repo visibility) stay open for #37's Gate 1; the paid-plan/wiki argument no longer applies to Q18.
+  - Q8 moot (no single-instance guard; AC6 now requires several instances). Redis config errors and startup errors (AC3, AC4) stay in 9a.
+- Plan approved by user: yes (Gate 2, 2026-11-12, "Approve all")
+- Gate 2 decisions (2026-11-12):
+  - ADR 0010 Accepted: `@redis/client` pinned exactly 6.3.1, dynamic import only when configured; Redis 7.2+ and Valkey 7.2+, single endpoint (replaces the `redis` package named at Gate 1).
+  - ADR 0011 Accepted: per-group unit of work + effect outbox (PR 1); fenced Redis lease lock in PR 2.
+  - ADR 0012 Accepted (applied in PR 2): per-instance pub/sub channel + attachment registry.
+  - ADR 0013 Accepted: due-time sorted set, Lua lease claim, 1 s poll, 30 s lease.
+  - ADR 0014 Accepted, option 1: close with 1001, 503 on upgrades, bounded in-memory disconnect replay; no protocol change.
+  - Q-A1 yes (two PRs; PR 2 on feat/35-redis-multi-instance after PR 1 merges, own plan revision and Gate 2). Q-A2 TTL = max-session deadline + 5 s. Q-A3 yes (a grace/hold running at shutdown ends no earlier than disconnectGraceSeconds after the server is back). Q-A4 yes (PR #38 body `Refs #35`). Q-A5 yes (pending method B approvals move to PR 2). Q-A6 startup warning, not error.
+  - Security required controls C1-C10 (security.md) are mandatory.
+  - Security advisories folded into PR 1 by the user: F10 (position in its own small key written in the same commit; document size measured at the default ceiling), F12 (P:epoch gets PEXPIRE GT like the shared keys), F13 (prune past-E members of due/live/ended sets in the timer poll and startup sweep; AC24 test for a group that expired while the server was down), F14 (README: Redis ACL user limited to the prefix, least commands), F15 (ci.yml starts Redis with `docker run` in a step, pinned digest, password, no persistence, bound to 127.0.0.1). P2-1 (commit as a Lua script) optional.
+- Security-sensitive: yes (confirmed by the architect: new dependency @redis/client, Redis credentials, names of possible minors in Redis, recovery fence, concurrency)
+- Review rounds: 2
+- QA verdict (round 2, head 0f59775): PASS. Local CI in Docker (fresh clone, no `dist/`, node:24, pinned redis:7.2.17-alpine with password/no persistence/noeviction on a private network, Test before Build): install, audit, lint, typecheck, test (protocol 207, sync-server 1514, client 574, react 227, reader 1010), build all green; sync-server with SYNC_TEST_STORE=redis 1514/1514; e2e 5/5. Round-1 findings 1-7 and security M1, L1-L3 fixed. 12 fail-open mutations (C1 epoch/ended/closure, C7 ended/epoch, L2, invalid document skip/rethrow, L1 rollback, AC4 message/close/NOPERM) each fail a new test. Child-process tests stable (6/6 Linux, 6/6 Windows; 4.3 s under the full suite on Windows, bounded by spawnSync 30 s). Image: ACL user without GET gives `Startup error: Redis authentication failed (REDIS_URL)`, exit 1, link closed, no secrets; one invalid document: server starts, `startup_sweep {groups: 2, invalid: 1}`, that group `GROUP_ENDED`, the other resumes (also with its timer past due). AC: 24/24 PR 1 criteria met, 8 deferred to PR 2. Observations (non-blocking): the startup-phase auth message differs from architecture 3 step 7 wording (better fits AC4; add to Deviations); GitHub Actions blocked by billing. All 42 commits signed. Review: PR #38 comment.
+- QA verdict (round 1, head 9439684): FAIL. Local CI in Docker (fresh clone as a git bundle, node:24, pinned redis:7.2.17-alpine on a private network): `check` fails at Test in a fresh clone (`redis-lazy-load.test.ts` resolves the protocol `dist/`, which ci.yml builds only after Test; fix: `--conditions=@sync-system/source`); every other suite green (protocol 207, sync-server 1302 also with SYNC_TEST_STORE=redis, client 574, react 227, reader 1010), build green, e2e 5/5, redis-required guard verified. A Redis failure inside `storage.start` prints `Startup error: cannot listen on port ...` and the process never exits (reproduced on the image: ACL NOPERM, one invalid live document). Test gaps: C1 (epoch/ended/closure invalid values), C6 (keys.ts), C7 (ended/epoch aborts), AC12 restart cases. AC: 22 met, AC4 and AC31 not met, the rest deferred to PR 2 per Q-A1/Q-A5. `docker compose up` hangs at Creating for the base compose.yaml too (bind mounts on this host, environmental); the override was verified by hand (connect, sweep, live group survives a server restart, dev password refused in production). All 26 commits signed. Review: PR #38 comment.
+- Delivery: two PRs on this issue proposed (Gate 2 Q-A1): PR 1 single-instance Redis + restart survival (this branch), PR 2 several instances (branch feat/35-redis-multi-instance after PR 1 merges)
+- Plan: docs/issues/35/architecture.md; ADRs 0010-0014 Proposed
+- Security plan review: docs/issues/35/security.md (PASS, required controls C1-C10 join the plan)
+- Last updated by: pm
+## Fix round 1 (engineer, 2026-11-12)
+- Input: QA round 1 FAIL (PR #38 comment, findings 1-7) and security code round 1 PASS (M1, L1-L3). User decisions: an invalid stored group document must not block startup (that group ends, fails closed); fix all security advisories now.
+- Commits:
+  - 5688b02 fix(server): resolve protocol sources in the lazy-load test without dist (QA 1)
+  - 0d867ef fix(server): report a redis failure while starting and exit (QA 2, AC4): `StorageStartError` from `storage.start`; `Startup error: Redis connection failed (REDIS_URL)`, or `Redis authentication failed (REDIS_URL)` for NOPERM/WRONGPASS/NOAUTH as at connect; server and Redis link closed, exit 1. Also closes the server on a listen error.
+  - b96576f fix(storage): end a group with an invalid stored document at startup (QA 2, user decision): the sweep ends only that group in one commit (keys, timers, live member gone; ended entry until now + max session + slack); `startup_sweep` logs `invalid` count.
+  - 069374e test(server): wait for redis to drop the closed startup link
+  - bf3c85c fix(storage): abort a recreation that never read the epoch (L2); a recreation outside a group task reads the epoch itself
+  - c513cbc test(storage): cover the ended and epoch recreation aborts (QA 5, M1)
+  - c8fe83e test(storage): cover invalid epoch, ended, closure and code values (QA 3, M1)
+  - fcb5801 test(storage): cover redis key part checks and member parsing (QA 4, C6)
+  - e647b89 test(server): cover keep-alive, frozen end and door pause across a restart (QA 6, AC12)
+  - 6a7fa57 fix(server): roll back local attachments when a commit fails (L1)
+  - 92b14bf test(server): remove the tls test key directory after use (L3)
+  - 0d3b379 docs(server): say an invalid stored group ends at startup
+  - 5180d37, ed7bdb4 test(server): explicit timeouts for the two process-spawning tests (tsx loads sources, > 5 s under the full suite on Windows)
+  - PR #38 body updated (QA 7): ADRs Accepted, all 16 chunks ticked, fix round listed.
+- Mutation checks (each reverted): invalid epoch / ended entry / closure / code value made to fail open, C7 `ended` / `epoch` checks and the create `SETNX` removed, the L2 guard reverted, the refresh rollback removed, key part checks removed, startup `runDue` removed and timer consumption disabled: each fails at least one new test. An invalid ended entry is caught twice at service level (classification and the C7 commit check), so the service tests need both mutated; the unit tests catch `has` alone.
+- Checks: fresh clone of ed7bdb4 with no `dist/` anywhere: `pnpm install --frozen-lockfile`, `pnpm audit --audit-level=high` (no known vulnerabilities), `pnpm lint`, `pnpm typecheck`, `CI=true SYNC_TEST_REDIS_URL=… pnpm test` against redis:7.2.17-alpine (protocol 207, sync-server 1514, client 574, react 227, reader 1010), sync-server with `SYNC_TEST_STORE=redis` 1514/1514, `pnpm build`: all green.
+- Known, not fixed (QA note, optional): when the disconnect replay queue overflows (cap MAX_CONNECTIONS, oldest group dropped), that group's stored leader stays online until it resumes or the next restart's sweep. Hard to reach at the cap; left as documented.
+- Not tested at integration level: the L1 rollback after a C7 conflict (needs a write between classification and commit inside one task); the same rollback path is covered by the reply-error tests.
+## Model log
+- pm groom: opus (orchestrator: broad scope and split proposal) → DONE
+- pm update-spec (Gate 1 decisions): opus (orchestrator: split restructure and new issues) → DONE
+- architect plan: opus (default; NEXT_MODEL opus) → DONE
+- pm update-spec (9c follow-up decisions): sonnet (default) → DONE
+- security plan: opus (rule) → PASS (0 critical, 0 high, 9 medium, 6 low; required controls C1-C10 in docs/issues/35/security.md)
+- engineer implement: opus (Implementer model line; security-sensitive) → DONE
+- qa validate: opus (NEXT_MODEL) → FAIL
+- security code (round 1): opus (rule) → PASS (0 critical, 0 high, 1 medium M1, 3 low L1-L3; fixed in fix round 1 at user request)
+- engineer fix (round 1): opus (rule) → DONE
+- qa validate (round 2): opus (rule: round 2) → PASS
+- security code (round 2, delta): opus (rule) → PASS (1 low L4 → follow-up #39, 1 info)
+- pm follow-up issue: sonnet (default) → DONE (#39)
+## Open questions
+- Follow-up #39 (security round 2 L4, user decision at Gate 3, 2026-11-12): `fix(storage): delete join-code keys when an invalid stored group ends at startup`; not in PR #38; may be folded into PR 2 of #35.
+- 9a Gate 2: Q-A1 two PRs, Q-A2 TTL slack 5 s, Q-A3 restart grace for running pauses, Q-A4 PR 1 body Refs vs Closes, Q-A5 approvals in PR 2, Q-A6 eviction policy warning; ADRs 0010-0014 (architecture.md section 18).
+- 9b (#36): Q20 for its own Gate 1. 9c (#37): Q17, Q18 for its own Gate 1 (Q16, Q19 decided). See spec.md.
+## Deviations from plan
+- Gate 2 additions to the section 17 chunks: F10 (position key), F12 (epoch expiry), F13 (pruning), F14 (README ACL advice), F15 (CI Redis via `docker run`) are folded into the matching chunks (8, 11, 10/11, 16 and 15).
+- F10: a new key `P:p:<ns>:<gid>` holds the position and the last leader activity; the document is rewritten only when it changes (fixed field order). Measured at MAX_GROUP_SIZE_CEILING 100 with the longest names, a 256-ID block list and 4 KiB metadata: document about 44.6 KB, position key about 4.1 KB at maxMessageBytes 4096. Every task still reads the document once.
+- P2-1 done: the commit is one Lua script (`COMMIT`, a small op interpreter over KEYS/ARGV), so C7's re-checks are atomic and PR 2 can add the lease check there.
+- Expiries are sent as TTLs relative to Redis `TIME` (not `PXAT` absolute), so the server and Redis clocks need not agree; deadlines are still compared with the server clock.
+- `P:e:gns` (guarded count per namespace) is not stored: the busiest namespace is computed in the Lua eviction from the guarded entries (no drifting counter). Ended entries carry their deadline and are checked against the server clock.
+- Replay queue (C4) is a bounded, deduplicated set of groups (cap MAX_CONNECTIONS, oldest dropped) rather than per-session entries: on recovery each group is reconciled under its lock (every participant without an open local session is disconnected), which covers the per-session cases.
+- node-redis's command timeout stops once a command is written, so the link adds its own timeout and replaces a stalled connection (a late reply would answer the wrong command).
+- `compose.redis.yaml` runs Redis as the image's `redis` user (999:1000), read-only, cap_drop ALL, `/data` on tmpfs, `noeviction`. The ACL example in the README adds `+time` (the commit script calls TIME); verified against Redis with that ACL user.
+- Two existing tests were made storage-neutral (pending-timer counts are memory-only; a join racing a disconnect may also get GROUP_LOCKED from the empty-group hold). The whole server suite also passes with `SYNC_TEST_STORE=redis` (every server test on Redis).
+- Bug introduced and fixed within this PR: chunk 6 broke the ended-group guard term (`fix(server): restore the clock-skew term of the ended-group guard`, with a regression test).
+- C10: the self-signed TLS test generates its certificate with the `openssl` CLI at test time (no key committed).
+- Local note: `docker compose up` hangs at "Creating" on this Windows machine for the plain compose.yaml too (environment); the image was checked by hand against a Redis run with the override's flags (connects, sweeps, listens; the dev password is refused with NODE_ENV=production). `docker compose -f compose.yaml -f compose.redis.yaml config` is valid.
