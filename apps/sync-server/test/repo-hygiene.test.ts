@@ -294,7 +294,7 @@ describe('README documents the lifecycle (#13 AC4, AC38, RC14)', () => {
     }
   });
 
-  it('documents every REDIS_* variable and the one-instance limit (#35 AC32, AC6 interim)', () => {
+  it('documents every REDIS_* variable and the Redis operating rules (#35 AC32)', () => {
     const readme = read('README.md');
     const table = readme.slice(
       readme.indexOf('### Environment variables'),
@@ -312,8 +312,7 @@ describe('README documents the lifecycle (#13 AC4, AC38, RC14)', () => {
       .slice(readme.indexOf('### Storage (Redis)'), readme.indexOf('### Joining'))
       .replace(/\s+/g, ' ');
     for (const text of [
-      'One instance only, for now.',
-      'one sync server per Redis key prefix',
+      'Any number of sync server instances can share one Redis and key prefix',
       'noeviction',
       'No persistence',
       'ACL SETUSER',
@@ -324,6 +323,26 @@ describe('README documents the lifecycle (#13 AC4, AC38, RC14)', () => {
     ]) {
       expect(storage, text).toContain(text);
     }
+  });
+
+  it('documents several instances, the compose example and the join budget (#35 AC6, AC22, AC23, AC32)', () => {
+    const readme = read('README.md');
+    expect(readme).not.toContain('One instance only');
+    expect(readme).toMatch(/^### Several instances$/m);
+    const flat = readme.replace(/\s+/g, ' ');
+    for (const text of [
+      'compose.multi.yaml',
+      'The join-attempt budget multiplies by the number of instances.',
+      'issue #41',
+      'stop every instance before starting the new ones',
+      'An outage longer than 10 seconds closes every group session of the instance with `1001`',
+      'including leader-only frames with display names',
+      '+publish +subscribe +unsubscribe +ping',
+      'No sticky sessions are needed',
+    ]) {
+      expect(flat, text).toContain(text);
+    }
+    expect(flat).not.toContain('+@pubsub`');
   });
 
   it('states the token rules after #13: no lifelong take-back, supersede kills stale codes', () => {
