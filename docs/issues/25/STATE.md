@@ -10,7 +10,7 @@
 - Security-sensitive: yes (roles, removal, take-back client change, other participants' names; see architecture.md section 16)
 - Review rounds: 1
 - QA verdict (round 1, head bd6b8cd): BLOCKED on CI only, no code findings. Locally green: audit, lint, typecheck, test (reader suite 3x, 1010/1010), build, e2e 5/5, real-browser pass en + he (25/25). AC 22/23 met; AC55 not verifiable because the CI jobs `check` and `e2e` never started (GitHub Actions billing / spending limit). Becomes PASS once CI re-runs green on bd6b8cd. All 21 commits signed. 102 new he strings listed in the PR #31 review for #28.
-- Last updated by: qa
+- Last updated by: engineer
 ## Model log
 - pm groom: opus (orchestrator: broad lifecycle scope, same as #24) → DONE
 - pm update-spec: sonnet (default) → DONE
@@ -21,6 +21,13 @@
 - security plan: opus (rule) → PASS (0 critical, 0 high, 1 medium, 6 low; required controls R15-R24 in security.md)
 - engineer implement: opus (Implementer model line; security-sensitive) → DONE (chunks 1-11; lint, typecheck, test, build, audit and e2e green)
 - qa validate: opus (NEXT_MODEL) → BLOCKED (CI not run: Actions billing; no code findings)
+- security code (round 1): opus (rule) → PASS (1 low)
+- engineer fix (round 1, security low at user request): opus (rule) → DONE
+## Fix round 1
+- Input: security code review round 1 PASS with one low (R16, Q-A1 storage check could not fail), fixed at the user's request. QA round 1: BLOCKED on CI only, no code findings.
+- `9c9eaf9 test(client)`: `packages/client/test/client.rejoin.test.ts`, a leader with stored recovery data drops, rejoins, and the server answers `group.joined` as member; the stored entry is the member token only, with no `recovery` and no codes blob. Put in the rejoin file (not resume) because Q-A1 is the automatic reconnect path. Checked to fail when the token store keeps recovery for member tokens (mutation reverted).
+- `dda1f61 test(reader)`: the Q-A1 test in `apps/reader/test/leadership-flow.test.tsx` now asserts on the app's injected `MemoryStorage` (seeded with the pointer a joined tab has), not global `sessionStorage`: the pointer is still there and no stored value holds the group or door code. The token half stays with the client test.
+- Checks: `pnpm lint`, `pnpm typecheck` green; client test 574/574, reader test 1010/1010. Full CI to be run locally by the orchestrator (Actions billing).
 ## Open questions
 - Gate 2: Q-A1 and Q-A2 decided (see Gate 2 decisions).
 - Resolved by the architect: D1-D9 (architecture.md section 2); server semantics for Gap 1 and keepalive.ack during the pause confirmed (section 3).
@@ -43,4 +50,4 @@
 - The People list heading is "People (n)" in both the panel and the sheet view.
 - The 8b console-spy test (AC54) landed with chunk 9, after the last flow existed.
 - E2E: one loopback control for both stacks (`/cut/<ms>`, `/cut/lifecycle/<ms>`, ms a bounded integer up to 60000); `cutLeader` moved into `e2e/helpers/fixtures.ts`.
-- R16 storage after the Q-A1 path: the reader test checks the tab's storage holds no codes; the member token without recovery data is the core client's `#admitted` behaviour, not re-tested with the fake client.
+- R16 storage after the Q-A1 path: the reader test checks the app's injected tab storage holds no codes; the member token without recovery data is covered in the client's rejoin test (fix round 1).
