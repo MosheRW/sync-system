@@ -22,6 +22,28 @@
 - Last updated by: engineer
 - Issue #35 stays open after PR 1 (`Refs #35`); board card moved back to In Progress.
 
+## PR 2 implementation (engineer, 2026-11-12)
+- All 14 planned chunks done on feat/35-redis-multi-instance, plus one fix found by a manual two-instance run and one lint fix:
+  - af7b605 fix(storage): delete join-code keys when an invalid stored group ends (#39, C17; STATE Gate 2 record)
+  - 9a69799 refactor(server): reach participants through recipients
+  - 92de83f refactor(server): put method b approvals behind an async store
+  - 6a90d5c feat(storage): register instances with liveness and self-fencing (P2-3, C11)
+  - c6ff374 feat(storage): fence group tasks with a redis lease lock (P2-7, Q-B4)
+  - dc145c4 feat(storage): keep an attachment registry per group (C14, C16)
+  - 507e5ad feat(storage): deliver group effects across instances over pub/sub (AC17, P2-4, C15, Q-B10)
+  - d9e3f3e feat(server): sweep the attachments of stopped instances (AC21, C12, C13)
+  - 651b913 feat(storage): keep method b approvals in redis across instances (AC7, AC20, Q-B3)
+  - 851e349 feat(server): admit parked members across instances
+  - b9fd00a test(server): cover several instances on one redis
+  - d94baa8 build(compose): add a two-instance example behind a load balancer (AC23, P2-8, Q-B8)
+  - 3943fb1 ci: check the compose files and allow time for the multi-instance tests
+  - 4bb5154 fix(compose): share the load balancer rotation across nginx workers
+  - 3717d27 docs(server): document several instances (AC6, AC22, AC32, P2-5, P2-6, #41)
+  - 3a6c25b style(docs): format the roadmap so prettier passes
+- Checks (local CI in Docker, fresh clone of 3a6c25b as a git bundle, no `dist/`, node:24, pinned redis:7.2.17-alpine with password, no persistence, noeviction, private network): install --frozen-lockfile, audit (no known vulnerabilities), lint, typecheck, test (protocol 207, sync-server 1614, client 574, react 227, reader 1010), sync-server with SYNC_TEST_STORE=redis 1614/1614, build: all green. The three `docker compose ... config -q` checks pass. Reader e2e (memory store) 5/5 on the host.
+- Manual run (containers, no compose because `docker compose up` hangs on bind mounts on this host): the built image twice on one Redis behind the pinned nginx-unprivileged with config/nginx-multi.conf; a group spread over both instances, one instance killed, its members resumed through the load balancer and kept getting moves.
+- Advisories not taken (medium/low, user did not ask): F22 (accepted, #41), F23 (claims released after a commit timeout), F24 (`forget` carries no generation), F25 (epoch not in the preload). F26 is done (ACL example names the pub/sub commands).
+
 ## PR 1 (#38, merged 2026-11-12)
 - Final PR 1 state: ready-to-merge, branch feat/35-redis-docs-release, PR #38 merged as 46f4af3, review rounds 2. Entries below are PR 1 history (the Review rounds and Last updated lines below are PR 1's).
 - Spec approved at Gate 1: yes (2026-11-12, with the edits below)
@@ -93,7 +115,18 @@
 - 9a Gate 2: Q-A1 two PRs, Q-A2 TTL slack 5 s, Q-A3 restart grace for running pauses, Q-A4 PR 1 body Refs vs Closes, Q-A5 approvals in PR 2, Q-A6 eviction policy warning; ADRs 0010-0014 (architecture.md section 18).
 - 9b (#36): Q20 for its own Gate 1. 9c (#37): Q17, Q18 for its own Gate 1 (Q16, Q19 decided). See spec.md.
 ## Deviations from plan
-- PR 2 (Gate 2 Q-B10): a per-group commit sequence is added to the plan (not in architecture 12): every group commit increments it, it travels with each published effect and each local flush, and a receiver drops effects whose sequence is older than the last one it applied for that group.
+- PR 2 (Gate 2 Q-B10), as implemented: dropping older effects alone would lose events (a remote frame of an earlier commit can be the only copy), so the order is enforced instead. Every commit that publishes takes a sequence from `P:seq` inside the COMMIT script (max(last + 1, Redis time in microseconds), so it never goes back even if the key expires) and records it per receiving instance in the group's high-water hash `P:q:<ns>:<gid>`; each message carries `s`. Because commits of a group are serialized by the lease and one channel delivers in script order, a task, after reading its group (one PRELOAD script: document, position, registry and its own high-water mark), waits until its instance received everything up to that mark (bound 1 s, `PUBSUB_BARRIER_MS`) and applies those effects first; only then does it run and flush. A message older than one already received is dropped (`pubsub_message_stale`). A link that lags past the bound is treated as stalled: resync (1001), then the link restarts from the current sequence. Message contract: `{v: 1, s, effects}` (`s` added to architecture 12.7). Tests: multi-delivery "a task waits for earlier effects" (5 then 6), "a lagging link resyncs".
+- PR 2 small deviations:
+  - Log field `cause` instead of `reason` in `instance_fenced` (a repo test forbids a log field named `reason`).
+  - The self-fence closes sessions quietly (no disconnect rules, C13) and clears the replay queue; the subscriber link dropping closes the instance's group sessions at once (12.7 resync), so an outage closes sessions before the 10 s fence too.
+  - Storage status is `unreachable` (503 on upgrades) also while the subscriber link is down or the instance is fenced.
+  - Remote effects outside a group task are dropped with a debug log (12.7 planned a plain PUBLISH; every group effect comes from a task).
+  - Pending approvals: queue members are `<rid>.<instanceId>` so a timeout after the request key expired still reaches the joiner's instance; the request key lives until its deadline (AC7). Remote approvals check the joiner's instance liveness in Redis (C12).
+  - The Q-A3 restart floor applies only to groups no live instance attends (a single-instance restart), not when a peer of a running cluster dies; startup sweeps the stopped instances first, then a pre-checked pass over all live groups (PR 1 groups, unattended pauses).
+  - The disconnect replay queue also drains on every heartbeat tick (12.5), and replays admit parked members.
+  - Test-only options: `timings` (incl. `sweepMs`, `timerLeaseMs`), `monotonic`, `beforeCommit` on `redisStorage`.
+  - nginx config: a shared upstream `zone` (one rotation across workers) and `proxy_connect_timeout 2s`, found in the manual run.
+  - The roadmap file from the PR #38 merge update was unformatted (failed `pnpm lint`); formatted in its own commit.
 - PR 2 plan (architecture 12.1) refines the section 12 outline: the attachment registry is its own key `P:a:<ns>:<gid>` (not in the document), remote effects are PUBLISHed inside the COMMIT script, the lease-wait timeout closes only the requester (`StorageBusyError`), pending approvals are one key per request plus an index (per-request expiry on Redis 7.2), parking uses a set of instance IDs `P:pk`. Gate 2 Q-B2.
 - Gate 2 additions to the section 17 chunks: F10 (position key), F12 (epoch expiry), F13 (pruning), F14 (README ACL advice), F15 (CI Redis via `docker run`) are folded into the matching chunks (8, 11, 10/11, 16 and 15).
 - F10: a new key `P:p:<ns>:<gid>` holds the position and the last leader activity; the document is rewritten only when it changes (fixed field order). Measured at MAX_GROUP_SIZE_CEILING 100 with the longest names, a 256-ID block list and 4 KiB metadata: document about 44.6 KB, position key about 4.1 KB at maxMessageBytes 4096. Every task still reads the document once.
