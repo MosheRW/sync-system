@@ -110,6 +110,7 @@ import {
 import type { ClusterNotifier } from './cluster-notifier.js';
 import type { RemoteEffect } from './remote-effects.js';
 import type { ApprovalStore } from '../joins/approval-store.js';
+import type { ParkingRegistry } from '../storage/redis/parking.js';
 import { ParkingLot } from './parking-lot.js';
 import { canSupersede, classifyToken } from './resume.js';
 import { nextTerm } from '../lifecycle/succession.js';
@@ -176,6 +177,8 @@ export interface GroupServiceDeps {
   cluster?: ClusterNotifier;
   /** Pending method B requests (Redis, #35 architecture 12.9); defaults to memory. */
   approvals?: ApprovalStore;
+  /** Which instances hold parked members of a missing group (Redis, 12.10). */
+  parked?: ParkingRegistry;
 }
 
 /**
@@ -661,6 +664,21 @@ export class GroupService implements GroupActions {
         joiner.afterPending(() => joiner.deliver(text));
         return;
       }
+      case 'admitParked': {
+        // Under the group lease, after this local step (12.10).
+        const app = this.deps.appOf(effect.ns);
+        if (app === undefined) return;
+        this.lock
+          .run(effect.ns, effect.gid, () => this.admitParkedNow(app, effect.gid))
+          .catch((err: unknown) => {
+            if (err instanceof StorageUnavailableError || err instanceof StorageBusyError) {
+              this.queueReplay(effect.ns, effect.gid);
+              return;
+            }
+            this.deps.logger.error({ event: 'remote_effect_error', err: safeErr(err) }, 'admit');
+          });
+        return;
+      }
       case 'forget': {
         const key = groupKey(effect.ns, effect.gid);
         this.deps.rateLimiter.forget(key);
@@ -683,7 +701,17 @@ export class GroupService implements GroupActions {
    * lock, every participant without an open local session is disconnected
    * with the usual rules. A group that failed again stays queued.
    */
-  async replayDisconnects(): Promise<void> {
+  replayDisconnects(): Promise<void> {
+    // One replay at a time (Redis back, and every heartbeat tick).
+    this.replaying ??= this.replayAll().finally(() => {
+      this.replaying = undefined;
+    });
+    return this.replaying;
+  }
+
+  private replaying: Promise<void> | undefined;
+
+  private async replayAll(): Promise<void> {
     for (const key of [...this.replay]) {
       this.replay.delete(key);
       const at = key.indexOf(':');
@@ -692,7 +720,11 @@ export class GroupService implements GroupActions {
       const app = this.deps.appOf(namespace);
       if (app === undefined) continue;
       try {
-        await this.lock.run(namespace, groupId, () => this.reconcile(app, groupId));
+        await this.lock.run(namespace, groupId, async () => {
+          await this.reconcile(app, groupId);
+          // Members parked here for a group recreated elsewhere (12.10).
+          await this.admitParkedNow(app, groupId);
+        });
       } catch (err) {
         if (err instanceof StorageUnavailableError) {
           this.queueReplay(namespace, groupId);
@@ -1921,6 +1953,10 @@ export class GroupService implements GroupActions {
     this.attach(session, record.id, claims.pid);
     this.deliverLater(session, this.rosterSnapshot(record));
     await this.admitParked(app, record);
+    // Members parked on other instances are admitted there (12.10).
+    for (const instance of (await this.deps.parked?.recreated(namespace, record.id)) ?? []) {
+      this.deps.cluster?.host.send(instance, { op: 'admitParked', ns: namespace, gid: record.id });
+    }
     this.deps.logger.info(
       {
         event: 'group_resumed',
@@ -2125,6 +2161,8 @@ export class GroupService implements GroupActions {
       },
       name,
     );
+    // Several instances: a recreation elsewhere admits it here (12.10).
+    this.deps.parked?.park(namespace, claims.gid, until);
     if (older !== undefined) {
       // One parked session per participant: newest wins (M5).
       const text = JSON.stringify({
@@ -2182,6 +2220,13 @@ export class GroupService implements GroupActions {
       const token = this.issueToken(namespace, entered, participantId, 'member', this.now());
       this.deliverLater(member, this.joinedMessage(entered, participantId, token));
     }
+  }
+
+  /** Admits the members parked here if the group exists now. Under the group lock. */
+  private async admitParkedNow(app: AppConfig, groupId: string): Promise<void> {
+    if (!this.parking.has(groupKey(app.namespace, groupId))) return;
+    const record = await this.deps.store.get(app.namespace, groupId);
+    if (record !== undefined) await this.admitParked(app, record);
   }
 
   /** Stores a roster change (#13 D10). Runs under the group lock. */

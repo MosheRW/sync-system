@@ -100,6 +100,11 @@ export class RedisKeys {
     return `${this.base}:ap:${this.group_(namespace, groupId)}:${check(JOIN_REQUEST_ID_PATTERN, requestId, 'requestId')}`;
   }
 
+  /** The instances holding a parked member of a missing group (#35 architecture 12.10). */
+  parking(namespace: string, groupId: string): string {
+    return `${this.base}:pk:${this.group_(namespace, groupId)}`;
+  }
+
   /** The group's lease (#35 architecture 12.4): a random token, PX 10 s, renewed. */
   lock(namespace: string, groupId: string): string {
     return `${this.base}:lock:${this.group_(namespace, groupId)}`;

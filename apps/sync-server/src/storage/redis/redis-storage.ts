@@ -16,6 +16,7 @@ import { LEASE_TIMINGS, type LeaseTimings, RedisLeaseSource } from './lease-lock
 import { RedisPubSub } from './pubsub.js';
 import { OrphanSweeper } from './sweeper.js';
 import { RedisApprovals } from './approvals.js';
+import { RedisParking } from './parking.js';
 import { type RedisContext, RedisWorkSource } from './unit-of-work.js';
 
 const MINUTE_MS = 60_000;
@@ -90,6 +91,7 @@ export function redisStorage(options: RedisStorageOptions): Storage {
   instance.onFence(() => void pubsub.leave());
   instance.onRegistered((id) => void pubsub.rejoin(id));
   let probeTimer: NodeJS.Timeout | undefined;
+  let replay: (() => Promise<void>) | undefined;
   const memory = memoryStorage({ scheduler: options.scheduler, logger: options.logger });
   const timers = new RedisTimerBackend(ctx, work, options.scheduler);
   const epoch = new RedisEpoch(ctx, work);
@@ -102,6 +104,7 @@ export function redisStorage(options: RedisStorageOptions): Storage {
     epoch,
     keepAttachmentsOnClose: true,
     onRecovered(listener) {
+      replay = listener;
       options.link.onState((state) => {
         if (state !== 'connected') return;
         // Queued disconnects first, then the timers that came due meanwhile.
@@ -117,6 +120,7 @@ export function redisStorage(options: RedisStorageOptions): Storage {
     },
     leases,
     approvals: new RedisApprovals(ctx, work),
+    parked: new RedisParking(ctx, work),
     cluster: {
       host: {
         selfId: () => work.current()?.instanceId ?? ctx.instanceId?.(),
@@ -154,7 +158,13 @@ export function redisStorage(options: RedisStorageOptions): Storage {
       instance.start();
       // Subscribe before anything can publish to this instance (12.8).
       await pubsub.start();
-      probeTimer = setInterval(() => void pubsub.probe(), timings.heartbeatMs);
+      probeTimer = setInterval(() => {
+        void pubsub.probe();
+        // Each tick also drains the replay queue (busy groups, 12.5).
+        if (options.link.state === 'connected' && !instance.fenced()) {
+          void replay?.().catch(() => undefined);
+        }
+      }, timings.heartbeatMs);
       probeTimer.unref();
       // Deadlines that passed while the server was down take effect once (AC12).
       await timers.runDue();
