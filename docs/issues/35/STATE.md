@@ -74,6 +74,7 @@
 - pm follow-up issue: sonnet (default) → DONE (#39)
 - pm update (PR #38 merge): sonnet (default: mechanical doc update) → DONE
 - architect plan revision (PR 2): opus (rule: default for architect; pm NEXT_MODEL opus; security-sensitive concurrency) → DONE (draft PR #40)
+- security plan (PR 2): opus (rule) → PASS (0 critical, 0 high; medium F16-F20, F22 advisory; low F21, F23-F26; required controls C11-C17)
 ## Open questions
 - PR 2 Gate 2 (architecture 12.22, recommendation first): Q-B1 fold #39 in as chunk 1 (yes), Q-B2 refinements inside ADRs 0011/0012 (registry in its own key, PUBLISH inside COMMIT, lease-wait timeout closes the requester only), Q-B3 approve racing a joiner disconnect (accept), Q-B4 busy closes requester only (yes), Q-B5 fixed timings (lease 10/3/5/30 s, liveness 15 s, heartbeat 5 s, self-fence 10 s, sweep 5 s; outage > 10 s closes group sessions), Q-B6 follow-up issue for a global join-attempt limiter, Q-B7 stop all PR 1 instances before upgrading, Q-B8 nginx-unprivileged image, Q-B9 config consistency documented only.
 - Follow-up #39 (security round 2 L4, user decision at Gate 3, 2026-11-12): `fix(storage): delete join-code keys when an invalid stored group ends at startup`; not in PR #38. Architect recommends folding it into PR 2 as chunk 1 (Gate 2 Q-B1); PR #40 says `Refs #39` until the user decides.
