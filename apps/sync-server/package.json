@@ -15,6 +15,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@redis/client": "6.3.1",
     "@sync-system/protocol": "workspace:*",
     "pino": "^10.4.0",
     "semver": "^7.7.0",
