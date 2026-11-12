@@ -2,7 +2,7 @@
 - Path: full
 - Phase: architecture
 - Branch: feat/35-redis-docs-release
-- PR: none
+- PR: #38 (draft)
 - Spec approved at Gate 1: yes (2026-11-12, with the edits below)
 - Gate 1 decisions (2026-11-12): all recommended defaults accepted except Q1, Q3, Q4 and Q13.
   - Q1: user's 3-way split: 9a #35 = all Redis storage (restart survival, server-side block lists, several instances; AC1-AC32; the architect may plan it as two PRs on this issue), 9b #36 = health, readiness and config errors (AC33-AC42), 9c #37 = docs, changelog, release (AC43-AC56). Order 9a, 9b, 9c.
