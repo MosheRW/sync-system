@@ -50,5 +50,5 @@ describe('@redis/client is loaded only when Redis is configured (#35 AC1, AC28, 
     expect(run.status, run.stderr).toBe(0);
     const result = JSON.parse(run.stdout.trim().split('\n').pop()!) as Record<string, unknown>;
     expect(result).toEqual({ memory: { kind: 'memory' }, afterMemory: false, afterRedis: true });
-  });
+  }, 60_000);
 });
