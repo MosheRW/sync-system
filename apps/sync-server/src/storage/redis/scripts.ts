@@ -127,8 +127,17 @@ end
  * while the score is still `s`), `keep` (PEXPIRE if the key exists),
  * `extend` (a shared key's expiry only moves later; a key without one gets
  * it), `remember` (an ended group, see ENDED_FUNCTIONS), `consume` (a fired
- * timer: removed from the due set and its hash only while still leased).
- * Returns `{'ok', evicted, closedNamespaces}` (the ended-groups warnings).
+ * timer: removed from the due set and its hash only while still leased),
+ * `hw` (a group's high-water mark for an instance: HSET field `f` to this
+ * commit's sequence) and `pub` (#35 architecture 12.7: PUBLISH
+ * `{"v":1,"s":<seq>,"effects":<v>}` on the channel `k`).
+ *
+ * Several instances (#35 security C15, Gate 2 Q-B10): the op list is
+ * validated before the first write, and every `pub` comes after every
+ * other write. With `q` (the sequence key), the commit takes the next
+ * sequence: above the last one and at least Redis time in microseconds, so
+ * it keeps growing even if the key expired; `qx` is its time to live.
+ * Returns `{'ok', evicted, closedNamespaces, seq}`.
  */
 export const COMMIT = new LuaScript(
   `
@@ -151,6 +160,27 @@ for _, c in ipairs(spec.c) do
   else
     return redis.error_reply('ERR unknown check')
   end
+end
+local known = {
+  set = true, setnx = true, del = true, deleq = true, hset = true, hdel = true,
+  sadd = true, srem = true, zadd = true, zrem = true, zremif = true, keep = true,
+  extend = true, remember = true, consume = true, hw = true, pub = true,
+}
+local publishing = false
+for _, w in ipairs(spec.w) do
+  if not known[w.o] then return redis.error_reply('ERR unknown write') end
+  if w.o == 'pub' then
+    publishing = true
+  elseif publishing then
+    return redis.error_reply('ERR write after publish')
+  end
+end
+local seq = ''
+if spec.q then
+  local last = tonumber(redis.call('GET', KEYS[spec.q])) or 0
+  local micros = tonumber(time[1]) * 1000000 + tonumber(time[2])
+  seq = string.format('%.0f', math.max(last + 1, micros))
+  redis.call('SET', KEYS[spec.q], seq, 'PX', spec.qx)
 end
 for _, w in ipairs(spec.w) do
   local k = KEYS[w.k]
@@ -194,11 +224,13 @@ for _, w in ipairs(spec.w) do
       redis.call('ZREM', k, w.m)
       redis.call('HDEL', KEYS[w.h], w.f)
     end
-  else
-    return redis.error_reply('ERR unknown write')
+  elseif o == 'hw' then
+    redis.call('HSET', k, w.f, seq)
+  elseif o == 'pub' then
+    redis.call('PUBLISH', k, '{"v":1,"s":' .. seq .. ',"effects":' .. w.v .. '}')
   end
 end
-return {'ok', tostring(evicted), table.concat(closed, ',')}
+return {'ok', tostring(evicted), table.concat(closed, ','), seq}
 `,
 );
 
@@ -389,4 +421,18 @@ return 0
 export const LEASE_RELEASE = new LuaScript(`
 if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end
 return 0
+`);
+
+/**
+ * Reads a group for a task (#35 architecture 12.1 step 3): document,
+ * position and attachment registry, plus the last sequence published to
+ * this instance for the group (Gate 2 Q-B10). KEYS: document, position,
+ * registry, high-water hash; ARGV: this instance's ID (empty: none).
+ */
+export const PRELOAD = new LuaScript(`
+local out = redis.call('MGET', KEYS[1], KEYS[2], KEYS[3])
+local hw = false
+if ARGV[1] ~= '' then hw = redis.call('HGET', KEYS[4], ARGV[1]) end
+table.insert(out, hw)
+return out
 `);

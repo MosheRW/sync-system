@@ -108,6 +108,7 @@ import {
   isRecipient,
 } from './recipients.js';
 import type { ClusterNotifier } from './cluster-notifier.js';
+import type { RemoteEffect } from './remote-effects.js';
 import { ParkingLot } from './parking-lot.js';
 import { canSupersede, classifyToken } from './resume.js';
 import { nextTerm } from '../lifecycle/succession.js';
@@ -262,7 +263,11 @@ export class GroupService implements GroupActions {
       (namespace, groupId, err, sessions) => {
         this.failedCommit(namespace, groupId, err, sessions as ReadonlySet<Session>);
       },
-      { leases: deps.leases, fenced: deps.fenced },
+      {
+        leases: deps.leases,
+        fenced: deps.fenced,
+        beforeTask: (namespace, groupId) => this.drainInbox(groupKey(namespace, groupId)),
+      },
     );
     this.timers = new GroupTimers(deps.timerBackend ?? new MemoryTimerBackend(deps.scheduler));
     this.joins = new JoinService(
@@ -526,6 +531,97 @@ export class GroupService implements GroupActions {
     this.replay.clear();
     this.refresher.clearAll();
     this.parking.clearAll();
+  }
+
+  /** Effects received from other instances, per group, not yet applied (12.7). */
+  private readonly inbox = new Map<string, RemoteEffect[]>();
+
+  /**
+   * Effects another instance published for sessions here (#35 architecture
+   * 12.7): each group's effects are applied in arrival order through the
+   * group's local queue, so they never interleave with a local task of the
+   * group; a task drains them first itself (Gate 2 Q-B10).
+   */
+  receiveRemote(effects: readonly RemoteEffect[]): void {
+    const groups = new Map<string, { namespace: string; groupId: string }>();
+    for (const effect of effects) {
+      const key = groupKey(effect.ns, effect.gid);
+      let queue = this.inbox.get(key);
+      if (queue === undefined) {
+        queue = [];
+        this.inbox.set(key, queue);
+      }
+      queue.push(effect);
+      groups.set(key, { namespace: effect.ns, groupId: effect.gid });
+    }
+    for (const [key, { namespace, groupId }] of groups) {
+      this.lock
+        .runLocal(namespace, groupId, () => this.drainInbox(key))
+        .catch((err: unknown) => {
+          this.deps.logger.error(
+            { event: 'remote_effect_error', err: safeErr(err) },
+            'remote failed',
+          );
+        });
+    }
+  }
+
+  /** Applies the group's received effects, in order. In the group's local queue. */
+  private drainInbox(key: string): void {
+    const queue = this.inbox.get(key);
+    if (queue === undefined) return;
+    this.inbox.delete(key);
+    for (const effect of queue) this.applyRemote(effect);
+  }
+
+  /**
+   * One received effect (#35 architecture 12.7, security P2-4, C15): it
+   * acts only on the local session that still holds the membership with
+   * the same attach ID; anything else is dropped. Never runs while fenced.
+   */
+  private applyRemote(effect: RemoteEffect): void {
+    if (this.deps.fenced?.() === true) return;
+    const dropped = () =>
+      this.deps.logger.debug({ event: 'remote_effect_dropped', op: effect.op }, 'effect dropped');
+    switch (effect.op) {
+      case 'deliver':
+      case 'detach':
+      case 'refresh': {
+        const key = membershipKey(effect.ns, effect.gid, effect.pid);
+        const session = this.deps.notifier.get(key);
+        if (session === undefined || session.membership?.attachId !== effect.att) {
+          dropped();
+          return;
+        }
+        if (effect.op === 'deliver') {
+          const { text } = effect;
+          if (effect.later) session.afterPending(() => session.deliver(text));
+          else session.deliver(text);
+        } else if (effect.op === 'detach') {
+          this.deps.notifier.unregister(key, session);
+          session.membership = undefined;
+          const { text, close } = effect;
+          if (text !== undefined || close !== undefined) {
+            session.afterPending(() => {
+              if (text !== undefined) session.deliver(text);
+              if (close !== undefined) session.close(close, 'removed');
+            });
+          }
+        } else {
+          this.startRefresh(effect.ns, effect.gid, effect.at);
+        }
+        return;
+      }
+      case 'forget': {
+        const key = groupKey(effect.ns, effect.gid);
+        this.deps.rateLimiter.forget(key);
+        this.controls.forgetGroup(effect.ns, effect.gid);
+        this.refresher.clear(key);
+        return;
+      }
+      default:
+        dropped();
+    }
   }
 
   /** Number of groups waiting for a disconnect replay. For tests only. */
@@ -2391,6 +2487,10 @@ export class GroupService implements GroupActions {
           participant instanceof LocalRecipient && participant.session === requester;
         participant.detach('ended', isRequester ? undefined : ended);
       }
+    }
+    // Other instances drop their per-group state too (12.7).
+    for (const instance of this.deps.cluster?.others(namespace, groupId) ?? []) {
+      this.deps.cluster!.host.send(instance, { op: 'forget', ns: namespace, gid: groupId });
     }
     this.deps.logger.info(
       {

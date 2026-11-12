@@ -260,5 +260,25 @@ export const GROUP_LEASE_MAX_HOLD_MS = 30_000;
  */
 export const GROUP_LOCK_WAIT_MS = 5_000;
 
+/**
+ * Largest pub/sub message between instances (#35 architecture 12.7): a
+ * received one over it is dropped before parsing; a commit splits its
+ * effects for one instance into several ordered messages under it.
+ */
+export const PUBSUB_MESSAGE_MAX_BYTES = 1_048_576;
+
+/** Longest serialized frame inside a remote effect (a roster snapshot is about 45 KB). */
+export const PUBSUB_FRAME_MAX_CHARS = 131_072;
+
+/** Most effects in one pub/sub message. */
+export const PUBSUB_EFFECTS_MAX = 512;
+
+/**
+ * How long a task waits for the effects an earlier commit of its group
+ * published to this instance (#35 Gate 2 Q-B10) before it treats the
+ * subscriber link as stalled.
+ */
+export const PUBSUB_BARRIER_MS = 1_000;
+
 /** How long the instance list keeps an instance ID after its last registration (24 h). */
 export const INSTANCE_LIST_RETENTION_MS = 86_400_000;

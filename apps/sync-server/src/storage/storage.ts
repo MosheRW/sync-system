@@ -10,6 +10,7 @@ import type { Scheduler } from '../time/scheduler.js';
 import { MemoryDoorStates, MemoryEndedGroups } from './memory/memory-state.js';
 import type { EpochSource } from './redis/epoch.js';
 import type { ClusterHost } from '../groups/cluster-notifier.js';
+import type { RemoteReceiver } from './redis/pubsub.js';
 
 /** What `SyncServer.storage()` reports (#35 AC27). */
 export type StorageStatus =
@@ -27,6 +28,14 @@ export interface StorageCluster {
    * disconnect rules (security C13).
    */
   onFence(listener: () => void): void;
+  /**
+   * Called when effects from other instances may have been lost (the
+   * subscriber link dropped, stalled or lagged; #35 architecture 12.7):
+   * every session in a group, parked or pending is closed with 1001.
+   */
+  onResync(listener: () => void): void;
+  /** Where effects received from other instances go. */
+  setReceiver(receiver: RemoteReceiver): void;
 }
 
 /**

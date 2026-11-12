@@ -55,6 +55,16 @@ export class ClusterNotifier {
     this.host.registry(namespace, groupId)?.set(pid, { i: self, t: attachId });
   }
 
+  /** The other instances the group's registry named when the task read it. */
+  others(namespace: string, groupId: string): string[] {
+    const registry = this.host.registry(namespace, groupId);
+    if (registry === undefined) return [];
+    const self = this.host.selfId();
+    return [...new Set([...registry.loaded.values()].map((entry) => entry.i))].filter(
+      (id) => id !== self,
+    );
+  }
+
   /** The attachment `attachId` of `pid` ends (only while the registry still names it). */
   detached(namespace: string, groupId: string, pid: string, attachId: string | undefined): void {
     if (attachId === undefined) return;

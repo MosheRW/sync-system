@@ -102,12 +102,19 @@ export interface GroupLockOptions {
    * closes those sessions anyway).
    */
   fenced?: (() => boolean) | undefined;
+  /**
+   * Runs after the task's group was read and before the task (#35 Gate 2
+   * Q-B10): effects received for the group from earlier commits are
+   * applied first.
+   */
+  beforeTask?: ((namespace: string, groupId: string) => void) | undefined;
 }
 
 export class GroupLock {
   private readonly locks = new KeyedLock();
   private readonly leases: LeaseSource | undefined;
   private readonly fenced: () => boolean;
+  private readonly beforeTask: ((namespace: string, groupId: string) => void) | undefined;
 
   constructor(
     private readonly source: UnitOfWorkSource = IMMEDIATE_WORK,
@@ -121,6 +128,7 @@ export class GroupLock {
   ) {
     this.leases = options.leases;
     this.fenced = options.fenced ?? (() => false);
+    this.beforeTask = options.beforeTask;
   }
 
   /** Number of groups with a task running or waiting. For tests only. */
@@ -185,6 +193,7 @@ export class GroupLock {
     let result: T;
     try {
       await work.preload?.();
+      this.beforeTask?.(namespace, groupId);
       result = await tasks.run(state, task);
     } catch (err) {
       if (this.source.transactional) {

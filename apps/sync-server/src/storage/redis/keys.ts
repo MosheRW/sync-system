@@ -76,6 +76,19 @@ export class RedisKeys {
     return `${this.base}:a:${this.group_(namespace, groupId)}`;
   }
 
+  /**
+   * The last commit sequence published to each instance for the group
+   * (#35 Gate 2 Q-B10): instance ID -> sequence.
+   */
+  highWater(namespace: string, groupId: string): string {
+    return `${this.base}:q:${this.group_(namespace, groupId)}`;
+  }
+
+  /** The last commit sequence that published anything (deployment metadata). */
+  sequence(): string {
+    return `${this.base}:seq`;
+  }
+
   /** The group's lease (#35 architecture 12.4): a random token, PX 10 s, renewed. */
   lock(namespace: string, groupId: string): string {
     return `${this.base}:lock:${this.group_(namespace, groupId)}`;

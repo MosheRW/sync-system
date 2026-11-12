@@ -14,6 +14,7 @@ import { RedisTimerBackend } from './timers.js';
 import { RedisEpoch } from './epoch.js';
 import { INSTANCE_TIMINGS, type InstanceTimings, RedisInstance } from './instance.js';
 import { LEASE_TIMINGS, type LeaseTimings, RedisLeaseSource } from './lease-lock.js';
+import { RedisPubSub } from './pubsub.js';
 import { parseMember } from './keys.js';
 import { type RedisContext, RedisWorkSource } from './unit-of-work.js';
 
@@ -69,6 +70,22 @@ export function redisStorage(options: RedisStorageOptions): Storage {
   const work = new RedisWorkSource(ctx);
   const leases = new RedisLeaseSource(ctx, timings, () => instance.started && instance.fenced());
   work.leases = leases;
+  const resyncListeners: Array<() => void> = [];
+  const pubsub = new RedisPubSub({
+    link: options.link,
+    keys: ctx.keys,
+    logger: options.logger,
+    instanceId: () => instance.id,
+    fenced: () => instance.started && instance.fenced(),
+    resync: () => {
+      for (const listener of resyncListeners) listener();
+    },
+  });
+  ctx.awaitReceived = (seq) => pubsub.awaitReceived(seq);
+  // A fenced instance leaves its channel; under a new ID it joins the new one.
+  instance.onFence(() => void pubsub.leave());
+  instance.onRegistered((id) => void pubsub.rejoin(id));
+  let probeTimer: NodeJS.Timeout | undefined;
   const memory = memoryStorage({ scheduler: options.scheduler, logger: options.logger });
   const timers = new RedisTimerBackend(ctx, work, options.scheduler);
   const epoch = new RedisEpoch(ctx, work);
@@ -100,8 +117,23 @@ export function redisStorage(options: RedisStorageOptions): Storage {
         registry: (namespace, groupId) => work.current()?.registry(namespace, groupId),
         looksLive: (id) => instance.looksLive(id),
         send(target, effect) {
-          work.current()?.queueRemote(target, effect);
+          const running = work.current();
+          if (running !== undefined) {
+            running.queueRemote(target, effect);
+            return;
+          }
+          // Every group effect comes from a group task; outside one it is dropped.
+          options.logger.debug(
+            { event: 'remote_effect_dropped', op: effect.op },
+            'remote effect outside a task',
+          );
         },
+      },
+      onResync(listener) {
+        resyncListeners.push(listener);
+      },
+      setReceiver(receiver) {
+        pubsub.setReceiver(receiver);
       },
       fenced: () => instance.started && instance.fenced(),
       onFence(listener) {
@@ -113,6 +145,10 @@ export function redisStorage(options: RedisStorageOptions): Storage {
       // Before the sweep and before any commit (#35 architecture 12.8).
       await instance.register();
       instance.start();
+      // Subscribe before anything can publish to this instance (12.8).
+      await pubsub.start();
+      probeTimer = setInterval(() => void pubsub.probe(), timings.heartbeatMs);
+      probeTimer.unref();
       // Deadlines that passed while the server was down take effect once (AC12).
       await timers.runDue();
       // Then every live group's attachments from before the stop (AC11).
@@ -143,9 +179,14 @@ export function redisStorage(options: RedisStorageOptions): Storage {
     status: () => ({
       kind: 'redis',
       // A fenced instance refuses upgrades like an unreachable one (12.5).
-      state: instance.started && instance.fenced() ? 'unreachable' : options.link.state,
+      state:
+        instance.started && (instance.fenced() || !pubsub.healthy)
+          ? 'unreachable'
+          : options.link.state,
     }),
     async close() {
+      clearInterval(probeTimer);
+      await pubsub.close();
       await instance.stop();
       await options.link.close();
     },

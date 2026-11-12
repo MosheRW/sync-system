@@ -228,6 +228,22 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
   const connections = new Set<Connection>();
   // A self-fence (#35 architecture 12.5): every session in a group, parked
   // or pending closes with 1001, with no disconnect rule (security C13).
+  // Effects other instances published for this one (#35 architecture 12.7).
+  storage.cluster?.setReceiver({ receive: (effects) => groups.receiveRemote(effects) });
+  // Effects may have been lost: sessions resume and read the current state.
+  storage.cluster?.onResync(() => {
+    let closed = 0;
+    for (const connection of connections) {
+      const session = connection.session;
+      if (session === undefined) continue;
+      if (session.membership === undefined && session.parked === undefined) {
+        if (session.pendingJoin === undefined) continue;
+      }
+      closed += 1;
+      connection.ws.close(CloseCode.GOING_AWAY, 'temporarily unavailable');
+    }
+    logger.warn({ event: 'pubsub_resync', sessions: closed }, 'sessions closed to resync');
+  });
   storage.cluster?.onFence(() => {
     let closed = 0;
     for (const connection of connections) {

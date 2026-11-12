@@ -72,9 +72,11 @@ describeRedis('while Redis is unreachable (#35 AC26, AC27, ADR 0014, security C4
     const before = await inspect.client.get(docKey);
     const idle = await server.connectReady();
     proxy.cut();
-    // Nobody sent anything: the silence alone fences the instance.
+    // Nobody sent anything: the dropped subscriber link closes the group
+    // sessions at once (12.7), and the silence then fences the instance.
     expect(await group.leader.closed()).toMatchObject({ code: 1001 });
     expect(await group.members[0]!.closed()).toMatchObject({ code: 1001 });
+    await waitUntil(() => server.logs.find('instance_fenced') !== undefined, 5_000);
     expect(server.logs.find('instance_fenced')).toMatchObject({ cause: 'silence' });
     // A session in no group stays open.
     expect(idle.isClosed).toBe(false);
@@ -112,7 +114,11 @@ describeRedis('while Redis is unreachable (#35 AC26, AC27, ADR 0014, security C4
 
     proxy.restore();
     await waitUntil(() => link.state === 'connected', 10_000);
-    expect(server.server.storage()).toEqual({ kind: 'redis', state: 'connected' });
+    // The subscriber link comes back too before the storage serves (12.7).
+    await waitUntil(() => {
+      const status = server.server.storage();
+      return status.kind === 'redis' && status.state === 'connected';
+    }, 10_000);
     // The disconnects of the closed sessions were replayed: the leader is
     // offline, the member is gone from the group.
     await waitUntil(async () => {
@@ -125,7 +131,7 @@ describeRedis('while Redis is unreachable (#35 AC26, AC27, ADR 0014, security C4
     const { reply } = await resumeWith(server, group.memberTokens[0]);
     expect(reply).toMatchObject({ type: 'group.joined', groupId: group.groupId });
     expect(logs.text).not.toContain(new URL(TEST_REDIS_URL!).password || 'unused-sentinel');
-  });
+  }, 20_000);
 
   it('never falls back to memory: a create during the outage leaves no group (AC26)', async () => {
     const server = await start();
@@ -147,7 +153,10 @@ describeRedis('while Redis is unreachable (#35 AC26, AC27, ADR 0014, security C4
     expect(server.server.storage()).toEqual({ kind: 'redis', state: 'unreachable' });
     await expect(server.connect()).rejects.toThrow();
     proxy.restore();
-    await waitUntil(() => link.state === 'connected', 10_000);
+    await waitUntil(() => {
+      const status = server.server.storage();
+      return status.kind === 'redis' && status.state === 'connected';
+    }, 10_000);
     const client = await server.connectReady();
     expect(client.isClosed).toBe(false);
   }, 20_000);

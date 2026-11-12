@@ -23,7 +23,9 @@ import type { RedisLink } from './connect.js';
 import { AttachmentRegistry, decodeRegistry, encodeRegistry, instancesOf } from './attachments.js';
 import { decodeGroup, encodeDocument, encodePosition } from './document.js';
 import type { RedisKeys } from './keys.js';
-import { COMMIT } from './scripts.js';
+import { COMMIT, PRELOAD } from './scripts.js';
+import { encodeBatches } from './pubsub.js';
+import { INSTANCE_LIST_RETENTION_MS } from '../../limits/constants.js';
 
 /** What every Redis part shares. */
 export interface RedisContext {
@@ -42,6 +44,12 @@ export interface RedisContext {
   onFencedAbort?: () => void;
   /** This instance's current ID (several instances); unset without. */
   instanceId?: () => string | undefined;
+  /**
+   * Waits until this instance received every effect published to it up to
+   * sequence `seq` (#35 Gate 2 Q-B10), bounded; then the task's group
+   * applies them before the task runs.
+   */
+  awaitReceived?: (seq: number) => Promise<void>;
 }
 
 /** The instance fence of a commit plan (#35 security C11). */
@@ -64,6 +72,8 @@ type Op = Record<string, string | number>;
 export interface CommitResult {
   evicted: number;
   closed: string[];
+  /** The commit's sequence when it published (Q-B10). */
+  seq?: string;
 }
 
 /**
@@ -86,9 +96,26 @@ export class CommitPlan {
   private readonly index = new Map<string, number>();
   private readonly checks: Op[] = [];
   private readonly writes: Op[] = [];
+  private readonly pubs: Op[] = [];
+  private sequenceKey: number | undefined;
 
   get empty(): boolean {
-    return this.checks.length === 0 && this.writes.length === 0;
+    return this.checks.length === 0 && this.writes.length === 0 && this.pubs.length === 0;
+  }
+
+  /** The commit takes the next sequence from `key` (Q-B10). */
+  sequence(key: string): void {
+    this.sequenceKey = this.k(key);
+  }
+
+  /** `field` of `key` becomes this commit's sequence (the group's high-water mark). */
+  highWater(key: string, field: string): void {
+    this.writes.push({ o: 'hw', k: this.k(key), f: field });
+  }
+
+  /** Publishes the effects (a JSON array text) on `channel`, after every write (C15). */
+  publish(channel: string, effects: string): void {
+    this.pubs.push({ o: 'pub', k: this.k(channel), v: effects });
   }
 
   private k(key: string): number {
@@ -192,9 +219,12 @@ export class CommitPlan {
       this.fence === undefined
         ? this.checks
         : [{ o: 'exists', k: this.k(this.fence.key), r: 'fenced' }, ...this.checks];
-    const reply = await link.script(COMMIT, this.keys, [
-      JSON.stringify({ c: checks, w: this.writes }),
-    ]);
+    const spec: Record<string, unknown> = { c: checks, w: [...this.writes, ...this.pubs] };
+    if (this.sequenceKey !== undefined) {
+      spec.q = this.sequenceKey;
+      spec.qx = String(INSTANCE_LIST_RETENTION_MS);
+    }
+    const reply = await link.script(COMMIT, this.keys, [JSON.stringify(spec)]);
     if (Array.isArray(reply) && reply[0] === 'abort') {
       if (reply[1] === 'fenced') {
         this.fence?.onAbort?.();
@@ -203,11 +233,12 @@ export class CommitPlan {
       if (reply[1] === 'lease') throw new LeaseLostError();
       throw new StorageConflictError(String(reply[1]));
     }
-    const [, evicted, closed] = Array.isArray(reply) ? (reply as unknown[]) : [];
+    const [, evicted, closed, seq] = Array.isArray(reply) ? (reply as unknown[]) : [];
     const count = Number(evicted);
     return {
       evicted: Number.isSafeInteger(count) && count > 0 ? count : 0,
       closed: typeof closed === 'string' && closed !== '' ? closed.split(',') : [],
+      ...(typeof seq === 'string' && seq !== '' ? { seq } : {}),
     };
   }
 }
@@ -233,6 +264,8 @@ export interface WorkEntry {
   door: DoorState | undefined;
   /** Who is attached where (#35 architecture 12.6), its own key. */
   registry: AttachmentRegistry;
+  /** The last sequence published to this instance for the group (Q-B10), 0 if none. */
+  highWater: number;
 }
 
 function keyOf(namespace: string, groupId: string): string {
@@ -273,9 +306,16 @@ export class RedisUnitOfWork implements UnitOfWork {
     this.instanceId = ctx.instanceId?.();
   }
 
-  /** Reads the task's own group with its registry (#35 architecture 12.1 step 3). */
+  /**
+   * Reads the task's own group with its registry (#35 architecture 12.1
+   * step 3), then waits until every effect an earlier commit of the group
+   * published to this instance has arrived (Gate 2 Q-B10): the task's own
+   * frames then never overtake them.
+   */
   async preload(): Promise<void> {
-    if (this.home !== undefined) await this.entry(this.home.namespace, this.home.groupId);
+    if (this.home === undefined) return;
+    const entry = await this.entry(this.home.namespace, this.home.groupId);
+    if (entry.highWater > 0) await this.ctx.awaitReceived?.(entry.highWater);
   }
 
   /** The group's registry if this work read the group, else undefined. */
@@ -307,7 +347,7 @@ export class RedisUnitOfWork implements UnitOfWork {
   }
 
   private async load(namespace: string, groupId: string): Promise<WorkEntry> {
-    const stored = await readGroup(this.ctx, namespace, groupId);
+    const stored = await readGroup(this.ctx, namespace, groupId, this.instanceId);
     const entry: WorkEntry = {
       namespace,
       groupId,
@@ -318,6 +358,7 @@ export class RedisUnitOfWork implements UnitOfWork {
       deleted: false,
       door: stored?.door,
       registry: stored?.registry ?? new AttachmentRegistry(),
+      highWater: stored?.highWater ?? 0,
     };
     if (stored !== undefined) await this.cache.create(stored.record);
     this.entries.set(keyOf(namespace, groupId), entry);
@@ -379,6 +420,7 @@ export class RedisUnitOfWork implements UnitOfWork {
         plan.zrem(keys.live(), keys.liveMember(namespace, groupId));
         // The registry and the instances' group sets go with the group (AC24).
         plan.del(keys.attachments(namespace, groupId));
+        plan.del(keys.highWater(namespace, groupId));
         for (const id of instancesOf(entry.registry.loaded)) {
           plan.srem(keys.instanceGroups(id), keys.liveMember(namespace, groupId));
         }
@@ -413,7 +455,36 @@ export class RedisUnitOfWork implements UnitOfWork {
       expiry: (namespace, groupId) => ends.get(keyOf(namespace, groupId)),
     };
     for (const step of this.steps) step(plan, groups);
+    this.planPublish(plan, ends);
     return plan;
+  }
+
+  /**
+   * The task's remote effects (#35 architecture 12.7): one or more ordered
+   * messages per instance, published by the commit after every write, with
+   * the commit's sequence; each instance's high-water mark for the group
+   * moves to it (Gate 2 Q-B10).
+   */
+  private planPublish(plan: CommitPlan, ends: ReadonlyMap<string, number>): void {
+    if (this.remote.size === 0) return;
+    const { keys } = this.ctx;
+    const batches: Array<[string, string[]]> = [];
+    for (const [instance, effects] of this.remote) {
+      const encoded = encodeBatches(effects, this.ctx.logger);
+      if (encoded.length > 0) batches.push([instance, encoded]);
+    }
+    if (batches.length === 0) return;
+    plan.sequence(keys.sequence());
+    const home = this.home;
+    const end = home === undefined ? undefined : ends.get(keyOf(home.namespace, home.groupId));
+    if (home !== undefined && end !== undefined) {
+      const hw = keys.highWater(home.namespace, home.groupId);
+      for (const [instance] of batches) plan.highWater(hw, instance);
+      plan.keep(hw, end);
+    }
+    for (const [instance, encoded] of batches) {
+      for (const text of encoded) plan.publish(keys.channel(instance), text);
+    }
   }
 
   /**
@@ -479,6 +550,8 @@ export interface StoredGroupTexts {
   docText: string;
   posText: string;
   registry: AttachmentRegistry;
+  /** The last sequence published to `self` for the group (Q-B10), 0 if none. */
+  highWater: number;
 }
 
 /**
@@ -490,15 +563,20 @@ export async function readGroup(
   ctx: RedisContext,
   namespace: string,
   groupId: string,
+  self?: string,
 ): Promise<StoredGroupTexts | undefined> {
   const { keys } = ctx;
-  const reply = await ctx.link.send([
-    'MGET',
-    keys.group(namespace, groupId),
-    keys.position(namespace, groupId),
-    keys.attachments(namespace, groupId),
-  ]);
-  const [docText, posText, regText] = Array.isArray(reply) ? (reply as unknown[]) : [];
+  const reply = await ctx.link.script(
+    PRELOAD,
+    [
+      keys.group(namespace, groupId),
+      keys.position(namespace, groupId),
+      keys.attachments(namespace, groupId),
+      keys.highWater(namespace, groupId),
+    ],
+    [self ?? ''],
+  );
+  const [docText, posText, regText, hwText] = Array.isArray(reply) ? (reply as unknown[]) : [];
   if (docText === null || docText === undefined) return undefined;
   const decoded =
     typeof docText === 'string' && (typeof posText === 'string' || posText === null)
@@ -518,7 +596,14 @@ export async function readGroup(
     }
     registry = new AttachmentRegistry(entries, regText as string);
   }
-  return { ...decoded, docText: docText as string, posText: posText as string, registry };
+  const highWater = typeof hwText === 'string' && /^[0-9]{1,16}$/.test(hwText) ? Number(hwText) : 0;
+  return {
+    ...decoded,
+    docText: docText as string,
+    posText: posText as string,
+    registry,
+    highWater,
+  };
 }
 
 /**
