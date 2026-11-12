@@ -179,6 +179,9 @@ describe('two-instance compose example (#35 AC23, security P2-8)', () => {
     expect(nginx).toMatch(/proxy_set_header Upgrade \$http_upgrade;/);
     expect(nginx).toMatch(/proxy_set_header Connection \$connection_upgrade;/);
     expect(nginx).toMatch(/proxy_read_timeout 120s;/);
+    // One rotation for all worker processes, and a stopped instance skipped fast.
+    expect(nginx).toMatch(/^\s*zone sync_servers \d+k;/m);
+    expect(nginx).toMatch(/proxy_connect_timeout 2s;/);
     expect(nginx).toMatch(/access_log off;/);
     expect(nginx).toContain('server sync-server:8080;');
     expect(nginx).toContain('server sync-server-2:8080;');
