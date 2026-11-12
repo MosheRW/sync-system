@@ -1,8 +1,10 @@
 import { afterAll, beforeAll, expect, it } from 'vitest';
+import { endedRef } from '../src/groups/ended-groups.js';
 import { GroupLock } from '../src/groups/group-lock.js';
 import { createLogger } from '../src/logging/logger.js';
 import { StorageInvalidError } from '../src/storage/errors.js';
 import type { RedisLink } from '../src/storage/redis/connect.js';
+import { RedisEndedGroups } from '../src/storage/redis/ended.js';
 import { RedisEpoch } from '../src/storage/redis/epoch.js';
 import { RedisGroupStore } from '../src/storage/redis/group-store.js';
 import { redisContext } from '../src/storage/redis/redis-storage.js';
@@ -173,5 +175,56 @@ describeRedis('RedisGroupStore (#35 AC7, AC24, AC29, ADR 0011)', () => {
       }),
     ).rejects.toMatchObject({ name: 'StorageConflictError', reason: 'epoch' });
     expect(await inspect.keys(prefix)).toEqual([]);
+  });
+
+  it('a recreation commit finds the group ended meanwhile and writes nothing (C7)', async () => {
+    prefix = randomPrefix();
+    const { store, work, epoch } = make();
+    const lock = new GroupLock(work);
+    await expect(
+      lock.run('app-a', ID, async () => {
+        await epoch.current();
+        expect(await store.createIfAbsent(record({ createdAt: NOW }))).toBe('created');
+        // Another writer ends the group before this commit.
+        const other = make();
+        const ended = new RedisEndedGroups(other.ctx, other.work, other.ctx.logger);
+        await ended.remember('app-a', ID, NOW + MINUTE);
+      }),
+    ).rejects.toMatchObject({ name: 'StorageConflictError', reason: 'ended' });
+    expect(await inspect.keys(`${prefix}:v1:g`)).toEqual([]);
+    expect(await inspect.keys(`${prefix}:v1:p`)).toEqual([]);
+    expect(await inspect.client.get(`${prefix}:v1:e:${endedRef('app-a', ID)}`)).not.toBeNull();
+    await inspect.flush(prefix);
+  });
+
+  it('a recreation commit finds the epoch changed meanwhile and writes nothing (C7)', async () => {
+    prefix = randomPrefix();
+    const { store, work, epoch } = make();
+    const lock = new GroupLock(work);
+    await expect(
+      lock.run('app-a', ID, async () => {
+        await epoch.current();
+        expect(await store.createIfAbsent(record({ createdAt: NOW }))).toBe('created');
+        // Redis lost its data and a new epoch was set before this commit.
+        await inspect.client.set(`${prefix}:v1:epoch`, String(NOW + 1));
+      }),
+    ).rejects.toMatchObject({ name: 'StorageConflictError', reason: 'epoch' });
+    expect(await inspect.keys(`${prefix}:v1:g`)).toEqual([]);
+    expect(await inspect.keys(`${prefix}:v1:p`)).toEqual([]);
+    expect(await inspect.client.get(`${prefix}:v1:epoch`)).toBe(String(NOW + 1));
+    await inspect.flush(prefix);
+  });
+
+  it('create sets a missing epoch and keeps an existing one (C7)', async () => {
+    prefix = randomPrefix();
+    const { store } = make();
+    expect(await inspect.client.get(`${prefix}:v1:epoch`)).toBeNull();
+    await store.create(record({ createdAt: NOW }));
+    expect(await inspect.client.get(`${prefix}:v1:epoch`)).toBe(String(NOW));
+    await store.delete('app-a', ID);
+    await inspect.client.set(`${prefix}:v1:epoch`, '5');
+    await store.create(record({ createdAt: NOW }));
+    expect(await inspect.client.get(`${prefix}:v1:epoch`)).toBe('5');
+    await inspect.flush(prefix);
   });
 });
