@@ -29,6 +29,17 @@ export class RedisEpoch implements EpochSource {
   }
 
   async current(): Promise<number> {
+    const raw = await this.read();
+    // Fail closed: every token is "from this epoch", so no recreation.
+    if (raw === undefined) return 0;
+    const epoch = Number(raw);
+    this.work.current()?.seeEpoch(raw);
+    this.listener(epoch);
+    return epoch;
+  }
+
+  /** The stored epoch text, created if missing; undefined when invalid (logged, C1). */
+  async read(): Promise<string | undefined> {
     const key = this.ctx.keys.epoch();
     let raw = await this.ctx.link.send(['GET', key]);
     if (raw === null || raw === undefined) {
@@ -36,13 +47,9 @@ export class RedisEpoch implements EpochSource {
       raw = await this.ctx.link.send(['GET', key]);
     }
     if (typeof raw !== 'string' || !DIGITS.test(raw)) {
-      // Fail closed: every token is "from this epoch", so no recreation.
       this.ctx.logger.error({ event: 'store_document_invalid' }, 'stored epoch is invalid');
-      return 0;
+      return undefined;
     }
-    const epoch = Number(raw);
-    this.work.current()?.seeEpoch(raw);
-    this.listener(epoch);
-    return epoch;
+    return raw;
   }
 }

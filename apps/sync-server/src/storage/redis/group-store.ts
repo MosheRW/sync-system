@@ -6,6 +6,7 @@ import type {
   GroupStore,
 } from '../../groups/group-store.js';
 import type { GroupCodes } from '../../joins/codes.js';
+import { RedisEpoch } from './epoch.js';
 import { type RedisContext, type RedisWorkSource, readGroup } from './unit-of-work.js';
 
 /**
@@ -16,19 +17,31 @@ import { type RedisContext, type RedisWorkSource, readGroup } from './unit-of-wo
  * at once.
  */
 export class RedisGroupStore implements GroupStore {
+  private readonly epoch: RedisEpoch;
+
   constructor(
     private readonly ctx: RedisContext,
     private readonly work: RedisWorkSource,
-  ) {}
+  ) {
+    this.epoch = new RedisEpoch(ctx, work);
+  }
 
   create(group: GroupRecord): Promise<void> {
     return this.work.within(group.appNamespace, group.id, (work) => work.create(group, 'create'));
   }
 
   createIfAbsent(group: GroupRecord): Promise<'created' | 'exists'> {
+    const standalone = this.work.current() === undefined;
     return this.work.within(group.appNamespace, group.id, async (work) => {
       const entry = await work.entry(group.appNamespace, group.id);
       if (entry.existed && !entry.deleted) return 'exists';
+      // Outside a group task no token was classified: the commit re-checks
+      // the epoch as read now. Inside one, the classification's read counts
+      // (none read: the commit aborts, security C7).
+      if (standalone) {
+        const raw = await this.epoch.read();
+        if (raw !== undefined) work.seeEpoch(raw);
+      }
       await work.create(group, 'ifAbsent');
       return 'created';
     });

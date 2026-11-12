@@ -3,6 +3,7 @@ import { GroupLock } from '../src/groups/group-lock.js';
 import { createLogger } from '../src/logging/logger.js';
 import { StorageInvalidError } from '../src/storage/errors.js';
 import type { RedisLink } from '../src/storage/redis/connect.js';
+import { RedisEpoch } from '../src/storage/redis/epoch.js';
 import { RedisGroupStore } from '../src/storage/redis/group-store.js';
 import { redisContext } from '../src/storage/redis/redis-storage.js';
 import { type RedisContext, RedisWorkSource } from '../src/storage/redis/unit-of-work.js';
@@ -34,7 +35,7 @@ describeRedis('RedisGroupStore (#35 AC7, AC24, AC29, ADR 0011)', () => {
   function make(minutes = 60) {
     const ctx = context(minutes);
     const work = new RedisWorkSource(ctx);
-    return { ctx, work, store: new RedisGroupStore(ctx, work) };
+    return { ctx, work, store: new RedisGroupStore(ctx, work), epoch: new RedisEpoch(ctx, work) };
   }
 
   beforeAll(async () => {
@@ -144,10 +145,12 @@ describeRedis('RedisGroupStore (#35 AC7, AC24, AC29, ADR 0011)', () => {
 
   it('a recreation commit finds a group stored meanwhile and writes nothing (C7)', async () => {
     prefix = randomPrefix();
-    const { store, work } = make();
+    const { store, work, epoch } = make();
     const lock = new GroupLock(work);
     await expect(
       lock.run('app-a', ID, async () => {
+        // A recreation classifies the token against the epoch first.
+        await epoch.current();
         expect(await store.createIfAbsent(record({ leaderId: 'a', createdAt: NOW }))).toBe(
           'created',
         );
@@ -158,5 +161,17 @@ describeRedis('RedisGroupStore (#35 AC7, AC24, AC29, ADR 0011)', () => {
     ).rejects.toMatchObject({ name: 'StorageConflictError', reason: 'exists' });
     expect((await store.get('app-a', ID))!.leaderId).toBe('b');
     await inspect.flush(prefix);
+  });
+
+  it('a recreation in a task that never read the epoch aborts and writes nothing (C7, L2)', async () => {
+    prefix = randomPrefix();
+    const { store, work } = make();
+    const lock = new GroupLock(work);
+    await expect(
+      lock.run('app-a', ID, async () => {
+        expect(await store.createIfAbsent(record({ createdAt: NOW }))).toBe('created');
+      }),
+    ).rejects.toMatchObject({ name: 'StorageConflictError', reason: 'epoch' });
+    expect(await inspect.keys(prefix)).toEqual([]);
   });
 });

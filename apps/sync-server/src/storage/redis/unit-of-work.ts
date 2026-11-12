@@ -295,7 +295,9 @@ export class RedisUnitOfWork implements UnitOfWork {
         // Security C7: the recreation stands only if the group did not end
         // and the epoch it was classified with is still the epoch.
         plan.absent(keys.ended(endedRef(namespace, groupId)), 'ended');
-        if (this.epochSeen !== undefined) plan.eq(keys.epoch(), this.epochSeen, 'epoch');
+        // No epoch read in this task: nothing to re-check, so fail closed.
+        if (this.epochSeen === undefined) throw new StorageConflictError('epoch');
+        plan.eq(keys.epoch(), this.epochSeen, 'epoch');
       }
       // Tokens issued right after a flush are never older than the epoch (C7).
       if (entry.mode === 'create') plan.setnx(keys.epoch(), String(this.ctx.now()));
