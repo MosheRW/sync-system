@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { DEV_REDIS_PASSWORD } from '../src/config/redis.js';
 import { DEV_TOKEN_SECRET } from '../src/config/token-secret.js';
 
 const repoRoot = fileURLToPath(new URL('../../../', import.meta.url));
@@ -90,6 +91,46 @@ describe('pinned supply chain (L8)', () => {
     const match = /^\s*TOKEN_SECRET:\s*(\S+)\s*$/m.exec(compose);
     expect(match?.[1]).toBe(DEV_TOKEN_SECRET);
     expect(compose).not.toMatch(/TOKEN_SECRET_PREVIOUS/);
+  });
+});
+
+describe('optional Redis compose override (#35 AC30, security C2, C3, C5)', () => {
+  const override = read('compose.redis.yaml');
+  const redis = override.slice(override.indexOf('  redis:'), override.indexOf('  sync-server:'));
+
+  it('leaves the default compose file on the memory store', () => {
+    const compose = read('compose.yaml');
+    expect(compose).not.toMatch(/^\s+redis:/m);
+    expect(compose).not.toContain('REDIS_URL');
+  });
+
+  it('pins the Redis image by digest and publishes no host port', () => {
+    expect(redis).toMatch(/image: redis:7\.2\.\d+-alpine@sha256:[0-9a-f]{64}$/m);
+    expect(redis).not.toMatch(/^\s+ports:/m);
+  });
+
+  it('requires a password, keeps nothing on disk and never evicts', () => {
+    const lines = redis.split(/\r?\n/).map((line) => line.trim());
+    const flag = (name: string) => lines[lines.indexOf(`- ${name}`) + 1];
+    expect(flag('--requirepass')).toBe(`- ${DEV_REDIS_PASSWORD}`);
+    expect(flag('--save')).toBe("- ''");
+    expect(flag('--appendonly')).toBe("- 'no'");
+    expect(flag('--maxmemory-policy')).toBe('- noeviction');
+    expect(redis).not.toMatch(/^\s+volumes:/m);
+    expect(redis).toMatch(/tmpfs:\s*\n\s+- \/data/);
+  });
+
+  it('gives the sync server the dev password, which only development accepts (C5)', () => {
+    const url = /REDIS_URL:\s*(\S+)/.exec(override)?.[1];
+    expect(url).toBe(`redis://:${DEV_REDIS_PASSWORD}@redis:6379`);
+    expect(read('compose.yaml')).toMatch(/NODE_ENV: development/);
+  });
+
+  it('pins @redis/client exactly (#35 AC28, ADR 0010)', () => {
+    const pkg = JSON.parse(read('apps/sync-server/package.json')) as {
+      dependencies: Record<string, string>;
+    };
+    expect(pkg.dependencies['@redis/client']).toBe('6.3.1');
   });
 });
 
