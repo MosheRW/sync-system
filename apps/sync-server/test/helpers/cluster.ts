@@ -44,6 +44,10 @@ export interface TestCluster {
 export interface ClusterOptions extends Omit<StartOptions, 'redisPrefix' | 'redisLink'> {
   /** Instances to start (default 2). */
   size?: number;
+  /** Options for the instance with this index only (e.g. a test hook). */
+  perNode?: (index: number) => Partial<StartOptions>;
+  /** Redis command timeout of every link (default 500 ms). */
+  commandTimeoutMs?: number;
 }
 
 /**
@@ -53,7 +57,8 @@ export interface ClusterOptions extends Omit<StartOptions, 'redisPrefix' | 'redi
  * several hosts with NTP.
  */
 export async function startCluster(options: ClusterOptions = {}): Promise<TestCluster> {
-  const { size = 2, ...rest } = options;
+  const { size = 2, perNode, commandTimeoutMs = 500, ...rest } = options;
+  let started = 0;
   const prefix = randomPrefix();
   const secrets: TokenSecrets = rest.tokenSecrets ?? {
     current: randomBytes(32),
@@ -71,16 +76,18 @@ export async function startCluster(options: ClusterOptions = {}): Promise<TestCl
       parseRedisSettings({
         REDIS_URL: url.toString(),
         REDIS_KEY_PREFIX: prefix,
-        REDIS_COMMAND_TIMEOUT_MS: '500',
+        REDIS_COMMAND_TIMEOUT_MS: String(commandTimeoutMs),
         REDIS_CONNECT_TIMEOUT_SECONDS: '2',
       })!,
       { logger: createLogger({ level: 'silent' }), nodeEnv: 'test' },
     );
     if (!connected.ok) throw new Error(connected.message);
+    const index = started++;
     const ts = await startTestServer({
       now: Date.now,
       redisTimings: FAST_TIMINGS,
       ...rest,
+      ...perNode?.(index),
       tokenSecrets: secrets,
       redisPrefix: prefix,
       redisLink: connected.link,

@@ -1,5 +1,5 @@
 import type { AppConfig } from '../../apps/app-registry.js';
-import { END_TTL_SLACK_MS, ORPHAN_SWEEP_MS } from '../../limits/constants.js';
+import { END_TTL_SLACK_MS, ORPHAN_SWEEP_MS, TIMER_LEASE_MS } from '../../limits/constants.js';
 import { type Logger, safeErr } from '../../logging/logger.js';
 import type { Scheduler } from '../../time/scheduler.js';
 import { type Storage, memoryStorage } from '../storage.js';
@@ -34,6 +34,8 @@ export interface RedisStorageOptions {
   timings?: Partial<ClusterTimings>;
   /** Test-only: the monotonic clock of the self-fence (default `performance.now`). */
   monotonic?: () => number;
+  /** Test-only: runs before every group commit (#35 architecture 12.17, AC18 fence test). */
+  beforeCommit?: () => Promise<void>;
 }
 
 /** Every several-instance timing (#35 architecture 12.4, 12.5, 12.8; Gate 2 Q-B5). */
@@ -41,11 +43,19 @@ export type ClusterTimings = InstanceTimings &
   LeaseTimings & {
     /** How often the orphan sweep runs. */
     sweepMs: number;
+    /** How long a claimed group timer is leased (ADR 0013). */
+    timerLeaseMs: number;
   };
 
 /** The fixed timings, merged with test overrides. */
 export function clusterTimings(overrides: Partial<ClusterTimings> = {}): ClusterTimings {
-  return { ...INSTANCE_TIMINGS, ...LEASE_TIMINGS, sweepMs: ORPHAN_SWEEP_MS, ...overrides };
+  return {
+    ...INSTANCE_TIMINGS,
+    ...LEASE_TIMINGS,
+    sweepMs: ORPHAN_SWEEP_MS,
+    timerLeaseMs: TIMER_LEASE_MS,
+    ...overrides,
+  };
 }
 
 /** The parts every Redis component shares. */
@@ -72,6 +82,7 @@ export function redisStorage(options: RedisStorageOptions): Storage {
   ctx.instanceKey = () => instance.liveKey();
   ctx.instanceId = () => (instance.started ? instance.id : undefined);
   ctx.onFencedAbort = () => instance.fence('fenced');
+  if (options.beforeCommit !== undefined) ctx.beforeCommit = options.beforeCommit;
   const work = new RedisWorkSource(ctx);
   const leases = new RedisLeaseSource(ctx, timings, () => instance.started && instance.fenced());
   work.leases = leases;
@@ -93,7 +104,7 @@ export function redisStorage(options: RedisStorageOptions): Storage {
   let probeTimer: NodeJS.Timeout | undefined;
   let replay: (() => Promise<void>) | undefined;
   const memory = memoryStorage({ scheduler: options.scheduler, logger: options.logger });
-  const timers = new RedisTimerBackend(ctx, work, options.scheduler);
+  const timers = new RedisTimerBackend(ctx, work, options.scheduler, timings.timerLeaseMs);
   const epoch = new RedisEpoch(ctx, work);
   const ended = new RedisEndedGroups(ctx, work, options.logger, options.endedGroupsCap);
   const sweeper = new OrphanSweeper(ctx, instance, ended, timings.sweepMs);

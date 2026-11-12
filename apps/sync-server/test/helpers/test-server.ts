@@ -95,6 +95,8 @@ export interface StartOptions extends Partial<
   redisTimings?: Partial<ClusterTimings>;
   /** The monotonic clock of the self-fence (#35 security C11 tests). */
   monotonic?: () => number;
+  /** Runs before every group commit (#35 AC18 fence test). */
+  beforeCommit?: () => Promise<void>;
 }
 
 export interface TestServer {
@@ -119,6 +121,7 @@ export async function startTestServer(options: StartOptions = {}): Promise<TestS
     redisLink,
     redisTimings,
     monotonic,
+    beforeCommit,
     ...rest
   } = { ...options, ...restartClock(options) };
   const env = parseEnv({ LOG_LEVEL: logLevel ?? 'trace', ...envOverrides });
@@ -149,6 +152,7 @@ export async function startTestServer(options: StartOptions = {}): Promise<TestS
       ...(rest.endedGroupsCap === undefined ? {} : { endedGroupsCap: rest.endedGroupsCap }),
       ...(redisTimings === undefined ? {} : { timings: redisTimings }),
       ...(monotonic === undefined ? {} : { monotonic }),
+      ...(beforeCommit === undefined ? {} : { beforeCommit }),
     });
   }
   const server = createSyncServer({

@@ -50,6 +50,8 @@ export interface RedisContext {
    * applies them before the task runs.
    */
   awaitReceived?: (seq: number) => Promise<void>;
+  /** Test-only: runs before every unit-of-work commit (a delayed commit, #35 12.17 AC18). */
+  beforeCommit?: () => Promise<void>;
 }
 
 /** The instance fence of a commit plan (#35 security C11). */
@@ -523,6 +525,7 @@ export class RedisUnitOfWork implements UnitOfWork {
   }
 
   async commit(): Promise<void> {
+    await this.ctx.beforeCommit?.();
     const plan = await this.plan();
     const result = await plan.run(this.ctx.link);
     for (const then of this.committed) then(result);

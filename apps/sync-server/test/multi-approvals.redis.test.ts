@@ -93,6 +93,20 @@ describeRedis('method B approvals across instances (#35 AC7, AC20, architecture 
     expect(await group.leader.next('error')).toMatchObject({ code: 'JOIN_REQUEST_NOT_FOUND' });
   });
 
+  it('an invalid stored request is never approvable (C1)', async () => {
+    cluster = await startCluster({ apps: APPS });
+    const [a, b] = cluster.nodes;
+    const group = await leaderOn(a!.ts);
+    const { requestId } = await ask(b!.ts, group.groupCode, 'Cy');
+    await group.leader.next('join.requested');
+    const key = `${cluster.prefix}:v1:ap:app-a:${group.groupId}:${requestId}`;
+    await inspect.client.set(key, '{"i":"nope","d":1}', { PX: 10_000 });
+    group.leader.send({ type: 'join.approve', requestId });
+    expect(await group.leader.next('error')).toMatchObject({ code: 'JOIN_REQUEST_NOT_FOUND' });
+    expect(a!.ts.logs.find('store_document_invalid')).toBeDefined();
+    expect(await inspect.client.exists(key)).toBe(0);
+  });
+
   it('deny, cancel and a closed joiner settle once each across instances', async () => {
     cluster = await startCluster({ apps: APPS });
     const [a, b] = cluster.nodes;
