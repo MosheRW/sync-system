@@ -8,6 +8,7 @@ import type { DoorStateStore } from '../joins/door-guard.js';
 import type { EvictionLogger } from '../groups/ended-groups.js';
 import type { Scheduler } from '../time/scheduler.js';
 import { MemoryDoorStates, MemoryEndedGroups } from './memory/memory-state.js';
+import type { EpochSource } from './redis/epoch.js';
 
 /** What `SyncServer.storage()` reports (#35 AC27). */
 export type StorageStatus =
@@ -28,11 +29,16 @@ export interface Storage {
   readonly timers: TimerBackend;
   readonly work: UnitOfWorkSource;
   status(): StorageStatus;
+  /** The store's epoch (Redis); the in-memory store uses the process start. */
+  readonly epoch?: EpochSource;
+  /** Keep stored attachments on a clean stop (Redis, #35 AC11). */
+  readonly keepAttachmentsOnClose: boolean;
   /**
-   * Runs before the server listens (Redis: past-due timers, then the timer
-   * poll, #35 AC12). The group service exists by then.
+   * Runs before the server listens (Redis, #35 architecture 7): the epoch,
+   * the timers that came due while the server was down (AC12), `sweep` for
+   * every live group (the restart grace, AC11), then the timer poll.
    */
-  start(): Promise<void>;
+  start(sweep: (namespace: string, groupId: string) => Promise<void>): Promise<void>;
   /** Releases connections (Redis). Stored data stays. */
   close(): Promise<void>;
 }
@@ -60,6 +66,7 @@ export function memoryStorage(options: MemoryStorageOptions): Storage {
     timers: new MemoryTimerBackend(scheduler),
     work: IMMEDIATE_WORK,
     status: () => ({ kind: 'memory' }),
+    keepAttachmentsOnClose: false,
     start: () => Promise.resolve(),
     close: () => Promise.resolve(),
   };

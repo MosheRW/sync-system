@@ -6,6 +6,8 @@ import {
 } from '../../groups/group-lock.js';
 import { InMemoryGroupStore } from '../../groups/in-memory-group-store.js';
 import { KeyedLock } from '../../groups/keyed-lock.js';
+import { endedRef } from '../../groups/ended-groups.js';
+import { MAX_CLOCK_SKEW_MS } from '../../limits/constants.js';
 import type { DoorState } from '../../joins/door-guard.js';
 import type { Logger } from '../../logging/logger.js';
 import { StorageConflictError, StorageInvalidError } from '../errors.js';
@@ -196,6 +198,8 @@ export class RedisUnitOfWork implements UnitOfWork {
   private readonly steps: Array<(plan: CommitPlan, groups: PlanGroups) => void> = [];
   private readonly abandoned: Array<() => Promise<void>> = [];
   private readonly committed: Array<(result: CommitResult) => void> = [];
+  /** The epoch this task classified tokens with (re-checked by a recreation, C7). */
+  private epochSeen: string | undefined;
 
   constructor(readonly ctx: RedisContext) {}
 
@@ -250,6 +254,11 @@ export class RedisUnitOfWork implements UnitOfWork {
     this.steps.push(step);
   }
 
+  /** Records the epoch value read in this task. */
+  seeEpoch(raw: string): void {
+    this.epochSeen = raw;
+  }
+
   /** Runs `then` with the commit's result once it succeeded. */
   afterCommit(then: (result: CommitResult) => void): void {
     this.committed.push(then);
@@ -282,10 +291,20 @@ export class RedisUnitOfWork implements UnitOfWork {
       const doc = encodeDocument(record, entry.door);
       const pos = encodePosition(record);
       if (entry.mode !== undefined) plan.absent(docKey, 'exists');
+      if (entry.mode === 'ifAbsent') {
+        // Security C7: the recreation stands only if the group did not end
+        // and the epoch it was classified with is still the epoch.
+        plan.absent(keys.ended(endedRef(namespace, groupId)), 'ended');
+        if (this.epochSeen !== undefined) plan.eq(keys.epoch(), this.epochSeen, 'epoch');
+      }
+      // Tokens issued right after a flush are never older than the epoch (C7).
+      if (entry.mode === 'create') plan.setnx(keys.epoch(), String(this.ctx.now()));
       if (entry.mode !== undefined || doc !== entry.docText) {
         plan.set(docKey, doc, expiresAt);
         plan.zadd(keys.live(), expiresAt, keys.liveMember(namespace, groupId));
         plan.extend(keys.live(), expiresAt);
+        // The epoch outlives every group and ended entry, then goes (F12).
+        plan.extend(keys.epoch(), expiresAt + MAX_CLOCK_SKEW_MS);
       }
       if (entry.mode !== undefined || pos !== entry.posText) plan.set(posKey, pos, expiresAt);
     }

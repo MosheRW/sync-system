@@ -73,7 +73,13 @@ import {
 } from '../lifecycle/roster.js';
 import { LeaderControls } from '../lifecycle/leader-controls.js';
 import { LifecycleService, pauseOnWire } from '../lifecycle/lifecycle-service.js';
-import { type GroupRecord, type GroupStore, connectedCount } from './group-store.js';
+import {
+  type GroupPause,
+  type GroupRecord,
+  type GroupStore,
+  connectedCount,
+  pauseDeadline,
+} from './group-store.js';
 import type { EndedGroupsStore } from './ended-groups.js';
 import type { CodeIndexStore } from '../joins/code-index.js';
 import type { DoorStateStore } from '../joins/door-guard.js';
@@ -87,6 +93,7 @@ import {
 import { newGroupId, newParticipantId } from './ids.js';
 import { GroupLock, type UnitOfWorkSource } from './group-lock.js';
 import { StorageConflictError } from '../storage/errors.js';
+import type { EpochSource } from '../storage/redis/epoch.js';
 import type { Notifier } from './notifier.js';
 import { ParkingLot } from './parking-lot.js';
 import { canSupersede, classifyToken } from './resume.js';
@@ -115,9 +122,16 @@ export interface GroupServiceDeps {
   /**
    * When this process started, from the injected clock, read before any
    * token was issued (#13 6.9 layer 2). Defaults to the clock at
-   * construction.
+   * construction. The epoch of the in-memory store.
    */
   processStartedAt?: number;
+  /** The store's epoch (Redis, #35 architecture 4.5); defaults to `processStartedAt`. */
+  epoch?: EpochSource;
+  /**
+   * Keep the stored attachments when the server stops (Redis): the restart
+   * grace then counts from when the server is back (#35 AC11).
+   */
+  keepAttachmentsOnClose?: boolean;
   /** Signs and verifies QR tickets (#10). */
   qrTickets: QrTicketService;
   /** Signs and verifies codes blobs (#10). */
@@ -317,8 +331,17 @@ export class GroupService implements GroupActions {
     });
   }
 
+  /** Set once the server stops: disconnects then keep stored attachments (Redis). */
+  private closing = false;
+
+  /** The store's epoch: the Redis epoch, or this process's start (#35 4.5). */
+  private epoch(): Promise<number> {
+    return this.deps.epoch?.current() ?? Promise.resolve(this.processStartedAt);
+  }
+
   /** Cancels every group and parking timer (server shutdown). */
   close(): void {
+    this.closing = true;
     this.timers.clearAll();
     this.parking.clearAll();
     this.refresher.clearAll();
@@ -946,7 +969,7 @@ export class GroupService implements GroupActions {
         app,
         record: await this.deps.store.get(app.namespace, claims.gid),
         ended: await this.deps.ended.has(app.namespace, claims.gid),
-        processStartedAt: this.processStartedAt,
+        epoch: await this.epoch(),
         recoveryClosed: await this.deps.ended.isRecoveryClosed(app.namespace),
         now,
         refreshMaxMs: this.deps.refresh.maxMs,
@@ -1164,7 +1187,7 @@ export class GroupService implements GroupActions {
       app,
       record,
       ended: await this.deps.ended.has(app.namespace, claims.gid),
-      processStartedAt: this.processStartedAt,
+      epoch: await this.epoch(),
       recoveryClosed: await this.deps.ended.isRecoveryClosed(app.namespace),
       now: this.now(),
       refreshMaxMs: this.deps.refresh.maxMs,
@@ -1360,7 +1383,7 @@ export class GroupService implements GroupActions {
         app,
         record: existing,
         ended: false,
-        processStartedAt: this.processStartedAt,
+        epoch: await this.epoch(),
         recoveryClosed: false,
         now: this.now(),
         refreshMaxMs: this.deps.refresh.maxMs,
@@ -1846,6 +1869,9 @@ export class GroupService implements GroupActions {
     if (!this.deps.notifier.unregister(membershipKey(namespace, groupId, participantId), session)) {
       return;
     }
+    // A clean stop with Redis leaves the stored attachments: the restart
+    // sweep disconnects them with a full grace from the restart (#35 AC11).
+    if (this.closing && this.deps.keepAttachmentsOnClose === true) return;
 
     // Under the group lock, so a join cannot land between the removal and
     // the delete.
@@ -1918,6 +1944,44 @@ export class GroupService implements GroupActions {
     this.timers.arm(namespace, groupId, 'frozenEnd', at);
   }
 
+  /**
+   * After a restart with Redis (#35 architecture 1.2 item 6, 7; AC11; Gate 2
+   * Q-A3), under the group lock: every participant the previous process had
+   * attached is disconnected now. A pause or hold already running ends no
+   * earlier than `disconnectGraceSeconds` from now; a leader online at the
+   * stop gets the normal grace from now; members leave and are marked
+   * disconnected; a group left empty is held. Nobody is connected yet, so
+   * nobody is told anything.
+   */
+  async sweepAfterRestart(namespace: string, groupId: string): Promise<void> {
+    const app = this.deps.appOf(namespace);
+    if (app === undefined) return;
+    await this.lock.run(namespace, groupId, async () => {
+      let record = await this.deps.store.get(namespace, groupId);
+      if (record === undefined) return;
+      const floor = this.now() + app.disconnectGraceSeconds * 1000;
+      const running = pauseDeadline(record.pause);
+      if (record.pause !== undefined && running !== undefined && running < floor) {
+        const pause: GroupPause =
+          record.pause.graceEndsAt !== undefined
+            ? { ...record.pause, graceEndsAt: floor }
+            : { ...record.pause, holdEndsAt: floor };
+        record = (await this.deps.store.patch(namespace, groupId, { pause })) ?? record;
+        this.lifecycle.armPauseEnd(app, record, floor);
+      }
+      for (const pid of record.participantIds) {
+        if (pid === record.leaderId) continue;
+        await this.deps.store.removeParticipant(namespace, groupId, pid);
+        const current = await this.deps.store.get(namespace, groupId);
+        if (current !== undefined) await this.leaveRosterOnDisconnect(app, current, pid);
+      }
+      const current = await this.deps.store.get(namespace, groupId);
+      if (current === undefined) return;
+      if (current.leaderOnline) await this.leaderOffline(app, groupId);
+      else if (connectedCount(current) === 0) await this.emptied(app, groupId);
+    });
+  }
+
   /** True when an open session owns any membership of the group (#13 RC19). */
   private anyoneAttached(record: GroupRecord): boolean {
     return record.participantIds.some((id) =>
@@ -1975,12 +2039,13 @@ export class GroupService implements GroupActions {
     // by the `iat` fence until their `lat` window passed (#13 6.9 layer 1).
     if (record) {
       const deadline = this.maxSessionEndAt(app, record);
+      const epoch = record.recoveredAt === undefined ? 0 : await this.epoch();
       const guardUntil =
         record.recoveredAt === undefined
           ? undefined
           : Math.min(
               deadline,
-              this.processStartedAt +
+              epoch +
                 app.inactivityLimitMinutes * MINUTE_MS +
                 this.deps.refresh.maxMs +
                 MAX_CLOCK_SKEW_MS,

@@ -178,6 +178,8 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
   // Read once, before any token is issued (#13 6.9 layer 2, RC18).
   const processStartedAt = scheduler.now();
   const tokens = new TokenService(new TokenKeyring(tokenSecrets), processStartedAt);
+  // The iat floor follows the store's epoch (#35 architecture 4.5).
+  storage.epoch?.follow((epoch) => tokens.raiseIatFloor(epoch));
   // One keyring per purpose, so the keys can never be mixed up (#10 R4).
   const qrTickets = new QrTicketService(
     new TokenKeyring(tokenSecrets, QR_TICKET_INFO_PREFIX),
@@ -186,6 +188,8 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
   const codesBlobs = new CodesBlobService(new TokenKeyring(tokenSecrets, CODES_BLOB_INFO_PREFIX));
   const groups = new GroupService({
     store: storage.groups,
+    ...(storage.epoch === undefined ? {} : { epoch: storage.epoch }),
+    keepAttachmentsOnClose: storage.keepAttachmentsOnClose,
     codes: storage.codes,
     doors: storage.doors,
     timerBackend: storage.timers,
@@ -278,7 +282,7 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
     stats: () => counter.snapshot(),
     storage: () => storage.status(),
     async listen(listenPort, host) {
-      await storage.start();
+      await storage.start((namespace, groupId) => groups.sweepAfterRestart(namespace, groupId));
       return new Promise((resolve, reject) => {
         const onError = (err: Error) => {
           httpServer.off('listening', onListening);

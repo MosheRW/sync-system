@@ -68,10 +68,13 @@ describeRedis('RedisGroupStore (#35 AC7, AC24, AC29, ADR 0011)', () => {
     for (const key of await inspect.keys(prefix)) {
       const ttl = await inspect.client.pTTL(key);
       expect(ttl, key).toBeGreaterThan(0);
-      expect(ttl, key).toBeLessThanOrEqual(60 * MINUTE + 5000);
+      // The epoch outlives the groups by the clock skew, then goes too (F12).
+      const bound = key.endsWith(':epoch') ? 65 * MINUTE + 5000 : 60 * MINUTE + 5000;
+      expect(ttl, key).toBeLessThanOrEqual(bound);
     }
     await store.delete('app-a', ID);
-    expect(await inspect.keys(prefix)).toEqual([]);
+    // Only the epoch (deployment metadata, no group data) stays, with its TTL.
+    expect(await inspect.keys(prefix)).toEqual([`${prefix}:v1:epoch`]);
     await inspect.flush(prefix);
   });
 

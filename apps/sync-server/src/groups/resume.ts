@@ -13,11 +13,12 @@ export interface ClassifyInput {
   /** The group ended in this process (EndedGroups). */
   ended: boolean;
   /**
-   * When this process started (epoch ms, the injected clock at
-   * construction). A token with `iat` in or after that second was issued
-   * here (#13 6.9 layer 2).
+   * When the store's keyspace started (epoch ms): the process start in
+   * memory, the Redis epoch with Redis (#35 architecture 4.5). A token with
+   * `iat` in or after that second was issued while the store held every
+   * live group (#13 6.9 layer 2).
    */
-  processStartedAt: number;
+  epoch: number;
   /** Recovery of the token's namespace is closed (#13 6.9 layer 3 (b)). */
   recoveryClosed: boolean;
   now: number;
@@ -54,9 +55,9 @@ export function canSupersede(
   );
 }
 
-/** True when the token was issued by this process (#13 6.9 layer 2, RC17). */
-export function issuedInThisProcess(claims: TokenClaims, processStartedAt: number): boolean {
-  return claims.iat >= Math.floor(processStartedAt / 1000);
+/** True when the token was issued in the store's epoch (#13 6.9 layer 2, RC17, #35 4.5). */
+export function issuedInEpoch(claims: TokenClaims, epoch: number): boolean {
+  return claims.iat >= Math.floor(epoch / 1000);
 }
 
 /**
@@ -84,10 +85,7 @@ export function issuedInThisProcess(claims: TokenClaims, processStartedAt: numbe
 export function classifyToken(input: ClassifyInput): TokenStatus {
   const { claims, app, record, now } = input;
   if (input.ended) return 'ended';
-  if (
-    record === undefined &&
-    (issuedInThisProcess(claims, input.processStartedAt) || input.recoveryClosed)
-  ) {
+  if (record === undefined && (issuedInEpoch(claims, input.epoch) || input.recoveryClosed)) {
     return 'ended';
   }
   if (claims.gct + app.maxSessionMinutes * MINUTE_MS <= now) return 'expired';

@@ -240,6 +240,11 @@ export class LifecycleService {
     return updated;
   }
 
+  /** Arms the end of a running pause or hold at `at` (#35 Q-A3: the restart floor). */
+  armPauseEnd(app: AppConfig, record: GroupRecord, at: number): void {
+    this.armGrace(app, record, at);
+  }
+
   /** Arms the grace end of a pause (#13 6.4). Stale if the term or the pause changed. */
   private armGrace(app: AppConfig, record: GroupRecord, at: number): void {
     this.host.timers.arm(app.namespace, record.id, 'grace', at, { term: record.term, at });

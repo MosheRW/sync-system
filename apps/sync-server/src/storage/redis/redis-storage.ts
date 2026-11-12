@@ -10,6 +10,8 @@ import { RedisEndedGroups } from './ended.js';
 import { RedisGroupStore } from './group-store.js';
 import { RedisKeys } from './keys.js';
 import { RedisTimerBackend } from './timers.js';
+import { RedisEpoch } from './epoch.js';
+import { parseMember } from './keys.js';
 import { type RedisContext, RedisWorkSource } from './unit-of-work.js';
 
 const MINUTE_MS = 60_000;
@@ -46,13 +48,21 @@ export function redisStorage(options: RedisStorageOptions): Storage {
   const work = new RedisWorkSource(ctx);
   const memory = memoryStorage({ scheduler: options.scheduler, logger: options.logger });
   const timers = new RedisTimerBackend(ctx, work, options.scheduler);
+  const epoch = new RedisEpoch(ctx, work);
   return {
     ...memory,
     kind: 'redis',
     timers,
-    async start() {
+    epoch,
+    keepAttachmentsOnClose: true,
+    async start(sweep) {
+      await epoch.current();
       // Deadlines that passed while the server was down take effect once (AC12).
       await timers.runDue();
+      // Then every live group's attachments from before the stop (AC11).
+      const live = await liveGroups(ctx);
+      for (const { namespace, groupId } of live) await sweep(namespace, groupId);
+      options.logger.info({ event: 'startup_sweep', groups: live.length }, 'restart sweep done');
       timers.startPolling();
     },
     groups: new RedisGroupStore(ctx, work),
@@ -63,4 +73,30 @@ export function redisStorage(options: RedisStorageOptions): Storage {
     status: () => ({ kind: 'redis', state: options.link.state }),
     close: () => options.link.close(),
   };
+}
+
+/** Live groups, by end bound from now (members past it were pruned, F13). */
+async function liveGroups(
+  ctx: RedisContext,
+): Promise<Array<{ namespace: string; groupId: string }>> {
+  const found: Array<{ namespace: string; groupId: string }> = [];
+  const page = 100;
+  for (let offset = 0; ; offset += page) {
+    const reply = await ctx.link.send([
+      'ZRANGE',
+      ctx.keys.live(),
+      String(ctx.now()),
+      '+inf',
+      'BYSCORE',
+      'LIMIT',
+      String(offset),
+      String(page),
+    ]);
+    const members = Array.isArray(reply) ? (reply as unknown[]).map(String) : [];
+    for (const member of members) {
+      const parsed = parseMember(member);
+      if (parsed !== undefined && parsed.kind === undefined) found.push(parsed);
+    }
+    if (members.length < page) return found;
+  }
 }
