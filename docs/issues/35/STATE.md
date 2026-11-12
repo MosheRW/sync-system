@@ -1,8 +1,8 @@
 # State: #35 feat: redis storage with restart survival and several instances (PRD item 9a)
 - Path: full
-- Phase: implementation
+- Phase: validation
 - Branch: feat/35-redis-docs-release
-- PR: #38 (draft)
+- PR: #38 (ready)
 - Spec approved at Gate 1: yes (2026-11-12, with the edits below)
 - Gate 1 decisions (2026-11-12): all recommended defaults accepted except Q1, Q3, Q4 and Q13.
   - Q1: user's 3-way split: 9a #35 = all Redis storage (restart survival, server-side block lists, several instances; AC1-AC32; the architect may plan it as two PRs on this issue), 9b #36 = health, readiness and config errors (AC33-AC42), 9c #37 = docs, changelog, release (AC43-AC56). Order 9a, 9b, 9c.
@@ -22,11 +22,12 @@
   - Security required controls C1-C10 (security.md) are mandatory.
   - Security advisories folded into PR 1 by the user: F10 (position in its own small key written in the same commit; document size measured at the default ceiling), F12 (P:epoch gets PEXPIRE GT like the shared keys), F13 (prune past-E members of due/live/ended sets in the timer poll and startup sweep; AC24 test for a group that expired while the server was down), F14 (README: Redis ACL user limited to the prefix, least commands), F15 (ci.yml starts Redis with `docker run` in a step, pinned digest, password, no persistence, bound to 127.0.0.1). P2-1 (commit as a Lua script) optional.
 - Security-sensitive: yes (confirmed by the architect: new dependency @redis/client, Redis credentials, names of possible minors in Redis, recovery fence, concurrency)
-- Review rounds: 0
+- Review rounds: 1
+- QA verdict (round 1, head 9439684): FAIL. Local CI in Docker (fresh clone as a git bundle, node:24, pinned redis:7.2.17-alpine on a private network): `check` fails at Test in a fresh clone (`redis-lazy-load.test.ts` resolves the protocol `dist/`, which ci.yml builds only after Test; fix: `--conditions=@sync-system/source`); every other suite green (protocol 207, sync-server 1302 also with SYNC_TEST_STORE=redis, client 574, react 227, reader 1010), build green, e2e 5/5, redis-required guard verified. A Redis failure inside `storage.start` prints `Startup error: cannot listen on port ...` and the process never exits (reproduced on the image: ACL NOPERM, one invalid live document). Test gaps: C1 (epoch/ended/closure invalid values), C6 (keys.ts), C7 (ended/epoch aborts), AC12 restart cases. AC: 22 met, AC4 and AC31 not met, the rest deferred to PR 2 per Q-A1/Q-A5. `docker compose up` hangs at Creating for the base compose.yaml too (bind mounts on this host, environmental); the override was verified by hand (connect, sweep, live group survives a server restart, dev password refused in production). All 26 commits signed. Review: PR #38 comment.
 - Delivery: two PRs on this issue proposed (Gate 2 Q-A1): PR 1 single-instance Redis + restart survival (this branch), PR 2 several instances (branch feat/35-redis-multi-instance after PR 1 merges)
 - Plan: docs/issues/35/architecture.md; ADRs 0010-0014 Proposed
 - Security plan review: docs/issues/35/security.md (PASS, required controls C1-C10 join the plan)
-- Last updated by: engineer
+- Last updated by: qa
 ## Model log
 - pm groom: opus (orchestrator: broad scope and split proposal) → DONE
 - pm update-spec (Gate 1 decisions): opus (orchestrator: split restructure and new issues) → DONE
@@ -34,6 +35,7 @@
 - pm update-spec (9c follow-up decisions): sonnet (default) → DONE
 - security plan: opus (rule) → PASS (0 critical, 0 high, 9 medium, 6 low; required controls C1-C10 in docs/issues/35/security.md)
 - engineer implement: opus (Implementer model line; security-sensitive) → DONE
+- qa validate: opus (NEXT_MODEL) → FAIL
 ## Open questions
 - 9a Gate 2: Q-A1 two PRs, Q-A2 TTL slack 5 s, Q-A3 restart grace for running pauses, Q-A4 PR 1 body Refs vs Closes, Q-A5 approvals in PR 2, Q-A6 eviction policy warning; ADRs 0010-0014 (architecture.md section 18).
 - 9b (#36): Q20 for its own Gate 1. 9c (#37): Q17, Q18 for its own Gate 1 (Q16, Q19 decided). See spec.md.
