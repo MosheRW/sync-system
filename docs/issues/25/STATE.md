@@ -1,6 +1,6 @@
 # State: #25 feat: reading app leader views and lifecycle prompts (PRD item 8b)
 - Path: full
-- Phase: validation
+- Phase: merged (2026-11-12, e3e6c87)
 - Branch: feat/25-reading-app-leader-views
 - PR: #31
 - Spec approved at Gate 1: yes (2026-11-11, "Accept all", plus the two gap decisions)
@@ -25,6 +25,8 @@
 - security code (round 1): opus (rule) → PASS (1 low)
 - engineer fix (round 1, security low at user request): opus (rule) → DONE
 - qa validate (round 2, delta + local CI): opus (rule: round 2) → PASS
+- security code (round 2, delta): opus (rule) → PASS
+- pm roadmap update: sonnet (default) → DONE
 ## Fix round 1
 - Input: security code review round 1 PASS with one low (R16, Q-A1 storage check could not fail), fixed at the user's request. QA round 1: BLOCKED on CI only, no code findings.
 - `9c9eaf9 test(client)`: `packages/client/test/client.rejoin.test.ts`, a leader with stored recovery data drops, rejoins, and the server answers `group.joined` as member; the stored entry is the member token only, with no `recovery` and no codes blob. Put in the rejoin file (not resume) because Q-A1 is the automatic reconnect path. Checked to fail when the token store keeps recovery for member tokens (mutation reverted).
