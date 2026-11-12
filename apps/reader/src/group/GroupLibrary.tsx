@@ -19,6 +19,7 @@ import { useI18n } from '../i18n/index.js';
 import type { LibraryEntry } from '../library/types.js';
 import { browserNavigation } from './browser.js';
 import { type GroupEnv, useGroupEnv } from './context.js';
+import { usePastedLinkNotice } from './pasted-link.js';
 import { useJoin } from './use-join.js';
 import { useResume } from './use-resume.js';
 
@@ -45,6 +46,10 @@ function GroupLibraryOn({ entries, env }: { entries: readonly LibraryEntry[]; en
   const [view, setView] = useState<View | null>(null);
   const [missingId, setMissingId] = useState<string | null>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
+  // A pasted QR link wasn't used (#25 AC57): sticky, above the in-group notice.
+  // A repeat paste shows it again (a new key: replaced, announced again).
+  const [qrPasted, setQrPasted] = useState(0);
+  usePastedLinkNotice(env.pastedLinks, true, () => setQrPasted((n) => n + 1));
   // A tab in a group comes back to it here too (AC34).
   useResume(env, true, () => undefined);
   const snapshot = useSyncSnapshot();
@@ -249,11 +254,23 @@ function GroupLibraryOn({ entries, env }: { entries: readonly LibraryEntry[]; en
       </NoticeBar>
     ) : null;
 
+  const notices =
+    qrPasted > 0 || inGroupNotice !== null ? (
+      <>
+        {qrPasted > 0 ? (
+          <NoticeBar key={qrPasted} dismissLabel={t.dismiss} onDismiss={() => setQrPasted(0)}>
+            {t.noticeQrPasted}
+          </NoticeBar>
+        ) : null}
+        {inGroupNotice}
+      </>
+    ) : null;
+
   return (
     <>
       <LibraryScreen
         entries={entries}
-        notice={inGroupNotice}
+        notice={notices}
         headerAction={
           group !== null ? (
             // A leader ends the group from the book, with its confirmation (AC32).

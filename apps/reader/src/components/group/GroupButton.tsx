@@ -16,6 +16,8 @@ export function indicatorText(kind: IndicatorKind, i18n: I18n, graceMs: number |
       return t.indNotFollowing;
     case 'leading':
       return t.indLeading;
+    case 'previewing':
+      return t.indPreviewing;
     case 'reconnecting':
       return t.indReconnecting;
     case 'leader-offline':
@@ -36,6 +38,7 @@ const DOT: Record<IndicatorKind, string> = {
   following: 'dotPositive',
   'not-following': 'dotHollow',
   leading: 'dotAccent',
+  previewing: 'dotPreview',
   reconnecting: 'dotSpin',
   'leader-offline': 'dotWarning',
   'leader-grace': 'dotWarning',

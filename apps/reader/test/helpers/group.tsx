@@ -1,7 +1,8 @@
-import type { JoinCodes, JoinMethod } from '@sync-system/react';
+import type { JoinCodes, JoinMethod, RosterEntry } from '@sync-system/react';
 import { act, fireEvent, screen, within } from '@testing-library/react';
 import { vi } from 'vitest';
-import { SYNC, readingReady, renderApp, testConfig } from './app.js';
+import type { PastedLinkSignal } from '../../src/group/pasted-link.js';
+import { SYNC, readingReady, renderApp, testConfig, testLoader } from './app.js';
 import { FakeSyncClient, GROUP_ID, connected } from './fake-sync-client.js';
 import { MemoryStorage } from './storage.js';
 
@@ -22,6 +23,7 @@ export async function renderGroupApp(
     uiLang?: 'en' | 'he';
     config?: Parameters<typeof testConfig>[2];
     entry?: Parameters<typeof testConfig>[0];
+    pastedLinks?: PastedLinkSignal;
   } = {},
 ) {
   const client = options.client ?? new FakeSyncClient();
@@ -32,6 +34,7 @@ export async function renderGroupApp(
     storage,
     syncClient: client,
     uiLang: options.uiLang ?? 'en',
+    ...(options.pastedLinks ? { pastedLinks: options.pastedLinks } : {}),
   });
   await readingReady();
   return { client, storage, view };
@@ -91,4 +94,51 @@ export function largeScreen(): void {
     removeListener: () => undefined,
     dispatchEvent: () => false,
   }));
+}
+
+/** A `matchMedia` stub whose `(min-width: 1024px)` can be flipped live (resize). */
+export function resizableScreen(large: boolean): (next: boolean) => void {
+  let matches = large;
+  const listeners = new Set<() => void>();
+  vi.stubGlobal('matchMedia', (query: string) => ({
+    get matches() {
+      return query.includes('1024') ? matches : false;
+    },
+    media: query,
+    onchange: null,
+    addEventListener: (_: string, listener: () => void) => listeners.add(listener),
+    removeEventListener: (_: string, listener: () => void) => listeners.delete(listener),
+    addListener: () => undefined,
+    removeListener: () => undefined,
+    dispatchEvent: () => false,
+  }));
+  return (next: boolean) => {
+    matches = next;
+    act(() => {
+      for (const listener of [...listeners]) listener();
+    });
+  };
+}
+
+/** A roster entry for tests (#25). */
+export function rosterEntry(participantId: string, extra: Partial<RosterEntry> = {}): RosterEntry {
+  return Object.freeze({
+    participantId,
+    displayName: participantId,
+    generated: false,
+    role: 'member' as const,
+    connected: true,
+    joinedAt: 0,
+    ...extra,
+  });
+}
+
+/** The bundled test book's own metadata: a member with it passes the content check. */
+export async function localMetadata() {
+  const result = await testLoader().load({
+    kind: 'bundled',
+    contentId: 'samples/pride-and-prejudice-en',
+  });
+  if (!result.ok) throw new Error('load');
+  return { ...result.content.metadata };
 }

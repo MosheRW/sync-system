@@ -102,6 +102,10 @@ export class FakeSyncClient implements SyncClientLike {
   });
   codes: JoinCodes | null = null;
   requests: readonly JoinRequest[] = [];
+  /** What `getRoster()` returns while leading (emit `rosterChanged` after a change). */
+  roster: readonly RosterEntry[] = [];
+  /** What `getLeaderState()` returns while leading. */
+  leaderState: LeaderState | null = null;
   readonly calls = new Map<string, unknown[][]>();
   readonly impl: Partial<Record<Method, (...args: never[]) => unknown>> = {};
   readonly pending = new Map<string, Deferred<unknown>[]>();
@@ -115,6 +119,7 @@ export class FakeSyncClient implements SyncClientLike {
   /** Like the core's LeaderPreview: local only, the group position never changes. */
   readonly preview = {
     start: (position?: JsonValue) => {
+      this.#record('previewStart', [position]);
       this.#previewActive = true;
       this.#previewPosition = position;
     },
@@ -127,8 +132,22 @@ export class FakeSyncClient implements SyncClientLike {
       this.#previewActive = false;
       this.#previewPosition = undefined;
     },
-    bringGroupHere: () => undefined,
-    returnToGroup: () => undefined,
+    /** Like the core: ends the preview, then one normal position update (may throw). */
+    bringGroupHere: () => {
+      this.#record('bringGroupHere', []);
+      const target = this.#previewPosition;
+      const active = this.#previewActive;
+      this.#previewActive = false;
+      this.#previewPosition = undefined;
+      if (active && target !== undefined) this.updatePosition(target);
+    },
+    returnToGroup: () => {
+      this.#record('returnToGroup', []);
+      this.#previewActive = false;
+      this.#previewPosition = undefined;
+      const group = this.snapshot.group;
+      return group?.status === 'active' && group.hasPosition ? group.position : undefined;
+    },
     getState: () =>
       Object.freeze({
         active: this.#previewActive,
@@ -141,6 +160,11 @@ export class FakeSyncClient implements SyncClientLike {
 
   setSnapshot(change: Partial<SyncClientSnapshot>): void {
     this.snapshot = Object.freeze({ ...this.snapshot, ...change });
+    // The core ends a preview on demotion and group end (#dropLeaderOnly).
+    if (!this.#leading()) {
+      this.#previewActive = false;
+      this.#previewPosition = undefined;
+    }
     for (const listener of [...this.#subscribers]) listener();
   }
 
@@ -237,11 +261,24 @@ export class FakeSyncClient implements SyncClientLike {
   }
 
   getRoster(): readonly RosterEntry[] {
-    return [];
+    return this.#leading() ? Object.freeze([...this.roster]) : [];
   }
 
   getLeaderState(): LeaderState | null {
-    return null;
+    return this.#leading() ? this.leaderState : null;
+  }
+
+  /** Sets the roster and emits `rosterChanged` (#13 AC31). */
+  setRoster(roster: readonly RosterEntry[]): void {
+    this.roster = roster;
+    const group = this.snapshot.group;
+    if (group?.status !== 'active') return;
+    this.emit('rosterChanged', { groupId: group.groupId, roster: this.getRoster() });
+  }
+
+  #leading(): boolean {
+    const group = this.snapshot.group;
+    return group?.status === 'active' && group.role === 'leader';
   }
 
   connect(): Promise<ConnectedInfo> {

@@ -1,5 +1,10 @@
 import { type ReactNode, type Ref, forwardRef, useEffect, useRef } from 'react';
 import styles from './group.module.css';
+import { formatLong } from '../../group/countdown.js';
+import type { ActionErrorState } from '../../group/use-retry-wait.js';
+import { useI18n } from '../../i18n/index.js';
+import { PlainText } from '../PlainText.js';
+import { Template } from './Template.js';
 
 export interface ButtonProps {
   variant?: 'primary' | 'secondary' | 'danger' | 'text';
@@ -76,13 +81,76 @@ export function BackButton({ label, onClick }: { label: string; onClick: () => v
   );
 }
 
-/** A docked card in the reading screen's overlay layer (design 4.1). */
+const AUTO_HIDE_TICK_MS = 250;
+
+/**
+ * Calls `onAutoHide` after `autoHideMs` of **visible** time (#25 design 2.4):
+ * the clock runs only while the tab is visible, the pointer is not over the
+ * bar and focus is not inside it. Monotonic (`performance.now()`), checked
+ * every 250 ms and on each of those events.
+ */
+function useAutoHide(
+  ref: { readonly current: HTMLElement | null },
+  autoHideMs: number | undefined,
+  onAutoHide: (() => void) | undefined,
+): void {
+  const callback = useRef(onAutoHide);
+  callback.current = onAutoHide;
+  useEffect(() => {
+    const element = ref.current;
+    if (autoHideMs === undefined || element === null) return undefined;
+    let shownMs = 0;
+    let since: number | null = null;
+    let hover = false;
+    let focus = false;
+    let done = false;
+    const running = () => document.visibilityState !== 'hidden' && !hover && !focus;
+    const check = () => {
+      const now = performance.now();
+      if (since !== null) shownMs += now - since;
+      since = running() ? now : null;
+      if (!done && shownMs >= autoHideMs) {
+        done = true;
+        callback.current?.();
+      }
+    };
+    const change = (apply: () => void) => {
+      check();
+      apply();
+      check();
+    };
+    const onEnter = () => change(() => (hover = true));
+    const onLeave = () => change(() => (hover = false));
+    const onFocusIn = () => change(() => (focus = true));
+    const onFocusOut = (event: FocusEvent) =>
+      change(() => (focus = element.contains(event.relatedTarget as Node | null)));
+    since = running() ? performance.now() : null;
+    const timer = setInterval(check, AUTO_HIDE_TICK_MS);
+    element.addEventListener('pointerenter', onEnter);
+    element.addEventListener('pointerleave', onLeave);
+    element.addEventListener('focusin', onFocusIn);
+    element.addEventListener('focusout', onFocusOut);
+    document.addEventListener('visibilitychange', check);
+    return () => {
+      clearInterval(timer);
+      element.removeEventListener('pointerenter', onEnter);
+      element.removeEventListener('pointerleave', onLeave);
+      element.removeEventListener('focusin', onFocusIn);
+      element.removeEventListener('focusout', onFocusOut);
+      document.removeEventListener('visibilitychange', check);
+    };
+  }, [ref, autoHideMs]);
+}
+
+/** A notice: banner slot, codes notice, overlay layer (design 4.1, #25 design 6.9). */
 export function NoticeBar({
   children,
   onDismiss,
   dismissLabel,
   tone = 'info',
   autoFocus = false,
+  autoHideMs,
+  onAutoHide,
 }: {
   children: ReactNode;
   onDismiss?: () => void;
@@ -90,13 +158,19 @@ export function NoticeBar({
   tone?: 'info' | 'warning';
   /** Focus Dismiss on appearance (focus was in something that closed, design F12.3). */
   autoFocus?: boolean;
+  /** Info notices: hide after this much visible time (#25 design 2.4); no visual timer. */
+  autoHideMs?: number;
+  onAutoHide?: () => void;
 }) {
   const dismissRef = useRef<HTMLButtonElement>(null);
+  const barRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (autoFocus) dismissRef.current?.focus();
   }, [autoFocus]);
+  useAutoHide(barRef, autoHideMs, onAutoHide);
   return (
     <div
+      ref={barRef}
       role="status"
       className={`${styles.notice} ${tone === 'warning' ? styles.noticeWarning : ''}`}
     >
@@ -107,5 +181,37 @@ export function NoticeBar({
         </button>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * A failed leader action, inline (#25 design 7.10, 7.11): `role="alert"`;
+ * the name is a `PlainText` node in the template, the wait an LTR isolate
+ * in words; at the end of a wait it says "You can try again now.".
+ */
+export function ActionErrorLine({ state }: { state: ActionErrorState }) {
+  const i18n = useI18n();
+  const current = state.current;
+  if (current === null) return null;
+  const { error, name } = current;
+  const waited = error.retryAfterMs !== undefined && state.waitLeft === 0;
+  return (
+    <p role="alert" className={styles.formError}>
+      {waited ? (
+        i18n.t.canTryNow
+      ) : (
+        <Template
+          text={i18n.t[error.key]}
+          values={{
+            ...(name !== undefined
+              ? { name: <PlainText text={name} dir="auto" maxLength={32} /> }
+              : {}),
+            ...(error.retryAfterMs !== undefined
+              ? { time: <bdi dir="ltr">{formatLong(state.waitLeft, i18n)}</bdi> }
+              : {}),
+          }}
+        />
+      )}
+    </p>
   );
 }

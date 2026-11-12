@@ -28,6 +28,7 @@ export { useStoredGroups } from './hooks/stored-groups.js';
 export type { StoredGroups, StoredGroupsOptions } from './hooks/stored-groups.js';
 export {
   useGroupLock,
+  useHandoffMode,
   useJoinRequests,
   useKeepAlive,
   useLeaderCodes,

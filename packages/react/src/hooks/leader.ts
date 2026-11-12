@@ -1,5 +1,6 @@
 'use client';
 import type {
+  HandoffMode,
   JoinCodes,
   JoinRequest,
   KeepAliveEvent,
@@ -177,6 +178,16 @@ export function useJoinRequests(): JoinRequests {
  */
 export function useRoster(): readonly RosterEntry[] {
   return useStoreSelector(useSyncStore('useRoster'), pickRoster, same);
+}
+
+const pickHandoff = (state: SyncState): HandoffMode | null => state.leaderState?.handoff ?? null;
+
+/**
+ * The handoff mode (`auto` or `frozen`) of the group this client leads, else
+ * `null` (members and the vice). Only the mode, never the leader state.
+ */
+export function useHandoffMode(): HandoffMode | null {
+  return useStoreSelector(useSyncStore('useHandoffMode'), pickHandoff, same);
 }
 
 export interface ViceLeader {

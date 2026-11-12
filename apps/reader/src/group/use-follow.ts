@@ -17,6 +17,11 @@ export interface FollowOptions {
   readonly lateJoinMs: number;
   /** The mode stored for this tab when the membership came back by resume, else `null`. */
   readonly resumedMode: () => FollowMode | null;
+  /**
+   * This tab led this membership's group and was demoted (#25 8.2): the
+   * start is a `demoted` event; the caller clears its flag when read.
+   */
+  readonly demoted?: (membership: string) => boolean;
   /** Performs a jump with the reading screen's own move. */
   readonly onJump: (index: number) => void;
   /** The mode changed (stored in the pointer, Decision Q3). */
@@ -32,6 +37,8 @@ export interface Follow {
   readonly stayHere: () => void;
   readonly lateExpired: () => void;
 }
+
+const TICK_MS = 250;
 
 /**
  * Wires the pure follow reducer to the group's official position
@@ -71,6 +78,10 @@ export function useFollow(options: FollowOptions): Follow {
     started.current = membership;
     stateRef.current = INITIAL_FOLLOW;
     const o = opts.current;
+    if (o.demoted?.(membership) === true) {
+      dispatch({ type: 'demoted', groupIndex, ownIndex: o.ownIndex() });
+      return;
+    }
     const storedMode = o.resumedMode();
     dispatch(
       storedMode !== null
@@ -99,6 +110,24 @@ export function useFollow(options: FollowOptions): Follow {
     if (stateRef.current.groupIndex === groupIndex) return;
     dispatch({ type: 'groupMoved', index: groupIndex, ownIndex: opts.current.ownIndex() });
   }, [active, groupIndex, dispatch]);
+
+  // The late-join countdown ends here, not in its card, so it also ends while
+  // a higher card hides it (#25 design 2.2 item 3). Monotonic, every tick and
+  // when the tab is visible again (AC53).
+  const lateDeadline = active ? (state.late?.deadline ?? null) : null;
+  useEffect(() => {
+    if (lateDeadline === null) return undefined;
+    const check = () => {
+      if (performance.now() >= lateDeadline) dispatch({ type: 'lateExpired' });
+    };
+    check();
+    const timer = setInterval(check, TICK_MS);
+    document.addEventListener('visibilitychange', check);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', check);
+    };
+  }, [lateDeadline, dispatch]);
 
   return {
     state: active ? state : INITIAL_FOLLOW,

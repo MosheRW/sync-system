@@ -6,17 +6,22 @@ import {
   useGroupExit,
   useJoinRequests,
   useGroupEnded,
+  useHandoffMode,
+  useKeepAlive,
   useLeaderCodes,
   usePosition,
   useRemoved,
   useQrTicket,
+  useRoster,
   useSyncEvent,
   useSyncIndicator,
   useSyncSnapshot,
+  useViceLeader,
 } from '@sync-system/react';
 import { type JoinedGroup, type ResumedGroup } from '@sync-system/react';
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ApprovalTray } from '../components/group/ApprovalTray.js';
+import { BannerSlot } from '../components/group/BannerSlot.js';
 import { ConfirmDialog } from '../components/group/ConfirmDialog.js';
 import { Button, NoticeBar } from '../components/group/controls.js';
 import { CREATE_FORM_ID, CreateGroupForm } from '../components/group/CreateGroupForm.js';
@@ -31,8 +36,20 @@ import {
   useWaitLeft,
 } from '../components/group/JoinViews.js';
 import { GroupSheet, type SheetContent, startView } from '../components/group/GroupSheet.js';
-import { CodeStrip, LeaderCodes, LeaderDetails, qrOnly } from '../components/group/LeaderViews.js';
+import {
+  CodeStrip,
+  LeaderCodes,
+  LeaderDetails,
+  LockControl,
+  LockLine,
+  PreviewControl,
+  qrOnly,
+} from '../components/group/LeaderViews.js';
+import { PreviewBanner } from '../components/group/PreviewBanner.js';
 import { MismatchBlock, VersionWarnDialog } from '../components/group/MismatchViews.js';
+import { PeopleCounter, PeopleRow, RosterList } from '../components/group/People.js';
+import { KeepAliveCard, TakeBackCard } from '../components/group/LifecycleCards.js';
+import { NowLeadingDialog } from '../components/group/NowLeadingDialog.js';
 import { JumpPrompt, LateJoinPrompt } from '../components/group/Prompts.js';
 import { bookHref } from '../components/LibraryScreen.js';
 import { QrCodeView } from '../components/group/QrCodeView.js';
@@ -53,6 +70,13 @@ import { type ShareTarget, buildJoinLink } from './deep-link.js';
 import { errorText, errorView } from './errors.js';
 import { ownNameText } from './names.js';
 import { type IndicatorKind, derivePhase, indicatorFor } from './phase.js';
+import { useBannerSlot } from './use-banner-slot.js';
+import { useLeadershipFlow } from './use-leadership-flow.js';
+import type { LeaderError } from './leader-errors.js';
+import { usePreviewMode } from './use-preview-mode.js';
+import { usePastedLinkNotice } from './pasted-link.js';
+import { countRoster } from './roster-view.js';
+import type { Messages } from '../i18n/en.js';
 import { encodePosition } from './position.js';
 import { useFollow } from './use-follow.js';
 import { useJoin } from './use-join.js';
@@ -65,7 +89,15 @@ import { LARGE_SCREEN, useMediaQuery } from './use-media-query.js';
 
 export type GroupReadingProps = Omit<
   ReadingScreenProps,
-  'headerEndSlot' | 'overlay' | 'belowHeader' | 'notices' | 'aside' | 'blocked' | 'announce'
+  | 'headerEndSlot'
+  | 'overlay'
+  | 'belowHeader'
+  | 'banner'
+  | 'notices'
+  | 'aside'
+  | 'blocked'
+  | 'announce'
+  | 'announceAssertive'
 > & {
   /** Where the book came from: the QR link opens the same one (Decision Q4). */
   source?: ContentSource;
@@ -75,7 +107,16 @@ export type GroupReadingProps = Omit<
 
 /** Which sheet view is open (design 6). */
 export type SheetView =
-  'start' | 'create' | 'ready' | 'leader' | 'qr' | 'join' | 'waiting' | 'member' | 'qr-join';
+  | 'start'
+  | 'create'
+  | 'ready'
+  | 'leader'
+  | 'qr'
+  | 'join'
+  | 'waiting'
+  | 'member'
+  | 'qr-join'
+  | 'people';
 
 /** The book a join link opens, from validated values only (R4). */
 function shareTargetOf(
@@ -126,13 +167,22 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
   const requests = useJoinRequests();
   const large = useMediaQuery(LARGE_SCREEN);
   const buttonRef = useRef<HTMLButtonElement>(null);
+  const roster = useRoster();
+  const counterRef = useRef<HTMLButtonElement>(null);
+  // Focus was in the panel's list when the window shrank: it goes to the counter (F14.4).
+  const focusCounterNext = useRef(false);
+  useEffect(() => {
+    if (large || !focusCounterNext.current) return;
+    focusCounterNext.current = false;
+    counterRef.current?.focus();
+  }, [large]);
   const [sheet, setSheet] = useState<SheetView | null>(null);
   const [formError, setFormError] = useState<SyncClientError | null>(null);
   const [confirm, setConfirm] = useState<Confirm>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [endedNotice, setEndedNotice] = useState<string | null>(null);
-  const focusDismiss = useRef(false);
   const [announcement, announce] = useAnnouncer();
+  // The assertive channel: keep-alive appearance and run-out only (#25 U13).
+  const [assertiveAnnouncement, announceAssertive] = useAnnouncer();
   const ownIndex = useRef(props.initialIndex ?? 0);
   const position = usePosition();
   const [restored] = useState(restoredPage);
@@ -178,6 +228,43 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
   const group = snapshot.group;
   const isLeader = group?.status === 'active' && group.role === 'leader';
   const isMember = group?.status === 'active' && group.role === 'member';
+  const vice = useViceLeader();
+  // The banner slot (#25 architecture 6): one banner, dropped when no longer true.
+  const banners = useBannerSlot(
+    {
+      isLeader,
+      isVice: vice.isVice,
+      locked: group?.status === 'active' && group.locked,
+      inGroup:
+        group !== null &&
+        (group.status === 'active' || group.status === 'rejoining' || group.status === 'waiting'),
+    },
+    announce,
+  );
+  const showEnded = banners.show;
+  // A pasted QR link wasn't used (#25 AC57): sticky, row 6.
+  usePastedLinkNotice(env.pastedLinks, true, () => banners.show({ row: 6, kind: 'qr-pasted' }));
+  const endedNotice = (text: keyof Messages, focus = false) =>
+    showEnded({ row: 1, kind: 'ended', text, focus });
+  const locked = group?.status === 'active' && group.locked;
+  // The last member-side content check, read when the lead arrives (#25 8.4, D9).
+  const lastMemberCheck = useRef(false);
+  const flow = useLeadershipFlow({
+    groupId: group !== null && 'groupId' in group ? group.groupId : null,
+    isLeader,
+    isMember,
+    isVice: vice.isVice,
+    show: banners.show,
+    clearMemberNotices: banners.clearMemberNotices,
+    pages: () => ({ ownIndex: ownIndex.current, groupIndex: groupIndexRef.current }),
+    mismatch: () => lastMemberCheck.current,
+    onNowLeading: (id) => {
+      // The dialog speaks: no "You're leading the group." on top (8.1 step 3).
+      leadingAnnounced.current = id;
+      setSheet((view) => (view === 'member' ? null : view));
+    },
+  });
+  const { leaderActivity } = flow;
   // The content check runs before anything is followed (AC21, item 7 compare).
   const memberMetadata = isMember ? group.metadata : null;
   const compare = useMemo(
@@ -189,6 +276,12 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
   const [ack, setAck] = useState(() => env.pointers.read()?.ack ?? null);
   const leaderBook = useMemo(() => parseLeaderMetadata(memberMetadata), [memberMetadata]);
   const acknowledged = ack !== null && leaderBook !== null && ack === leaderBook.fingerprint;
+  if (isMember && compare !== null) {
+    lastMemberCheck.current =
+      compare === 'different-content' ||
+      compare === 'unsupported-schema' ||
+      (compare === 'different-version' && !acknowledged);
+  }
   const phase = derivePhase({
     enabled: true,
     connection: snapshot.connection,
@@ -219,7 +312,7 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
       resume.forget();
       join.clear();
       setSheet(null);
-      setEndedNotice(t.leftGroup);
+      endedNotice('leftGroup');
       return;
     }
     lastExit.current = 'leave';
@@ -256,10 +349,25 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
     fresh: () => !turnedSinceLoad.current && !restored,
     lateJoinMs: env.sync.lateJoinSeconds * 1000,
     resumedMode: () => resumedMode.current,
+    demoted: flow.consumeDemoted,
     onJump: (index) => setJumpRequest((prev) => ({ index, id: (prev?.id ?? 0) + 1 })),
     onMode: (mode) => env.pointers.update({ mode }),
   });
-  const kind = indicatorFor(phase, clientIndicator, followed.state.mode);
+  // The leader's preview (#25 architecture 7.3): routed by the core's live state.
+  const previewMode = usePreviewMode(doc.pages.length);
+  const previewing = isLeader && previewMode.active;
+  const [previewError, setPreviewError] = useState<LeaderError | null>(null);
+  const previewActive = previewMode.active;
+  useEffect(() => {
+    if (!previewActive) setPreviewError(null);
+  }, [previewActive]);
+  // The group's official page, for the leader's sends and the preview banner.
+  const groupIndex = position.hasPosition
+    ? decodePosition(position.position, doc.pages.length)
+    : null;
+  const groupIndexRef = useRef(groupIndex);
+  groupIndexRef.current = groupIndex;
+  const kind = indicatorFor(phase, clientIndicator, followed.state.mode, previewing);
   const graceEndsAt =
     group?.status === 'active' && group.leader.status !== 'online'
       ? (group.leader.graceEndsAt ?? null)
@@ -274,6 +382,7 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
     const text = indicatorAnnouncement(shownKind.current, kind, i18n, {
       graceMs: graceEndsAt === null ? null : graceEndsAt - Date.now(),
       leadingAnnounced: groupId !== null && leadingAnnounced.current === groupId,
+      groupIndex: groupIndexRef.current,
     });
     shownKind.current = kind;
     if (kind === 'leading' && groupId !== null) leadingAnnounced.current = groupId;
@@ -318,9 +427,14 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
     setNotice(null);
     setResumedNotice(false);
     setConfirm(null);
-    setSheet((view) => (view === 'ready' || view === 'leader' || view === 'create' ? null : view));
+    setSheet((view) =>
+      view === 'ready' || view === 'leader' || view === 'create' || view === 'people' ? null : view,
+    );
   }, [isLeader]);
 
+  // While "You're leading" is open nothing is sent (#25 L3); the user chooses after it.
+  const nowLeadingOpen = useRef(false);
+  nowLeadingOpen.current = flow.nowLeading !== null;
   const pageChanged = useCallback(
     (index: number, source: MoveSource) => {
       ownIndex.current = index;
@@ -329,11 +443,56 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
         turnedSinceLoad.current = true;
         followed.userTurned(index);
       }
-      // The leader's page is the group's (AC25); the client throttles (trailing send).
-      if (position.canUpdate) position.updatePosition(encodePosition(index));
+      if (nowLeadingOpen.current) return;
+      // Previewing: a preview move, never a position update (#25 AC41, R21).
+      if (previewMode.isActiveNow()) {
+        previewMode.move(index);
+        leaderActivity();
+        return;
+      }
+      // The leader's page is the group's (AC25); only real moves are sent
+      // (#25 7.3); the client throttles (trailing send).
+      if (position.canUpdate && groupIndexRef.current !== index) {
+        position.updatePosition(encodePosition(index));
+        leaderActivity();
+      }
     },
-    [onPageChange, followed, position],
+    [onPageChange, followed, position, previewMode, leaderActivity],
   );
+
+  const startPreview = () => {
+    setSheet(null);
+    setPreviewError(null);
+    previewMode.start(ownIndex.current);
+    leaderActivity();
+  };
+  const returnFromPreview = () => {
+    const index = previewMode.returnToGroup();
+    setPreviewError(null);
+    if (index !== null && index !== ownIndex.current) {
+      setJumpRequest((prev) => ({ index, id: (prev?.id ?? 0) + 1 }));
+    }
+    announce(t.announcePreviewOff);
+    focusArticle();
+  };
+  const bringGroupHere = () => {
+    const view = previewMode.viewIndex ?? ownIndex.current;
+    const error = previewMode.bring(isLeader);
+    setPreviewError(error);
+    if (error !== null) return;
+    leaderActivity();
+    announce(i18n.format(t.announceGroupMoved, { n: view + 1 }));
+    focusArticle();
+  };
+  const previewBanner = previewing ? (
+    <PreviewBanner
+      groupIndex={groupIndex}
+      viewIndex={previewMode.viewIndex ?? ownIndex.current}
+      error={previewError}
+      onReturn={returnFromPreview}
+      onBring={bringGroupHere}
+    />
+  ) : null;
 
   // Prompts are announced once when they appear or change (design 6.13, 6.14).
   const late = followed.state.late;
@@ -374,23 +533,25 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
     if (reason === 'closed') return;
     env.pointers.forget();
     resumedMode.current = null;
-    const text = {
-      ended_by_leader: t.endedByLeader,
-      leader_timeout: t.endedLeaderTimeout,
-      max_session: t.endedMaxSession,
-      inactivity: t.endedInactivity,
-      removed: t.endedRemoved,
-      replaced: t.endedReplaced,
-      left: lastExit.current === 'end' ? t.endedByYou : t.leftGroup,
-      rejoin_failed: resumedThisLoad ? t.endedRejoinFailed : t.storedGroupGone,
-    }[reason];
+    const key = (
+      {
+        ended_by_leader: 'endedByLeader',
+        leader_timeout: 'endedLeaderTimeout',
+        max_session: 'endedMaxSession',
+        inactivity: 'endedInactivity',
+        removed: 'endedRemoved',
+        replaced: 'endedReplaced',
+        left: lastExit.current === 'end' ? 'endedByYou' : 'leftGroup',
+        rejoin_failed: resumedThisLoad ? 'endedRejoinFailed' : 'storedGroupGone',
+      } as const
+    )[reason];
     lastExit.current = null;
-    focusDismiss.current = document.activeElement?.closest('dialog, [role="region"]') != null;
+    const focus = document.activeElement?.closest('dialog, [role="region"]') != null;
     setSheet(null);
     setConfirm(null);
     join.clear();
-    setEndedNotice(text);
-    announce(text);
+    endedNotice(key, focus);
+    announce(t[key]);
     // Only `ended` and `removed` on purpose: one notice per end, not a
     // repeat when the text, pointers or join state change.
   }, [ended, removed]);
@@ -398,8 +559,8 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
   // A stored group that is gone: one short notice, never retried (AC37).
   useEffect(() => {
     if (resume.status === 'gone' || resume.status === 'none') resumedMode.current = null;
-    if (resume.status === 'gone') setEndedNotice(t.storedGroupGone);
-  }, [resume.status, t.storedGroupGone]);
+    if (resume.status === 'gone') showEnded({ row: 1, kind: 'ended', text: 'storedGroupGone' });
+  }, [resume.status, showEnded]);
 
   const openSheet = () => {
     if (phase === 'leader') setSheet('leader');
@@ -479,7 +640,17 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
     group?.status === 'active'
       ? ownNameText(group.displayName, group.generated, t, i18n.format)
       : null;
-  const leaderDetails = (top?: ReactNode, qrPart?: ReactNode) => (
+  const rosterList = (onUnmountWithFocus?: () => void) => (
+    <RosterList
+      roster={roster}
+      viceId={vice.viceId}
+      stale={connection.status !== 'connected'}
+      announce={announce}
+      onActivity={leaderActivity}
+      {...(onUnmountWithFocus !== undefined ? { onUnmountWithFocus } : {})}
+    />
+  );
+  const leaderDetails = (top?: ReactNode, qrPart?: ReactNode, people?: ReactNode) => (
     <LeaderDetails
       codes={leader.codes}
       pausedUntil={paused}
@@ -490,8 +661,56 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
       onRotate={() => setConfirm('rotate')}
       onEnd={() => setConfirm('end')}
       top={top}
+      locked={locked}
+      controls={
+        <>
+          <PreviewControl
+            active={previewMode.active}
+            onStart={startPreview}
+            onReturn={returnFromPreview}
+          />
+          <LockControl announce={announce} onActivity={leaderActivity} />
+        </>
+      }
+      {...(people !== undefined ? { people } : {})}
+      {...(sheet === 'leader' || sheet === 'ready'
+        ? { peopleRow: <PeopleRow roster={roster} onShow={() => setSheet('people')} /> }
+        : {})}
     />
   );
+
+  // The keep-alive card (#25 architecture 8.3): leader only, top of the overlay.
+  const keepAlive = useKeepAlive().prompt;
+  const handoff = useHandoffMode();
+  const keepAliveCard =
+    isLeader && keepAlive !== null ? (
+      <KeepAliveCard
+        prompt={keepAlive}
+        handoff={handoff}
+        othersHere={countRoster(roster).here}
+        lastChance={flow.lastChance}
+        announce={announce}
+        announceAssertive={announceAssertive}
+        onActivity={leaderActivity}
+        onClosedWithFocus={focusArticle}
+      />
+    ) : null;
+
+  // The take-back card (#25 architecture 8.5): member only, under keep-alive.
+  const takeBackCard = flow.takeBackCard ? (
+    <TakeBackCard
+      announce={announce}
+      onDecline={flow.declineTakeBack}
+      onRefused={flow.takeBackRefused}
+      onClosedWithFocus={focusArticle}
+    />
+  ) : null;
+  const dismissNowLeading = () => {
+    const open = flow.nowLeading;
+    flow.dismissNowLeading();
+    // Off the group's page: preview at this page, nothing moves until chosen (U7, D3).
+    if (open?.offPage != null && isLeader) previewMode.start(ownIndex.current);
+  };
 
   // Join requests: overlay on phones, top of the panel on large screens (6.15).
   const tray =
@@ -501,18 +720,6 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
 
   const noticeBars = (
     <>
-      {endedNotice !== null ? (
-        <NoticeBar
-          dismissLabel={t.dismiss}
-          autoFocus={focusDismiss.current}
-          onDismiss={() => {
-            setEndedNotice(null);
-            focusArticle();
-          }}
-        >
-          {endedNotice}
-        </NoticeBar>
-      ) : null}
       {isLeader && notice !== null ? (
         <NoticeBar
           dismissLabel={t.dismiss}
@@ -729,6 +936,8 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
               <PlainText text={ownName} dir="auto" maxLength={32} />
             </p>
           ) : null}
+          {vice.isVice ? <p className={styles.para}>{t.memberViceLine}</p> : null}
+          {locked ? <LockLine member /> : null}
           {followed.state.mode === 'browsing' &&
           followed.groupIndex !== null &&
           followed.groupIndex !== ownIndex.current ? (
@@ -828,6 +1037,13 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
         hasQr ? <Button onClick={() => setSheet('qr')}>{t.showQr}</Button> : undefined,
       ),
     };
+  } else if (sheet === 'people' && isLeader) {
+    content2 = {
+      key: 'people',
+      title: t.peopleTitle,
+      onBack: () => setSheet('leader'),
+      body: rosterList(),
+    };
   } else if (sheet === 'qr' && isLeader) {
     content2 = {
       key: 'qr',
@@ -848,6 +1064,10 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
       <CodeStrip
         codes={leader.codes}
         pausedUntil={paused}
+        locked={locked}
+        counter={
+          <PeopleCounter ref={counterRef} roster={roster} onOpen={() => setSheet('people')} />
+        }
         {...(hasQr
           ? {
               qrButton: (
@@ -880,6 +1100,9 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
               </Button>
             </>
           ) : undefined,
+          rosterList(() => {
+            focusCounterNext.current = true;
+          }),
         )}
       </aside>
     ) : null;
@@ -890,6 +1113,7 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
         {...props}
         onPageChange={pageChanged}
         announce={announcement}
+        announceAssertive={assertiveAnnouncement}
         jumpRequest={jumpRequest}
         headerEndSlot={
           kind === null ? null : (
@@ -897,6 +1121,13 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
           )
         }
         belowHeader={strip}
+        banner={
+          // Blocked by the content check: only the ended notice (others wait, 6.1).
+          (banners.shown !== null && (phase !== 'mismatch-block' || banners.shown.row === 1)) ||
+          previewBanner !== null ? (
+            <BannerSlot slot={banners} preview={previewBanner} onDismissed={focusArticle} />
+          ) : null
+        }
         notices={large && isLeader ? null : noticeBars}
         aside={panel}
         blocked={
@@ -914,16 +1145,24 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
           ) : null
         }
         overlay={
-          late !== null || jump !== null || (!large && tray !== null) ? (
+          keepAliveCard !== null ||
+          takeBackCard !== null ||
+          late !== null ||
+          jump !== null ||
+          (!large && tray !== null) ? (
             <div className={styles.overlayStack}>
-              {late !== null ? (
+              {/* One card, by priority (#25 design 2.2): keep-alive, take-back, late-join, jump. */}
+              {keepAliveCard !== null ? (
+                keepAliveCard
+              ) : takeBackCard !== null ? (
+                takeBackCard
+              ) : late !== null ? (
                 <LateJoinPrompt
                   index={late.index}
                   deadline={late.deadline}
                   totalMs={env.sync.lateJoinSeconds * 1000}
                   onGo={followed.goToGroup}
                   onStay={followed.stayHere}
-                  onExpired={followed.lateExpired}
                 />
               ) : jump !== null ? (
                 <JumpPrompt
@@ -950,6 +1189,13 @@ function GroupReadingOn({ source, restoredPage = false, ...props }: GroupReading
           leaveError={leaveError}
           onFollow={followAnyway}
           onLeave={leaveGroup}
+        />
+      ) : null}
+      {flow.nowLeading !== null ? (
+        <NowLeadingDialog
+          state={flow.nowLeading}
+          onDismiss={dismissNowLeading}
+          returnFocus={() => document.getElementById(ARTICLE_ID)}
         />
       ) : null}
       {landing.state.status === 'ask' ? (

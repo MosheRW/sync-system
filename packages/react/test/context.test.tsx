@@ -37,6 +37,7 @@ const PUBLIC_HOOKS: Record<string, () => unknown> = {
   useGroupLock: () => api.useGroupLock(),
   useMemberRemoval: () => api.useMemberRemoval(),
   useKeepAlive: () => api.useKeepAlive(),
+  useHandoffMode: () => api.useHandoffMode(),
   useLeadership: () => api.useLeadership(),
   usePreview: () => api.usePreview(),
 };

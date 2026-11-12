@@ -2,10 +2,23 @@ import { type Browser, type Page, expect, test as base } from '@playwright/test'
 
 export const BOOK_PATH = '/?book=samples%2Fpride-and-prejudice-en';
 
-export function readerUrl(proxied = false): string {
-  const url = process.env[proxied ? 'E2E_PROXIED_READER' : 'E2E_READER'];
+/** The stacks global setup starts: `main` (30 s grace) and `lifecycle` (5 s, auto handoff). */
+export type Stack = 'main' | 'lifecycle';
+
+export function readerUrl(proxied = false, stack: Stack = 'main'): string {
+  const prefix = stack === 'lifecycle' ? 'E2E_LIFECYCLE_' : 'E2E_';
+  const url = process.env[`${prefix}${proxied ? 'PROXIED_READER' : 'READER'}`];
   if (url === undefined) throw new Error('global setup did not run');
   return url;
+}
+
+/** Drops the proxied reader's connection of `stack` for `ms` (a locked phone). */
+export async function cutLeader(ms: number, stack: Stack = 'main'): Promise<void> {
+  const control = process.env['E2E_PROXY_CONTROL'];
+  if (control === undefined) throw new Error('global setup did not run');
+  const path = stack === 'lifecycle' ? `/cut/lifecycle/${ms}` : `/cut/${ms}`;
+  const response = await fetch(`${control}${path}`, { method: 'POST' });
+  expect(response.ok).toBe(true);
 }
 
 /** Collects CSP violations and CSP console errors on a page (#24 AC55, R12). */

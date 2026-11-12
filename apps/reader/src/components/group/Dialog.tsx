@@ -25,6 +25,8 @@ export interface DialogProps {
    * (design 6.1).
    */
   viewKey?: string;
+  /** The element that describes the dialog (`aria-describedby`, #25 design 6.8). */
+  describedBy?: string;
   children?: ReactNode;
 }
 
@@ -46,6 +48,7 @@ export function Dialog({
   closeLabel,
   footer,
   viewKey,
+  describedBy,
   children,
 }: DialogProps) {
   const ref = useRef<HTMLDialogElement>(null);
@@ -99,6 +102,7 @@ export function Dialog({
       ref={ref}
       role={role === 'alertdialog' ? 'alertdialog' : undefined}
       aria-labelledby={titleId}
+      {...(describedBy !== undefined ? { 'aria-describedby': describedBy } : {})}
       aria-modal="true"
       className={variant === 'sheet' ? styles.sheet : styles.dialog}
       onKeyDown={(event) => {

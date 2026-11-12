@@ -51,8 +51,20 @@ function startProcess(
   });
 }
 
+/** The dev apps config (the committed public dev key). */
+export const DEV_CONFIG = join(repoRoot, 'config', 'apps.dev.json');
+
+/**
+ * The lifecycle stack's config (#25 13.2, R23): the same `dev-app` and dev
+ * key with a 5 s grace and `auto` handoff, nothing else relaxed.
+ */
+export const LIFECYCLE_CONFIG = join(readerRoot, 'e2e', 'fixtures', 'apps.lifecycle.json');
+
 /** The real sync server (built), loopback only, dev key, a random token secret per run (R11). */
-export async function startSyncServer(port: number): Promise<ChildProcess> {
+export async function startSyncServer(
+  port: number,
+  configPath: string = DEV_CONFIG,
+): Promise<ChildProcess> {
   return startProcess(
     join(repoRoot, 'apps', 'sync-server', 'dist', 'index.js'),
     {
@@ -60,7 +72,7 @@ export async function startSyncServer(port: number): Promise<ChildProcess> {
       PORT: String(port),
       HOST: '127.0.0.1',
       LOG_LEVEL: 'info',
-      SYNC_CONFIG_PATH: join(repoRoot, 'config', 'apps.dev.json'),
+      SYNC_CONFIG_PATH: configPath,
       TOKEN_SECRET: randomBytes(32).toString('base64'),
     },
     /server_listening|listening/,

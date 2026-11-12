@@ -162,6 +162,66 @@ describe('leadership changes (#13 AC23, AC24, RC12)', () => {
     client.close();
   });
 
+  it('a later leader.changed withdraws a take-back offer (Gap 1)', async () => {
+    const { client, socket } = await member();
+    socket.receive({ type: 'takeback.offered', groupId: GROUP_ID });
+    const seen: unknown[] = [];
+    client.on('leaderChanged', () => seen.push(client.getSnapshot().group));
+    socket.receive({ type: 'leader.changed', groupId: GROUP_ID, reason: 'take_back' });
+    expect(seen).toEqual([expect.objectContaining({ takeBackAvailable: false })]);
+    socket.receive({ type: 'takeback.offered', groupId: GROUP_ID });
+    expect(client.getSnapshot().group).toMatchObject({ takeBackAvailable: true });
+    client.close();
+  });
+
+  it('leader.changed without an offer changes nothing', async () => {
+    const { client, socket } = await member();
+    const before = client.getSnapshot();
+    socket.receive({ type: 'leader.changed', groupId: GROUP_ID, reason: 'superseded' });
+    expect(client.getSnapshot()).toBe(before);
+    client.close();
+  });
+
+  it('NOT_ALLOWED from the server withdraws the offer, RATE_LIMITED keeps it', async () => {
+    const { client, socket } = await member();
+    socket.receive({ type: 'takeback.offered', groupId: GROUP_ID });
+    const limited = client.takeBackLeadership();
+    socket.receive({
+      type: 'error',
+      reqId: socket.lastMessage().reqId,
+      code: 'RATE_LIMITED',
+      message: 'x',
+      details: { retryAfterMs: 1000 },
+    });
+    await expect(limited).rejects.toMatchObject({ code: 'RATE_LIMITED' });
+    expect(client.getSnapshot().group).toMatchObject({ takeBackAvailable: true });
+    const refused = client.takeBackLeadership();
+    socket.receive({
+      type: 'error',
+      reqId: socket.lastMessage().reqId,
+      code: 'NOT_ALLOWED',
+      message: 'x',
+    });
+    await expect(refused).rejects.toMatchObject({ code: 'NOT_ALLOWED' });
+    expect(client.getSnapshot().group).toMatchObject({ takeBackAvailable: false });
+    client.close();
+  });
+
+  it('a NOT_ALLOWED reply after leaving touches no other group (L6)', async () => {
+    const { client, socket } = await member();
+    socket.receive({ type: 'takeback.offered', groupId: GROUP_ID });
+    const refused = client.takeBackLeadership().catch((error: unknown) => error);
+    const takeReq = socket.lastMessage().reqId;
+    const leaving = client.leaveGroup();
+    socket.receive({ type: 'group.left', reqId: socket.lastMessage().reqId, groupId: GROUP_ID });
+    await leaving;
+    const after = client.getSnapshot();
+    socket.receive({ type: 'error', reqId: takeReq, code: 'NOT_ALLOWED', message: 'x' });
+    await refused;
+    expect(client.getSnapshot()).toBe(after);
+    client.close();
+  });
+
   it('leaderChanged carries no ID', async () => {
     const { client, socket } = await member();
     const changed: unknown[] = [];

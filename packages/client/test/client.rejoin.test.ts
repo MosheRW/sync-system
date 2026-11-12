@@ -228,6 +228,47 @@ describe('token rejoin after an unexpected drop (#5 AC35, AC36)', () => {
     client.close();
   });
 
+  it('a leader back as a member (lost the lead while away) keeps no recovery data (#25 R16)', async () => {
+    const { client, socket, storage, token } = await leader();
+    const entries = () =>
+      (JSON.parse(storage.getItem(KEY) as string) as { entries: Array<Record<string, unknown>> })
+        .entries;
+    expect(entries()).toHaveLength(1);
+    expect(entries()[0]).toMatchObject({ token });
+    expect(entries()[0]).toHaveProperty('recovery.joinCodes', TEST_CODES.blob);
+    const rejoined: ResumedGroup[] = [];
+    client.on('rejoined', (e) => rejoined.push(e));
+    const next = await dropAndReconnect(client, socket);
+    const resume = next.lastMessage();
+    expect(resume).toMatchObject({ type: 'group.resume', token, joinCodes: TEST_CODES.blob });
+    const fresh = fakeToken({ gid: GROUP_ID, role: 'member' });
+    next.receive({
+      type: 'group.joined',
+      displayName: 'Guest 1',
+      generated: true,
+      locked: false,
+      reqId: resume.reqId,
+      groupId: GROUP_ID,
+      participantId: 'leader-pid',
+      role: 'member',
+      metadata: METADATA,
+      token: fresh,
+      leaderOnline: true,
+      hasPosition: true,
+      position: { page: 2 },
+    });
+    expect(client.getSnapshot().group).toMatchObject({ status: 'active', role: 'member' });
+    expect(rejoined).toEqual([expect.objectContaining({ role: 'member', status: 'active' })]);
+    await settle();
+    // Only the member token: the recovery data (codes blob, block list,
+    // metadata) is gone from storage.
+    expect(entries()).toHaveLength(1);
+    expect(entries()[0]).toMatchObject({ token: fresh });
+    expect(entries()[0]).not.toHaveProperty('recovery');
+    expect(storage.getItem(KEY) as string).not.toContain(TEST_CODES.blob);
+    client.close();
+  });
+
   it('reads the block list from storage, not a stale cache (L5)', async () => {
     const { client, socket, storage, token } = await leader();
     // Another tab blocked someone meanwhile.

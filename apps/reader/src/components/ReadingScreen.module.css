@@ -72,6 +72,15 @@
   outline: var(--focus-ring) solid var(--color-focus);
 }
 
+/* The banner slot (#25 design 2.1): sticky under the header, in the reading
+   column on every width. */
+.banner {
+  position: sticky;
+  inset-block-start: var(--header-block-size, 0px);
+  z-index: 1;
+  background: var(--color-surface);
+}
+
 .overlay:empty {
   display: none;
 }

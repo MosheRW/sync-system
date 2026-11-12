@@ -26,7 +26,12 @@ export function indicatorAnnouncement(
   prev: IndicatorKind | null,
   next: IndicatorKind,
   i18n: I18n,
-  options: { graceMs: number | null; leadingAnnounced: boolean },
+  options: {
+    graceMs: number | null;
+    leadingAnnounced: boolean;
+    /** The group's page (0-based) for "Preview on" (#25 F15.2). */
+    groupIndex?: number | null;
+  },
 ): string | null {
   const { t } = i18n;
   if (prev === next) return null;
@@ -39,7 +44,12 @@ export function indicatorAnnouncement(
       return t.announceNotFollowing;
     case 'leading':
       if (prev === 'reconnecting') return t.announceBack;
+      // Leaving preview: its exit announcement covers it (#25 design 6.11).
+      if (prev === 'previewing') return null;
       return options.leadingAnnounced ? null : t.announceLeading;
+    case 'previewing':
+      if (prev === 'reconnecting') return t.announceBack;
+      return i18n.format(t.announcePreviewOn, { n: (options.groupIndex ?? 0) + 1 });
     case 'reconnecting':
       // A reload shows Reconnecting… at once; only a lost connection is news.
       return prev === null || prev === 'group' || prev === 'joining'

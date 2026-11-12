@@ -80,6 +80,7 @@ export type IndicatorKind =
   | 'following'
   | 'not-following'
   | 'leading'
+  | 'previewing'
   | 'reconnecting'
   | 'leader-offline'
   | 'leader-grace'
@@ -96,6 +97,8 @@ export function indicatorFor(
   phase: Phase,
   client: SyncIndicator,
   mode: FollowMode,
+  /** The leader previews pages (#25 AC40, design 6.11). */
+  previewing = false,
 ): IndicatorKind | null {
   switch (phase) {
     case 'off':
@@ -115,7 +118,8 @@ export function indicatorFor(
     case 'disconnected':
       return 'disconnected';
     case 'leader':
-      return client === 'reconnecting' ? 'reconnecting' : 'leading';
+      if (client === 'reconnecting') return 'reconnecting';
+      return previewing ? 'previewing' : 'leading';
     case 'member':
       switch (client) {
         case 'following':

@@ -48,11 +48,19 @@ export interface WindowLike {
 /**
  * A `#t=` link pasted into a tab that is already open changes only the
  * fragment (`hashchange`, no reload): strip it the same way and drop the
- * ticket (L2). Joining always starts from a page load.
+ * ticket (L2). Joining always starts from a page load. Then, only for a
+ * stripped `#t=`, `onIgnored()` is called with **no arguments** (#25 AC57,
+ * R20): the ticket never leaves this function; a throwing listener can't
+ * undo the strip.
  */
-export function stripLaterTickets(win: WindowLike): () => void {
+export function stripLaterTickets(win: WindowLike, onIgnored?: () => void): () => void {
   const onChange = () => {
-    takeQrTicket(win.location, win.history);
+    if (takeQrTicket(win.location, win.history) === null) return;
+    try {
+      onIgnored?.();
+    } catch {
+      // The notice is best effort; the strip already happened.
+    }
   };
   win.addEventListener('hashchange', onChange);
   return () => win.removeEventListener('hashchange', onChange);

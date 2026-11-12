@@ -302,6 +302,7 @@ return groups
 | `useGroupLock()`     | `{ locked, lock, unlock }`.                                                                              |
 | `useMemberRemoval()` | `{ blockList, remove, addToBlockList }` (`addToBlockList` uses the active group).                        |
 | `useKeepAlive()`     | `{ prompt, answer }`: the keep-alive prompt (`deadlineAt`) and its answer.                               |
+| `useHandoffMode()`   | The handoff mode (`'auto'` or `'frozen'`) of the group this client leads, else `null`.                   |
 
 Leader-only data (codes, requests, roster, block list, recovery state,
 keep-alive prompt, QR ticket) is shown only while this client leads the
