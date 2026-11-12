@@ -1,6 +1,7 @@
 import { type LeadershipReason, SyncClientError } from '@sync-system/react';
 import { act, fireEvent, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { POINTER_KEY } from './helpers/app.js';
 import { FakeSyncClient, GROUP_ID } from './helpers/fake-sync-client.js';
 import {
   CODES,
@@ -212,7 +213,19 @@ describe('lead lost (#25 AC47, design F20)', () => {
   });
 
   it('lost while away (Q-A1): back as a member, the lostDisconnect banner and the take-back card', async () => {
-    const client = await leader();
+    // As leader(), keeping the storage the app was given.
+    const {
+      client,
+      view: { storage },
+    } = await member();
+    // The pointer a joined tab has (written on join, which the fake skips).
+    storage.setItem(
+      POINTER_KEY,
+      JSON.stringify({ v: 1, groupId: GROUP_ID, mode: 'following', ack: null, qrShown: false }),
+    );
+    becomeLeader(client, 'handoff_disconnect');
+    fireEvent.click(screen.getByRole('button', { name: 'Start leading' }));
+    act(() => client.setRoster([rosterEntry('p-self', { role: 'leader' }), rosterEntry('a')]));
     act(() => {
       client.patchGroup({ role: 'member', takeBackAvailable: false });
       client.emit('rejoined', {
@@ -233,8 +246,13 @@ describe('lead lost (#25 AC47, design F20)', () => {
       client.emit('takeBackOffered', { groupId: GROUP_ID });
     });
     expect(takeBack()).not.toBeNull();
-    const stored = JSON.stringify(Object.entries(sessionStorage));
+    // The reader's own tab storage (the group pointer) never holds the codes
+    // (#25 R16); the member token without recovery data is the core
+    // client's part, covered in packages/client/test/client.rejoin.test.ts.
+    expect(JSON.parse(storage.getItem(POINTER_KEY)!)).toMatchObject({ groupId: GROUP_ID });
+    const stored = [...storage.items.values()].join();
     expect(stored).not.toContain(CODES.groupCode);
+    expect(stored).not.toContain(CODES.doorCode);
   });
 });
 
