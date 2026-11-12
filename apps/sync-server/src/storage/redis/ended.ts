@@ -1,3 +1,4 @@
+import { ALPHA_CODE_PATTERN, GROUP_CODE_PATTERN } from '@sync-system/protocol';
 import type { EndedGroupsStore, EvictionLogger } from '../../groups/ended-groups.js';
 import { endedRef } from '../../groups/ended-groups.js';
 import { TIMER_KINDS } from '../../groups/group-timers.js';
@@ -84,12 +85,23 @@ export class RedisEndedGroups implements EndedGroupsStore {
   /**
    * Ends a group whose stored document is invalid (#35 security C1, user
    * decision in QA round 1): its keys and timers go and it is remembered as
-   * ended until `deadline`, so no token can recreate it. One commit.
+   * ended until `deadline`, so no token can recreate it. One commit. The
+   * join codes the document still names are freed too (#39, security C17):
+   * each one that matches its pattern is deleted only while it still points
+   * at this group; anything unreadable expires with its TTL.
    */
   async endInvalid(namespace: string, groupId: string, deadline: number): Promise<void> {
     const { keys } = this.ctx;
+    const raw = await this.ctx.link.send(['GET', keys.group(namespace, groupId)]);
     const plan = this.work.plan();
     this.addTo(plan, namespace, groupId, deadline);
+    const codes = lenientCodes(raw);
+    if (codes.groupCode !== undefined) {
+      plan.deleq(keys.groupCode(namespace, codes.groupCode), groupId);
+    }
+    if (codes.alphaCode !== undefined) {
+      plan.deleq(keys.alphaCode(namespace, codes.alphaCode), groupId);
+    }
     plan.del(keys.group(namespace, groupId));
     plan.del(keys.position(namespace, groupId));
     plan.zrem(keys.live(), keys.liveMember(namespace, groupId));
@@ -175,4 +187,26 @@ function parseEntryDeadline(raw: unknown): number | undefined {
   }
   if (g !== undefined && (typeof g !== 'number' || !Number.isFinite(g))) return undefined;
   return d;
+}
+
+/**
+ * The join codes an invalid document still names (#39, security C17): read
+ * leniently (any part may be missing or malformed), and only values that
+ * match their pattern, so nothing else can reach a key name.
+ */
+export function lenientCodes(raw: unknown): { groupCode?: string; alphaCode?: string } {
+  if (typeof raw !== 'string') return {};
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    return {};
+  }
+  const codes = (value as { record?: { codes?: unknown } } | null)?.record?.codes;
+  if (typeof codes !== 'object' || codes === null) return {};
+  const { groupCode, alphaCode } = codes as { groupCode?: unknown; alphaCode?: unknown };
+  return {
+    ...(typeof groupCode === 'string' && GROUP_CODE_PATTERN.test(groupCode) ? { groupCode } : {}),
+    ...(typeof alphaCode === 'string' && ALPHA_CODE_PATTERN.test(alphaCode) ? { alphaCode } : {}),
+  };
 }

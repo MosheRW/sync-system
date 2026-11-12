@@ -1,13 +1,25 @@
 # State: #35 feat: redis storage with restart survival and several instances (PRD item 9a)
 - Path: full
-- Phase: architecture (PR 2)
+- Phase: implementation (PR 2)
 - Branch: feat/35-redis-multi-instance
-- PR: #40 (PR 2, draft, `Closes #35`, `Refs #39`; PR 1 #38 merged 2026-11-12 as 46f4af3)
-- Plan approved by user: no (PR 2 plan revision: architecture.md section 12, Gate 2 questions Q-B1-Q-B9 in 12.22; PR 1 plan approved 2026-11-12)
+- PR: #40 (PR 2, draft, `Closes #35`, `Closes #39`; PR 1 #38 merged 2026-11-12 as 46f4af3)
+- Plan approved by user: yes (PR 2 Gate 2, 2026-11-12, "Approve all"; PR 1 plan approved 2026-11-12)
+- PR 2 Gate 2 decisions (2026-11-12, all recommendations accepted):
+  - Q-B1 yes: follow-up #39 folded in as chunk 1 (C17); PR #40 body `Closes #39`.
+  - Q-B2 yes: registry in its own key `P:a`, PUBLISH inside COMMIT, lease-wait timeout closes only the requester; no new ADR (recorded in docs/conventions.md); ADRs 0011/0012 stay Accepted.
+  - Q-B3 accept: an approval racing the joiner's disconnect across instances: the leader sees `admitted`, the member then leaves by the normal rules.
+  - Q-B4 yes: 5 s lease wait -> 1001 to the requester only.
+  - Q-B5 yes: fixed constants (lease 10/3 s, wait 5 s, hold cap 30 s; liveness 15 s, heartbeat 5 s, self-fence 10 s, sweep 5 s), not env. Accepted behaviour change: a Redis outage > 10 s closes group sessions with 1001 even with one instance (documented).
+  - Q-B6 yes: join-attempt multiplication documented in the README; follow-up #41 (global Redis-backed join limiter) opened and referenced.
+  - Q-B7 yes: upgrading from PR 1 = stop every instance; mixed versions unsupported (README).
+  - Q-B8 yes: `nginxinc/nginx-unprivileged` alpine, digest-pinned.
+  - Q-B9 yes: configuration consistency documented only.
+  - Q-B10 yes (orchestrator-raised from security's AC17 note): a per-group monotonic commit sequence so a receiver ignores effects older than the last commit it applied for that group (no 6-then-5); with a test.
+  - Security required controls C1-C10 and C11-C17 are mandatory; F16-F26 read.
 - Security-sensitive: yes (PR 2: architecture 12.19)
 - Security plan review (PR 2, round 1, 2026-11-12): PASS, security.md "PR 2" section 7. 0 critical, 0 high, 6 medium (F16-F20, F22 advisory), 5 low (F21, F23-F26). P2-3/P2-4/P2-6/P2-7/P2-8 settled. Required controls C11-C17 join the PR 2 plan (C1-C10 stay mandatory). Advisories for Gate 2: F22-F26. Security view on Q-B1-Q-B9: all recommendations acceptable (7.5).
 - Review rounds: 0 (for PR 2; PR 1 had 2)
-- Last updated by: security
+- Last updated by: engineer
 - Issue #35 stays open after PR 1 (`Refs #35`); board card moved back to In Progress.
 
 ## PR 1 (#38, merged 2026-11-12)
@@ -81,6 +93,7 @@
 - 9a Gate 2: Q-A1 two PRs, Q-A2 TTL slack 5 s, Q-A3 restart grace for running pauses, Q-A4 PR 1 body Refs vs Closes, Q-A5 approvals in PR 2, Q-A6 eviction policy warning; ADRs 0010-0014 (architecture.md section 18).
 - 9b (#36): Q20 for its own Gate 1. 9c (#37): Q17, Q18 for its own Gate 1 (Q16, Q19 decided). See spec.md.
 ## Deviations from plan
+- PR 2 (Gate 2 Q-B10): a per-group commit sequence is added to the plan (not in architecture 12): every group commit increments it, it travels with each published effect and each local flush, and a receiver drops effects whose sequence is older than the last one it applied for that group.
 - PR 2 plan (architecture 12.1) refines the section 12 outline: the attachment registry is its own key `P:a:<ns>:<gid>` (not in the document), remote effects are PUBLISHed inside the COMMIT script, the lease-wait timeout closes only the requester (`StorageBusyError`), pending approvals are one key per request plus an index (per-request expiry on Redis 7.2), parking uses a set of instance IDs `P:pk`. Gate 2 Q-B2.
 - Gate 2 additions to the section 17 chunks: F10 (position key), F12 (epoch expiry), F13 (pruning), F14 (README ACL advice), F15 (CI Redis via `docker run`) are folded into the matching chunks (8, 11, 10/11, 16 and 15).
 - F10: a new key `P:p:<ns>:<gid>` holds the position and the last leader activity; the document is rewritten only when it changes (fixed field order). Measured at MAX_GROUP_SIZE_CEILING 100 with the longest names, a 256-ID block list and 4 KiB metadata: document about 44.6 KB, position key about 4.1 KB at maxMessageBytes 4096. Every task still reads the document once.
