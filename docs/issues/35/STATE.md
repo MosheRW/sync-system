@@ -27,7 +27,28 @@
 - Delivery: two PRs on this issue proposed (Gate 2 Q-A1): PR 1 single-instance Redis + restart survival (this branch), PR 2 several instances (branch feat/35-redis-multi-instance after PR 1 merges)
 - Plan: docs/issues/35/architecture.md; ADRs 0010-0014 Proposed
 - Security plan review: docs/issues/35/security.md (PASS, required controls C1-C10 join the plan)
-- Last updated by: qa
+- Last updated by: engineer
+## Fix round 1 (engineer, 2026-11-12)
+- Input: QA round 1 FAIL (PR #38 comment, findings 1-7) and security code round 1 PASS (M1, L1-L3). User decisions: an invalid stored group document must not block startup (that group ends, fails closed); fix all security advisories now.
+- Commits:
+  - 5688b02 fix(server): resolve protocol sources in the lazy-load test without dist (QA 1)
+  - 0d867ef fix(server): report a redis failure while starting and exit (QA 2, AC4): `StorageStartError` from `storage.start`; `Startup error: Redis connection failed (REDIS_URL)`, or `Redis authentication failed (REDIS_URL)` for NOPERM/WRONGPASS/NOAUTH as at connect; server and Redis link closed, exit 1. Also closes the server on a listen error.
+  - b96576f fix(storage): end a group with an invalid stored document at startup (QA 2, user decision): the sweep ends only that group in one commit (keys, timers, live member gone; ended entry until now + max session + slack); `startup_sweep` logs `invalid` count.
+  - 069374e test(server): wait for redis to drop the closed startup link
+  - bf3c85c fix(storage): abort a recreation that never read the epoch (L2); a recreation outside a group task reads the epoch itself
+  - c513cbc test(storage): cover the ended and epoch recreation aborts (QA 5, M1)
+  - c8fe83e test(storage): cover invalid epoch, ended, closure and code values (QA 3, M1)
+  - fcb5801 test(storage): cover redis key part checks and member parsing (QA 4, C6)
+  - e647b89 test(server): cover keep-alive, frozen end and door pause across a restart (QA 6, AC12)
+  - 6a7fa57 fix(server): roll back local attachments when a commit fails (L1)
+  - 92b14bf test(server): remove the tls test key directory after use (L3)
+  - 0d3b379 docs(server): say an invalid stored group ends at startup
+  - 5180d37, ed7bdb4 test(server): explicit timeouts for the two process-spawning tests (tsx loads sources, > 5 s under the full suite on Windows)
+  - PR #38 body updated (QA 7): ADRs Accepted, all 16 chunks ticked, fix round listed.
+- Mutation checks (each reverted): invalid epoch / ended entry / closure / code value made to fail open, C7 `ended` / `epoch` checks and the create `SETNX` removed, the L2 guard reverted, the refresh rollback removed, key part checks removed, startup `runDue` removed and timer consumption disabled: each fails at least one new test. An invalid ended entry is caught twice at service level (classification and the C7 commit check), so the service tests need both mutated; the unit tests catch `has` alone.
+- Checks: fresh clone of ed7bdb4 with no `dist/` anywhere: `pnpm install --frozen-lockfile`, `pnpm audit --audit-level=high` (no known vulnerabilities), `pnpm lint`, `pnpm typecheck`, `CI=true SYNC_TEST_REDIS_URL=… pnpm test` against redis:7.2.17-alpine (protocol 207, sync-server 1514, client 574, react 227, reader 1010), sync-server with `SYNC_TEST_STORE=redis` 1514/1514, `pnpm build`: all green.
+- Known, not fixed (QA note, optional): when the disconnect replay queue overflows (cap MAX_CONNECTIONS, oldest group dropped), that group's stored leader stays online until it resumes or the next restart's sweep. Hard to reach at the cap; left as documented.
+- Not tested at integration level: the L1 rollback after a C7 conflict (needs a write between classification and commit inside one task); the same rollback path is covered by the reply-error tests.
 ## Model log
 - pm groom: opus (orchestrator: broad scope and split proposal) → DONE
 - pm update-spec (Gate 1 decisions): opus (orchestrator: split restructure and new issues) → DONE
@@ -36,6 +57,7 @@
 - security plan: opus (rule) → PASS (0 critical, 0 high, 9 medium, 6 low; required controls C1-C10 in docs/issues/35/security.md)
 - engineer implement: opus (Implementer model line; security-sensitive) → DONE
 - qa validate: opus (NEXT_MODEL) → FAIL
+- engineer fix (round 1): opus (rule) → DONE
 ## Open questions
 - 9a Gate 2: Q-A1 two PRs, Q-A2 TTL slack 5 s, Q-A3 restart grace for running pauses, Q-A4 PR 1 body Refs vs Closes, Q-A5 approvals in PR 2, Q-A6 eviction policy warning; ADRs 0010-0014 (architecture.md section 18).
 - 9b (#36): Q20 for its own Gate 1. 9c (#37): Q17, Q18 for its own Gate 1 (Q16, Q19 decided). See spec.md.
