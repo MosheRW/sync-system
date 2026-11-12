@@ -261,6 +261,12 @@ export const GROUP_LEASE_MAX_HOLD_MS = 30_000;
 export const GROUP_LOCK_WAIT_MS = 5_000;
 
 /**
+ * How often an instance looks for stopped or dead instances and sweeps
+ * their attachments (#35 architecture 12.8), with up to 1 s of jitter.
+ */
+export const ORPHAN_SWEEP_MS = 5_000;
+
+/**
  * Largest pub/sub message between instances (#35 architecture 12.7): a
  * received one over it is dropped before parsing; a commit splits its
  * effects for one instance into several ordered messages under it.

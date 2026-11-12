@@ -1,8 +1,7 @@
 import type { AppConfig } from '../../apps/app-registry.js';
-import { END_TTL_SLACK_MS } from '../../limits/constants.js';
+import { END_TTL_SLACK_MS, ORPHAN_SWEEP_MS } from '../../limits/constants.js';
 import { type Logger, safeErr } from '../../logging/logger.js';
 import type { Scheduler } from '../../time/scheduler.js';
-import { StorageInvalidError } from '../errors.js';
 import { type Storage, memoryStorage } from '../storage.js';
 import type { RedisLink } from './connect.js';
 import { RedisCodeIndex } from './codes.js';
@@ -15,7 +14,7 @@ import { RedisEpoch } from './epoch.js';
 import { INSTANCE_TIMINGS, type InstanceTimings, RedisInstance } from './instance.js';
 import { LEASE_TIMINGS, type LeaseTimings, RedisLeaseSource } from './lease-lock.js';
 import { RedisPubSub } from './pubsub.js';
-import { parseMember } from './keys.js';
+import { OrphanSweeper } from './sweeper.js';
 import { type RedisContext, RedisWorkSource } from './unit-of-work.js';
 
 const MINUTE_MS = 60_000;
@@ -35,12 +34,16 @@ export interface RedisStorageOptions {
   monotonic?: () => number;
 }
 
-/** Every several-instance timing (#35 architecture 12.4, 12.5; Gate 2 Q-B5). */
-export type ClusterTimings = InstanceTimings & LeaseTimings;
+/** Every several-instance timing (#35 architecture 12.4, 12.5, 12.8; Gate 2 Q-B5). */
+export type ClusterTimings = InstanceTimings &
+  LeaseTimings & {
+    /** How often the orphan sweep runs. */
+    sweepMs: number;
+  };
 
 /** The fixed timings, merged with test overrides. */
 export function clusterTimings(overrides: Partial<ClusterTimings> = {}): ClusterTimings {
-  return { ...INSTANCE_TIMINGS, ...LEASE_TIMINGS, ...overrides };
+  return { ...INSTANCE_TIMINGS, ...LEASE_TIMINGS, sweepMs: ORPHAN_SWEEP_MS, ...overrides };
 }
 
 /** The parts every Redis component shares. */
@@ -90,6 +93,7 @@ export function redisStorage(options: RedisStorageOptions): Storage {
   const timers = new RedisTimerBackend(ctx, work, options.scheduler);
   const epoch = new RedisEpoch(ctx, work);
   const ended = new RedisEndedGroups(ctx, work, options.logger, options.endedGroupsCap);
+  const sweeper = new OrphanSweeper(ctx, instance, ended, timings.sweepMs);
   return {
     ...memory,
     kind: 'redis',
@@ -116,6 +120,7 @@ export function redisStorage(options: RedisStorageOptions): Storage {
         selfId: () => work.current()?.instanceId ?? ctx.instanceId?.(),
         registry: (namespace, groupId) => work.current()?.registry(namespace, groupId),
         looksLive: (id) => instance.looksLive(id),
+        liveOf: (ids) => instance.liveOf(ids),
         send(target, effect) {
           const running = work.current();
           if (running !== undefined) {
@@ -151,25 +156,20 @@ export function redisStorage(options: RedisStorageOptions): Storage {
       probeTimer.unref();
       // Deadlines that passed while the server was down take effect once (AC12).
       await timers.runDue();
-      // Then every live group's attachments from before the stop (AC11).
-      const live = await liveGroups(ctx);
-      let invalid = 0;
-      for (const { namespace, groupId } of live) {
-        try {
-          await sweep(namespace, groupId);
-        } catch (err) {
-          if (!(err instanceof StorageInvalidError)) throw err;
-          // One invalid document never blocks the start: that group ends
-          // and stays ended (fails closed, security C1).
-          invalid += 1;
-          await ended.endInvalid(namespace, groupId, ctx.expiryOf(namespace, ctx.now()));
-        }
-      }
+      // Then the attachments of stopped instances (this one before its
+      // restart included), and the groups no live instance attends, with
+      // the restart grace (AC11, Q-A3). One invalid document never blocks
+      // the start: that group ends and stays ended (fails closed, C1).
+      const seen = new Set<string>();
+      const counts = { invalid: 0, disconnected: 0 };
+      await sweeper.sweepDead(sweep, true, seen, counts);
+      await sweeper.legacyPass(sweep, seen, counts);
       options.logger.info(
-        { event: 'startup_sweep', groups: live.length, invalid },
+        { event: 'startup_sweep', groups: seen.size, invalid: counts.invalid },
         'restart sweep done',
       );
       timers.startPolling();
+      sweeper.start(sweep);
     },
     groups: new RedisGroupStore(ctx, work),
     codes: new RedisCodeIndex(ctx, work),
@@ -185,36 +185,11 @@ export function redisStorage(options: RedisStorageOptions): Storage {
           : options.link.state,
     }),
     async close() {
+      await sweeper.stop();
       clearInterval(probeTimer);
       await pubsub.close();
       await instance.stop();
       await options.link.close();
     },
   };
-}
-
-/** Live groups, by end bound from now (members past it were pruned, F13). */
-async function liveGroups(
-  ctx: RedisContext,
-): Promise<Array<{ namespace: string; groupId: string }>> {
-  const found: Array<{ namespace: string; groupId: string }> = [];
-  const page = 100;
-  for (let offset = 0; ; offset += page) {
-    const reply = await ctx.link.send([
-      'ZRANGE',
-      ctx.keys.live(),
-      String(ctx.now()),
-      '+inf',
-      'BYSCORE',
-      'LIMIT',
-      String(offset),
-      String(page),
-    ]);
-    const members = Array.isArray(reply) ? (reply as unknown[]).map(String) : [];
-    for (const member of members) {
-      const parsed = parseMember(member);
-      if (parsed !== undefined && parsed.kind === undefined) found.push(parsed);
-    }
-    if (members.length < page) return found;
-  }
 }

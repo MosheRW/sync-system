@@ -329,7 +329,9 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
     storage: () => storage.status(),
     async listen(listenPort, host) {
       try {
-        await storage.start((namespace, groupId) => groups.sweepAfterRestart(namespace, groupId));
+        await storage.start((namespace, groupId, restart) =>
+          groups.sweepGroup(namespace, groupId, restart),
+        );
       } catch (err) {
         throw new StorageStartError(err);
       }

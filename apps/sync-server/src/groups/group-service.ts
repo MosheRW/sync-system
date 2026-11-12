@@ -659,23 +659,82 @@ export class GroupService implements GroupActions {
     }
   }
 
-  /** Disconnects every participant with no open local session. Under the group lock. */
-  private async reconcile(app: AppConfig, groupId: string): Promise<void> {
+  /**
+   * The connected participants of the group nobody holds any more (#35
+   * architecture 12.8, security C12, C13). In memory: no open local
+   * session. With several instances, from the registry read under the
+   * lease: no entry, an entry naming an instance whose liveness key is gone
+   * (read from Redis now, never the cache), or an entry naming this
+   * instance with no matching open local session.
+   */
+  private async orphans(record: GroupRecord): Promise<Set<string>> {
+    const namespace = record.appNamespace;
+    const groupId = record.id;
+    const connected = record.participantIds.filter((pid) => pid !== record.leaderId);
+    if (record.leaderOnline) connected.push(record.leaderId);
+    const localGone = (pid: string) => {
+      const owner = this.recipient(namespace, groupId, pid);
+      return !(owner instanceof LocalRecipient && owner.isOpen());
+    };
+    const cluster = this.deps.cluster;
+    if (cluster === undefined) return new Set(connected.filter(localGone));
+    const entries = cluster.entries(namespace, groupId);
+    const self = cluster.host.selfId();
+    const others = connected
+      .map((pid) => entries.get(pid)?.i)
+      .filter((id): id is string => id !== undefined && id !== self);
+    const live = await cluster.host.liveOf(others);
+    return new Set(
+      connected.filter((pid) => {
+        const entry = entries.get(pid);
+        if (entry === undefined) return true;
+        return entry.i === self ? localGone(pid) : !live.has(entry.i);
+      }),
+    );
+  }
+
+  /**
+   * Disconnects every participant nobody holds any more (`orphans`), with
+   * the usual rules: a leader goes offline with the grace from now (AC21),
+   * members leave and are marked disconnected, an emptied group is held.
+   * After a restart (`restart`), a pause or hold of a group nobody is
+   * attached to on a live instance ends no earlier than
+   * `disconnectGraceSeconds` from now (#35 Gate 2 Q-A3, AC11). Under the
+   * group lock.
+   */
+  private async reconcile(app: AppConfig, groupId: string, restart = false): Promise<number> {
     const namespace = app.namespace;
-    const record = await this.deps.store.get(namespace, groupId);
-    if (record === undefined) return;
-    const open = (pid: string) => isParticipantConnected(this.recipient(namespace, groupId, pid));
+    let record = await this.deps.store.get(namespace, groupId);
+    if (record === undefined) return 0;
+    const gone = await this.orphans(record);
+    const connected = record.participantIds.filter((pid) => pid !== record!.leaderId);
+    if (record.leaderOnline) connected.push(record.leaderId);
+    const attended = connected.some((pid) => !gone.has(pid));
+    if (restart && !attended) {
+      const floor = this.now() + app.disconnectGraceSeconds * 1000;
+      const running = pauseDeadline(record.pause);
+      if (record.pause !== undefined && running !== undefined && running < floor) {
+        const pause: GroupPause =
+          record.pause.graceEndsAt !== undefined
+            ? { ...record.pause, graceEndsAt: floor }
+            : { ...record.pause, holdEndsAt: floor };
+        record = (await this.deps.store.patch(namespace, groupId, { pause })) ?? record;
+        this.lifecycle.armPauseEnd(app, record, floor);
+      }
+    }
     for (const pid of record.participantIds) {
-      if (pid === record.leaderId || open(pid)) continue;
+      if (pid === record.leaderId || !gone.has(pid)) continue;
       const result = await this.deps.store.removeParticipant(namespace, groupId, pid);
       const current = await this.deps.store.get(namespace, groupId);
       if (current !== undefined) await this.leaveRosterOnDisconnect(app, current, pid);
       if (result && result.connected === 0) await this.emptied(app, groupId);
     }
     const current = await this.deps.store.get(namespace, groupId);
-    if (current !== undefined && current.leaderOnline && !open(current.leaderId)) {
-      await this.leaderOffline(app, groupId);
-    }
+    if (current === undefined) return gone.size;
+    if (current.leaderOnline && gone.has(current.leaderId)) await this.leaderOffline(app, groupId);
+    else if (restart && !attended && connectedCount(current) === 0)
+      await this.emptied(app, groupId);
+    return gone.size;
   }
 
   /** The store's epoch: the Redis epoch, or this process's start (#35 4.5). */
@@ -2367,41 +2426,18 @@ export class GroupService implements GroupActions {
   }
 
   /**
-   * After a restart with Redis (#35 architecture 1.2 item 6, 7; AC11; Gate 2
-   * Q-A3), under the group lock: every participant the previous process had
-   * attached is disconnected now. A pause or hold already running ends no
-   * earlier than `disconnectGraceSeconds` from now; a leader online at the
-   * stop gets the normal grace from now; members leave and are marked
-   * disconnected; a group left empty is held. Nobody is connected yet, so
-   * nobody is told anything.
+   * The orphan sweep of one group (#35 architecture 12.8, AC21, AC11), under
+   * the group lease: every connected participant nobody holds any more (its
+   * instance stopped or died, or a PR 1 group with no registry) is
+   * disconnected with the usual rules; `restart` adds the Q-A3 floor.
+   * Nobody whose session is gone is told anything; participants still
+   * attached elsewhere get the usual `leader.offline` and roster frames.
+   * Returns how many participants it disconnected.
    */
-  async sweepAfterRestart(namespace: string, groupId: string): Promise<void> {
+  async sweepGroup(namespace: string, groupId: string, restart: boolean): Promise<number> {
     const app = this.deps.appOf(namespace);
-    if (app === undefined) return;
-    await this.lock.run(namespace, groupId, async () => {
-      let record = await this.deps.store.get(namespace, groupId);
-      if (record === undefined) return;
-      const floor = this.now() + app.disconnectGraceSeconds * 1000;
-      const running = pauseDeadline(record.pause);
-      if (record.pause !== undefined && running !== undefined && running < floor) {
-        const pause: GroupPause =
-          record.pause.graceEndsAt !== undefined
-            ? { ...record.pause, graceEndsAt: floor }
-            : { ...record.pause, holdEndsAt: floor };
-        record = (await this.deps.store.patch(namespace, groupId, { pause })) ?? record;
-        this.lifecycle.armPauseEnd(app, record, floor);
-      }
-      for (const pid of record.participantIds) {
-        if (pid === record.leaderId) continue;
-        await this.deps.store.removeParticipant(namespace, groupId, pid);
-        const current = await this.deps.store.get(namespace, groupId);
-        if (current !== undefined) await this.leaveRosterOnDisconnect(app, current, pid);
-      }
-      const current = await this.deps.store.get(namespace, groupId);
-      if (current === undefined) return;
-      if (current.leaderOnline) await this.leaderOffline(app, groupId);
-      else if (connectedCount(current) === 0) await this.emptied(app, groupId);
-    });
+    if (app === undefined) return 0;
+    return this.lock.run(namespace, groupId, () => this.reconcile(app, groupId, restart));
   }
 
   /** True when an open session owns any membership of the group (#13 RC19). */

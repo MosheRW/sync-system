@@ -20,6 +20,7 @@ export const FAST_TIMINGS: Partial<ClusterTimings> = {
   renewMs: 300,
   maxHoldMs: 3_000,
   waitMs: 1_000,
+  sweepMs: 300,
 };
 
 /** One instance of a test cluster, with its own TCP proxy to Redis (to partition it). */

@@ -62,11 +62,15 @@ export interface Storage {
   /** The group leases across instances (#35 architecture 12.4); memory has none. */
   readonly leases?: LeaseSource;
   /**
-   * Runs before the server listens (Redis, #35 architecture 7): the epoch,
-   * the timers that came due while the server was down (AC12), `sweep` for
-   * every live group (the restart grace, AC11), then the timer poll.
+   * Runs before the server listens (Redis, #35 architecture 7, 12.8): the
+   * epoch, this instance's registration and channel, the timers that came
+   * due while the server was down (AC12), `sweep` (with `restart`) for the
+   * groups of stopped instances and of PR 1 (the restart grace, AC11), then
+   * the timer poll and, from then on, the periodic orphan sweep.
    */
-  start(sweep: (namespace: string, groupId: string) => Promise<void>): Promise<void>;
+  start(
+    sweep: (namespace: string, groupId: string, restart: boolean) => Promise<number>,
+  ): Promise<void>;
   /** Calls `listener` each time Redis is reachable again (#35 architecture 8). */
   onRecovered(listener: () => Promise<void>): void;
   /** Releases connections (Redis). Stored data stays. */

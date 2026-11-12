@@ -1,4 +1,4 @@
-import type { AttachmentRegistry } from '../storage/redis/attachments.js';
+import type { Attachment, AttachmentRegistry } from '../storage/redis/attachments.js';
 import type { Notifier } from './notifier.js';
 import type { RemoteEffect } from './remote-effects.js';
 import { type Session, membershipKey } from './session.js';
@@ -13,6 +13,8 @@ export interface ClusterHost {
   looksLive(id: string): boolean;
   /** Sends `effect` to `instance`: in the running task's commit, else at once. */
   send(instance: string, effect: RemoteEffect): void;
+  /** Which of `ids` have their liveness key now, read from Redis (security C12). */
+  liveOf(ids: readonly string[]): Promise<Set<string>>;
 }
 
 /** Where a participant is attached, as a task sees it. */
@@ -53,6 +55,11 @@ export class ClusterNotifier {
     const self = this.host.selfId();
     if (self === undefined) return;
     this.host.registry(namespace, groupId)?.set(pid, { i: self, t: attachId });
+  }
+
+  /** The registry entries of the group as the running task has them (empty outside one). */
+  entries(namespace: string, groupId: string): ReadonlyMap<string, Attachment> {
+    return this.host.registry(namespace, groupId)?.current() ?? new Map();
   }
 
   /** The other instances the group's registry named when the task read it. */
