@@ -4,9 +4,10 @@
 - Branch: feat/35-redis-multi-instance
 - PR: #40 (PR 2, draft, `Closes #35`, `Refs #39`; PR 1 #38 merged 2026-11-12 as 46f4af3)
 - Plan approved by user: no (PR 2 plan revision: architecture.md section 12, Gate 2 questions Q-B1-Q-B9 in 12.22; PR 1 plan approved 2026-11-12)
-- Security-sensitive: yes (PR 2: architecture 12.19; security plan review of section 12 due, P2-3/P2-4/P2-6/P2-7/P2-8 blocking)
+- Security-sensitive: yes (PR 2: architecture 12.19)
+- Security plan review (PR 2, round 1, 2026-11-12): PASS, security.md "PR 2" section 7. 0 critical, 0 high, 6 medium (F16-F20, F22 advisory), 5 low (F21, F23-F26). P2-3/P2-4/P2-6/P2-7/P2-8 settled. Required controls C11-C17 join the PR 2 plan (C1-C10 stay mandatory). Advisories for Gate 2: F22-F26. Security view on Q-B1-Q-B9: all recommendations acceptable (7.5).
 - Review rounds: 0 (for PR 2; PR 1 had 2)
-- Last updated by: architect
+- Last updated by: security
 - Issue #35 stays open after PR 1 (`Refs #35`); board card moved back to In Progress.
 
 ## PR 1 (#38, merged 2026-11-12)
