@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { type AddressInfo, type Server, createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -45,9 +45,20 @@ async function attempt(url: string, seconds = '2') {
   return result;
 }
 
-/** A self-signed certificate for localhost, made with the openssl CLI. */
+/**
+ * A self-signed certificate for localhost, made with the openssl CLI. The
+ * key is read into memory and its temp directory removed at once (L3).
+ */
 function selfSigned(): { key: Buffer; cert: Buffer } {
   const dir = mkdtempSync(join(tmpdir(), 'sync-tls-'));
+  try {
+    return makeCertificate(dir);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+function makeCertificate(dir: string): { key: Buffer; cert: Buffer } {
   const run = spawnSync(
     'openssl',
     [
