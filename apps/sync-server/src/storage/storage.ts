@@ -39,6 +39,8 @@ export interface Storage {
    * every live group (the restart grace, AC11), then the timer poll.
    */
   start(sweep: (namespace: string, groupId: string) => Promise<void>): Promise<void>;
+  /** Calls `listener` each time Redis is reachable again (#35 architecture 8). */
+  onRecovered(listener: () => Promise<void>): void;
   /** Releases connections (Redis). Stored data stays. */
   close(): Promise<void>;
 }
@@ -67,6 +69,7 @@ export function memoryStorage(options: MemoryStorageOptions): Storage {
     work: IMMEDIATE_WORK,
     status: () => ({ kind: 'memory' }),
     keepAttachmentsOnClose: false,
+    onRecovered: () => undefined,
     start: () => Promise.resolve(),
     close: () => Promise.resolve(),
   };

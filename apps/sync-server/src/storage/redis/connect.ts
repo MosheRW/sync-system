@@ -81,6 +81,8 @@ const CONNECTION_ERROR_NAMES = new Set([
   'SocketClosedUnexpectedlyError',
   'ReconnectStrategyError',
   'AbortError',
+  'CommandTimeout',
+  'StartupTimeout',
 ]);
 
 /**
@@ -177,31 +179,35 @@ export async function connectRedis(
   const endpoint = settings.endpoint();
   let starting = true;
   let lastErrorLogAt = Number.NEGATIVE_INFINITY;
-  const client = createClient({
-    socket: {
-      host: endpoint.host,
-      port: endpoint.port,
-      connectTimeout: settings.connectTimeoutMs,
-      // Verification always on (security C10): no option turns it off.
-      ...(endpoint.tls ? { tls: true as const, servername: endpoint.host } : {}),
-      // At startup a failure is final (AC4); later, back off and retry.
-      reconnectStrategy: (retries: number) => (starting ? false : reconnectDelay(retries)),
-    },
-    ...(endpoint.username === undefined ? {} : { username: endpoint.username }),
-    ...(endpoint.password === undefined ? {} : { password: endpoint.password }),
-    database: endpoint.database,
-    // Fail fast while disconnected; never queue work (ADR 0014).
-    disableOfflineQueue: true,
-    disableClientInfo: true,
-    // Plain RESP2 replies: strings, integers, arrays.
-    RESP: 2,
-  });
-  client.on('error', (err: unknown) => {
-    const now = Date.now();
-    if (starting || now - lastErrorLogAt < REDIS_ERROR_LOG_INTERVAL_MS) return;
-    lastErrorLogAt = now;
-    logger.warn({ event: 'redis_error', err: safeErr(err) }, 'redis connection error');
-  });
+  const make = (): Client => {
+    const client = createClient({
+      socket: {
+        host: endpoint.host,
+        port: endpoint.port,
+        connectTimeout: settings.connectTimeoutMs,
+        // Verification always on (security C10): no option turns it off.
+        ...(endpoint.tls ? { tls: true as const, servername: endpoint.host } : {}),
+        // At startup a failure is final (AC4); later, back off and retry.
+        reconnectStrategy: (retries: number) => (starting ? false : reconnectDelay(retries)),
+      },
+      ...(endpoint.username === undefined ? {} : { username: endpoint.username }),
+      ...(endpoint.password === undefined ? {} : { password: endpoint.password }),
+      database: endpoint.database,
+      // Fail fast while disconnected; never queue work (ADR 0014).
+      disableOfflineQueue: true,
+      disableClientInfo: true,
+      // Plain RESP2 replies: strings, integers, arrays.
+      RESP: 2,
+    });
+    client.on('error', (err: unknown) => {
+      const now = Date.now();
+      if (starting || now - lastErrorLogAt < REDIS_ERROR_LOG_INTERVAL_MS) return;
+      lastErrorLogAt = now;
+      logger.warn({ event: 'redis_error', err: safeErr(err) }, 'redis connection error');
+    });
+    return client;
+  };
+  const client = make();
 
   let timer: NodeJS.Timeout | undefined;
   const deadline = new Promise<never>((_resolve, reject) => {
@@ -216,7 +222,13 @@ export async function connectRedis(
   }
   clearTimeout(timer);
 
-  const link = new ClientLink(client, settings.commandTimeoutMs, logger);
+  const link = new ClientLink(
+    client,
+    make,
+    settings.commandTimeoutMs,
+    settings.connectTimeoutMs,
+    logger,
+  );
   try {
     const server = String(await link.send(['INFO', 'server']));
     const version = semver.coerce(infoField(server, 'redis_version') ?? '');
@@ -252,11 +264,20 @@ export async function connectRedis(
 
 /** The part of the client the link uses. */
 interface Client {
-  sendCommand(args: string[], options: { timeout: number }): Promise<unknown>;
+  sendCommand(args: string[], options?: { timeout?: number }): Promise<unknown>;
   on(event: string, listener: (...args: unknown[]) => void): unknown;
+  connect(): Promise<unknown>;
   readonly isOpen: boolean;
   close(): Promise<unknown>;
   destroy(): void;
+}
+
+/** A command not answered within the command timeout (#35 AC26). */
+class CommandTimeout extends Error {
+  constructor() {
+    super('command timeout');
+    this.name = 'TimeoutError';
+  }
 }
 
 /** The connection with timeouts, error classes and the state machine (ADR 0014, security C4). */
@@ -266,10 +287,14 @@ class ClientLink implements RedisLink {
   private probeTimer: NodeJS.Timeout | undefined;
   private probing = false;
   private closed = false;
+  /** When the current client was started, until it is ready. */
+  private startedAt: number | undefined;
 
   constructor(
-    private readonly client: Client,
+    private client: Client,
+    private readonly make: () => Client,
     private readonly timeoutMs: number,
+    private readonly connectTimeoutMs: number,
     private readonly logger: Logger,
   ) {}
 
@@ -283,15 +308,61 @@ class ClientLink implements RedisLink {
 
   /** Follows the client's own connection events once the startup checks passed. */
   watch(): void {
-    const down = () => this.setState('unreachable');
-    this.client.on('end', down);
-    this.client.on('reconnecting', down);
-    this.client.on('ready', () => this.scheduleProbe(0));
+    this.follow(this.client);
+  }
+
+  private follow(client: Client): void {
+    const down = () => {
+      if (client === this.client) this.setState('unreachable');
+    };
+    client.on('end', down);
+    client.on('reconnecting', down);
+    client.on('ready', () => {
+      if (client !== this.client) return;
+      this.startedAt = undefined;
+      this.scheduleProbe(0);
+    });
+  }
+
+  /**
+   * One command, bounded by the command timeout. The client's own timeout
+   * stops once a command is written, so a stalled Redis is caught here; the
+   * connection is then replaced, since a late reply would answer the wrong
+   * command (security C4).
+   */
+  private async command(args: string[]): Promise<unknown> {
+    const client = this.client;
+    let timer: NodeJS.Timeout | undefined;
+    const timeout = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => reject(new CommandTimeout()), this.timeoutMs);
+    });
+    try {
+      return await Promise.race([client.sendCommand(args, { timeout: this.timeoutMs }), timeout]);
+    } catch (err) {
+      if (err instanceof CommandTimeout) this.replace(client);
+      throw err;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /** Drops a stalled connection and starts a new one (it reconnects with back-off). */
+  private replace(stalled: Client): void {
+    if (stalled !== this.client || this.closed) return;
+    this.setState('unreachable');
+    this.probing = false;
+    stalled.destroy();
+    const next = this.make();
+    this.client = next;
+    this.startedAt = Date.now();
+    this.follow(next);
+    next.connect().catch(() => undefined);
+    this.scheduleProbe(REDIS_PROBE_INTERVAL_MS);
   }
 
   async send(args: readonly string[]): Promise<unknown> {
     try {
-      return await this.client.sendCommand([...args], { timeout: this.timeoutMs });
+      return await this.command([...args]);
     } catch (err) {
       throw this.classify(err);
     }
@@ -304,16 +375,12 @@ class ClientLink implements RedisLink {
   ): Promise<unknown> {
     const tail = [String(keys.length), ...keys, ...args];
     try {
-      return await this.client.sendCommand(['EVALSHA', script.sha, ...tail], {
-        timeout: this.timeoutMs,
-      });
+      return await this.command(['EVALSHA', script.sha, ...tail]);
     } catch (err) {
       if (replyCode(err) !== 'NOSCRIPT') throw this.classify(err);
     }
     try {
-      return await this.client.sendCommand(['EVAL', script.source, ...tail], {
-        timeout: this.timeoutMs,
-      });
+      return await this.command(['EVAL', script.source, ...tail]);
     } catch (err) {
       throw this.classify(err);
     }
@@ -322,10 +389,23 @@ class ClientLink implements RedisLink {
   async close(): Promise<void> {
     this.closed = true;
     clearTimeout(this.probeTimer);
+    const client = this.client;
+    let timer: NodeJS.Timeout | undefined;
     try {
-      if (this.client.isOpen) await this.client.close();
+      // A stalled Redis never answers the close: give up after the timeout.
+      if (client.isOpen) {
+        await Promise.race([
+          client.close(),
+          new Promise((resolve) => {
+            timer = setTimeout(resolve, this.timeoutMs);
+          }),
+        ]);
+      }
     } catch {
-      this.client.destroy();
+      // Destroyed below.
+    } finally {
+      clearTimeout(timer);
+      client.destroy();
     }
   }
 
@@ -362,13 +442,21 @@ class ClientLink implements RedisLink {
     this.probing = true;
     let ok = false;
     try {
-      ok = (await this.client.sendCommand(['PING'], { timeout: this.timeoutMs })) === 'PONG';
+      ok = (await this.command(['PING'])) === 'PONG';
     } catch {
       ok = false;
     } finally {
       this.probing = false;
     }
-    if (ok) this.setState('connected');
-    else this.scheduleProbe(REDIS_PROBE_INTERVAL_MS);
+    if (ok) {
+      this.setState('connected');
+      return;
+    }
+    // A new connection that never got ready (its handshake was lost): again.
+    if (this.startedAt !== undefined && Date.now() - this.startedAt > this.connectTimeoutMs) {
+      this.replace(this.client);
+      return;
+    }
+    this.scheduleProbe(REDIS_PROBE_INTERVAL_MS);
   }
 }

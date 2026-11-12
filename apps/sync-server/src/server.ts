@@ -73,6 +73,8 @@ export interface SyncServerOptions {
   codeRandom?: RandomInt;
   /** Cap of the ended-groups memory; defaults to MAX_ENDED_GROUPS. Tests lower it. */
   endedGroupsCap?: number;
+  /** Groups waiting for a disconnect replay; defaults to MAX_CONNECTIONS. Tests lower it. */
+  replayCap?: number;
 }
 
 export interface SyncServer {
@@ -190,6 +192,7 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
     store: storage.groups,
     ...(storage.epoch === undefined ? {} : { epoch: storage.epoch }),
     keepAttachmentsOnClose: storage.keepAttachmentsOnClose,
+    replayCap: options.replayCap ?? env.maxConnections,
     codes: storage.codes,
     doors: storage.doors,
     timerBackend: storage.timers,
@@ -211,6 +214,8 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
     codesBlobs,
     ...(options.codeRandom === undefined ? {} : { codeRandom: options.codeRandom }),
   });
+  // Redis back after an outage: queued disconnects, then due timers (#35 8).
+  storage.onRecovered(() => groups.replayDisconnects());
   const counter = new ConnectionCounter();
   const connections = new Set<Connection>();
 
@@ -221,6 +226,10 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
       counter,
       env,
       logger,
+      available: () => {
+        const status = storage.status();
+        return status.kind === 'memory' || status.state === 'connected';
+      },
       onConnection(ws) {
         const connection = new Connection(ws, {
           logger,

@@ -92,7 +92,7 @@ import {
 } from './group-timers.js';
 import { newGroupId, newParticipantId } from './ids.js';
 import { GroupLock, type UnitOfWorkSource } from './group-lock.js';
-import { StorageConflictError } from '../storage/errors.js';
+import { StorageConflictError, StorageUnavailableError } from '../storage/errors.js';
 import type { EpochSource } from '../storage/redis/epoch.js';
 import type { Notifier } from './notifier.js';
 import { ParkingLot } from './parking-lot.js';
@@ -132,6 +132,12 @@ export interface GroupServiceDeps {
    * grace then counts from when the server is back (#35 AC11).
    */
   keepAttachmentsOnClose?: boolean;
+  /**
+   * Most groups whose disconnects wait for Redis to come back (#35 security
+   * C4); defaults to 10 000. Over it, the oldest group is dropped (its
+   * sessions re-check on their next resume).
+   */
+  replayCap?: number;
   /** Signs and verifies QR tickets (#10). */
   qrTickets: QrTicketService;
   /** Signs and verifies codes blobs (#10). */
@@ -221,7 +227,9 @@ export class GroupService implements GroupActions {
   private readonly processStartedAt: number;
 
   constructor(private readonly deps: GroupServiceDeps) {
-    this.lock = new GroupLock(deps.work);
+    this.lock = new GroupLock(deps.work, (namespace, groupId, err, sessions) => {
+      this.failedCommit(namespace, groupId, err, sessions as ReadonlySet<Session>);
+    });
     this.timers = new GroupTimers(deps.timerBackend ?? new MemoryTimerBackend(deps.scheduler));
     this.joins = new JoinService(
       {
@@ -334,6 +342,99 @@ export class GroupService implements GroupActions {
   /** Set once the server stops: disconnects then keep stored attachments (Redis). */
   private closing = false;
 
+  /**
+   * Groups whose disconnects could not be stored (Redis unreachable), in
+   * arrival order, replayed under the group lock when Redis is back
+   * (#35 architecture 8, security C4).
+   */
+  private readonly replay = new Set<string>();
+
+  /**
+   * A task's commit failed (#35 ADR 0014, security C8). Only when Redis is
+   * unavailable: every local session of the group is closed with 1001, so
+   * clients resume later; other errors close nobody.
+   */
+  private failedCommit(
+    namespace: string,
+    groupId: string,
+    err: unknown,
+    touched: ReadonlySet<Session>,
+  ): void {
+    if (!(err instanceof StorageUnavailableError)) return;
+    const sessions = new Set([...this.deps.notifier.sessionsOf(namespace, groupId), ...touched]);
+    for (const session of sessions) {
+      session.close(CloseCode.GOING_AWAY, 'temporarily unavailable');
+    }
+  }
+
+  /** Notes a session whose attachment this task changed (closed if the commit fails). */
+  private touch(session: Session): void {
+    this.lock.current()?.sessions.add(session);
+  }
+
+  /** Remembers a group whose disconnect waits for Redis (bounded, deduplicated). */
+  private queueReplay(namespace: string, groupId: string): void {
+    const key = `${namespace}:${groupId}`;
+    this.replay.delete(key);
+    this.replay.add(key);
+    const cap = this.deps.replayCap ?? 10_000;
+    while (this.replay.size > cap) {
+      const oldest = this.replay.values().next().value;
+      if (oldest === undefined) break;
+      this.replay.delete(oldest);
+    }
+  }
+
+  /** Number of groups waiting for a disconnect replay. For tests only. */
+  get replayCount(): number {
+    return this.replay.size;
+  }
+
+  /**
+   * Redis is back (#35 architecture 8): for each queued group, under its
+   * lock, every participant without an open local session is disconnected
+   * with the usual rules. A group that failed again stays queued.
+   */
+  async replayDisconnects(): Promise<void> {
+    for (const key of [...this.replay]) {
+      this.replay.delete(key);
+      const at = key.indexOf(':');
+      const namespace = key.slice(0, at);
+      const groupId = key.slice(at + 1);
+      const app = this.deps.appOf(namespace);
+      if (app === undefined) continue;
+      try {
+        await this.lock.run(namespace, groupId, () => this.reconcile(app, groupId));
+      } catch (err) {
+        if (err instanceof StorageUnavailableError) {
+          this.queueReplay(namespace, groupId);
+          return;
+        }
+        this.deps.logger.error({ event: 'replay_error', err: safeErr(err) }, 'replay failed');
+      }
+    }
+  }
+
+  /** Disconnects every participant with no open local session. Under the group lock. */
+  private async reconcile(app: AppConfig, groupId: string): Promise<void> {
+    const namespace = app.namespace;
+    const record = await this.deps.store.get(namespace, groupId);
+    if (record === undefined) return;
+    const open = (pid: string) =>
+      isParticipantConnected(this.deps.notifier.get(membershipKey(namespace, groupId, pid)));
+    for (const pid of record.participantIds) {
+      if (pid === record.leaderId || open(pid)) continue;
+      const result = await this.deps.store.removeParticipant(namespace, groupId, pid);
+      const current = await this.deps.store.get(namespace, groupId);
+      if (current !== undefined) await this.leaveRosterOnDisconnect(app, current, pid);
+      if (result && result.connected === 0) await this.emptied(app, groupId);
+    }
+    const current = await this.deps.store.get(namespace, groupId);
+    if (current !== undefined && current.leaderOnline && !open(current.leaderId)) {
+      await this.leaderOffline(app, groupId);
+    }
+  }
+
   /** The store's epoch: the Redis epoch, or this process's start (#35 4.5). */
   private epoch(): Promise<number> {
     return this.deps.epoch?.current() ?? Promise.resolve(this.processStartedAt);
@@ -427,6 +528,7 @@ export class GroupService implements GroupActions {
   }
 
   private attach(session: Session, membership: Membership): void {
+    this.touch(session);
     session.membership = membership;
     this.deps.notifier.register(
       membershipKey(session.app.namespace, membership.groupId, membership.participantId),
@@ -1063,6 +1165,7 @@ export class GroupService implements GroupActions {
     const key = membershipKey(record.appNamespace, record.id, participantId);
     const member = this.deps.notifier.get(key);
     if (member === undefined) return;
+    this.touch(member);
     this.deps.notifier.unregister(key, member);
     if (member.membership?.groupId === record.id) member.membership = undefined;
     const text = JSON.stringify({
@@ -1109,6 +1212,7 @@ export class GroupService implements GroupActions {
       // a handoff the old leader may leave and the new one may not.
       const current = await this.deps.store.get(app.namespace, groupId);
       if (current?.leaderId === participantId) return errorMessage(ErrorCode.LEADER_CANNOT_LEAVE);
+      this.touch(session);
       this.deps.notifier.unregister(membershipKey(app.namespace, groupId, participantId), session);
       session.membership = undefined;
       const result = await this.deps.store.removeParticipant(app.namespace, groupId, participantId);
@@ -1235,6 +1339,7 @@ export class GroupService implements GroupActions {
     const key = membershipKey(namespace, groupId, participantId);
     const older = this.deps.notifier.get(key);
     if (older === undefined || older === by) return;
+    this.touch(older);
     this.deps.notifier.unregister(key, older);
     if (older.membership?.groupId === groupId) older.membership = undefined;
     const text = JSON.stringify({
@@ -1874,23 +1979,28 @@ export class GroupService implements GroupActions {
     if (this.closing && this.deps.keepAttachmentsOnClose === true) return;
 
     // Under the group lock, so a join cannot land between the removal and
-    // the delete.
-    await this.lock.run(namespace, groupId, async () => {
-      // #13 RC19: the participant resumed on a new socket before this close
-      // was handled; that session owns the membership, so nothing changes.
-      const owner = this.deps.notifier.get(membershipKey(namespace, groupId, participantId));
-      if (isParticipantConnected(owner)) return;
-      const record = await this.deps.store.get(namespace, groupId);
-      if (record === undefined) return;
-      // The role is read from the live record, never from the session (#13 D1).
-      if (record.leaderId === participantId) {
-        await this.leaderOffline(app, groupId);
-        return;
-      }
-      const result = await this.deps.store.removeParticipant(namespace, groupId, participantId);
-      await this.leaveRosterOnDisconnect(app, record, participantId);
-      if (result && result.connected === 0) await this.emptied(app, groupId);
-    });
+    // the delete. If Redis is down, the group is replayed when it is back.
+    await this.lock
+      .run(namespace, groupId, async () => {
+        // #13 RC19: the participant resumed on a new socket before this close
+        // was handled; that session owns the membership, so nothing changes.
+        const owner = this.deps.notifier.get(membershipKey(namespace, groupId, participantId));
+        if (isParticipantConnected(owner)) return;
+        const record = await this.deps.store.get(namespace, groupId);
+        if (record === undefined) return;
+        // The role is read from the live record, never from the session (#13 D1).
+        if (record.leaderId === participantId) {
+          await this.leaderOffline(app, groupId);
+          return;
+        }
+        const result = await this.deps.store.removeParticipant(namespace, groupId, participantId);
+        await this.leaveRosterOnDisconnect(app, record, participantId);
+        if (result && result.connected === 0) await this.emptied(app, groupId);
+      })
+      .catch((err: unknown) => {
+        if (!(err instanceof StorageUnavailableError)) throw err;
+        this.queueReplay(namespace, groupId);
+      });
   }
 
   /**
@@ -2065,6 +2175,7 @@ export class GroupService implements GroupActions {
         const participant = this.deps.notifier.get(key);
         if (participant === undefined) continue;
         notified += 1;
+        this.touch(participant);
         this.deps.notifier.unregister(key, participant);
         if (participant.membership?.groupId === groupId) participant.membership = undefined;
         // The requester gets group.ended as its direct reply instead.

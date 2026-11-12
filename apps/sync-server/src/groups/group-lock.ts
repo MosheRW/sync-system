@@ -30,6 +30,8 @@ export interface GroupTask {
   readonly groupId: string;
   readonly outbox: EffectOutbox;
   readonly work: UnitOfWork;
+  /** Sessions this task attached or detached (closed too if its commit fails). */
+  readonly sessions: Set<object>;
 }
 
 const NO_WORK: UnitOfWork = {
@@ -71,6 +73,7 @@ export class GroupLock {
       namespace: string,
       groupId: string,
       err: unknown,
+      sessions: ReadonlySet<object>,
     ) => void = () => undefined,
   ) {}
 
@@ -103,7 +106,7 @@ export class GroupLock {
   private async runTask<T>(namespace: string, groupId: string, task: () => Promise<T>): Promise<T> {
     const outbox = new EffectOutbox();
     const work = this.source.begin(namespace, groupId);
-    const state: GroupTask = { namespace, groupId, outbox, work };
+    const state: GroupTask = { namespace, groupId, outbox, work, sessions: new Set() };
     let result: T;
     try {
       result = await tasks.run(state, task);
@@ -111,7 +114,7 @@ export class GroupLock {
       if (this.source.transactional) {
         outbox.drop();
         await work.abandon();
-        this.onFailedCommit(namespace, groupId, err);
+        this.onFailedCommit(namespace, groupId, err, state.sessions);
       } else {
         outbox.flush();
       }
@@ -122,7 +125,7 @@ export class GroupLock {
     } catch (err) {
       outbox.drop();
       await work.abandon();
-      this.onFailedCommit(namespace, groupId, err);
+      this.onFailedCommit(namespace, groupId, err, state.sessions);
       throw err;
     }
     outbox.flush();

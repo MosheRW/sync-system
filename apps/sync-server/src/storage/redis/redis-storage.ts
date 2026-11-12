@@ -1,6 +1,6 @@
 import type { AppConfig } from '../../apps/app-registry.js';
 import { END_TTL_SLACK_MS } from '../../limits/constants.js';
-import type { Logger } from '../../logging/logger.js';
+import { type Logger, safeErr } from '../../logging/logger.js';
 import type { Scheduler } from '../../time/scheduler.js';
 import { type Storage, memoryStorage } from '../storage.js';
 import type { RedisLink } from './connect.js';
@@ -55,6 +55,20 @@ export function redisStorage(options: RedisStorageOptions): Storage {
     timers,
     epoch,
     keepAttachmentsOnClose: true,
+    onRecovered(listener) {
+      options.link.onState((state) => {
+        if (state !== 'connected') return;
+        // Queued disconnects first, then the timers that came due meanwhile.
+        void listener()
+          .then(() => timers.runDue())
+          .catch((err: unknown) => {
+            options.logger.warn(
+              { event: 'redis_recovery_failed', err: safeErr(err) },
+              'recovery step failed',
+            );
+          });
+      });
+    },
     async start(sweep) {
       await epoch.current();
       // Deadlines that passed while the server was down take effect once (AC12).

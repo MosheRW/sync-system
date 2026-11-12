@@ -14,6 +14,8 @@ export interface UpgradeDeps {
   env: Pick<ServerEnv, 'maxConnections' | 'maxPendingHandshakes'>;
   logger: Logger;
   onConnection: (ws: WebSocket) => void;
+  /** False while the storage is unreachable: upgrades get 503 (#35 AC26, ADR 0014). */
+  available?: () => boolean;
 }
 
 const STATUS_TEXT: Record<number, string> = {
@@ -57,6 +59,11 @@ export function createUpgradeHandler(deps: UpgradeDeps) {
 
     if (pathOf(req.url) !== WS_PATH) {
       refuse(socket, 404);
+      return;
+    }
+    if (deps.available?.() === false) {
+      logger.warn({ event: 'upgrade_refused', limit: 'STORAGE' }, 'storage unavailable');
+      refuse(socket, 503);
       return;
     }
     if (counter.total >= env.maxConnections) {

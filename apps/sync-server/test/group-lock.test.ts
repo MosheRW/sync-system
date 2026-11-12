@@ -77,8 +77,8 @@ describe('GroupLock (#35 ADR 0011)', () => {
     const failure = new Error('commit failed');
     const { value, calls } = source(() => Promise.reject(failure));
     const reported: unknown[] = [];
-    const lock = new GroupLock(value, (namespace, groupId, err) =>
-      reported.push([namespace, groupId, err]),
+    const lock = new GroupLock(value, (namespace, groupId, err, sessions) =>
+      reported.push([namespace, groupId, err, sessions]),
     );
     const seen: string[] = [];
     await expect(
@@ -89,7 +89,7 @@ describe('GroupLock (#35 ADR 0011)', () => {
     ).rejects.toBe(failure);
     expect(seen).toEqual([]);
     expect(calls).toEqual(['begin ns:g1', 'commit', 'abandon']);
-    expect(reported).toEqual([['ns', 'g1', failure]]);
+    expect(reported).toEqual([['ns', 'g1', failure, new Set()]]);
   });
 
   it('drops the effects of a failed task on a transactional store', async () => {

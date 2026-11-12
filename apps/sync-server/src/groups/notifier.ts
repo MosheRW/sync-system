@@ -16,10 +16,19 @@ export interface Notifier {
   get(key: string): Session | undefined;
   /** Serializes `message` once and delivers the same string to each attached key. */
   broadcast(keys: readonly string[], message: ServerMessage): void;
+  /** Every session attached to the group (#35 ADR 0014: closed when its commit fails). */
+  sessionsOf(namespace: string, groupId: string): Session[];
+}
+
+/** The group part of a membership key `namespace:groupId:participantId`. */
+function groupPart(key: string): string {
+  return key.slice(0, key.lastIndexOf(':'));
 }
 
 export class LocalNotifier implements Notifier {
   private readonly sessions = new Map<string, Session>();
+  /** `namespace:groupId` -> membership keys attached locally. */
+  private readonly groups = new Map<string, Set<string>>();
 
   /** Number of attachments. For tests only. */
   get size(): number {
@@ -28,12 +37,29 @@ export class LocalNotifier implements Notifier {
 
   register(key: string, session: Session): void {
     this.sessions.set(key, session);
+    const group = groupPart(key);
+    let keys = this.groups.get(group);
+    if (keys === undefined) {
+      keys = new Set();
+      this.groups.set(group, keys);
+    }
+    keys.add(key);
   }
 
   unregister(key: string, session: Session): boolean {
     if (this.sessions.get(key) !== session) return false;
     this.sessions.delete(key);
+    const group = groupPart(key);
+    const keys = this.groups.get(group);
+    keys?.delete(key);
+    if (keys?.size === 0) this.groups.delete(group);
     return true;
+  }
+
+  sessionsOf(namespace: string, groupId: string): Session[] {
+    const keys = this.groups.get(`${namespace}:${groupId}`);
+    if (keys === undefined) return [];
+    return [...keys].map((key) => this.sessions.get(key)).filter((s) => s !== undefined);
   }
 
   get(key: string): Session | undefined {

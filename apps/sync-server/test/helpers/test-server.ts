@@ -9,6 +9,7 @@ import { redisStorage } from '../../src/storage/redis/redis-storage.js';
 import { realScheduler } from '../../src/time/scheduler.js';
 import { LogCapture } from './log-capture.js';
 import { randomPrefix, testLink } from './redis.js';
+import type { RedisLink } from '../../src/storage/redis/connect.js';
 import { TestClient } from './test-client.js';
 
 export const KEY_A = 'test-key-app-a-0123456789-0123456789-abcdef';
@@ -88,6 +89,8 @@ export interface StartOptions extends Partial<
   logLevel?: LogLevel;
   /** Runs on the test Redis under this key prefix (#35; needs SYNC_TEST_REDIS_URL). */
   redisPrefix?: string;
+  /** The Redis connection to use with `redisPrefix` (e.g. through a TCP proxy). */
+  redisLink?: RedisLink;
 }
 
 export interface TestServer {
@@ -109,6 +112,7 @@ export async function startTestServer(options: StartOptions = {}): Promise<TestS
     apps,
     logLevel,
     redisPrefix,
+    redisLink,
     ...rest
   } = { ...options, ...restartClock(options) };
   const env = parseEnv({ LOG_LEVEL: logLevel ?? 'trace', ...envOverrides });
@@ -131,7 +135,7 @@ export async function startTestServer(options: StartOptions = {}): Promise<TestS
     rest.scheduler = scheduler;
     const byNamespace = new Map(registry.apps().map((app) => [app.namespace, app]));
     storage = redisStorage({
-      link: await testLink(prefix, logger),
+      link: redisLink ?? (await testLink(prefix, logger)),
       keyPrefix: prefix,
       scheduler,
       logger,
