@@ -190,6 +190,14 @@ function nameChoice(raw: string | undefined): NameChoice | undefined {
   return resolved.generated ? { generated: true } : { generated: false, name: resolved.name };
 }
 
+/** A task's local changes, undone when its commit fails (#35 security L1). */
+interface Rollback {
+  /** Each touched session as it was before the task: membership and whether it owned it. */
+  sessions: Map<Session, { membership: Membership | undefined; attached: boolean }>;
+  /** Groups whose refresh state this task created. */
+  refresh: Set<string>;
+}
+
 /**
  * Group business rules. Never reads the fields of `position` or `metadata`:
  * they are stored and relayed as the parsed references (AC14).
@@ -360,16 +368,80 @@ export class GroupService implements GroupActions {
     err: unknown,
     touched: ReadonlySet<Session>,
   ): void {
-    if (!(err instanceof StorageUnavailableError)) return;
+    if (!(err instanceof StorageUnavailableError)) {
+      // Nothing was stored, and nobody is closed (C8): the attachments this
+      // task made or dropped go back to how they were (security L1).
+      const undo = this.rollbacks.get(touched);
+      if (undo !== undefined) this.rollBack(undo);
+      return;
+    }
     const sessions = new Set([...this.deps.notifier.sessionsOf(namespace, groupId), ...touched]);
     for (const session of sessions) {
       session.close(CloseCode.GOING_AWAY, 'temporarily unavailable');
     }
   }
 
+  /**
+   * What a task changed locally, to undo when its commit fails with anything
+   * but "unavailable" (#35 security L1). Keyed by the task's session set.
+   */
+  private readonly rollbacks = new WeakMap<object, Rollback>();
+
+  /** The running task's rollback record, created on first use. */
+  private rollback(): Rollback | undefined {
+    const task = this.lock.current();
+    if (task === undefined) return undefined;
+    let undo = this.rollbacks.get(task.sessions);
+    if (undo === undefined) {
+      undo = { sessions: new Map(), refresh: new Set() };
+      this.rollbacks.set(task.sessions, undo);
+    }
+    return undo;
+  }
+
+  /** Restores every touched session's membership and attachment; drops new refresh state. */
+  private rollBack(undo: Rollback): void {
+    for (const session of undo.sessions.keys()) {
+      const membership = session.membership;
+      if (membership === undefined) continue;
+      this.deps.notifier.unregister(
+        membershipKey(session.app.namespace, membership.groupId, membership.participantId),
+        session,
+      );
+    }
+    for (const [session, before] of undo.sessions) {
+      session.membership = before.membership;
+      if (before.membership !== undefined && before.attached) {
+        this.deps.notifier.register(
+          membershipKey(
+            session.app.namespace,
+            before.membership.groupId,
+            before.membership.participantId,
+          ),
+          session,
+        );
+      }
+    }
+    for (const key of undo.refresh) this.refresher.clear(key);
+  }
+
   /** Notes a session whose attachment this task changed (closed if the commit fails). */
   private touch(session: Session): void {
-    this.lock.current()?.sessions.add(session);
+    const task = this.lock.current();
+    if (task === undefined) return;
+    const undo = this.rollback();
+    if (undo !== undefined && !undo.sessions.has(session)) {
+      const membership = session.membership;
+      undo.sessions.set(session, {
+        membership,
+        attached:
+          membership !== undefined &&
+          this.deps.notifier.get(
+            membershipKey(session.app.namespace, membership.groupId, membership.participantId),
+          ) === session,
+      });
+    }
+    task.sessions.add(session);
   }
 
   /** Remembers a group whose disconnect waits for Redis (bounded, deduplicated). */
@@ -469,7 +541,10 @@ export class GroupService implements GroupActions {
    * leader token was issued at `at` (create, return, recreation).
    */
   private startRefresh(namespace: string, groupId: string, at: number): void {
-    this.refresher.reset(groupKey(namespace, groupId), at, () => {
+    const key = groupKey(namespace, groupId);
+    // Refresh state this task creates goes if its commit fails (L1).
+    if (!this.refresher.has(key)) this.rollback()?.refresh.add(key);
+    this.refresher.reset(key, at, () => {
       this.runTimer(namespace, groupId, () => this.sendRefreshedToken(namespace, groupId));
     });
   }

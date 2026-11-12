@@ -72,6 +72,11 @@ export class TokenRefresher {
     });
   }
 
+  /** Whether the group has refresh state (its leader is online here). */
+  has(key: string): boolean {
+    return this.states.has(key);
+  }
+
   clear(key: string): void {
     this.states.get(key)?.cancel?.();
     this.states.delete(key);
