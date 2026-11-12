@@ -16,12 +16,14 @@
 - Review rounds: 0
 - Delivery: two PRs on this issue proposed (Gate 2 Q-A1): PR 1 single-instance Redis + restart survival (this branch), PR 2 several instances (branch feat/35-redis-multi-instance after PR 1 merges)
 - Plan: docs/issues/35/architecture.md; ADRs 0010-0014 Proposed
-- Last updated by: architect
+- Security plan review: docs/issues/35/security.md (PASS, required controls C1-C10 join the plan)
+- Last updated by: security
 ## Model log
 - pm groom: opus (orchestrator: broad scope and split proposal) → DONE
 - pm update-spec (Gate 1 decisions): opus (orchestrator: split restructure and new issues) → DONE
 - architect plan: opus (default; NEXT_MODEL opus) → DONE
 - pm update-spec (9c follow-up decisions): sonnet (default) → DONE
+- security plan: opus (rule) → PASS (0 critical, 0 high, 9 medium, 6 low; required controls C1-C10 in docs/issues/35/security.md)
 ## Open questions
 - 9a Gate 2: Q-A1 two PRs, Q-A2 TTL slack 5 s, Q-A3 restart grace for running pauses, Q-A4 PR 1 body Refs vs Closes, Q-A5 approvals in PR 2, Q-A6 eviction policy warning; ADRs 0010-0014 (architecture.md section 18).
 - 9b (#36): Q20 for its own Gate 1. 9c (#37): Q17, Q18 for its own Gate 1 (Q16, Q19 decided). See spec.md.
