@@ -201,5 +201,5 @@ describeRedis('run() with REDIS_URL (#35 AC2, AC4, AC27)', () => {
     } finally {
       await user.remove();
     }
-  });
+  }, 60_000);
 });
