@@ -1,5 +1,5 @@
 import { EndedGroups, type EndedGroupsStore } from '../groups/ended-groups.js';
-import { IMMEDIATE_WORK, type UnitOfWorkSource } from '../groups/group-lock.js';
+import { IMMEDIATE_WORK, type LeaseSource, type UnitOfWorkSource } from '../groups/group-lock.js';
 import type { GroupStore } from '../groups/group-store.js';
 import { MemoryTimerBackend, type TimerBackend } from '../groups/group-timers.js';
 import { InMemoryGroupStore } from '../groups/in-memory-group-store.js';
@@ -47,6 +47,8 @@ export interface Storage {
   readonly keepAttachmentsOnClose: boolean;
   /** Set with Redis: this process is one of several instances (#35 architecture 12). */
   readonly cluster?: StorageCluster;
+  /** The group leases across instances (#35 architecture 12.4); memory has none. */
+  readonly leases?: LeaseSource;
   /**
    * Runs before the server listens (Redis, #35 architecture 7): the epoch,
    * the timers that came due while the server was down (AC12), `sweep` for

@@ -1,4 +1,4 @@
-import { StorageUnavailableError } from '../storage/errors.js';
+import { StorageBusyError, StorageUnavailableError } from '../storage/errors.js';
 import {
   type ClientMessage,
   CloseCode,
@@ -218,11 +218,19 @@ export class Connection implements HeartbeatTarget {
         await this.handleReady(message);
       }
     } catch (err) {
-      if (err instanceof StorageUnavailableError) {
-        // Redis is down (#35 ADR 0014): nothing was stored; the client
-        // resumes later. Going away / temporarily unavailable.
+      if (err instanceof StorageUnavailableError || err instanceof StorageBusyError) {
+        // Redis is down (#35 ADR 0014), or another instance held the group
+        // past the wait bound (12.4, Gate 2 Q-B4: this connection only):
+        // nothing was stored; the client resumes later. Going away /
+        // temporarily unavailable.
         this.deps.logger.info(
-          { event: 'storage_unavailable_closed', type: message.type },
+          {
+            event:
+              err instanceof StorageBusyError
+                ? 'storage_busy_closed'
+                : 'storage_unavailable_closed',
+            type: message.type,
+          },
           'closed: storage unavailable',
         );
         this.state = 'closing';

@@ -367,3 +367,21 @@ redis.call('DEL', KEYS[2])
 redis.call('ZREM', KEYS[3], ARGV[1])
 return 1
 `);
+
+/**
+ * Renews a group lease only while it is still ours (#35 architecture
+ * 12.4). KEYS: lease key; ARGV: token, lease ms. Returns 1, or 0 when lost.
+ */
+export const LEASE_RENEW = new LuaScript(`
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+  redis.call('PEXPIRE', KEYS[1], ARGV[2])
+  return 1
+end
+return 0
+`);
+
+/** Releases a group lease only while it is still ours (compare-and-delete). KEYS: lease key; ARGV: token. */
+export const LEASE_RELEASE = new LuaScript(`
+if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end
+return 0
+`);

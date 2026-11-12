@@ -1,6 +1,7 @@
 import { ALPHA_CODE_PATTERN, GROUP_CODE_PATTERN } from '@sync-system/protocol';
 import type { EndedGroupsStore, EvictionLogger } from '../../groups/ended-groups.js';
 import { endedRef } from '../../groups/ended-groups.js';
+import type { HeldLease } from '../../groups/group-lock.js';
 import { TIMER_KINDS } from '../../groups/group-timers.js';
 import { MAX_ENDED_GROUPS } from '../../limits/constants.js';
 import type { CommitPlan, CommitResult, RedisContext, RedisWorkSource } from './unit-of-work.js';
@@ -91,9 +92,22 @@ export class RedisEndedGroups implements EndedGroupsStore {
    * at this group; anything unreadable expires with its TTL.
    */
   async endInvalid(namespace: string, groupId: string, deadline: number): Promise<void> {
+    // Under the group lease and the instance fence (security C17).
+    await this.work.withLease(namespace, groupId, async (lease) => {
+      await this.endInvalidLeased(namespace, groupId, deadline, lease);
+    });
+  }
+
+  private async endInvalidLeased(
+    namespace: string,
+    groupId: string,
+    deadline: number,
+    lease: HeldLease | undefined,
+  ): Promise<void> {
     const { keys } = this.ctx;
     const raw = await this.ctx.link.send(['GET', keys.group(namespace, groupId)]);
     const plan = this.work.plan();
+    if (lease !== undefined) plan.eq(lease.key, lease.token, 'lease');
     this.addTo(plan, namespace, groupId, deadline);
     const codes = lenientCodes(raw);
     if (codes.groupCode !== undefined) {

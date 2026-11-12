@@ -1,5 +1,7 @@
 import type { GroupRecord } from '../../groups/group-store.js';
 import {
+  type HeldLease,
+  type LeaseSource,
   type UnitOfWork,
   type UnitOfWorkSource,
   currentGroupTask,
@@ -10,7 +12,12 @@ import { endedRef } from '../../groups/ended-groups.js';
 import { MAX_CLOCK_SKEW_MS } from '../../limits/constants.js';
 import type { DoorState } from '../../joins/door-guard.js';
 import type { Logger } from '../../logging/logger.js';
-import { InstanceFencedError, StorageConflictError, StorageInvalidError } from '../errors.js';
+import {
+  InstanceFencedError,
+  LeaseLostError,
+  StorageConflictError,
+  StorageInvalidError,
+} from '../errors.js';
 import type { RedisLink } from './connect.js';
 import { decodeGroup, encodeDocument, encodePosition } from './document.js';
 import type { RedisKeys } from './keys.js';
@@ -181,6 +188,7 @@ export class CommitPlan {
         this.fence?.onAbort?.();
         throw new InstanceFencedError();
       }
+      if (reply[1] === 'lease') throw new LeaseLostError();
       throw new StorageConflictError(String(reply[1]));
     }
     const [, evicted, closed] = Array.isArray(reply) ? (reply as unknown[]) : [];
@@ -236,7 +244,11 @@ export class RedisUnitOfWork implements UnitOfWork {
   /** The instance this task started as (security C11): its commit requires that liveness. */
   private readonly fence: PlanFence | undefined;
 
-  constructor(readonly ctx: RedisContext) {
+  constructor(
+    readonly ctx: RedisContext,
+    /** The group lease this task holds (several instances): checked first by the commit. */
+    private readonly lease?: HeldLease,
+  ) {
     this.fence = fenceOf(ctx);
   }
 
@@ -309,6 +321,8 @@ export class RedisUnitOfWork implements UnitOfWork {
   /** The commit plan of this task. */
   async plan(): Promise<CommitPlan> {
     const plan = new CommitPlan(this.ctx.now(), this.fence);
+    // The fence of #35 architecture 12.4: the lease is still this task's.
+    if (this.lease !== undefined) plan.eq(this.lease.key, this.lease.token, 'lease');
     const { keys } = this.ctx;
     const ends = new Map<string, number>();
     for (const entry of this.entries.values()) {
@@ -421,11 +435,30 @@ export class RedisWorkSource implements UnitOfWorkSource {
   readonly transactional = true;
   /** Serializes one-step works per group, so each is atomic in this process. */
   private readonly standalone = new KeyedLock();
+  /** The group leases (several instances); set once the storage is built. */
+  leases: LeaseSource | undefined;
 
   constructor(private readonly ctx: RedisContext) {}
 
-  begin(): RedisUnitOfWork {
-    return new RedisUnitOfWork(this.ctx);
+  begin(_namespace?: string, _groupId?: string, lease?: HeldLease): RedisUnitOfWork {
+    return new RedisUnitOfWork(this.ctx, lease);
+  }
+
+  /**
+   * Runs `step` holding the group's lease (#35 architecture 12.4), for a
+   * step outside any group task; without leases it just runs.
+   */
+  async withLease<T>(
+    namespace: string,
+    groupId: string,
+    step: (lease: HeldLease | undefined) => Promise<T>,
+  ): Promise<T> {
+    const lease = await this.leases?.acquire(namespace, groupId);
+    try {
+      return await step(lease);
+    } finally {
+      await lease?.release();
+    }
   }
 
   /**
@@ -454,17 +487,19 @@ export class RedisWorkSource implements UnitOfWorkSource {
   ): Promise<T> {
     const running = this.current();
     if (running !== undefined) return step(running);
-    return this.standalone.run(`${namespace}:${groupId}`, async () => {
-      const work = this.begin();
-      let result: T;
-      try {
-        result = await step(work);
-        await work.commit();
-      } catch (err) {
-        await work.abandon();
-        throw err;
-      }
-      return result;
-    });
+    return this.standalone.run(`${namespace}:${groupId}`, () =>
+      this.withLease(namespace, groupId, async (lease) => {
+        const work = this.begin(namespace, groupId, lease);
+        let result: T;
+        try {
+          result = await step(work);
+          await work.commit();
+        } catch (err) {
+          await work.abandon();
+          throw err;
+        }
+        return result;
+      }),
+    );
   }
 }

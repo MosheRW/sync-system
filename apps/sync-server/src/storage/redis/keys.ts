@@ -71,6 +71,11 @@ export class RedisKeys {
     return `${this.base}:c:${check(NAMESPACE_PATTERN, namespace, 'namespace')}:a:${check(ALPHA_CODE_PATTERN, code, 'alphaCode')}`;
   }
 
+  /** The group's lease (#35 architecture 12.4): a random token, PX 10 s, renewed. */
+  lock(namespace: string, groupId: string): string {
+    return `${this.base}:lock:${this.group_(namespace, groupId)}`;
+  }
+
   /** The group's timers: kind -> `{at, data}`. */
   timers(namespace: string, groupId: string): string {
     return `${this.base}:t:${this.group_(namespace, groupId)}`;

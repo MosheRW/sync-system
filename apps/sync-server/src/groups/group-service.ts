@@ -91,8 +91,13 @@ import {
   type TimerKind,
 } from './group-timers.js';
 import { newAttachId, newGroupId, newParticipantId } from './ids.js';
-import { GroupLock, type UnitOfWorkSource } from './group-lock.js';
-import { StorageConflictError, StorageUnavailableError } from '../storage/errors.js';
+import { GroupLock, type LeaseSource, type UnitOfWorkSource } from './group-lock.js';
+import {
+  LeaseLostError,
+  StorageBusyError,
+  StorageConflictError,
+  StorageUnavailableError,
+} from '../storage/errors.js';
 import type { EpochSource } from '../storage/redis/epoch.js';
 import type { Notifier } from './notifier.js';
 import { LocalRecipient, type Recipient, type Target, isRecipient } from './recipients.js';
@@ -151,6 +156,10 @@ export interface GroupServiceDeps {
   timerBackend?: TimerBackend;
   /** The storage's unit of work (#35 ADR 0011); defaults to the in-memory one. */
   work?: UnitOfWorkSource;
+  /** The group leases across instances (#35 architecture 12.4); memory has none. */
+  leases?: LeaseSource;
+  /** The synchronous instance guard (#35 security C11). */
+  fenced?: () => boolean;
 }
 
 /**
@@ -236,9 +245,13 @@ export class GroupService implements GroupActions {
   private readonly processStartedAt: number;
 
   constructor(private readonly deps: GroupServiceDeps) {
-    this.lock = new GroupLock(deps.work, (namespace, groupId, err, sessions) => {
-      this.failedCommit(namespace, groupId, err, sessions as ReadonlySet<Session>);
-    });
+    this.lock = new GroupLock(
+      deps.work,
+      (namespace, groupId, err, sessions) => {
+        this.failedCommit(namespace, groupId, err, sessions as ReadonlySet<Session>);
+      },
+      { leases: deps.leases, fenced: deps.fenced },
+    );
     this.timers = new GroupTimers(deps.timerBackend ?? new MemoryTimerBackend(deps.scheduler));
     this.joins = new JoinService(
       {
@@ -374,6 +387,13 @@ export class GroupService implements GroupActions {
       const undo = this.rollbacks.get(touched);
       if (undo !== undefined) this.rollBack(undo);
       return;
+    }
+    if (err instanceof LeaseLostError) {
+      // Another instance took the lease: this view may be stale (12.4).
+      this.deps.logger.warn(
+        { event: 'group_lease_lost', groupRef: groupRef(groupId) },
+        'group lease lost before the commit',
+      );
     }
     const sessions = new Set([...this.deps.notifier.sessionsOf(namespace, groupId), ...touched]);
     for (const session of sessions) {
@@ -520,6 +540,11 @@ export class GroupService implements GroupActions {
         if (err instanceof StorageUnavailableError) {
           this.queueReplay(namespace, groupId);
           return;
+        }
+        // Another instance holds the group: try again at the next replay.
+        if (err instanceof StorageBusyError) {
+          this.queueReplay(namespace, groupId);
+          continue;
         }
         this.deps.logger.error({ event: 'replay_error', err: safeErr(err) }, 'replay failed');
       }
@@ -2137,7 +2162,11 @@ export class GroupService implements GroupActions {
         if (result && result.connected === 0) await this.emptied(app, groupId);
       })
       .catch((err: unknown) => {
-        if (!(err instanceof StorageUnavailableError)) throw err;
+        // Redis down, or another instance held the group too long (12.4):
+        // the disconnect is replayed later.
+        if (!(err instanceof StorageUnavailableError) && !(err instanceof StorageBusyError)) {
+          throw err;
+        }
         this.queueReplay(namespace, groupId);
       });
   }

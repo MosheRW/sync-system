@@ -13,6 +13,7 @@ import { RedisKeys } from './keys.js';
 import { RedisTimerBackend } from './timers.js';
 import { RedisEpoch } from './epoch.js';
 import { INSTANCE_TIMINGS, type InstanceTimings, RedisInstance } from './instance.js';
+import { LEASE_TIMINGS, type LeaseTimings, RedisLeaseSource } from './lease-lock.js';
 import { parseMember } from './keys.js';
 import { type RedisContext, RedisWorkSource } from './unit-of-work.js';
 
@@ -34,11 +35,11 @@ export interface RedisStorageOptions {
 }
 
 /** Every several-instance timing (#35 architecture 12.4, 12.5; Gate 2 Q-B5). */
-export type ClusterTimings = InstanceTimings;
+export type ClusterTimings = InstanceTimings & LeaseTimings;
 
 /** The fixed timings, merged with test overrides. */
 export function clusterTimings(overrides: Partial<ClusterTimings> = {}): ClusterTimings {
-  return { ...INSTANCE_TIMINGS, ...overrides };
+  return { ...INSTANCE_TIMINGS, ...LEASE_TIMINGS, ...overrides };
 }
 
 /** The parts every Redis component shares. */
@@ -65,6 +66,8 @@ export function redisStorage(options: RedisStorageOptions): Storage {
   ctx.instanceKey = () => instance.liveKey();
   ctx.onFencedAbort = () => instance.fence('fenced');
   const work = new RedisWorkSource(ctx);
+  const leases = new RedisLeaseSource(ctx, timings, () => instance.started && instance.fenced());
+  work.leases = leases;
   const memory = memoryStorage({ scheduler: options.scheduler, logger: options.logger });
   const timers = new RedisTimerBackend(ctx, work, options.scheduler);
   const epoch = new RedisEpoch(ctx, work);
@@ -89,8 +92,9 @@ export function redisStorage(options: RedisStorageOptions): Storage {
           });
       });
     },
+    leases,
     cluster: {
-      fenced: () => instance.fenced(),
+      fenced: () => instance.started && instance.fenced(),
       onFence(listener) {
         instance.onFence(() => listener());
       },
