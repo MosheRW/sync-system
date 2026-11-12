@@ -1,6 +1,6 @@
 # 0010. Redis client library and supported Redis servers
 
-- Status: Proposed
+- Status: Accepted (Gate 2, 2026-11-12: user chose the recommended option)
 - Date: 2026-11-12
 - Issue: #35
 
@@ -66,7 +66,7 @@ Supported servers (same for every option):
 
 ## Decision
 
-Proposed: **option 1**, `@redis/client` pinned at exactly `6.3.1`, in
+Accepted: **option 1**, `@redis/client` pinned at exactly `6.3.1`, in
 `apps/sync-server` `dependencies`, imported only through a dynamic
 `import('@redis/client')` in `src/storage/redis/connect.ts`. Redis 7.2+ and
 Valkey 7.2+, single endpoint, tested against `redis:7.2.17-alpine` by digest.

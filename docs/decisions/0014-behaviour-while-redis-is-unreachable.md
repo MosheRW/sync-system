@@ -1,6 +1,6 @@
 # 0014. What clients see while Redis is unreachable
 
-- Status: Proposed
+- Status: Accepted (Gate 2, 2026-11-12: user chose the recommended option 1)
 - Date: 2026-11-12
 - Issue: #35
 
@@ -60,7 +60,7 @@ What exists today:
 
 ## Decision
 
-Proposed: **option 1**: close `1001` for the affected group's local
+Accepted: **option 1**: close `1001` for the affected group's local
 sessions, 503 at the upgrade while unreachable, replay queued disconnects
 on reconnect. The server keeps `INTERNAL_ERROR` for real bugs only.
 

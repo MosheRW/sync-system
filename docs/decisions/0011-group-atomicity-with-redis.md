@@ -1,6 +1,6 @@
 # 0011. Group atomicity with Redis: a per-group unit of work, then a fenced lease lock
 
-- Status: Proposed
+- Status: Accepted (Gate 2, 2026-11-12: user chose the recommended option)
 - Date: 2026-11-12
 - Issue: #35
 
@@ -74,7 +74,7 @@ shape keeps every #5, #10 and #13 rule and its tests.
 
 ## Decision
 
-Proposed: **option 1**. PR 1 builds the unit of work and the effect
+Accepted: **option 1**. PR 1 builds the unit of work and the effect
 outbox (used by both stores, so there is one code path), PR 2 adds the
 fenced lease lock.
 

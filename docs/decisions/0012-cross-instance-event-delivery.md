@@ -1,6 +1,6 @@
 # 0012. Cross-instance event delivery: one pub/sub channel per instance
 
-- Status: Proposed
+- Status: Accepted (Gate 2, 2026-11-12: user chose the recommended option; applied in PR 2 of #35)
 - Date: 2026-11-12
 - Issue: #35 (applies to PR 2 of 9a)
 
@@ -59,7 +59,7 @@ The same happens when the instance loses Redis (ADR 0014).
 
 ## Decision
 
-Proposed: **option 1**, channel `<prefix>:v1:ch:<instanceId>`, the
+Accepted: **option 1**, channel `<prefix>:v1:ch:<instanceId>`, the
 instance ID a fresh 128-bit random value per process start (never logged
 in full; a short hash only).
 

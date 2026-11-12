@@ -1,6 +1,6 @@
 # 0013. Group timers in Redis: a due-time sorted set with lease claiming
 
-- Status: Proposed
+- Status: Accepted (Gate 2, 2026-11-12: user chose the recommended option)
 - Date: 2026-11-12
 - Issue: #35
 
@@ -62,7 +62,7 @@ stay process-local: they belong to a live socket on one instance.
 
 ## Decision
 
-Proposed: **option 1**. Poll interval 1 s, lease 30 s, both fixed
+Accepted: **option 1**. Poll interval 1 s, lease 30 s, both fixed
 constants (`limits/constants.ts`), not env settings. Timer callbacks are
 replaced by a dispatch by kind (`maxSession`, `frozenEnd`,
 `keepAlivePrompt`, `keepAliveDeadline`, `grace`, `doorPauseEnd`) with
