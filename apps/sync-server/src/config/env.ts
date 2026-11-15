@@ -259,7 +259,7 @@ export function parseEnv(env: EnvSource): ServerEnv {
   }
 
   if (errors.length > 0) {
-    throw new ConfigError(errors.join('\n'));
+    throw new ConfigError(errors);
   }
 
   const n = numbers as Record<keyof ServerEnv, number>;

@@ -105,6 +105,17 @@ describe('run', () => {
     expect(stderr).not.toContain('SENTINEL');
   });
 
+  it('prints one Config error line per problem (#36 AC38)', async () => {
+    const { result, stderr } = await runCapture({
+      MAX_GROUP_SIZE_CEILING: 'abc',
+      LOG_LEVEL: 'loud',
+    });
+    expect(result).toEqual({ ok: false, exitCode: 1 });
+    const lines = stderr.trimEnd().split('\n');
+    expect(lines.length).toBeGreaterThanOrEqual(2);
+    for (const line of lines) expect(line).toMatch(/^Config error: /);
+  });
+
   it('returns exit code 1 for an invalid env variable (AC6)', async () => {
     const { result, stderr } = await runCapture({ MAX_GROUP_SIZE_CEILING: 'abc' });
     expect(result).toEqual({ ok: false, exitCode: 1 });

@@ -208,6 +208,6 @@ export function collectRedisSettings(env: EnvSource, errors: string[]): RedisSet
 export function parseRedisSettings(env: EnvSource): RedisSettings | undefined {
   const errors: string[] = [];
   const settings = collectRedisSettings(env, errors);
-  if (errors.length > 0) throw new ConfigError(errors.join('\n'));
+  if (errors.length > 0) throw new ConfigError(errors);
   return settings;
 }

@@ -117,7 +117,7 @@ export function parseTokenSecrets(env: EnvSource, nodeEnv: string | undefined): 
     }
   }
 
-  if (errors.length > 0) throw new ConfigError(errors.join('\n'));
+  if (errors.length > 0) throw new ConfigError(errors);
 
   const current =
     source === 'random' ? randomBytes(MIN_TOKEN_SECRET_BYTES) : Buffer.from(raw!, 'utf8');

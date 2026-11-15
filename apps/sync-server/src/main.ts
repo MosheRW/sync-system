@@ -95,7 +95,8 @@ export async function run(env: EnvSource, io: RunIO = {}): Promise<RunResult> {
     }
   } catch (err) {
     if (err instanceof ConfigError) {
-      stderr(`Config error: ${err.message}\n`);
+      // One prefixed line per problem (#36 AC38).
+      stderr(err.problems.map((problem) => `Config error: ${problem}\n`).join(''));
       return { ok: false, exitCode: 1 };
     }
     throw err;

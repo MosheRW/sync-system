@@ -316,7 +316,7 @@ export function parseAppsConfig(text: string, env: Ceilings, source = 'apps conf
   });
 
   if (errors.length > 0) {
-    throw new ConfigError(errors.map((e) => `${source}: ${e}`).join('\n'));
+    throw new ConfigError(errors.map((e) => `${source}: ${e}`));
   }
   return result;
 }
