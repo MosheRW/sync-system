@@ -1,4 +1,5 @@
 import { closeSync, openSync, readSync } from 'node:fs';
+import { URL } from 'node:url';
 import semver from 'semver';
 
 /** The package whose version `/health` reports. */
@@ -32,6 +33,16 @@ export class VersionError extends Error {
   constructor(readonly reason: string) {
     super(`${VERSION_STARTUP_PREFIX}: ${reason}`);
   }
+}
+
+/**
+ * `../package.json` from this module, with Node's URL. Not written as
+ * `new URL(x, import.meta.url)`: Vite rewrites that pattern into an asset
+ * URL when a browser-like test environment (jsdom) loads this module.
+ */
+function defaultPackageUrl(): URL {
+  const moduleUrl: string = import.meta.url;
+  return new URL('../package.json', moduleUrl);
 }
 
 function readCapped(url: URL): Buffer {
@@ -72,7 +83,7 @@ function readCapped(url: URL): Buffer {
  * startup. Throws VersionError with a reason that never contains the file
  * content or the absolute path.
  */
-export function readServerVersion(url = new URL('../package.json', import.meta.url)): string {
+export function readServerVersion(url = defaultPackageUrl()): string {
   const text = readCapped(url).toString('utf8');
   let data: unknown;
   try {
