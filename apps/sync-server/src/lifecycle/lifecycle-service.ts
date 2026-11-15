@@ -13,6 +13,7 @@ import {
   pauseDeadline,
 } from '../groups/group-store.js';
 import type { GroupTimers } from '../groups/group-timers.js';
+import type { Recipient, Target } from '../groups/recipients.js';
 import type { Session } from '../groups/session.js';
 import { type Logger, groupRef } from '../logging/logger.js';
 import { nextTerm, pickSuccessor } from './succession.js';
@@ -24,18 +25,18 @@ export interface LifecycleHost {
   store: GroupStore;
   timers: GroupTimers;
   logger: Logger;
-  /** The attached session of the group's leader, if any. */
-  leaderSession(record: GroupRecord): Session | undefined;
-  /** Sends `message` to `session` after the replies it is already owed. */
-  deliverLater(session: Session, message: ServerMessage): void;
+  /** The attached group leader, if any. */
+  leaderSession(record: GroupRecord): Recipient | undefined;
+  /** Sends `message` to `to` after the replies it is already owed. */
+  deliverLater(to: Target, message: ServerMessage): void;
   /** Counts a leader activity for the token refresh (#5 AC12). */
   refresherActivity(namespace: string, groupId: string, at: number): void;
   /** Sends `message` to every attached member (not the leader). */
   toMembers(record: GroupRecord, message: ServerMessage): void;
   /** Arms the frozen bound, or ends the group if it passed (#5 AC21). */
   scheduleFrozenEnd(app: AppConfig, record: GroupRecord): Promise<void>;
-  /** The session attached as `pid`, if any. */
-  sessionOf(record: GroupRecord, pid: string): Session | undefined;
+  /** The participant attached as `pid`, if any. */
+  sessionOf(record: GroupRecord, pid: string): Recipient | undefined;
   /** A token for `pid` with the record's current claims (term, gct, lat). */
   issueToken(record: GroupRecord, pid: string, role: 'leader' | 'member'): string;
   /** The leader recovery state (#13 D13). */
@@ -45,9 +46,9 @@ export interface LifecycleHost {
   /** The whole roster for the leader. */
   rosterSnapshot(record: GroupRecord): ServerMessage;
   /** Re-sends pending approval requests and a running door pause to a new leader. */
-  onLeaderReturn(leader: Session, record: GroupRecord): Promise<void>;
-  /** Restarts the leader-token refresh for the group's online leader. */
-  startRefresh(namespace: string, groupId: string, at: number): void;
+  onLeaderReturn(leader: Target, record: GroupRecord): Promise<void>;
+  /** Restarts the leader-token refresh where the new leader `pid` is attached. */
+  refreshLeader(record: GroupRecord, pid: string, at: number): void;
   /** Ends the group for everyone with `inactivity` (#13 AC22). */
   endInactive(app: AppConfig, groupId: string): Promise<void>;
   /** Ends a group nobody is connected to (#13 D15). */
@@ -373,7 +374,7 @@ export class LifecycleService {
     this.host.timers.clear(namespace, record.id, 'frozenEnd');
     this.stopKeepAlive(namespace, record.id);
     this.armKeepAlive(app, updated);
-    this.host.startRefresh(namespace, record.id, now);
+    this.host.refreshLeader(updated, successor, now);
     const granted = await this.announce(
       updated,
       successor,
@@ -398,7 +399,7 @@ export class LifecycleService {
     successor: string,
     old: string,
     reason: 'handoff_disconnect' | 'handoff_inactivity' | 'take_back',
-    oldSession: Session | undefined,
+    oldSession: Recipient | undefined,
   ): Promise<ServerMessage> {
     const granted: ServerMessage = {
       type: 'leader.granted',

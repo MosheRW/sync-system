@@ -84,6 +84,11 @@ export class ParkingLot {
     return drained;
   }
 
+  /** Whether any session is parked for `groupKey`. */
+  has(groupKey: string): boolean {
+    return (this.groups.get(groupKey)?.size ?? 0) > 0;
+  }
+
   /** Cancels every expiry timer and forgets every entry (server shutdown). */
   clearAll(): void {
     for (const entries of this.groups.values()) {

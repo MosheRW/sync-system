@@ -134,6 +134,67 @@ describe('optional Redis compose override (#35 AC30, security C2, C3, C5)', () =
   });
 });
 
+describe('two-instance compose example (#35 AC23, security P2-8)', () => {
+  const multi = read('compose.multi.yaml');
+  const nginx = read('config/nginx-multi.conf');
+  /** One service block of compose.multi.yaml. */
+  const service = (name: string): string => {
+    const start = multi.indexOf(`\n  ${name}:`);
+    const rest = multi.slice(start + 1);
+    const next = rest.search(/\n {2}[a-z][a-z0-9-]*:/);
+    return next === -1 ? rest : rest.slice(0, next);
+  };
+
+  it('pins the unprivileged nginx image by digest', () => {
+    expect(service('lb')).toMatch(
+      /image: nginxinc\/nginx-unprivileged:[0-9.]+-alpine@sha256:[0-9a-f]{64}$/m,
+    );
+  });
+
+  it('publishes only the load balancer, on loopback; both servers have no host port', () => {
+    expect(service('lb')).toContain("- '127.0.0.1:8080:8080'");
+    expect(service('sync-server')).toMatch(/ports: !reset \[\]/);
+    expect(service('sync-server-2')).toMatch(/ports: !reset \[\]/);
+    expect(multi.match(/^\s+ports:/gm)).toHaveLength(3);
+    expect(multi).not.toContain('0.0.0.0:');
+  });
+
+  it('locks the load balancer down and keeps the Redis rules of compose.redis.yaml', () => {
+    const lb = service('lb');
+    expect(lb).toMatch(/read_only: true/);
+    expect(lb).toMatch(/cap_drop:\s*\n\s+- ALL/);
+    expect(lb).toContain('no-new-privileges:true');
+    expect(lb).toContain('./config/nginx-multi.conf:/etc/nginx/conf.d/default.conf:ro');
+    // Redis is not redefined here: the C3 and C5 rules above still hold.
+    expect(multi).not.toMatch(/^ {2}redis:/m);
+    const url = /REDIS_URL:\s*(\S+)/.exec(service('sync-server-2'))?.[1];
+    expect(url).toBe(`redis://:${DEV_REDIS_PASSWORD}@redis:6379`);
+    // The second instance reuses the first one's image (no second build).
+    expect(service('sync-server-2')).toMatch(/build: !reset null/);
+    expect(service('sync-server-2')).toContain('image: sync-system/sync-server:dev');
+  });
+
+  it('balances round robin with the WebSocket upgrade, no stickiness and no access log', () => {
+    expect(nginx).toMatch(/proxy_http_version 1\.1;/);
+    expect(nginx).toMatch(/proxy_set_header Upgrade \$http_upgrade;/);
+    expect(nginx).toMatch(/proxy_set_header Connection \$connection_upgrade;/);
+    expect(nginx).toMatch(/proxy_read_timeout 120s;/);
+    // One rotation for all worker processes, and a stopped instance skipped fast.
+    expect(nginx).toMatch(/^\s*zone sync_servers \d+k;/m);
+    expect(nginx).toMatch(/proxy_connect_timeout 2s;/);
+    expect(nginx).toMatch(/access_log off;/);
+    expect(nginx).toContain('server sync-server:8080;');
+    expect(nginx).toContain('server sync-server-2:8080;');
+    const directives = nginx
+      .split(/\r?\n/)
+      .filter((line) => !line.trim().startsWith('#'))
+      .join('\n');
+    for (const sticky of [/\bip_hash\b/, /\bhash\b/, /\bsticky\b/]) {
+      expect(directives).not.toMatch(sticky);
+    }
+  });
+});
+
 describe('CI workflow (AC28, L1, L8)', () => {
   const workflow = read('.github/workflows/ci.yml');
 
@@ -168,6 +229,19 @@ describe('CI workflow (AC28, L1, L8)', () => {
     expect(test).toContain('SYNC_TEST_REDIS_URL: redis://:ci-only-redis-password@127.0.0.1:6379');
     expect(test).toMatch(/CI: 'true'/);
     expect(workflow.indexOf('name: Start Redis')).toBeLessThan(workflow.indexOf('run: pnpm test'));
+  });
+
+  it('checks the three compose files and gives the check job 25 minutes (#35 AC23, AC31)', () => {
+    const check = workflow.slice(workflow.indexOf('  check:'), workflow.indexOf('  e2e:'));
+    expect(check).toMatch(/timeout-minutes: 25/);
+    const compose = check.slice(check.indexOf('name: Compose files'), check.indexOf('name: Build'));
+    for (const files of [
+      '-f compose.yaml config -q',
+      '-f compose.yaml -f compose.redis.yaml config -q',
+      '-f compose.yaml -f compose.redis.yaml -f compose.multi.yaml config -q',
+    ]) {
+      expect(compose).toContain(`docker compose ${files}`);
+    }
   });
 
   it('installs from the lockfile, audits, then runs every check', () => {
@@ -220,7 +294,7 @@ describe('README documents the lifecycle (#13 AC4, AC38, RC14)', () => {
     }
   });
 
-  it('documents every REDIS_* variable and the one-instance limit (#35 AC32, AC6 interim)', () => {
+  it('documents every REDIS_* variable and the Redis operating rules (#35 AC32)', () => {
     const readme = read('README.md');
     const table = readme.slice(
       readme.indexOf('### Environment variables'),
@@ -238,8 +312,7 @@ describe('README documents the lifecycle (#13 AC4, AC38, RC14)', () => {
       .slice(readme.indexOf('### Storage (Redis)'), readme.indexOf('### Joining'))
       .replace(/\s+/g, ' ');
     for (const text of [
-      'One instance only, for now.',
-      'one sync server per Redis key prefix',
+      'Any number of sync server instances can share one Redis and key prefix',
       'noeviction',
       'No persistence',
       'ACL SETUSER',
@@ -250,6 +323,26 @@ describe('README documents the lifecycle (#13 AC4, AC38, RC14)', () => {
     ]) {
       expect(storage, text).toContain(text);
     }
+  });
+
+  it('documents several instances, the compose example and the join budget (#35 AC6, AC22, AC23, AC32)', () => {
+    const readme = read('README.md');
+    expect(readme).not.toContain('One instance only');
+    expect(readme).toMatch(/^### Several instances$/m);
+    const flat = readme.replace(/\s+/g, ' ');
+    for (const text of [
+      'compose.multi.yaml',
+      'The join-attempt budget multiplies by the number of instances.',
+      'issue #41',
+      'stop every instance before starting the new ones',
+      'An outage longer than 10 seconds closes every group session of the instance with `1001`',
+      'including leader-only frames with display names',
+      '+publish +subscribe +unsubscribe +ping',
+      'No sticky sessions are needed',
+    ]) {
+      expect(flat, text).toContain(text);
+    }
+    expect(flat).not.toContain('+@pubsub`');
   });
 
   it('states the token rules after #13: no lifelong take-back, supersede kills stale codes', () => {

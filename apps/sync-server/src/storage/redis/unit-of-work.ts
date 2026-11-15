@@ -1,5 +1,7 @@
 import type { GroupRecord } from '../../groups/group-store.js';
 import {
+  type HeldLease,
+  type LeaseSource,
   type UnitOfWork,
   type UnitOfWorkSource,
   currentGroupTask,
@@ -9,12 +11,21 @@ import { KeyedLock } from '../../groups/keyed-lock.js';
 import { endedRef } from '../../groups/ended-groups.js';
 import { MAX_CLOCK_SKEW_MS } from '../../limits/constants.js';
 import type { DoorState } from '../../joins/door-guard.js';
+import type { RemoteEffect } from '../../groups/remote-effects.js';
 import type { Logger } from '../../logging/logger.js';
-import { StorageConflictError, StorageInvalidError } from '../errors.js';
+import {
+  InstanceFencedError,
+  LeaseLostError,
+  StorageConflictError,
+  StorageInvalidError,
+} from '../errors.js';
 import type { RedisLink } from './connect.js';
+import { AttachmentRegistry, decodeRegistry, encodeRegistry, instancesOf } from './attachments.js';
 import { decodeGroup, encodeDocument, encodePosition } from './document.js';
 import type { RedisKeys } from './keys.js';
-import { COMMIT } from './scripts.js';
+import { COMMIT, PRELOAD } from './scripts.js';
+import { encodeBatches } from './pubsub.js';
+import { INSTANCE_LIST_RETENTION_MS } from '../../limits/constants.js';
 
 /** What every Redis part shares. */
 export interface RedisContext {
@@ -24,6 +35,37 @@ export interface RedisContext {
   /** The group's end bound E: max-session deadline + slack (#35 AC24). */
   expiryOf(namespace: string, createdAt: number): number;
   now(): number;
+  /**
+   * With several instances (#35 security C11): the liveness key of this
+   * instance, which every group-scoped commit requires, and what to do when
+   * a commit found it gone. Unset in tests that use no instance.
+   */
+  instanceKey?: () => string | undefined;
+  onFencedAbort?: () => void;
+  /** This instance's current ID (several instances); unset without. */
+  instanceId?: () => string | undefined;
+  /**
+   * Waits until this instance received every effect published to it up to
+   * sequence `seq` (#35 Gate 2 Q-B10), bounded; then the task's group
+   * applies them before the task runs.
+   */
+  awaitReceived?: (seq: number) => Promise<void>;
+  /** Test-only: runs before every unit-of-work commit (a delayed commit, #35 12.17 AC18). */
+  beforeCommit?: () => Promise<void>;
+}
+
+/** The instance fence of a commit plan (#35 security C11). */
+export interface PlanFence {
+  /** The liveness key that must exist. */
+  key: string;
+  /** Called when it did not (the instance fences itself). */
+  onAbort?: (() => void) | undefined;
+}
+
+/** The fence for a commit of this instance now, if it runs with instances. */
+export function fenceOf(ctx: RedisContext): PlanFence | undefined {
+  const key = ctx.instanceKey?.();
+  return key === undefined ? undefined : { key, onAbort: ctx.onFencedAbort };
 }
 
 type Op = Record<string, string | number>;
@@ -32,6 +74,8 @@ type Op = Record<string, string | number>;
 export interface CommitResult {
   evicted: number;
   closed: string[];
+  /** The commit's sequence when it published (Q-B10). */
+  seq?: string;
 }
 
 /**
@@ -41,7 +85,10 @@ export interface CommitResult {
 export class CommitPlan {
   readonly keys: string[] = [];
 
-  constructor(private readonly now: number) {}
+  constructor(
+    private readonly now: number,
+    private readonly fence?: PlanFence,
+  ) {}
 
   /** Time to live in ms, at least 1 (a passed end makes the key vanish at once). */
   private ttl(expiresAt: number): string {
@@ -51,9 +98,26 @@ export class CommitPlan {
   private readonly index = new Map<string, number>();
   private readonly checks: Op[] = [];
   private readonly writes: Op[] = [];
+  private readonly pubs: Op[] = [];
+  private sequenceKey: number | undefined;
 
   get empty(): boolean {
-    return this.checks.length === 0 && this.writes.length === 0;
+    return this.checks.length === 0 && this.writes.length === 0 && this.pubs.length === 0;
+  }
+
+  /** The commit takes the next sequence from `key` (Q-B10). */
+  sequence(key: string): void {
+    this.sequenceKey = this.k(key);
+  }
+
+  /** `field` of `key` becomes this commit's sequence (the group's high-water mark). */
+  highWater(key: string, field: string): void {
+    this.writes.push({ o: 'hw', k: this.k(key), f: field });
+  }
+
+  /** Publishes the effects (a JSON array text) on `channel`, after every write (C15). */
+  publish(channel: string, effects: string): void {
+    this.pubs.push({ o: 'pub', k: this.k(channel), v: effects });
   }
 
   private k(key: string): number {
@@ -96,6 +160,14 @@ export class CommitPlan {
 
   hdel(key: string, field: string): void {
     this.writes.push({ o: 'hdel', k: this.k(key), f: field });
+  }
+
+  sadd(key: string, member: string): void {
+    this.writes.push({ o: 'sadd', k: this.k(key), m: member });
+  }
+
+  srem(key: string, member: string): void {
+    this.writes.push({ o: 'srem', k: this.k(key), m: member });
   }
 
   zadd(key: string, score: number, member: string): void {
@@ -144,17 +216,31 @@ export class CommitPlan {
    */
   async run(link: RedisLink): Promise<CommitResult> {
     if (this.empty) return { evicted: 0, closed: [] };
-    const reply = await link.script(COMMIT, this.keys, [
-      JSON.stringify({ c: this.checks, w: this.writes }),
-    ]);
+    // Security C11: a fenced instance never writes; this check comes first.
+    const checks =
+      this.fence === undefined
+        ? this.checks
+        : [{ o: 'exists', k: this.k(this.fence.key), r: 'fenced' }, ...this.checks];
+    const spec: Record<string, unknown> = { c: checks, w: [...this.writes, ...this.pubs] };
+    if (this.sequenceKey !== undefined) {
+      spec.q = this.sequenceKey;
+      spec.qx = String(INSTANCE_LIST_RETENTION_MS);
+    }
+    const reply = await link.script(COMMIT, this.keys, [JSON.stringify(spec)]);
     if (Array.isArray(reply) && reply[0] === 'abort') {
+      if (reply[1] === 'fenced') {
+        this.fence?.onAbort?.();
+        throw new InstanceFencedError();
+      }
+      if (reply[1] === 'lease') throw new LeaseLostError();
       throw new StorageConflictError(String(reply[1]));
     }
-    const [, evicted, closed] = Array.isArray(reply) ? (reply as unknown[]) : [];
+    const [, evicted, closed, seq] = Array.isArray(reply) ? (reply as unknown[]) : [];
     const count = Number(evicted);
     return {
       evicted: Number.isSafeInteger(count) && count > 0 ? count : 0,
       closed: typeof closed === 'string' && closed !== '' ? closed.split(',') : [],
+      ...(typeof seq === 'string' && seq !== '' ? { seq } : {}),
     };
   }
 }
@@ -178,6 +264,10 @@ export interface WorkEntry {
   deleted: boolean;
   /** Door state (#10 AC29), stored in the document (#35 AC7). */
   door: DoorState | undefined;
+  /** Who is attached where (#35 architecture 12.6), its own key. */
+  registry: AttachmentRegistry;
+  /** The last sequence published to this instance for the group (Q-B10), 0 if none. */
+  highWater: number;
 }
 
 function keyOf(namespace: string, groupId: string): string {
@@ -200,8 +290,50 @@ export class RedisUnitOfWork implements UnitOfWork {
   private readonly committed: Array<(result: CommitResult) => void> = [];
   /** The epoch this task classified tokens with (re-checked by a recreation, C7). */
   private epochSeen: string | undefined;
+  /** The instance this task started as (security C11): its commit requires that liveness. */
+  private readonly fence: PlanFence | undefined;
+  /** The instance ID this task acts as: its registry entries name it. */
+  readonly instanceId: string | undefined;
+  /** Effects for participants on other instances, by instance, in queue order (12.7). */
+  readonly remote = new Map<string, RemoteEffect[]>();
 
-  constructor(readonly ctx: RedisContext) {}
+  constructor(
+    readonly ctx: RedisContext,
+    /** The group lease this task holds (several instances): checked first by the commit. */
+    private readonly lease?: HeldLease,
+    /** The task's own group, read before the task runs. */
+    private readonly home?: { namespace: string; groupId: string },
+  ) {
+    this.fence = fenceOf(ctx);
+    this.instanceId = ctx.instanceId?.();
+  }
+
+  /**
+   * Reads the task's own group with its registry (#35 architecture 12.1
+   * step 3), then waits until every effect an earlier commit of the group
+   * published to this instance has arrived (Gate 2 Q-B10): the task's own
+   * frames then never overtake them.
+   */
+  async preload(): Promise<void> {
+    if (this.home === undefined) return;
+    const entry = await this.entry(this.home.namespace, this.home.groupId);
+    if (entry.highWater > 0) await this.ctx.awaitReceived?.(entry.highWater);
+  }
+
+  /** The group's registry if this work read the group, else undefined. */
+  registry(namespace: string, groupId: string): AttachmentRegistry | undefined {
+    return this.entries.get(keyOf(namespace, groupId))?.registry;
+  }
+
+  /** Queues an effect for a participant on `instance` (sent with the commit, 12.7). */
+  queueRemote(instance: string, effect: RemoteEffect): void {
+    let queue = this.remote.get(instance);
+    if (queue === undefined) {
+      queue = [];
+      this.remote.set(instance, queue);
+    }
+    queue.push(effect);
+  }
 
   /** The group's entry, read from Redis on first use. */
   entry(namespace: string, groupId: string): Promise<WorkEntry> {
@@ -217,7 +349,7 @@ export class RedisUnitOfWork implements UnitOfWork {
   }
 
   private async load(namespace: string, groupId: string): Promise<WorkEntry> {
-    const stored = await readGroup(this.ctx, namespace, groupId);
+    const stored = await readGroup(this.ctx, namespace, groupId, this.instanceId);
     const entry: WorkEntry = {
       namespace,
       groupId,
@@ -227,6 +359,8 @@ export class RedisUnitOfWork implements UnitOfWork {
       mode: undefined,
       deleted: false,
       door: stored?.door,
+      registry: stored?.registry ?? new AttachmentRegistry(),
+      highWater: stored?.highWater ?? 0,
     };
     if (stored !== undefined) await this.cache.create(stored.record);
     this.entries.set(keyOf(namespace, groupId), entry);
@@ -271,7 +405,9 @@ export class RedisUnitOfWork implements UnitOfWork {
 
   /** The commit plan of this task. */
   async plan(): Promise<CommitPlan> {
-    const plan = new CommitPlan(this.ctx.now());
+    const plan = new CommitPlan(this.ctx.now(), this.fence);
+    // The fence of #35 architecture 12.4: the lease is still this task's.
+    if (this.lease !== undefined) plan.eq(this.lease.key, this.lease.token, 'lease');
     const { keys } = this.ctx;
     const ends = new Map<string, number>();
     for (const entry of this.entries.values()) {
@@ -284,6 +420,13 @@ export class RedisUnitOfWork implements UnitOfWork {
         plan.del(docKey);
         plan.del(posKey);
         plan.zrem(keys.live(), keys.liveMember(namespace, groupId));
+        // The registry and the instances' group sets go with the group (AC24).
+        plan.del(keys.attachments(namespace, groupId));
+        plan.del(keys.highWater(namespace, groupId));
+        plan.del(keys.approvalQueue(namespace, groupId));
+        for (const id of instancesOf(entry.registry.loaded)) {
+          plan.srem(keys.instanceGroups(id), keys.liveMember(namespace, groupId));
+        }
         continue;
       }
       const expiresAt = this.ctx.expiryOf(namespace, record.createdAt);
@@ -309,15 +452,80 @@ export class RedisUnitOfWork implements UnitOfWork {
         plan.extend(keys.epoch(), expiresAt + MAX_CLOCK_SKEW_MS);
       }
       if (entry.mode !== undefined || pos !== entry.posText) plan.set(posKey, pos, expiresAt);
+      this.planRegistry(plan, entry, record, expiresAt);
     }
     const groups: PlanGroups = {
       expiry: (namespace, groupId) => ends.get(keyOf(namespace, groupId)),
     };
     for (const step of this.steps) step(plan, groups);
+    this.planPublish(plan, ends);
     return plan;
   }
 
+  /**
+   * The task's remote effects (#35 architecture 12.7): one or more ordered
+   * messages per instance, published by the commit after every write, with
+   * the commit's sequence; each instance's high-water mark for the group
+   * moves to it (Gate 2 Q-B10).
+   */
+  private planPublish(plan: CommitPlan, ends: ReadonlyMap<string, number>): void {
+    if (this.remote.size === 0) return;
+    const { keys } = this.ctx;
+    const batches: Array<[string, string[]]> = [];
+    for (const [instance, effects] of this.remote) {
+      const encoded = encodeBatches(effects, this.ctx.logger);
+      if (encoded.length > 0) batches.push([instance, encoded]);
+    }
+    if (batches.length === 0) return;
+    plan.sequence(keys.sequence());
+    const home = this.home;
+    const end = home === undefined ? undefined : ends.get(keyOf(home.namespace, home.groupId));
+    if (home !== undefined && end !== undefined) {
+      const hw = keys.highWater(home.namespace, home.groupId);
+      for (const [instance] of batches) plan.highWater(hw, instance);
+      plan.keep(hw, end);
+    }
+    for (const [instance, encoded] of batches) {
+      for (const text of encoded) plan.publish(keys.channel(instance), text);
+    }
+  }
+
+  /**
+   * The registry's writes (#35 architecture 12.6). First the invariant: a
+   * pid has an entry only while it is connected in the record (in
+   * `participantIds`, or the online leader). Then `P:a` is written only if
+   * it changed, and each instance's group set gains or loses the group when
+   * its first attachment comes or its last goes.
+   */
+  private planRegistry(
+    plan: CommitPlan,
+    entry: WorkEntry,
+    record: GroupRecord,
+    expiresAt: number,
+  ): void {
+    const { keys } = this.ctx;
+    const { namespace, groupId, registry } = entry;
+    registry.retain((pid) =>
+      pid === record.leaderId ? record.leaderOnline : record.participantIds.includes(pid),
+    );
+    const text = encodeRegistry(registry.current());
+    if (text === registry.text) return;
+    const key = keys.attachments(namespace, groupId);
+    if (text === undefined) plan.del(key);
+    else plan.set(key, text, expiresAt);
+    const before = instancesOf(registry.loaded);
+    const after = instancesOf(registry.current());
+    const member = keys.liveMember(namespace, groupId);
+    for (const id of after) {
+      if (before.has(id)) continue;
+      plan.sadd(keys.instanceGroups(id), member);
+      plan.extend(keys.instanceGroups(id), expiresAt);
+    }
+    for (const id of before) if (!after.has(id)) plan.srem(keys.instanceGroups(id), member);
+  }
+
   async commit(): Promise<void> {
+    await this.ctx.beforeCommit?.();
     const plan = await this.plan();
     const result = await plan.run(this.ctx.link);
     for (const then of this.committed) then(result);
@@ -339,12 +547,15 @@ export class RedisUnitOfWork implements UnitOfWork {
   }
 }
 
-/** A group as stored: the record, its door state and the raw texts. */
+/** A group as stored: the record, its door state, its registry and the raw texts. */
 export interface StoredGroupTexts {
   record: GroupRecord;
   door: DoorState | undefined;
   docText: string;
   posText: string;
+  registry: AttachmentRegistry;
+  /** The last sequence published to `self` for the group (Q-B10), 0 if none. */
+  highWater: number;
 }
 
 /**
@@ -356,14 +567,20 @@ export async function readGroup(
   ctx: RedisContext,
   namespace: string,
   groupId: string,
+  self?: string,
 ): Promise<StoredGroupTexts | undefined> {
   const { keys } = ctx;
-  const reply = await ctx.link.send([
-    'MGET',
-    keys.group(namespace, groupId),
-    keys.position(namespace, groupId),
-  ]);
-  const [docText, posText] = Array.isArray(reply) ? (reply as unknown[]) : [];
+  const reply = await ctx.link.script(
+    PRELOAD,
+    [
+      keys.group(namespace, groupId),
+      keys.position(namespace, groupId),
+      keys.attachments(namespace, groupId),
+      keys.highWater(namespace, groupId),
+    ],
+    [self ?? ''],
+  );
+  const [docText, posText, regText, hwText] = Array.isArray(reply) ? (reply as unknown[]) : [];
   if (docText === null || docText === undefined) return undefined;
   const decoded =
     typeof docText === 'string' && (typeof posText === 'string' || posText === null)
@@ -373,7 +590,24 @@ export async function readGroup(
     ctx.logger.error({ event: 'store_document_invalid' }, 'stored group document is invalid');
     throw new StorageInvalidError();
   }
-  return { ...decoded, docText: docText as string, posText: posText as string };
+  // A missing registry (a PR 1 group) means nobody is known attached (12.8).
+  let registry = new AttachmentRegistry();
+  if (regText !== null && regText !== undefined) {
+    const entries = typeof regText === 'string' ? decodeRegistry(regText) : 'invalid';
+    if (entries === 'invalid') {
+      ctx.logger.error({ event: 'store_document_invalid' }, 'stored registry is invalid');
+      throw new StorageInvalidError();
+    }
+    registry = new AttachmentRegistry(entries, regText as string);
+  }
+  const highWater = typeof hwText === 'string' && /^[0-9]{1,16}$/.test(hwText) ? Number(hwText) : 0;
+  return {
+    ...decoded,
+    docText: docText as string,
+    posText: posText as string,
+    registry,
+    highWater,
+  };
 }
 
 /**
@@ -384,16 +618,43 @@ export class RedisWorkSource implements UnitOfWorkSource {
   readonly transactional = true;
   /** Serializes one-step works per group, so each is atomic in this process. */
   private readonly standalone = new KeyedLock();
+  /** The group leases (several instances); set once the storage is built. */
+  leases: LeaseSource | undefined;
 
   constructor(private readonly ctx: RedisContext) {}
 
-  begin(): RedisUnitOfWork {
-    return new RedisUnitOfWork(this.ctx);
+  begin(namespace?: string, groupId?: string, lease?: HeldLease): RedisUnitOfWork {
+    return new RedisUnitOfWork(
+      this.ctx,
+      lease,
+      namespace === undefined || groupId === undefined ? undefined : { namespace, groupId },
+    );
   }
 
-  /** An empty commit plan, for a step outside any unit of work. */
-  plan(): CommitPlan {
-    return new CommitPlan(this.ctx.now());
+  /**
+   * Runs `step` holding the group's lease (#35 architecture 12.4), for a
+   * step outside any group task; without leases it just runs.
+   */
+  async withLease<T>(
+    namespace: string,
+    groupId: string,
+    step: (lease: HeldLease | undefined) => Promise<T>,
+  ): Promise<T> {
+    const lease = await this.leases?.acquire(namespace, groupId);
+    try {
+      return await step(lease);
+    } finally {
+      await lease?.release();
+    }
+  }
+
+  /**
+   * An empty commit plan, for a step outside any unit of work. Fenced by
+   * this instance's liveness (security C11) unless `fenced` is false (only
+   * compare-and-delete code releases).
+   */
+  plan(fenced = true): CommitPlan {
+    return new CommitPlan(this.ctx.now(), fenced ? fenceOf(this.ctx) : undefined);
   }
 
   /** The running task's work if it belongs to this storage. */
@@ -413,17 +674,19 @@ export class RedisWorkSource implements UnitOfWorkSource {
   ): Promise<T> {
     const running = this.current();
     if (running !== undefined) return step(running);
-    return this.standalone.run(`${namespace}:${groupId}`, async () => {
-      const work = this.begin();
-      let result: T;
-      try {
-        result = await step(work);
-        await work.commit();
-      } catch (err) {
-        await work.abandon();
-        throw err;
-      }
-      return result;
-    });
+    return this.standalone.run(`${namespace}:${groupId}`, () =>
+      this.withLease(namespace, groupId, async (lease) => {
+        const work = this.begin(namespace, groupId, lease);
+        let result: T;
+        try {
+          result = await step(work);
+          await work.commit();
+        } catch (err) {
+          await work.abandon();
+          throw err;
+        }
+        return result;
+      }),
+    );
   }
 }

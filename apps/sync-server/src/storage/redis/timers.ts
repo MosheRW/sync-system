@@ -64,6 +64,8 @@ export class RedisTimerBackend implements TimerBackend {
     private readonly ctx: RedisContext,
     private readonly work: RedisWorkSource,
     private readonly scheduler: Scheduler,
+    /** How long a claimed timer is leased (ADR 0013); tests shorten it. */
+    private readonly leaseMs: number = TIMER_LEASE_MS,
   ) {}
 
   get size(): number {
@@ -142,7 +144,7 @@ export class RedisTimerBackend implements TimerBackend {
     // Outside a group task (tests): no group is known, so no expiry; commit
     // what does not need one.
     const plan = this.work.plan();
-    step(plan, { expiry: () => this.ctx.now() + TIMER_LEASE_MS });
+    step(plan, { expiry: () => this.ctx.now() + this.leaseMs });
     plan
       .run(this.ctx.link)
       .then(() => {
@@ -202,7 +204,7 @@ export class RedisTimerBackend implements TimerBackend {
   private async claimDue(): Promise<number> {
     const { keys } = this.ctx;
     const now = this.ctx.now();
-    const leaseEnd = now + TIMER_LEASE_MS;
+    const leaseEnd = now + this.leaseMs;
     const reply = await this.ctx.link.script(
       CLAIM_DUE,
       [keys.due(), keys.live()],

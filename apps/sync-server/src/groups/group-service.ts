@@ -90,11 +90,27 @@ import {
   type TimerData,
   type TimerKind,
 } from './group-timers.js';
-import { newGroupId, newParticipantId } from './ids.js';
-import { GroupLock, type UnitOfWorkSource } from './group-lock.js';
-import { StorageConflictError, StorageUnavailableError } from '../storage/errors.js';
+import { newAttachId, newGroupId, newParticipantId } from './ids.js';
+import { GroupLock, type LeaseSource, type UnitOfWorkSource } from './group-lock.js';
+import {
+  LeaseLostError,
+  StorageBusyError,
+  StorageConflictError,
+  StorageUnavailableError,
+} from '../storage/errors.js';
 import type { EpochSource } from '../storage/redis/epoch.js';
 import type { Notifier } from './notifier.js';
+import {
+  LocalRecipient,
+  type Recipient,
+  RemoteRecipient,
+  type Target,
+  isRecipient,
+} from './recipients.js';
+import type { ClusterNotifier } from './cluster-notifier.js';
+import type { RemoteEffect } from './remote-effects.js';
+import type { ApprovalStore } from '../joins/approval-store.js';
+import type { ParkingRegistry } from '../storage/redis/parking.js';
 import { ParkingLot } from './parking-lot.js';
 import { canSupersede, classifyToken } from './resume.js';
 import { nextTerm } from '../lifecycle/succession.js';
@@ -150,6 +166,19 @@ export interface GroupServiceDeps {
   timerBackend?: TimerBackend;
   /** The storage's unit of work (#35 ADR 0011); defaults to the in-memory one. */
   work?: UnitOfWorkSource;
+  /** The group leases across instances (#35 architecture 12.4); memory has none. */
+  leases?: LeaseSource;
+  /** The synchronous instance guard (#35 security C11). */
+  fenced?: () => boolean;
+  /**
+   * Several instances (#35 architecture 12.6): who owns a membership comes
+   * from the group's attachment registry, read under the lease.
+   */
+  cluster?: ClusterNotifier;
+  /** Pending method B requests (Redis, #35 architecture 12.9); defaults to memory. */
+  approvals?: ApprovalStore;
+  /** Which instances hold parked members of a missing group (Redis, 12.10). */
+  parked?: ParkingRegistry;
 }
 
 /**
@@ -235,9 +264,17 @@ export class GroupService implements GroupActions {
   private readonly processStartedAt: number;
 
   constructor(private readonly deps: GroupServiceDeps) {
-    this.lock = new GroupLock(deps.work, (namespace, groupId, err, sessions) => {
-      this.failedCommit(namespace, groupId, err, sessions as ReadonlySet<Session>);
-    });
+    this.lock = new GroupLock(
+      deps.work,
+      (namespace, groupId, err, sessions) => {
+        this.failedCommit(namespace, groupId, err, sessions as ReadonlySet<Session>);
+      },
+      {
+        leases: deps.leases,
+        fenced: deps.fenced,
+        beforeTask: (namespace, groupId) => this.drainInbox(groupKey(namespace, groupId)),
+      },
+    );
     this.timers = new GroupTimers(deps.timerBackend ?? new MemoryTimerBackend(deps.scheduler));
     this.joins = new JoinService(
       {
@@ -251,16 +288,32 @@ export class GroupService implements GroupActions {
         doors: deps.doors,
         timers: this.timers,
         groupExpiry: (namespace, createdAt) => this.groupExpiry(namespace, createdAt),
+        ...(deps.approvals === undefined ? {} : { approvals: deps.approvals }),
       },
       {
         busy: (session) => this.busy(session),
         runLocked: (namespace, groupId, task) => this.lock.run(namespace, groupId, task),
         admit: (session, groupId, method, name) => this.admitMember(session, groupId, method, name),
-        leaderOf: (record) =>
-          this.deps.notifier.get(membershipKey(record.appNamespace, record.id, record.leaderId)),
+        leaderOf: (record) => this.recipientOf(record, record.leaderId),
         deliverLater: (session, message) => this.deliverLater(session, message),
         admissionClosed: (record) => this.admissionClosed(record),
         asLeader: (session, action, task) => this.asLeader(session, action, task),
+        ...(deps.cluster === undefined
+          ? {}
+          : {
+              admitRemote: (app, groupId, name, instance, requestId) =>
+                this.admitRemote(app, groupId, name, instance, requestId),
+              settleRemote: (instance, namespace, groupId, requestId, message) =>
+                deps.cluster!.host.send(instance, {
+                  op: 'settle',
+                  ns: namespace,
+                  gid: groupId,
+                  rid: requestId,
+                  text: JSON.stringify(message),
+                }),
+              instanceLive: async (instance) =>
+                (await deps.cluster!.host.liveOf([instance])).has(instance),
+            }),
       },
     );
     this.checkLimiter = new SlidingWindowRateLimiter(() => this.now(), TOKENS_CHECK_WINDOW_MS);
@@ -309,7 +362,7 @@ export class GroupService implements GroupActions {
       codesPayload: (record) => this.joins.payload(record),
       rosterSnapshot: (record) => this.rosterSnapshot(record),
       onLeaderReturn: (leader, record) => this.joins.onLeaderReturn(leader, record),
-      startRefresh: (namespace, groupId, at) => this.startRefresh(namespace, groupId, at),
+      refreshLeader: (record, pid, at) => this.refreshLeader(record, pid, at),
       endEmpty: (app, groupId) => this.endGroup(app, groupId, 'empty'),
       endInactive: (app, groupId) => this.endGroup(app, groupId, 'inactivity'),
       anyoneAttached: (record) => this.anyoneAttached(record),
@@ -322,6 +375,7 @@ export class GroupService implements GroupActions {
     this.onTimer('keepAlivePrompt', (app, groupId) => this.lifecycle.onPrompt(app, groupId));
     this.onTimer('keepAliveDeadline', (app, groupId) => this.lifecycle.onDeadline(app, groupId));
     this.onTimer('doorPauseEnd', (app, groupId) => this.joins.pauseEnded(app.namespace, groupId));
+    this.onTimer('approvalDue', (app, groupId) => this.joins.approvalDue(app.namespace, groupId));
     this.onTimer('grace', (app, groupId, data) =>
       data === undefined
         ? Promise.resolve()
@@ -374,6 +428,13 @@ export class GroupService implements GroupActions {
       const undo = this.rollbacks.get(touched);
       if (undo !== undefined) this.rollBack(undo);
       return;
+    }
+    if (err instanceof LeaseLostError) {
+      // Another instance took the lease: this view may be stale (12.4).
+      this.deps.logger.warn(
+        { event: 'group_lease_lost', groupRef: groupRef(groupId) },
+        'group lease lost before the commit',
+      );
     }
     const sessions = new Set([...this.deps.notifier.sessionsOf(namespace, groupId), ...touched]);
     for (const session of sessions) {
@@ -457,6 +518,179 @@ export class GroupService implements GroupActions {
     }
   }
 
+  /**
+   * This instance fenced itself (#35 architecture 12.5, security C13): a
+   * session in a group, parked or waiting for approval leaves it here
+   * without any disconnect rule (the orphan sweep of a peer, or of this
+   * instance under its new ID, runs them). Returns whether it was in one;
+   * the caller then closes it with 1001.
+   */
+  quietDetach(session: Session): boolean {
+    let busy = false;
+    const membership = session.membership;
+    if (membership !== undefined) {
+      busy = true;
+      this.deps.notifier.unregister(
+        membershipKey(session.app.namespace, membership.groupId, membership.participantId),
+        session,
+      );
+      session.membership = undefined;
+    }
+    if (session.parked !== undefined) {
+      busy = true;
+      this.parking.unpark(session);
+    }
+    if (session.pendingJoin !== undefined) {
+      busy = true;
+      this.joins.forgetPending(session);
+    }
+    return busy;
+  }
+
+  /**
+   * After a self-fence (#35 architecture 12.5, C13): queued disconnect
+   * replays, refreshers and parking go; the sweep takes over.
+   */
+  onFenced(): void {
+    this.replay.clear();
+    this.refresher.clearAll();
+    this.parking.clearAll();
+  }
+
+  /** Effects received from other instances, per group, not yet applied (12.7). */
+  private readonly inbox = new Map<string, RemoteEffect[]>();
+
+  /**
+   * Effects another instance published for sessions here (#35 architecture
+   * 12.7): each group's effects are applied in arrival order through the
+   * group's local queue, so they never interleave with a local task of the
+   * group; a task drains them first itself (Gate 2 Q-B10).
+   */
+  receiveRemote(effects: readonly RemoteEffect[]): void {
+    const groups = new Map<string, { namespace: string; groupId: string }>();
+    for (const effect of effects) {
+      const key = groupKey(effect.ns, effect.gid);
+      let queue = this.inbox.get(key);
+      if (queue === undefined) {
+        queue = [];
+        this.inbox.set(key, queue);
+      }
+      queue.push(effect);
+      groups.set(key, { namespace: effect.ns, groupId: effect.gid });
+    }
+    for (const [key, { namespace, groupId }] of groups) {
+      this.lock
+        .runLocal(namespace, groupId, () => this.drainInbox(key))
+        .catch((err: unknown) => {
+          this.deps.logger.error(
+            { event: 'remote_effect_error', err: safeErr(err) },
+            'remote failed',
+          );
+        });
+    }
+  }
+
+  /** Applies the group's received effects, in order. In the group's local queue. */
+  private drainInbox(key: string): void {
+    const queue = this.inbox.get(key);
+    if (queue === undefined) return;
+    this.inbox.delete(key);
+    for (const effect of queue) this.applyRemote(effect);
+  }
+
+  /**
+   * One received effect (#35 architecture 12.7, security P2-4, C15): it
+   * acts only on the local session that still holds the membership with
+   * the same attach ID; anything else is dropped. Never runs while fenced.
+   */
+  private applyRemote(effect: RemoteEffect): void {
+    if (this.deps.fenced?.() === true) return;
+    const dropped = () =>
+      this.deps.logger.debug({ event: 'remote_effect_dropped', op: effect.op }, 'effect dropped');
+    switch (effect.op) {
+      case 'deliver':
+      case 'detach':
+      case 'refresh': {
+        const key = membershipKey(effect.ns, effect.gid, effect.pid);
+        const session = this.deps.notifier.get(key);
+        if (session === undefined || session.membership?.attachId !== effect.att) {
+          dropped();
+          return;
+        }
+        if (effect.op === 'deliver') {
+          const { text } = effect;
+          if (effect.later) session.afterPending(() => session.deliver(text));
+          else session.deliver(text);
+        } else if (effect.op === 'detach') {
+          this.deps.notifier.unregister(key, session);
+          session.membership = undefined;
+          const { text, close } = effect;
+          if (text !== undefined || close !== undefined) {
+            session.afterPending(() => {
+              if (text !== undefined) session.deliver(text);
+              if (close !== undefined) session.close(close, 'removed');
+            });
+          }
+        } else {
+          this.startRefresh(effect.ns, effect.gid, effect.at);
+        }
+        return;
+      }
+      case 'admit': {
+        // An approved joiner (12.9): attach it as the registry already says.
+        const joiner = this.joins.approvals.releaseJoiner(effect.rid);
+        if (
+          joiner === undefined ||
+          !joiner.isOpen() ||
+          joiner.app.namespace !== effect.ns ||
+          this.busy(joiner)
+        ) {
+          // Gone meanwhile (Gate 2 Q-B3): removed with the usual rules.
+          this.disconnectStale(effect.ns, effect.gid, effect.pid, effect.att);
+          return;
+        }
+        this.attach(joiner, effect.gid, effect.pid, effect.att);
+        const { text } = effect;
+        joiner.afterPending(() => joiner.deliver(text));
+        return;
+      }
+      case 'settle': {
+        const joiner = this.joins.approvals.releaseJoiner(effect.rid);
+        if (joiner === undefined || joiner.app.namespace !== effect.ns) {
+          dropped();
+          return;
+        }
+        const { text } = effect;
+        joiner.afterPending(() => joiner.deliver(text));
+        return;
+      }
+      case 'admitParked': {
+        // Under the group lease, after this local step (12.10).
+        const app = this.deps.appOf(effect.ns);
+        if (app === undefined) return;
+        this.lock
+          .run(effect.ns, effect.gid, () => this.admitParkedNow(app, effect.gid))
+          .catch((err: unknown) => {
+            if (err instanceof StorageUnavailableError || err instanceof StorageBusyError) {
+              this.queueReplay(effect.ns, effect.gid);
+              return;
+            }
+            this.deps.logger.error({ event: 'remote_effect_error', err: safeErr(err) }, 'admit');
+          });
+        return;
+      }
+      case 'forget': {
+        const key = groupKey(effect.ns, effect.gid);
+        this.deps.rateLimiter.forget(key);
+        this.controls.forgetGroup(effect.ns, effect.gid);
+        this.refresher.clear(key);
+        return;
+      }
+      default:
+        dropped();
+    }
+  }
+
   /** Number of groups waiting for a disconnect replay. For tests only. */
   get replayCount(): number {
     return this.replay.size;
@@ -467,7 +701,17 @@ export class GroupService implements GroupActions {
    * lock, every participant without an open local session is disconnected
    * with the usual rules. A group that failed again stays queued.
    */
-  async replayDisconnects(): Promise<void> {
+  replayDisconnects(): Promise<void> {
+    // One replay at a time (Redis back, and every heartbeat tick).
+    this.replaying ??= this.replayAll().finally(() => {
+      this.replaying = undefined;
+    });
+    return this.replaying;
+  }
+
+  private replaying: Promise<void> | undefined;
+
+  private async replayAll(): Promise<void> {
     for (const key of [...this.replay]) {
       this.replay.delete(key);
       const at = key.indexOf(':');
@@ -476,35 +720,102 @@ export class GroupService implements GroupActions {
       const app = this.deps.appOf(namespace);
       if (app === undefined) continue;
       try {
-        await this.lock.run(namespace, groupId, () => this.reconcile(app, groupId));
+        await this.lock.run(namespace, groupId, async () => {
+          await this.reconcile(app, groupId);
+          // Members parked here for a group recreated elsewhere (12.10).
+          await this.admitParkedNow(app, groupId);
+        });
       } catch (err) {
         if (err instanceof StorageUnavailableError) {
           this.queueReplay(namespace, groupId);
           return;
+        }
+        // Another instance holds the group: try again at the next replay.
+        if (err instanceof StorageBusyError) {
+          this.queueReplay(namespace, groupId);
+          continue;
         }
         this.deps.logger.error({ event: 'replay_error', err: safeErr(err) }, 'replay failed');
       }
     }
   }
 
-  /** Disconnects every participant with no open local session. Under the group lock. */
-  private async reconcile(app: AppConfig, groupId: string): Promise<void> {
+  /**
+   * The connected participants of the group nobody holds any more (#35
+   * architecture 12.8, security C12, C13). In memory: no open local
+   * session. With several instances, from the registry read under the
+   * lease: no entry, an entry naming an instance whose liveness key is gone
+   * (read from Redis now, never the cache), or an entry naming this
+   * instance with no matching open local session.
+   */
+  private async orphans(record: GroupRecord): Promise<Set<string>> {
+    const namespace = record.appNamespace;
+    const groupId = record.id;
+    const connected = record.participantIds.filter((pid) => pid !== record.leaderId);
+    if (record.leaderOnline) connected.push(record.leaderId);
+    const localGone = (pid: string) => {
+      const owner = this.recipient(namespace, groupId, pid);
+      return !(owner instanceof LocalRecipient && owner.isOpen());
+    };
+    const cluster = this.deps.cluster;
+    if (cluster === undefined) return new Set(connected.filter(localGone));
+    const entries = cluster.entries(namespace, groupId);
+    const self = cluster.host.selfId();
+    const others = connected
+      .map((pid) => entries.get(pid)?.i)
+      .filter((id): id is string => id !== undefined && id !== self);
+    const live = await cluster.host.liveOf(others);
+    return new Set(
+      connected.filter((pid) => {
+        const entry = entries.get(pid);
+        if (entry === undefined) return true;
+        return entry.i === self ? localGone(pid) : !live.has(entry.i);
+      }),
+    );
+  }
+
+  /**
+   * Disconnects every participant nobody holds any more (`orphans`), with
+   * the usual rules: a leader goes offline with the grace from now (AC21),
+   * members leave and are marked disconnected, an emptied group is held.
+   * After a restart (`restart`), a pause or hold of a group nobody is
+   * attached to on a live instance ends no earlier than
+   * `disconnectGraceSeconds` from now (#35 Gate 2 Q-A3, AC11). Under the
+   * group lock.
+   */
+  private async reconcile(app: AppConfig, groupId: string, restart = false): Promise<number> {
     const namespace = app.namespace;
-    const record = await this.deps.store.get(namespace, groupId);
-    if (record === undefined) return;
-    const open = (pid: string) =>
-      isParticipantConnected(this.deps.notifier.get(membershipKey(namespace, groupId, pid)));
+    let record = await this.deps.store.get(namespace, groupId);
+    if (record === undefined) return 0;
+    const gone = await this.orphans(record);
+    const connected = record.participantIds.filter((pid) => pid !== record!.leaderId);
+    if (record.leaderOnline) connected.push(record.leaderId);
+    const attended = connected.some((pid) => !gone.has(pid));
+    if (restart && !attended) {
+      const floor = this.now() + app.disconnectGraceSeconds * 1000;
+      const running = pauseDeadline(record.pause);
+      if (record.pause !== undefined && running !== undefined && running < floor) {
+        const pause: GroupPause =
+          record.pause.graceEndsAt !== undefined
+            ? { ...record.pause, graceEndsAt: floor }
+            : { ...record.pause, holdEndsAt: floor };
+        record = (await this.deps.store.patch(namespace, groupId, { pause })) ?? record;
+        this.lifecycle.armPauseEnd(app, record, floor);
+      }
+    }
     for (const pid of record.participantIds) {
-      if (pid === record.leaderId || open(pid)) continue;
+      if (pid === record.leaderId || !gone.has(pid)) continue;
       const result = await this.deps.store.removeParticipant(namespace, groupId, pid);
       const current = await this.deps.store.get(namespace, groupId);
       if (current !== undefined) await this.leaveRosterOnDisconnect(app, current, pid);
       if (result && result.connected === 0) await this.emptied(app, groupId);
     }
     const current = await this.deps.store.get(namespace, groupId);
-    if (current !== undefined && current.leaderOnline && !open(current.leaderId)) {
-      await this.leaderOffline(app, groupId);
-    }
+    if (current === undefined) return gone.size;
+    if (current.leaderOnline && gone.has(current.leaderId)) await this.leaderOffline(app, groupId);
+    else if (restart && !attended && connectedCount(current) === 0)
+      await this.emptied(app, groupId);
+    return gone.size;
   }
 
   /** The store's epoch: the Redis epoch, or this process's start (#35 4.5). */
@@ -550,13 +861,27 @@ export class GroupService implements GroupActions {
   }
 
   /**
+   * Starts the refresher where the new leader `pid` is attached (#35
+   * architecture 12.6); with nobody attached, here.
+   */
+  private refreshLeader(record: GroupRecord, pid: string, at: number): void {
+    const leader = this.recipientOf(record, pid);
+    if (leader instanceof RemoteRecipient) {
+      // The refresher runs where the leader's actions are counted.
+      this.refresher.clear(groupKey(record.appNamespace, record.id));
+      leader.refresh(at);
+    } else if (leader !== undefined) leader.refresh(at);
+    else this.startRefresh(record.appNamespace, record.id, at);
+  }
+
+  /**
    * Sends the online leader a token with the group's current last-activity
    * time; all other claims stay the same (#5 AC12). Runs under the group lock.
    */
   private async sendRefreshedToken(namespace: string, groupId: string): Promise<void> {
     const record = await this.deps.store.get(namespace, groupId);
     if (!record || !record.leaderOnline) return;
-    const leader = this.deps.notifier.get(membershipKey(namespace, groupId, record.leaderId));
+    const leader = this.recipient(namespace, groupId, record.leaderId);
     if (leader === undefined) return;
     const token = this.issueToken(namespace, record, record.leaderId, 'leader', this.now());
     const text = JSON.stringify({
@@ -564,7 +889,7 @@ export class GroupService implements GroupActions {
       groupId,
       token,
     } satisfies ServerMessage);
-    this.lock.effect(() => leader.deliver(text));
+    leader.send(text, false);
     this.deps.logger.debug(
       { event: 'token_refreshed', namespace, groupRef: groupRef(groupId) },
       'leader token refreshed',
@@ -594,21 +919,88 @@ export class GroupService implements GroupActions {
     return this.deps.scheduler.now();
   }
 
-  /** The session's membership if the session still owns it in the notifier (M4). */
+  /**
+   * The session's membership if the session still owns it (M4). Locally
+   * that is the notifier; inside a task of its group with several
+   * instances, the registry read under the lease decides too: the local
+   * check alone may only deny (#35 security C14).
+   */
   private owned(session: Session): Membership | undefined {
     const membership = session.membership;
     if (membership === undefined) return undefined;
-    const key = membershipKey(session.app.namespace, membership.groupId, membership.participantId);
-    return this.deps.notifier.get(key) === session ? membership : undefined;
+    const namespace = session.app.namespace;
+    const key = membershipKey(namespace, membership.groupId, membership.participantId);
+    if (this.deps.notifier.get(key) !== session) return undefined;
+    if (this.deps.cluster === undefined) return membership;
+    const task = this.lock.current();
+    if (task === undefined || task.groupId !== membership.groupId) return membership;
+    const owner = this.recipient(namespace, membership.groupId, membership.participantId);
+    return owner instanceof LocalRecipient && owner.session === session ? membership : undefined;
   }
 
-  private attach(session: Session, membership: Membership): void {
+  /** Attaches `session` as `participantId` of the group, with a new attach ID. */
+  private attach(
+    session: Session,
+    groupId: string,
+    participantId: string,
+    attachId = newAttachId(),
+  ): void {
     this.touch(session);
-    session.membership = membership;
+    session.membership = { groupId, participantId, attachId };
     this.deps.notifier.register(
-      membershipKey(session.app.namespace, membership.groupId, membership.participantId),
+      membershipKey(session.app.namespace, groupId, participantId),
       session,
     );
+    // Several instances: the registry names this instance and attach ID (12.6).
+    this.deps.cluster?.attached(session.app.namespace, groupId, participantId, attachId);
+  }
+
+  /**
+   * The participant `pid` of the group as a task reaches it (#35
+   * architecture 12.6), or undefined when nobody is attached as `pid`.
+   */
+  private recipient(namespace: string, groupId: string, pid: string): Recipient | undefined {
+    const cluster = this.deps.cluster;
+    if (cluster === undefined) {
+      const session = this.deps.notifier.get(membershipKey(namespace, groupId, pid));
+      return session === undefined ? undefined : this.localRecipient(session, groupId, pid);
+    }
+    const resolved = cluster.resolve(namespace, groupId, pid);
+    if (resolved === undefined) return undefined;
+    if (resolved.kind === 'local') return this.localRecipient(resolved.session, groupId, pid);
+    return new RemoteRecipient(namespace, groupId, pid, resolved.instance, resolved.attachId, {
+      send: (instance, effect) => cluster.host.send(instance, effect),
+      forget: (participantId, attachId) =>
+        cluster.detached(namespace, groupId, participantId, attachId),
+      looksLive: (instance) => cluster.host.looksLive(instance),
+    });
+  }
+
+  private localRecipient(session: Session, groupId: string, pid: string): LocalRecipient {
+    return new LocalRecipient(session, groupId, pid, {
+      effect: (effect) => this.lock.effect(effect),
+      detachLocal: (detached, gid, participantId) => this.detachLocal(detached, gid, participantId),
+      refreshLocal: (gid, at) => this.startRefresh(session.app.namespace, gid, at),
+    });
+  }
+
+  /** The attached participant `pid` of `record`'s group, if any. */
+  private recipientOf(record: GroupRecord, pid: string): Recipient | undefined {
+    return this.recipient(record.appNamespace, record.id, pid);
+  }
+
+  /**
+   * `session` loses the membership `pid` of `groupId` at once (M4): it is
+   * unregistered and its membership cleared; the task's rollback record
+   * notes it first (#35 security L1).
+   */
+  private detachLocal(session: Session, groupId: string, pid: string): void {
+    this.touch(session);
+    if (session.membership?.groupId === groupId) {
+      this.deps.cluster?.detached(session.app.namespace, groupId, pid, session.membership.attachId);
+    }
+    this.deps.notifier.unregister(membershipKey(session.app.namespace, groupId, pid), session);
+    if (session.membership?.groupId === groupId) session.membership = undefined;
   }
 
   private issueToken(
@@ -750,7 +1142,7 @@ export class GroupService implements GroupActions {
     this.armMaxSession(app, record);
     this.startRefresh(app.namespace, record.id, now);
     this.lifecycle.armKeepAlive(app, record);
-    this.attach(session, { groupId: record.id, participantId });
+    this.attach(session, record.id, participantId);
     this.deps.logger.info(
       { event: 'group_created', namespace: app.namespace, groupRef: groupRef(record.id) },
       'group created',
@@ -916,9 +1308,9 @@ export class GroupService implements GroupActions {
     if (pid === record.viceId) this.controls.tellVice(record, pid, true);
   }
 
-  /** The session attached as `pid` in the group, if any. */
-  private sessionOf(record: GroupRecord, pid: string): Session | undefined {
-    return this.deps.notifier.get(membershipKey(record.appNamespace, record.id, pid));
+  /** The participant attached as `pid` in the group, if any. */
+  private sessionOf(record: GroupRecord, pid: string): Recipient | undefined {
+    return this.recipientOf(record, pid);
   }
 
   /** codes.rotate (#10 AC30). */
@@ -1002,7 +1394,7 @@ export class GroupService implements GroupActions {
     method?: JoinMethod,
   ): ServerMessage {
     const { app } = session;
-    this.attach(session, { groupId: record.id, participantId });
+    this.attach(session, record.id, participantId);
     this.deps.logger.info(
       {
         event: 'group_joined',
@@ -1102,10 +1494,8 @@ export class GroupService implements GroupActions {
     );
   }
 
-  private memberKeys(record: GroupRecord): string[] {
-    return record.participantIds
-      .filter((id) => id !== record.leaderId)
-      .map((id) => membershipKey(record.appNamespace, record.id, id));
+  private memberIds(record: GroupRecord): string[] {
+    return record.participantIds.filter((id) => id !== record.leaderId);
   }
 
   /**
@@ -1237,23 +1627,14 @@ export class GroupService implements GroupActions {
    * has nothing to close.
    */
   private detachRemoved(record: GroupRecord, participantId: string): void {
-    const key = membershipKey(record.appNamespace, record.id, participantId);
-    const member = this.deps.notifier.get(key);
+    const member = this.recipientOf(record, participantId);
     if (member === undefined) return;
-    this.touch(member);
-    this.deps.notifier.unregister(key, member);
-    if (member.membership?.groupId === record.id) member.membership = undefined;
     const text = JSON.stringify({
       type: 'group.ended',
       groupId: record.id,
       reason: 'removed',
     } satisfies ServerMessage);
-    this.lock.effect(() => {
-      member.afterPending(() => {
-        member.deliver(text);
-        member.close(CloseCode.REMOVED, 'removed');
-      });
-    });
+    member.detach('removed', text, CloseCode.REMOVED);
   }
 
   /**
@@ -1287,9 +1668,7 @@ export class GroupService implements GroupActions {
       // a handoff the old leader may leave and the new one may not.
       const current = await this.deps.store.get(app.namespace, groupId);
       if (current?.leaderId === participantId) return errorMessage(ErrorCode.LEADER_CANNOT_LEAVE);
-      this.touch(session);
-      this.deps.notifier.unregister(membershipKey(app.namespace, groupId, participantId), session);
-      session.membership = undefined;
+      this.detachLocal(session, groupId, participantId);
       const result = await this.deps.store.removeParticipant(app.namespace, groupId, participantId);
       if (current !== undefined) {
         // A vice-leader who leaves loses the designation (#13 AC12), and a
@@ -1411,18 +1790,14 @@ export class GroupService implements GroupActions {
     participantId: string,
     by: Session,
   ): void {
-    const key = membershipKey(namespace, groupId, participantId);
-    const older = this.deps.notifier.get(key);
-    if (older === undefined || older === by) return;
-    this.touch(older);
-    this.deps.notifier.unregister(key, older);
-    if (older.membership?.groupId === groupId) older.membership = undefined;
+    const older = this.recipient(namespace, groupId, participantId);
+    if (older === undefined || (older instanceof LocalRecipient && older.session === by)) return;
     const text = JSON.stringify({
       type: 'group.ended',
       groupId,
       reason: 'replaced',
     } satisfies ServerMessage);
-    this.lock.effect(() => older.afterPending(() => older.deliver(text)));
+    older.detach('replaced', text);
     this.deps.logger.info(
       { event: 'session_replaced', namespace, groupRef: groupRef(groupId) },
       'session replaced',
@@ -1470,7 +1845,7 @@ export class GroupService implements GroupActions {
     this.lifecycle.armKeepAlive(app, updated);
     // The return ends a pause (offline or inactive); members get leader.online.
     await this.lifecycle.unpause(app, updated);
-    this.attach(session, { groupId: record.id, participantId: claims.pid });
+    this.attach(session, record.id, claims.pid);
     // The roster, then pending approval requests and a running pause, are
     // sent after the reply (#13 AC31, #10 AC21, AC29, AC34).
     this.deliverLater(session, this.rosterSnapshot(updated));
@@ -1575,9 +1950,13 @@ export class GroupService implements GroupActions {
     this.armMaxSession(app, record);
     this.startRefresh(namespace, record.id, now);
     this.lifecycle.armKeepAlive(app, record);
-    this.attach(session, { groupId: record.id, participantId: claims.pid });
+    this.attach(session, record.id, claims.pid);
     this.deliverLater(session, this.rosterSnapshot(record));
     await this.admitParked(app, record);
+    // Members parked on other instances are admitted there (12.10).
+    for (const instance of (await this.deps.parked?.recreated(namespace, record.id)) ?? []) {
+      this.deps.cluster?.host.send(instance, { op: 'admitParked', ns: namespace, gid: record.id });
+    }
     this.deps.logger.info(
       {
         event: 'group_resumed',
@@ -1702,7 +2081,7 @@ export class GroupService implements GroupActions {
     this.startRefresh(namespace, record.id, now);
 
     this.replaceOwner(namespace, record.id, claims.pid, session);
-    this.attach(session, { groupId: record.id, participantId: claims.pid });
+    this.attach(session, record.id, claims.pid);
 
     // Step 3.
     if (!staleBlocked && staleSession !== undefined) {
@@ -1782,6 +2161,8 @@ export class GroupService implements GroupActions {
       },
       name,
     );
+    // Several instances: a recreation elsewhere admits it here (12.10).
+    this.deps.parked?.park(namespace, claims.gid, until);
     if (older !== undefined) {
       // One parked session per participant: newest wins (M5).
       const text = JSON.stringify({
@@ -1834,11 +2215,18 @@ export class GroupService implements GroupActions {
         continue;
       }
       const entered = await this.enterRoster(added.group, participantId, name);
-      this.attach(member, { groupId: record.id, participantId });
+      this.attach(member, record.id, participantId);
       this.tellReturningVice(entered, participantId);
       const token = this.issueToken(namespace, entered, participantId, 'member', this.now());
       this.deliverLater(member, this.joinedMessage(entered, participantId, token));
     }
+  }
+
+  /** Admits the members parked here if the group exists now. Under the group lock. */
+  private async admitParkedNow(app: AppConfig, groupId: string): Promise<void> {
+    if (!this.parking.has(groupKey(app.namespace, groupId))) return;
+    const record = await this.deps.store.get(app.namespace, groupId);
+    if (record !== undefined) await this.admitParked(app, record);
   }
 
   /** Stores a roster change (#13 D10). Runs under the group lock. */
@@ -1894,9 +2282,7 @@ export class GroupService implements GroupActions {
 
   /** Sends `message` to the group's attached leader, after its pending replies. */
   private toLeader(record: GroupRecord, message: ServerMessage): void {
-    const leader = this.deps.notifier.get(
-      membershipKey(record.appNamespace, record.id, record.leaderId),
-    );
+    const leader = this.recipientOf(record, record.leaderId);
     if (leader !== undefined) this.deliverLater(leader, message);
   }
 
@@ -1938,9 +2324,13 @@ export class GroupService implements GroupActions {
    * Sends `message` to `session` after the replies it is already owed. In a
    * locked task it waits in the outbox until the task's state is committed.
    */
-  private deliverLater(session: Session, message: ServerMessage): void {
+  private deliverLater(to: Target, message: ServerMessage): void {
     const text = JSON.stringify(message);
-    this.lock.effect(() => session.afterPending(() => session.deliver(text)));
+    if (isRecipient(to)) {
+      to.send(text, true);
+      return;
+    }
+    this.lock.effect(() => to.afterPending(() => to.deliver(text)));
   }
 
   /**
@@ -1949,14 +2339,12 @@ export class GroupService implements GroupActions {
    * who gets it; the frames go out with the task's other effects.
    */
   private toMembers(record: GroupRecord, message: ServerMessage): void {
-    const members = this.memberKeys(record)
-      .map((key) => this.deps.notifier.get(key))
-      .filter((session) => session !== undefined);
+    const members = this.memberIds(record)
+      .map((pid) => this.recipientOf(record, pid))
+      .filter((member) => member !== undefined);
     if (members.length === 0) return;
     const text = JSON.stringify(message);
-    this.lock.effect(() => {
-      for (const member of members) member.deliver(text);
-    });
+    for (const member of members) member.send(text, false);
   }
 
   private resumedMessage(
@@ -2013,7 +2401,7 @@ export class GroupService implements GroupActions {
     // Newest wins (AC20).
     this.replaceOwner(namespace, record.id, claims.pid, session);
     const entered = await this.enterRoster(added.group, claims.pid, name);
-    this.attach(session, { groupId: record.id, participantId: claims.pid });
+    this.attach(session, record.id, claims.pid);
     this.tellReturningVice(entered, claims.pid);
     // The displaced leader is back as a member: it may take back (AC24).
     if (claims.pid === entered.displacedLeaderId) {
@@ -2031,6 +2419,93 @@ export class GroupService implements GroupActions {
     );
     const token = this.issueToken(app.namespace, entered, claims.pid, 'member', this.now());
     return this.joinedMessage(entered, claims.pid, token);
+  }
+
+  /**
+   * Admits an approved joiner that waits on another instance (#35
+   * architecture 12.9): the store-side admission (lock, size, block list,
+   * roster), a registry entry naming that instance with a new attach ID,
+   * and `group.joined` sent there in this commit. Under the group lock.
+   */
+  private async admitRemote(
+    app: AppConfig,
+    groupId: string,
+    name: NameChoice,
+    instance: string,
+    requestId: string,
+  ): Promise<ServerMessage> {
+    const namespace = app.namespace;
+    const current = await this.deps.store.get(namespace, groupId);
+    if (current !== undefined && this.admissionClosed(current)) return GROUP_LOCKED;
+    const participantId = newParticipantId();
+    const added = await this.deps.store.addParticipant(
+      namespace,
+      groupId,
+      participantId,
+      app.maxGroupSize,
+    );
+    if (added.status === 'not_found') return errorMessage(ErrorCode.CODE_NOT_FOUND);
+    if (added.status === 'blocked') return errorMessage(ErrorCode.PARTICIPANT_BLOCKED);
+    if (added.status === 'full') {
+      return errorMessage(ErrorCode.GROUP_FULL, { details: { maxGroupSize: app.maxGroupSize } });
+    }
+    const record = await this.enterRoster(
+      added.group,
+      participantId,
+      name,
+      added.group.recoveryMarking,
+    );
+    const attachId = newAttachId();
+    this.deps.cluster!.attachedElsewhere(namespace, groupId, participantId, instance, attachId);
+    const joined = this.joinedMessage(
+      record,
+      participantId,
+      this.issueToken(namespace, record, participantId, 'member', this.now()),
+    );
+    this.deps.cluster!.host.send(instance, {
+      op: 'admit',
+      ns: namespace,
+      gid: groupId,
+      pid: participantId,
+      att: attachId,
+      rid: requestId,
+      text: JSON.stringify(joined),
+    });
+    this.deps.logger.info(
+      { event: 'group_joined', namespace, groupRef: groupRef(groupId), method: 'B' },
+      'group joined',
+    );
+    return joined;
+  }
+
+  /**
+   * An approved joiner was gone when its admission arrived (#35 Gate 2
+   * Q-B3): under the lease, the member-disconnect rules run for `pid`, only
+   * while the registry still names that attachment. Busy or failed: the
+   * group is replayed (security C13).
+   */
+  private disconnectStale(namespace: string, groupId: string, pid: string, attachId: string): void {
+    const app = this.deps.appOf(namespace);
+    if (app === undefined) return;
+    this.lock
+      .run(namespace, groupId, async () => {
+        if (this.deps.cluster?.entries(namespace, groupId).get(pid)?.t !== attachId) return;
+        // A session here that holds that attachment is attached: nothing to do.
+        const held = this.deps.notifier.get(membershipKey(namespace, groupId, pid));
+        if (held?.membership?.attachId === attachId && held.isOpen()) return;
+        const record = await this.deps.store.get(namespace, groupId);
+        if (record === undefined || record.leaderId === pid) return;
+        const result = await this.deps.store.removeParticipant(namespace, groupId, pid);
+        await this.leaveRosterOnDisconnect(app, record, pid);
+        if (result && result.connected === 0) await this.emptied(app, groupId);
+      })
+      .catch((err: unknown) => {
+        if (err instanceof StorageUnavailableError || err instanceof StorageBusyError) {
+          this.queueReplay(namespace, groupId);
+          return;
+        }
+        this.deps.logger.error({ event: 'remote_effect_error', err: safeErr(err) }, 'stale failed');
+      });
   }
 
   async disconnect(session: Session): Promise<void> {
@@ -2059,8 +2534,10 @@ export class GroupService implements GroupActions {
       .run(namespace, groupId, async () => {
         // #13 RC19: the participant resumed on a new socket before this close
         // was handled; that session owns the membership, so nothing changes.
-        const owner = this.deps.notifier.get(membershipKey(namespace, groupId, participantId));
-        if (isParticipantConnected(owner)) return;
+        // Attached elsewhere (another instance's session owns it) or anew
+        // here: nothing changes (M4).
+        const owner = this.recipient(namespace, groupId, participantId);
+        if (owner instanceof RemoteRecipient || isParticipantConnected(owner)) return;
         const record = await this.deps.store.get(namespace, groupId);
         if (record === undefined) return;
         // The role is read from the live record, never from the session (#13 D1).
@@ -2073,7 +2550,11 @@ export class GroupService implements GroupActions {
         if (result && result.connected === 0) await this.emptied(app, groupId);
       })
       .catch((err: unknown) => {
-        if (!(err instanceof StorageUnavailableError)) throw err;
+        // Redis down, or another instance held the group too long (12.4):
+        // the disconnect is replayed later.
+        if (!(err instanceof StorageUnavailableError) && !(err instanceof StorageBusyError)) {
+          throw err;
+        }
         this.queueReplay(namespace, groupId);
       });
   }
@@ -2130,50 +2611,23 @@ export class GroupService implements GroupActions {
   }
 
   /**
-   * After a restart with Redis (#35 architecture 1.2 item 6, 7; AC11; Gate 2
-   * Q-A3), under the group lock: every participant the previous process had
-   * attached is disconnected now. A pause or hold already running ends no
-   * earlier than `disconnectGraceSeconds` from now; a leader online at the
-   * stop gets the normal grace from now; members leave and are marked
-   * disconnected; a group left empty is held. Nobody is connected yet, so
-   * nobody is told anything.
+   * The orphan sweep of one group (#35 architecture 12.8, AC21, AC11), under
+   * the group lease: every connected participant nobody holds any more (its
+   * instance stopped or died, or a PR 1 group with no registry) is
+   * disconnected with the usual rules; `restart` adds the Q-A3 floor.
+   * Nobody whose session is gone is told anything; participants still
+   * attached elsewhere get the usual `leader.offline` and roster frames.
+   * Returns how many participants it disconnected.
    */
-  async sweepAfterRestart(namespace: string, groupId: string): Promise<void> {
+  async sweepGroup(namespace: string, groupId: string, restart: boolean): Promise<number> {
     const app = this.deps.appOf(namespace);
-    if (app === undefined) return;
-    await this.lock.run(namespace, groupId, async () => {
-      let record = await this.deps.store.get(namespace, groupId);
-      if (record === undefined) return;
-      const floor = this.now() + app.disconnectGraceSeconds * 1000;
-      const running = pauseDeadline(record.pause);
-      if (record.pause !== undefined && running !== undefined && running < floor) {
-        const pause: GroupPause =
-          record.pause.graceEndsAt !== undefined
-            ? { ...record.pause, graceEndsAt: floor }
-            : { ...record.pause, holdEndsAt: floor };
-        record = (await this.deps.store.patch(namespace, groupId, { pause })) ?? record;
-        this.lifecycle.armPauseEnd(app, record, floor);
-      }
-      for (const pid of record.participantIds) {
-        if (pid === record.leaderId) continue;
-        await this.deps.store.removeParticipant(namespace, groupId, pid);
-        const current = await this.deps.store.get(namespace, groupId);
-        if (current !== undefined) await this.leaveRosterOnDisconnect(app, current, pid);
-      }
-      const current = await this.deps.store.get(namespace, groupId);
-      if (current === undefined) return;
-      if (current.leaderOnline) await this.leaderOffline(app, groupId);
-      else if (connectedCount(current) === 0) await this.emptied(app, groupId);
-    });
+    if (app === undefined) return 0;
+    return this.lock.run(namespace, groupId, () => this.reconcile(app, groupId, restart));
   }
 
   /** True when an open session owns any membership of the group (#13 RC19). */
   private anyoneAttached(record: GroupRecord): boolean {
-    return record.participantIds.some((id) =>
-      isParticipantConnected(
-        this.deps.notifier.get(membershipKey(record.appNamespace, record.id, id)),
-      ),
-    );
+    return record.participantIds.some((id) => isParticipantConnected(this.recipientOf(record, id)));
   }
 
   /** Clears every per-group structure; frees the group's join codes (#10 AC11). */
@@ -2237,7 +2691,6 @@ export class GroupService implements GroupActions {
             );
       await this.deps.ended.remember(namespace, groupId, deadline, guardUntil);
     }
-    const keys = (record?.participantIds ?? []).map((id) => membershipKey(namespace, groupId, id));
     let notified = 0;
     // `empty` has no wire reason: nobody is attached to be told (#13 6.9).
     if (reason !== 'empty') {
@@ -2246,18 +2699,19 @@ export class GroupService implements GroupActions {
         groupId,
         reason,
       } satisfies ServerMessage);
-      for (const key of keys) {
-        const participant = this.deps.notifier.get(key);
+      for (const pid of record?.participantIds ?? []) {
+        const participant = this.recipient(namespace, groupId, pid);
         if (participant === undefined) continue;
         notified += 1;
-        this.touch(participant);
-        this.deps.notifier.unregister(key, participant);
-        if (participant.membership?.groupId === groupId) participant.membership = undefined;
         // The requester gets group.ended as its direct reply instead.
-        if (participant !== requester) {
-          this.lock.effect(() => participant.afterPending(() => participant.deliver(ended)));
-        }
+        const isRequester =
+          participant instanceof LocalRecipient && participant.session === requester;
+        participant.detach('ended', isRequester ? undefined : ended);
       }
+    }
+    // Other instances drop their per-group state too (12.7).
+    for (const instance of this.deps.cluster?.others(namespace, groupId) ?? []) {
+      this.deps.cluster!.host.send(instance, { op: 'forget', ns: namespace, gid: groupId });
     }
     this.deps.logger.info(
       {

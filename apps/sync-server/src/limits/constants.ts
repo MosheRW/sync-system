@@ -219,3 +219,81 @@ export const TIMER_POLL_MS = 1_000;
 
 /** How long a claimed Redis timer is leased to the claiming instance (#35 ADR 0013). */
 export const TIMER_LEASE_MS = 30_000;
+
+/**
+ * How long an instance's liveness key lives after each renewal (#35
+ * architecture 12.5, Gate 2 Q-B5). Peers treat an instance as dead only
+ * once this key is gone (Redis time).
+ */
+export const INSTANCE_LIVENESS_MS = 15_000;
+
+/** How often an instance renews its liveness key (#35 architecture 12.5). */
+export const INSTANCE_HEARTBEAT_MS = 5_000;
+
+/**
+ * An instance whose last successful renewal was sent this long ago fences
+ * itself: it closes its group sessions before peers may sweep it (#35
+ * security P2-3). Below INSTANCE_LIVENESS_MS, so the margin is 5 s.
+ */
+export const INSTANCE_SELF_FENCE_MS = 10_000;
+
+/**
+ * A group task's Redis lease (#35 architecture 12.4, ADR 0011, Gate 2
+ * Q-B5): it lives this long after each renewal, so a crashed holder blocks
+ * the group at most this long.
+ */
+export const GROUP_LEASE_MS = 10_000;
+
+/** How often a running task renews its group lease. */
+export const GROUP_LEASE_RENEW_MS = 3_000;
+
+/**
+ * Renewals stop after this long (#35 architecture 12.4): a task that holds
+ * a lease this long is a bug, and the commit fence then refuses its write.
+ */
+export const GROUP_LEASE_MAX_HOLD_MS = 30_000;
+
+/**
+ * How long a task waits for a group lease held by another instance before
+ * it fails as busy: only the requester's connection closes with 1001 (#35
+ * Gate 2 Q-B4, security P2-7).
+ */
+export const GROUP_LOCK_WAIT_MS = 5_000;
+
+/**
+ * How often an instance looks for stopped or dead instances and sweeps
+ * their attachments (#35 architecture 12.8), with up to 1 s of jitter.
+ */
+export const ORPHAN_SWEEP_MS = 5_000;
+
+/**
+ * Largest pub/sub message between instances (#35 architecture 12.7): a
+ * received one over it is dropped before parsing; a commit splits its
+ * effects for one instance into several ordered messages under it.
+ */
+export const PUBSUB_MESSAGE_MAX_BYTES = 1_048_576;
+
+/** Longest serialized frame inside a remote effect (a roster snapshot is about 45 KB). */
+export const PUBSUB_FRAME_MAX_CHARS = 131_072;
+
+/** Most effects in one pub/sub message. */
+export const PUBSUB_EFFECTS_MAX = 512;
+
+/**
+ * How long a task waits for the effects an earlier commit of its group
+ * published to this instance (#35 Gate 2 Q-B10) before it treats the
+ * subscriber link as stalled.
+ */
+export const PUBSUB_BARRIER_MS = 1_000;
+
+/**
+ * A received sequence this far (1 s of Redis time, in microseconds) or more
+ * below the last one is not a stale message but a sequence that went back
+ * (`P:seq` lost while Redis time is behind, or a forged `s`): the link is
+ * treated as lost and restarts from the current sequence (#35 security S1).
+ * A smaller step back is dropped as stale.
+ */
+export const PUBSUB_SEQUENCE_REWIND_MAX = 1_000_000;
+
+/** How long the instance list keeps an instance ID after its last registration (24 h). */
+export const INSTANCE_LIST_RETENTION_MS = 86_400_000;

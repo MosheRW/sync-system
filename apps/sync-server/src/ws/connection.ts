@@ -1,4 +1,4 @@
-import { StorageUnavailableError } from '../storage/errors.js';
+import { StorageBusyError, StorageUnavailableError } from '../storage/errors.js';
 import {
   type ClientMessage,
   CloseCode,
@@ -12,7 +12,7 @@ import {
   checkJson,
   parseClientMessage,
 } from '@sync-system/protocol';
-import type { RawData, WebSocket } from 'ws';
+import { type RawData, WebSocket } from 'ws';
 import type { AppRegistry } from '../apps/app-registry.js';
 import { newParticipantId } from '../groups/ids.js';
 import type { GroupActions, Session } from '../groups/session.js';
@@ -87,6 +87,18 @@ export class Connection implements HeartbeatTarget {
   /** Bytes of the queued frames, including the one being handled (#7 L3). */
   private queuedBytes = 0;
   private flooded = false;
+  /**
+   * The membership the request being handled started with (`null`: no
+   * request in flight). A request that attached the session (join, resume)
+   * has not sent its reply yet: frames for the new membership wait for it.
+   */
+  private requestMembership: Session['membership'] | null = null;
+  /** Frames queued behind a reply, not sent yet: later frames queue too (order). */
+  private heldFrames = 0;
+  /** Their bytes: they count against `maxBufferedBytes` like sent ones (security S5). */
+  private heldBytes = 0;
+  /** True while a queued task (afterPending or a held frame) runs. */
+  private draining = false;
 
   constructor(
     readonly ws: WebSocket,
@@ -196,6 +208,25 @@ export class Connection implements HeartbeatTarget {
     });
   }
 
+  /** Queues a synchronous task; frames it delivers go out at once, in queue order. */
+  private enqueueNow(task: () => void): void {
+    this.enqueue(() => {
+      this.draining = true;
+      try {
+        task();
+      } finally {
+        this.draining = false;
+      }
+      return Promise.resolve();
+    });
+  }
+
+  /** Whether the request in flight attached the session to a (new) membership. */
+  private attaching(): boolean {
+    const now = this.session?.membership;
+    return this.requestMembership !== null && now !== undefined && now !== this.requestMembership;
+  }
+
   private async process(data: RawData, isBinary: boolean): Promise<void> {
     if (this.closed || this.state === 'closing') return;
 
@@ -215,14 +246,27 @@ export class Connection implements HeartbeatTarget {
       if (this.state === 'awaiting_hello') {
         this.handleHello(message);
       } else {
-        await this.handleReady(message);
+        this.requestMembership = this.session?.membership;
+        try {
+          await this.handleReady(message);
+        } finally {
+          this.requestMembership = null;
+        }
       }
     } catch (err) {
-      if (err instanceof StorageUnavailableError) {
-        // Redis is down (#35 ADR 0014): nothing was stored; the client
-        // resumes later. Going away / temporarily unavailable.
+      if (err instanceof StorageUnavailableError || err instanceof StorageBusyError) {
+        // Redis is down (#35 ADR 0014), or another instance held the group
+        // past the wait bound (12.4, Gate 2 Q-B4: this connection only):
+        // nothing was stored; the client resumes later. Going away /
+        // temporarily unavailable.
         this.deps.logger.info(
-          { event: 'storage_unavailable_closed', type: message.type },
+          {
+            event:
+              err instanceof StorageBusyError
+                ? 'storage_busy_closed'
+                : 'storage_unavailable_closed',
+            type: message.type,
+          },
           'closed: storage unavailable',
         );
         this.state = 'closing';
@@ -286,19 +330,40 @@ export class Connection implements HeartbeatTarget {
       membership: undefined,
       isOpen: () => !this.closed,
       deliver: (text) => {
-        this.transmit(text);
+        if (this.draining || (this.heldFrames === 0 && !this.attaching())) {
+          this.transmit(text);
+          return;
+        }
+        // A group frame never goes out before the reply that attached the
+        // session (#35 fix round 1): it waits in the queue, behind the reply.
+        // Held frames count against the outbound buffer limit as if sent
+        // (H2, security S5): over it, the socket is cut like a slow consumer.
+        const bytes = Buffer.byteLength(text, 'utf8');
+        if (
+          this.ws.readyState === WebSocket.OPEN &&
+          this.ws.bufferedAmount + this.heldBytes + bytes > this.deps.maxBufferedBytes
+        ) {
+          this.ws.terminate();
+          this.deps.logger.warn(
+            { event: 'slow_consumer_terminated', namespace: this.session?.app.namespace },
+            'outbound buffer limit exceeded',
+          );
+          return;
+        }
+        this.heldFrames += 1;
+        this.heldBytes += bytes;
+        this.enqueueNow(() => {
+          this.heldFrames -= 1;
+          this.heldBytes -= bytes;
+          this.transmit(text);
+        });
       },
       close: (code, reason) => {
         if (this.closed || this.state === 'closing') return;
         this.state = 'closing';
         this.ws.close(code, reason);
       },
-      afterPending: (task) => {
-        this.enqueue(() => {
-          task();
-          return Promise.resolve();
-        });
-      },
+      afterPending: (task) => this.enqueueNow(task),
     };
     this.deps.logger.info(
       {

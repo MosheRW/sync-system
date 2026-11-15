@@ -2,6 +2,7 @@ import {
   ALPHA_CODE_PATTERN,
   GROUP_CODE_PATTERN,
   GROUP_ID_PATTERN,
+  JOIN_REQUEST_ID_PATTERN,
   NAMESPACE_PATTERN,
 } from '@sync-system/protocol';
 import { REDIS_KEY_PREFIX_PATTERN } from '../../config/redis.js';
@@ -16,6 +17,9 @@ export class KeyPartError extends Error {
 }
 
 const REF_PATTERN = /^[0-9a-f]{32}$/;
+
+/** An instance ID: 16 random bytes, hex (#35 architecture 12.3, 12.5). */
+export const INSTANCE_ID_PATTERN = /^[0-9a-f]{32}$/;
 
 function check(pattern: RegExp, value: string, part: string): string {
   if (!pattern.test(value)) throw new KeyPartError(part);
@@ -68,6 +72,44 @@ export class RedisKeys {
     return `${this.base}:c:${check(NAMESPACE_PATTERN, namespace, 'namespace')}:a:${check(ALPHA_CODE_PATTERN, code, 'alphaCode')}`;
   }
 
+  /** The group's attachment registry (#35 architecture 12.6): `{v: 1, a: {pid: {i, t}}}`. */
+  attachments(namespace: string, groupId: string): string {
+    return `${this.base}:a:${this.group_(namespace, groupId)}`;
+  }
+
+  /**
+   * The last commit sequence published to each instance for the group
+   * (#35 Gate 2 Q-B10): instance ID -> sequence.
+   */
+  highWater(namespace: string, groupId: string): string {
+    return `${this.base}:q:${this.group_(namespace, groupId)}`;
+  }
+
+  /** The last commit sequence that published anything (deployment metadata). */
+  sequence(): string {
+    return `${this.base}:seq`;
+  }
+
+  /** The group's pending method B requests (#35 architecture 12.9): `<rid>.<instance>` by deadline. */
+  approvalQueue(namespace: string, groupId: string): string {
+    return `${this.base}:aq:${this.group_(namespace, groupId)}`;
+  }
+
+  /** One pending request `{i, n?, d}`, until its deadline (#35 AC20). */
+  approval(namespace: string, groupId: string, requestId: string): string {
+    return `${this.base}:ap:${this.group_(namespace, groupId)}:${check(JOIN_REQUEST_ID_PATTERN, requestId, 'requestId')}`;
+  }
+
+  /** The instances holding a parked member of a missing group (#35 architecture 12.10). */
+  parking(namespace: string, groupId: string): string {
+    return `${this.base}:pk:${this.group_(namespace, groupId)}`;
+  }
+
+  /** The group's lease (#35 architecture 12.4): a random token, PX 10 s, renewed. */
+  lock(namespace: string, groupId: string): string {
+    return `${this.base}:lock:${this.group_(namespace, groupId)}`;
+  }
+
   /** The group's timers: kind -> `{at, data}`. */
   timers(namespace: string, groupId: string): string {
     return `${this.base}:t:${this.group_(namespace, groupId)}`;
@@ -111,6 +153,26 @@ export class RedisKeys {
 
   endedSeq(): string {
     return `${this.base}:e:seq`;
+  }
+
+  /** Liveness of an instance (#35 architecture 12.5): `1`, PX 15 s, renewed. */
+  instance(id: string): string {
+    return `${this.base}:inst:${check(INSTANCE_ID_PATTERN, id, 'instance')}`;
+  }
+
+  /** Instance IDs, score = liveness deadline in Redis time. */
+  instances(): string {
+    return `${this.base}:insts`;
+  }
+
+  /** The groups with an attachment on instance `id` (`ns:gid` members). */
+  instanceGroups(id: string): string {
+    return `${this.base}:ig:${check(INSTANCE_ID_PATTERN, id, 'instance')}`;
+  }
+
+  /** The pub/sub channel of instance `id` (#35 architecture 12.7). */
+  channel(id: string): string {
+    return `${this.base}:ch:${check(INSTANCE_ID_PATTERN, id, 'instance')}`;
   }
 }
 

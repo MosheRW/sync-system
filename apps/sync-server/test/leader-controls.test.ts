@@ -47,9 +47,17 @@ function controlsFor(records: Map<string, GroupRecord>): LeaderControls {
     records.get((session as unknown as { gid: string }).gid)!;
   const host: LeaderControlsHost = {
     asLeader: (session, _action, task) =>
-      task(byGroup(session), { groupId: byGroup(session).id, participantId: LEADER }),
+      task(byGroup(session), {
+        groupId: byGroup(session).id,
+        participantId: LEADER,
+        attachId: 'a',
+      }),
     asMember: (session, task) =>
-      task(byGroup(session), { groupId: byGroup(session).id, participantId: MEMBER }),
+      task(byGroup(session), {
+        groupId: byGroup(session).id,
+        participantId: MEMBER,
+        attachId: 'a',
+      }),
     patch: (r, patch) => Promise.resolve({ ...r, ...patch }),
     sessionOf: () => undefined,
     deliverLater: () => undefined,

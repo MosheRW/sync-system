@@ -14,6 +14,44 @@ export class StorageUnavailableError extends Error {
 }
 
 /**
+ * This instance's liveness key was gone when a commit ran (#35 security
+ * C11): others may already treat it as dead, so nothing was written and
+ * the instance fences itself (its sessions close with 1001).
+ */
+export class InstanceFencedError extends StorageUnavailableError {
+  constructor() {
+    super();
+    this.name = 'InstanceFencedError';
+  }
+}
+
+/**
+ * The group's lease was lost before the commit (#35 architecture 12.4):
+ * another instance took it, so this instance's view of the group may be
+ * stale. Nothing was written or published; the group's local sessions
+ * close with 1001.
+ */
+export class LeaseLostError extends StorageUnavailableError {
+  constructor() {
+    super();
+    this.name = 'LeaseLostError';
+  }
+}
+
+/**
+ * Another instance held the group's lease for longer than the wait bound
+ * (#35 architecture 12.4, Gate 2 Q-B4). The task never started, so nothing
+ * was written; only the requester's connection closes with 1001 (security
+ * C8, P2-7). Not an "unavailable" error: nothing else closes.
+ */
+export class StorageBusyError extends Error {
+  constructor() {
+    super('storage busy');
+    this.name = 'StorageBusyError';
+  }
+}
+
+/**
  * Any other Redis reply error (a script error, `WRONGTYPE`, a bug): it is
  * `INTERNAL_ERROR` to the requester only and never closes other sessions
  * (#35 security C8). Carries the reply's first word only, never its text.

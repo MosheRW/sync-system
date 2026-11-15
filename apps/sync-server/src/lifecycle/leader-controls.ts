@@ -14,6 +14,7 @@ import {
   type ViceSetMessage,
 } from '@sync-system/protocol';
 import type { GroupPatch, GroupRecord } from '../groups/group-store.js';
+import type { Recipient, Target } from '../groups/recipients.js';
 import type { Membership, Session } from '../groups/session.js';
 import type { AppConfig } from '../apps/app-registry.js';
 import type { GroupCodes } from '../joins/codes.js';
@@ -44,10 +45,10 @@ export interface LeaderControlsHost {
   ): Promise<ServerMessage>;
   /** Sets fields of the record in one step; returns the updated record. */
   patch(record: GroupRecord, patch: GroupPatch): Promise<GroupRecord>;
-  /** The session attached as `pid` in the group, if any. */
-  sessionOf(record: GroupRecord, pid: string): Session | undefined;
-  /** Sends `message` to `session` after the replies it is already owed. */
-  deliverLater(session: Session, message: ServerMessage): void;
+  /** The participant attached as `pid` in the group, if any. */
+  sessionOf(record: GroupRecord, pid: string): Recipient | undefined;
+  /** Sends `message` to `to` after the replies it is already owed. */
+  deliverLater(to: Target, message: ServerMessage): void;
   /** Tells the leader one roster entry changed (#13 AC31). */
   rosterUpdated(record: GroupRecord, pid: string): void;
   /** Sends `message` to every attached member (not the leader). */

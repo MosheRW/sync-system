@@ -14,6 +14,7 @@ import {
 } from '@sync-system/protocol';
 import type { AppConfig } from '../apps/app-registry.js';
 import type { GroupRecord, GroupStore } from '../groups/group-store.js';
+import type { Recipient, Target } from '../groups/recipients.js';
 import type { Membership, Session } from '../groups/session.js';
 import type { LeaderAction } from '../lifecycle/leader-guard.js';
 import type { NameChoice } from '../lifecycle/roster.js';
@@ -46,7 +47,12 @@ import {
   issueCodeSet,
   rotateDoorCode,
 } from './codes.js';
-import { ApprovalQueue, type PendingRequest, type TakenRequest } from './approval-queue.js';
+import {
+  type ApprovalStore,
+  MemoryApprovals,
+  type PendingRequest,
+  type TakenRequest,
+} from './approval-store.js';
 import type { DoorStateStore } from './door-guard.js';
 import { isValidGroupMethodSet, resolveGroupMethods } from './join-methods.js';
 
@@ -68,6 +74,8 @@ export interface JoinServiceDeps {
   timers: GroupTimers;
   /** The latest a group created at `createdAt` can live: the TTL of its code claims (#35 AC24). */
   groupExpiry(namespace: string, createdAt: number): number;
+  /** Pending method B requests; defaults to the in-memory store (#35 architecture 12.9). */
+  approvals?: ApprovalStore;
 }
 
 /**
@@ -93,9 +101,9 @@ export interface JoinHost {
    * The session that owns the leader's membership (ownership-checked through
    * the notifier, M4), if the leader is attached.
    */
-  leaderOf(record: GroupRecord): Session | undefined;
-  /** Sends `message` to `session` after the replies it is already owed. */
-  deliverLater(session: Session, message: ServerMessage): void;
+  leaderOf(record: GroupRecord): Recipient | undefined;
+  /** Sends `message` to `to` after the replies it is already owed. */
+  deliverLater(to: Target, message: ServerMessage): void;
   /**
    * True while the group admits nobody new: the leader locked it (#13
    * AC29). Read under the group lock.
@@ -112,6 +120,29 @@ export interface JoinHost {
     action: LeaderAction,
     task: (record: GroupRecord, membership: Membership) => Promise<ServerMessage>,
   ): Promise<ServerMessage>;
+  /**
+   * Several instances (#35 architecture 12.9): admits an approved joiner
+   * waiting on `instance` under request `requestId`, store-side (size,
+   * block list, roster, registry), and sends it `group.joined` there.
+   * Returns that `group.joined`, or the refusal. Under the lock.
+   */
+  admitRemote?(
+    app: AppConfig,
+    groupId: string,
+    name: NameChoice,
+    instance: string,
+    requestId: string,
+  ): Promise<ServerMessage>;
+  /** Several instances: `message` to the joiner waiting on `instance` under `requestId`. */
+  settleRemote?(
+    instance: string,
+    namespace: string,
+    groupId: string,
+    requestId: string,
+    message: ServerMessage,
+  ): void;
+  /** Several instances: whether `instance` has its liveness key now (Redis, security C12). */
+  instanceLive?(instance: string): Promise<boolean>;
 }
 
 /** Why a join attempt was refused, for the debug log (never a code or group ref for not_found). */
@@ -214,7 +245,7 @@ export class JoinService {
   /** Leader code rotations per group (#10 AC30). */
   private readonly rotateLimiter: SlidingWindowRateLimiter;
   /** Pending method B requests (#10 AC19-AC22). */
-  readonly approvals: ApprovalQueue;
+  readonly approvals: ApprovalStore;
   /** qr.issue per connection (#10 AC23). */
   private readonly qrLimiter: SlidingWindowRateLimiter;
 
@@ -228,7 +259,7 @@ export class JoinService {
     this.appJoinLimiter = new SlidingWindowRateLimiter(now, JOIN_WINDOW_MS);
     this.wrongDoorLimiter = new SlidingWindowRateLimiter(now, DOOR_FAILURES_APP_WINDOW_MS);
     this.rotateLimiter = new SlidingWindowRateLimiter(now, CODE_ROTATION_WINDOW_MS);
-    this.approvals = new ApprovalQueue(deps.scheduler);
+    this.approvals = deps.approvals ?? new MemoryApprovals(deps.scheduler);
     this.qrLimiter = new SlidingWindowRateLimiter(now, QR_ISSUE_WINDOW_MS);
   }
 
@@ -318,7 +349,7 @@ export class JoinService {
   }
 
   private settled(request: PendingRequest, outcome: SettleOutcome): void {
-    const namespace = request.session.app.namespace;
+    const namespace = request.groupKey.slice(0, request.groupKey.indexOf(':'));
     this.deps.logger.info(
       { event: 'join_settled', namespace, groupRef: groupRef(request.groupId), outcome },
       'join request settled',
@@ -344,13 +375,17 @@ export class JoinService {
    * `join.requested` after its pending replies. A frozen group's request
    * waits for the leader (Q6.2).
    */
-  private requestApproval(session: Session, record: GroupRecord, name: NameChoice): ServerMessage {
+  private async requestApproval(
+    session: Session,
+    record: GroupRecord,
+    name: NameChoice,
+  ): Promise<ServerMessage> {
     // Only a chosen name is shown in join.requested; a generated one is
     // drawn at admission (#13 AC36).
     const displayName = name.generated ? undefined : name.name;
     const namespace = record.appNamespace;
     const timeoutMs = session.app.approvalTimeoutSeconds * 1000;
-    const added = this.approvals.add(
+    const added = await this.approvals.add(
       {
         groupKey: groupKey(namespace, record.id),
         groupId: record.id,
@@ -369,6 +404,7 @@ export class JoinService {
       { event: 'join_requested', namespace, groupRef: groupRef(record.id) },
       'join requested',
     );
+    await this.rearm(namespace, record.id);
     const leader = this.host.leaderOf(record);
     if (leader !== undefined) this.host.deliverLater(leader, this.requestedMessage(added));
     return { type: 'join.pending', requestId: added.requestId, timeoutMs };
@@ -378,10 +414,10 @@ export class JoinService {
   private onApprovalTimeout(namespace: string, groupId: string, requestId: string): void {
     this.host
       .runLocked(namespace, groupId, async () => {
-        const taken = this.approvals.take(groupKey(namespace, groupId), requestId);
+        const taken = await this.approvals.take(groupKey(namespace, groupId), requestId);
         if (taken === undefined) return;
         this.settled(taken, 'timeout');
-        this.host.deliverLater(taken.session, errorMessage(ErrorCode.APPROVAL_TIMEOUT));
+        this.notifyJoiner(namespace, taken, errorMessage(ErrorCode.APPROVAL_TIMEOUT));
         await this.withdrawn(namespace, taken, 'timeout');
       })
       .catch((err: unknown) => {
@@ -390,6 +426,39 @@ export class JoinService {
           'approval timer failed',
         );
       });
+  }
+
+  /**
+   * The `approvalDue` timer (#35 architecture 12.9, Redis): every request
+   * whose deadline passed times out (the joiner gets APPROVAL_TIMEOUT, the
+   * leader `join.withdrawn timeout`), then the timer is armed for the next.
+   * Runs under the group lock.
+   */
+  async approvalDue(namespace: string, groupId: string): Promise<void> {
+    for (const taken of await this.approvals.takeDue(groupKey(namespace, groupId))) {
+      this.settled(taken, 'timeout');
+      this.notifyJoiner(namespace, taken, errorMessage(ErrorCode.APPROVAL_TIMEOUT));
+      await this.withdrawn(namespace, taken, 'timeout');
+    }
+    await this.rearm(namespace, groupId);
+  }
+
+  /** Arms the `approvalDue` timer at the group's earliest deadline (Redis only). */
+  private async rearm(namespace: string, groupId: string): Promise<void> {
+    if (this.approvals.timed) return;
+    const earliest = await this.approvals.earliest?.(groupKey(namespace, groupId));
+    if (earliest === undefined) this.deps.timers.clear(namespace, groupId, 'approvalDue');
+    else this.deps.timers.arm(namespace, groupId, 'approvalDue', earliest);
+  }
+
+  /** Sends `message` to the joiner of a settled request, here or where it waits. */
+  private notifyJoiner(namespace: string, taken: TakenRequest, message: ServerMessage): void {
+    if (taken.session !== undefined) {
+      this.host.deliverLater(taken.session, message);
+      return;
+    }
+    if (taken.instance === undefined) return;
+    this.host.settleRemote?.(taken.instance, namespace, taken.groupId, taken.requestId, message);
   }
 
   /** Tells the attached leader a request left without a decision. Under the lock. */
@@ -427,35 +496,63 @@ export class JoinService {
       const groupId = record.id;
       // #13 Q4.2: while locked a request stays pending and cannot be approved.
       if (decision === 'approve' && this.host.admissionClosed(record)) {
-        const pending = this.approvals
-          .list(groupKey(namespace, groupId))
-          .some((request) => request.requestId === requestId);
+        const pending = (await this.approvals.list(groupKey(namespace, groupId))).some(
+          (request) => request.requestId === requestId,
+        );
         return pending ? GROUP_LOCKED : REQUEST_NOT_FOUND;
       }
-      const taken = this.approvals.take(groupKey(namespace, groupId), requestId);
+      const taken = await this.approvals.take(groupKey(namespace, groupId), requestId);
       if (taken === undefined) return REQUEST_NOT_FOUND;
+      await this.rearm(namespace, groupId);
       if (decision === 'deny') {
         this.settled(taken, 'denied');
-        this.host.deliverLater(taken.session, errorMessage(ErrorCode.JOIN_DENIED));
+        this.notifyJoiner(namespace, taken, errorMessage(ErrorCode.JOIN_DENIED));
         return { type: 'join.decided', requestId, outcome: 'denied' };
       }
+      if (taken.session === undefined) return this.admitRemoteJoiner(session.app, taken);
       if (!taken.current || !taken.session.isOpen() || this.host.busy(taken.session)) {
         this.settled(taken, 'disconnected');
         return REQUEST_NOT_FOUND;
       }
-      return this.admitApproved(taken);
+      return this.admitApproved(taken, taken.session);
     });
   }
 
   /** Adds an approved joiner (#10 AC21): group.joined to it, or GROUP_FULL. Under the lock. */
-  private async admitApproved(taken: TakenRequest): Promise<ServerMessage> {
-    const name: NameChoice =
-      taken.displayName === undefined
-        ? { generated: true }
-        : { generated: false, name: taken.displayName };
-    const admitted = await this.host.admit(taken.session, taken.groupId, 'B', name);
+  private async admitApproved(taken: TakenRequest, joiner: Session): Promise<ServerMessage> {
+    const admitted = await this.host.admit(joiner, taken.groupId, 'B', nameOfRequest(taken));
     // The joiner gets the outcome unsolicited (no reqId): its own request was join.pending.
-    this.host.deliverLater(taken.session, admitted);
+    this.host.deliverLater(joiner, admitted);
+    const outcome = admitted.type === 'group.joined' ? 'admitted' : 'group_full';
+    this.settled(taken, outcome);
+    return { type: 'join.decided', requestId: taken.requestId, outcome };
+  }
+
+  /**
+   * Approves a joiner waiting on another instance (#35 architecture 12.9):
+   * gone if that instance's liveness key is gone (Redis truth); else it is
+   * admitted here, store-side, and gets `group.joined` there. If its
+   * session left meanwhile, that instance removes it with the usual rules
+   * (Gate 2 Q-B3). Under the lock.
+   */
+  private async admitRemoteJoiner(app: AppConfig, taken: TakenRequest): Promise<ServerMessage> {
+    const instance = taken.instance;
+    if (
+      instance === undefined ||
+      this.host.admitRemote === undefined ||
+      !(await this.host.instanceLive?.(instance))
+    ) {
+      this.settled(taken, 'disconnected');
+      return REQUEST_NOT_FOUND;
+    }
+    const admitted = await this.host.admitRemote(
+      app,
+      taken.groupId,
+      nameOfRequest(taken),
+      instance,
+      taken.requestId,
+    );
+    if (admitted.type !== 'group.joined') this.notifyJoiner(app.namespace, taken, admitted);
     const outcome = admitted.type === 'group.joined' ? 'admitted' : 'group_full';
     this.settled(taken, outcome);
     return { type: 'join.decided', requestId: taken.requestId, outcome };
@@ -467,8 +564,9 @@ export class JoinService {
     if (pending === undefined) return REQUEST_NOT_FOUND;
     const namespace = session.app.namespace;
     return this.host.runLocked(namespace, pending.groupId, async () => {
-      const taken = this.approvals.takeBySession(session);
+      const taken = await this.approvals.takeBySession(session);
       if (taken === undefined) return REQUEST_NOT_FOUND;
+      await this.rearm(namespace, pending.groupId);
       this.settled(taken, 'cancelled');
       await this.withdrawn(namespace, taken, 'cancelled');
       return { type: 'join.cancelled', requestId: taken.requestId };
@@ -479,7 +577,7 @@ export class JoinService {
    * The leader is back (#10 AC21, AC29, AC34): every pending request is
    * re-sent after the reply, and `join.paused` if method A is still paused.
    */
-  async onLeaderReturn(leader: Session, record: GroupRecord): Promise<void> {
+  async onLeaderReturn(leader: Target, record: GroupRecord): Promise<void> {
     const paused = await this.pausedFor(record.appNamespace, record.id);
     if (paused > 0) {
       this.host.deliverLater(leader, {
@@ -488,7 +586,7 @@ export class JoinService {
         retryAfterMs: paused,
       });
     }
-    for (const request of this.approvals.list(groupKey(record.appNamespace, record.id))) {
+    for (const request of await this.approvals.list(groupKey(record.appNamespace, record.id))) {
       this.host.deliverLater(leader, this.requestedMessage(request));
     }
   }
@@ -561,7 +659,7 @@ export class JoinService {
     record: GroupRecord,
     next: GroupCodes,
     cause: 'leader' | 'member_removed' | 'superseded',
-    leader: Session | undefined,
+    leader: Target | undefined,
   ): Promise<GroupRecord | undefined> {
     const namespace = record.appNamespace;
     const groupId = record.id;
@@ -1023,9 +1121,9 @@ export class JoinService {
     groupId: string,
     record: GroupRecord | undefined,
   ): Promise<void> {
-    for (const taken of this.approvals.drain(groupKey(namespace, groupId))) {
+    for (const taken of await this.approvals.drain(groupKey(namespace, groupId))) {
       this.settled(taken, 'group_gone');
-      this.host.deliverLater(taken.session, errorMessage(ErrorCode.GROUP_ENDED));
+      this.notifyJoiner(namespace, taken, errorMessage(ErrorCode.GROUP_ENDED));
     }
     if (record !== undefined) await this.deps.codes.release(namespace, groupId, record.codes);
     await this.deps.doors.clear(namespace, groupId);
@@ -1044,11 +1142,22 @@ export class JoinService {
     if (pending === undefined) return;
     const namespace = session.app.namespace;
     await this.host.runLocked(namespace, pending.groupId, async () => {
-      const taken = this.approvals.takeBySession(session);
+      const taken = await this.approvals.takeBySession(session);
       if (taken === undefined) return;
+      await this.rearm(namespace, pending.groupId);
       this.settled(taken, 'disconnected');
       await this.withdrawn(namespace, taken, 'disconnected');
     });
+  }
+
+  /**
+   * The session stops waiting without the leader being told (#35 security
+   * C13: a self-fence). In memory the request goes too; in Redis it
+   * expires at its deadline, and an approve after that finds nothing.
+   */
+  forgetPending(session: Session): void {
+    this.approvals.forgetJoiner(session);
+    session.pendingJoin = undefined;
   }
 
   /** Server shutdown: forgets every code and budget (AC31). */
@@ -1074,6 +1183,13 @@ export class JoinService {
       this.qrLimiter.size
     );
   }
+}
+
+/** The name a request was made with (#13 AC36): its chosen one, else a generated one. */
+function nameOfRequest(taken: TakenRequest): NameChoice {
+  return taken.displayName === undefined
+    ? { generated: true }
+    : { generated: false, name: taken.displayName };
 }
 
 /**

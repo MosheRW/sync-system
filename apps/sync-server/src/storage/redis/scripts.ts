@@ -119,14 +119,25 @@ end
  * in ms from now (`x`), turned into Redis time with TIME here, so the
  * server's and Redis's clocks never need to agree.
  *
- * Checks: `absent` (key must not exist), `eq` (GET must equal `v`).
+ * Checks: `absent` (key must not exist), `exists` (key must exist: this
+ * instance's liveness, security C11), `eq` (GET must equal `v`).
  * Writes: `set` (SET PX), `setnx` (SET NX), `del`, `deleq`
- * (compare-and-delete), `hset`, `hdel`, `zadd`, `zrem`, `zremif` (only
+ * (compare-and-delete), `hset`, `hdel`, `sadd`, `srem` (the groups of an
+ * instance), `zadd`, `zrem`, `zremif` (only
  * while the score is still `s`), `keep` (PEXPIRE if the key exists),
  * `extend` (a shared key's expiry only moves later; a key without one gets
  * it), `remember` (an ended group, see ENDED_FUNCTIONS), `consume` (a fired
- * timer: removed from the due set and its hash only while still leased).
- * Returns `{'ok', evicted, closedNamespaces}` (the ended-groups warnings).
+ * timer: removed from the due set and its hash only while still leased),
+ * `hw` (a group's high-water mark for an instance: HSET field `f` to this
+ * commit's sequence) and `pub` (#35 architecture 12.7: PUBLISH
+ * `{"v":1,"s":<seq>,"effects":<v>}` on the channel `k`).
+ *
+ * Several instances (#35 security C15, Gate 2 Q-B10): the op list is
+ * validated before the first write, and every `pub` comes after every
+ * other write. With `q` (the sequence key), the commit takes the next
+ * sequence: above the last one and at least Redis time in microseconds, so
+ * it keeps growing even if the key expired; `qx` is its time to live.
+ * Returns `{'ok', evicted, closedNamespaces, seq}`.
  */
 export const COMMIT = new LuaScript(
   `
@@ -142,11 +153,34 @@ for _, c in ipairs(spec.c) do
   local k = KEYS[c.k]
   if c.o == 'absent' then
     if redis.call('EXISTS', k) == 1 then return {'abort', c.r} end
+  elseif c.o == 'exists' then
+    if redis.call('EXISTS', k) == 0 then return {'abort', c.r} end
   elseif c.o == 'eq' then
     if redis.call('GET', k) ~= c.v then return {'abort', c.r} end
   else
     return redis.error_reply('ERR unknown check')
   end
+end
+local known = {
+  set = true, setnx = true, del = true, deleq = true, hset = true, hdel = true,
+  sadd = true, srem = true, zadd = true, zrem = true, zremif = true, keep = true,
+  extend = true, remember = true, consume = true, hw = true, pub = true,
+}
+local publishing = false
+for _, w in ipairs(spec.w) do
+  if not known[w.o] then return redis.error_reply('ERR unknown write') end
+  if w.o == 'pub' then
+    publishing = true
+  elseif publishing then
+    return redis.error_reply('ERR write after publish')
+  end
+end
+local seq = ''
+if spec.q then
+  local last = tonumber(redis.call('GET', KEYS[spec.q])) or 0
+  local micros = tonumber(time[1]) * 1000000 + tonumber(time[2])
+  seq = string.format('%.0f', math.max(last + 1, micros))
+  redis.call('SET', KEYS[spec.q], seq, 'PX', spec.qx)
 end
 for _, w in ipairs(spec.w) do
   local k = KEYS[w.k]
@@ -163,6 +197,10 @@ for _, w in ipairs(spec.w) do
     redis.call('HSET', k, w.f, w.v)
   elseif o == 'hdel' then
     redis.call('HDEL', k, w.f)
+  elseif o == 'sadd' then
+    redis.call('SADD', k, w.m)
+  elseif o == 'srem' then
+    redis.call('SREM', k, w.m)
   elseif o == 'zadd' then
     redis.call('ZADD', k, w.s, w.m)
   elseif o == 'zrem' then
@@ -186,11 +224,13 @@ for _, w in ipairs(spec.w) do
       redis.call('ZREM', k, w.m)
       redis.call('HDEL', KEYS[w.h], w.f)
     end
-  else
-    return redis.error_reply('ERR unknown write')
+  elseif o == 'hw' then
+    redis.call('HSET', k, w.f, seq)
+  elseif o == 'pub' then
+    redis.call('PUBLISH', k, '{"v":1,"s":' .. seq .. ',"effects":' .. w.v .. '}')
   end
 end
-return {'ok', tostring(evicted), table.concat(closed, ',')}
+return {'ok', tostring(evicted), table.concat(closed, ','), seq}
 `,
 );
 
@@ -276,5 +316,123 @@ for _, m in ipairs(redis.call('ZRANGEBYSCORE', due, '-inf', now, 'LIMIT', 0, lim
     end
   end
 end
+return out
+`);
+
+/** Redis time in ms, for the instance scripts (instance clocks never decide liveness). */
+const REDIS_NOW = `
+local time = redis.call('TIME')
+local now = tonumber(time[1]) * 1000 + math.floor(tonumber(time[2]) / 1000)
+`;
+
+/**
+ * Registers an instance (#35 architecture 12.5): its liveness key (only if
+ * new), its deadline in the instance list, and the list's expiry moved
+ * later. KEYS: liveness key, instance list; ARGV: ID, liveness ms, list
+ * retention ms. Returns 1, or 0 when the ID is taken.
+ */
+export const INSTANCE_REGISTER = new LuaScript(
+  REDIS_NOW +
+    `
+if not redis.call('SET', KEYS[1], '1', 'NX', 'PX', ARGV[2]) then return 0 end
+redis.call('ZADD', KEYS[2], now + tonumber(ARGV[2]), ARGV[1])
+local target = now + tonumber(ARGV[3])
+local current = redis.call('PEXPIRETIME', KEYS[2])
+if current == -1 or (current >= 0 and target > current) then
+  redis.call('PEXPIREAT', KEYS[2], target)
+end
+return 1
+`,
+);
+
+/**
+ * Renews an instance's liveness (#35 architecture 12.5, P2-3): only while
+ * the key still exists (`XX`), so a swept instance can never come back
+ * under its old ID. KEYS: liveness key, instance list; ARGV: ID, liveness
+ * ms. Returns `{0}` when fenced, else `{1, liveId...}` (instances whose
+ * deadline has not passed, for the live cache).
+ */
+export const INSTANCE_HEARTBEAT = new LuaScript(
+  REDIS_NOW +
+    `
+if not redis.call('SET', KEYS[1], '1', 'XX', 'PX', ARGV[2]) then return {0} end
+redis.call('ZADD', KEYS[2], now + tonumber(ARGV[2]), ARGV[1])
+local out = {1}
+for _, id in ipairs(redis.call('ZRANGEBYSCORE', KEYS[2], now, '+inf')) do
+  table.insert(out, id)
+end
+return out
+`,
+);
+
+/**
+ * A clean stop (#35 architecture 12.5): the liveness key goes and the
+ * deadline moves to 0, so peers sweep the instance at their next tick.
+ * KEYS: liveness key, instance list; ARGV: ID.
+ */
+export const INSTANCE_STOP = new LuaScript(`
+redis.call('DEL', KEYS[1])
+if redis.call('ZSCORE', KEYS[2], ARGV[1]) then redis.call('ZADD', KEYS[2], 0, ARGV[1]) end
+return 1
+`);
+
+/**
+ * Instances whose deadline passed and whose liveness key is gone (#35
+ * architecture 12.8). KEYS: instance list; ARGV: liveness key base, limit.
+ * Liveness keys are built from list members, which only ever hold checked
+ * instance IDs (the caller checks each returned ID again).
+ */
+export const DEAD_INSTANCES = new LuaScript(
+  REDIS_NOW +
+    `
+local out = {}
+for _, id in ipairs(redis.call('ZRANGEBYSCORE', KEYS[1], '-inf', now, 'LIMIT', 0, tonumber(ARGV[2]))) do
+  if redis.call('EXISTS', ARGV[1] .. id) == 0 then table.insert(out, id) end
+end
+return out
+`,
+);
+
+/**
+ * Forgets a swept instance (#35 architecture 12.8): its group set and its
+ * list entry, only while its liveness key is still absent. KEYS: liveness
+ * key, group set, instance list; ARGV: ID. Returns 1 if forgotten.
+ */
+export const FORGET_INSTANCE = new LuaScript(`
+if redis.call('EXISTS', KEYS[1]) == 1 then return 0 end
+redis.call('DEL', KEYS[2])
+redis.call('ZREM', KEYS[3], ARGV[1])
+return 1
+`);
+
+/**
+ * Renews a group lease only while it is still ours (#35 architecture
+ * 12.4). KEYS: lease key; ARGV: token, lease ms. Returns 1, or 0 when lost.
+ */
+export const LEASE_RENEW = new LuaScript(`
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+  redis.call('PEXPIRE', KEYS[1], ARGV[2])
+  return 1
+end
+return 0
+`);
+
+/** Releases a group lease only while it is still ours (compare-and-delete). KEYS: lease key; ARGV: token. */
+export const LEASE_RELEASE = new LuaScript(`
+if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end
+return 0
+`);
+
+/**
+ * Reads a group for a task (#35 architecture 12.1 step 3): document,
+ * position and attachment registry, plus the last sequence published to
+ * this instance for the group (Gate 2 Q-B10). KEYS: document, position,
+ * registry, high-water hash; ARGV: this instance's ID (empty: none).
+ */
+export const PRELOAD = new LuaScript(`
+local out = redis.call('MGET', KEYS[1], KEYS[2], KEYS[3])
+local hw = false
+if ARGV[1] ~= '' then hw = redis.call('HGET', KEYS[4], ARGV[1]) end
+table.insert(out, hw)
 return out
 `);

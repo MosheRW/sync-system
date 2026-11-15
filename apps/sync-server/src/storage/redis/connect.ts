@@ -33,6 +33,21 @@ export type RedisState = 'connected' | 'unreachable';
  * transient replies: the state becomes `unreachable` until a PING succeeds)
  * or StorageReplyError (anything else, security C8).
  */
+/**
+ * A subscriber connection (#35 architecture 12.7): a duplicate of the
+ * command link with the same endpoint, TLS, timeouts and redaction
+ * (security C9, C10), its own `error` listener, subscribed to one channel.
+ */
+export interface SubscriberLink {
+  subscribe(channel: string, listener: (message: string) => void): Promise<void>;
+  unsubscribe(channel: string): Promise<void>;
+  /** PING within the command timeout (security C15: stall detection). */
+  probe(): Promise<boolean>;
+  /** `down` when the connection drops, `up` when it is ready again. */
+  onState(listener: (state: 'down' | 'up') => void): void;
+  close(): Promise<void>;
+}
+
 export interface RedisLink {
   send(args: readonly string[]): Promise<unknown>;
   script(script: LuaScript, keys: readonly string[], args: readonly string[]): Promise<unknown>;
@@ -40,6 +55,8 @@ export interface RedisLink {
   /** Called on every state change (`connected` after a successful probe). */
   onState(listener: (state: RedisState) => void): void;
   close(): Promise<void>;
+  /** Opens a subscriber connection to the same Redis (several instances). */
+  openSubscriber?(): Promise<SubscriberLink>;
 }
 
 export type ConnectResult = { ok: true; link: RedisLink } | { ok: false; message: string };
@@ -270,6 +287,77 @@ interface Client {
   readonly isOpen: boolean;
   close(): Promise<unknown>;
   destroy(): void;
+  subscribe?(channel: string, listener: (message: unknown) => void): Promise<unknown>;
+  unsubscribe?(channel: string): Promise<unknown>;
+}
+
+/** Resolves `work`, or rejects with a timeout after `ms`. */
+async function bounded<T>(work: Promise<T>, ms: number): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new StorageUnavailableError()), ms);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** The subscriber connection over the client module (#35 architecture 12.7). */
+class ClientSubscriber implements SubscriberLink {
+  private readonly listeners: Array<(state: 'down' | 'up') => void> = [];
+  private closed = false;
+
+  constructor(
+    private readonly client: Client,
+    private readonly timeoutMs: number,
+  ) {
+    const emit = (state: 'down' | 'up') => {
+      if (this.closed) return;
+      for (const listener of this.listeners) listener(state);
+    };
+    client.on('end', () => emit('down'));
+    client.on('reconnecting', () => emit('down'));
+    client.on('ready', () => emit('up'));
+  }
+
+  onState(listener: (state: 'down' | 'up') => void): void {
+    this.listeners.push(listener);
+  }
+
+  async subscribe(channel: string, listener: (message: string) => void): Promise<void> {
+    await bounded(
+      this.client.subscribe!(channel, (message) => listener(String(message))),
+      this.timeoutMs,
+    );
+  }
+
+  async unsubscribe(channel: string): Promise<void> {
+    await bounded(this.client.unsubscribe!(channel), this.timeoutMs);
+  }
+
+  async probe(): Promise<boolean> {
+    try {
+      const reply = await bounded(this.client.sendCommand(['PING']), this.timeoutMs);
+      return String(reply).toLowerCase() === 'pong';
+    } catch {
+      return false;
+    }
+  }
+
+  async close(): Promise<void> {
+    this.closed = true;
+    try {
+      if (this.client.isOpen) await bounded(this.client.close(), this.timeoutMs);
+    } catch {
+      // Destroyed below.
+    } finally {
+      this.client.destroy();
+    }
+  }
 }
 
 /** A command not answered within the command timeout (#35 AC26). */
@@ -300,6 +388,21 @@ class ClientLink implements RedisLink {
 
   get state(): RedisState {
     return this.current;
+  }
+
+  /**
+   * A subscriber connection made like the command connection (same
+   * endpoint, TLS, credentials, rate-limited `safeErr` error logging).
+   */
+  async openSubscriber(): Promise<SubscriberLink> {
+    const client = this.make();
+    try {
+      await bounded(client.connect(), this.connectTimeoutMs);
+    } catch {
+      client.destroy();
+      throw new StorageUnavailableError();
+    }
+    return new ClientSubscriber(client, this.timeoutMs);
   }
 
   onState(listener: (state: RedisState) => void): void {

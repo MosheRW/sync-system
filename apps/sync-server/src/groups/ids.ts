@@ -9,3 +9,8 @@ export function newGroupId(): string {
 export function newParticipantId(): string {
   return randomUUID();
 }
+
+/** An attachment ID: 16 bytes from the CSPRNG, base64url, 22 characters (#35 security C16). */
+export function newAttachId(): string {
+  return randomBytes(16).toString('base64url');
+}

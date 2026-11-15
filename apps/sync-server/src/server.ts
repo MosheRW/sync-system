@@ -6,6 +6,7 @@ import type { AppRegistry } from './apps/app-registry.js';
 import { GroupService } from './groups/group-service.js';
 import type { GroupStore } from './groups/group-store.js';
 import { LocalNotifier } from './groups/notifier.js';
+import { ClusterNotifier } from './groups/cluster-notifier.js';
 import type { ServerEnv } from './config/env.js';
 import { ConfigError } from './config/config-error.js';
 import { MIN_TOKEN_SECRET_BYTES, type TokenSecrets } from './config/token-secret.js';
@@ -189,6 +190,7 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
     env.qrTicketSecondsCeiling,
   );
   const codesBlobs = new CodesBlobService(new TokenKeyring(tokenSecrets, CODES_BLOB_INFO_PREFIX));
+  const notifier = new LocalNotifier();
   const groups = new GroupService({
     store: storage.groups,
     ...(storage.epoch === undefined ? {} : { epoch: storage.epoch }),
@@ -198,7 +200,14 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
     doors: storage.doors,
     timerBackend: storage.timers,
     work: storage.work,
-    notifier: new LocalNotifier(),
+    ...(storage.leases === undefined ? {} : { leases: storage.leases }),
+    ...(storage.approvals === undefined ? {} : { approvals: storage.approvals }),
+    ...(storage.parked === undefined ? {} : { parked: storage.parked }),
+    ...(storage.cluster === undefined ? {} : { fenced: () => storage.cluster!.fenced() }),
+    notifier,
+    ...(storage.cluster === undefined
+      ? {}
+      : { cluster: new ClusterNotifier(notifier, storage.cluster.host) }),
     logger,
     rateLimiter: new SlidingWindowRateLimiter(now),
     tokens,
@@ -219,6 +228,35 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
   storage.onRecovered(() => groups.replayDisconnects());
   const counter = new ConnectionCounter();
   const connections = new Set<Connection>();
+  // A self-fence (#35 architecture 12.5): every session in a group, parked
+  // or pending closes with 1001, with no disconnect rule (security C13).
+  // Effects other instances published for this one (#35 architecture 12.7).
+  storage.cluster?.setReceiver({ receive: (effects) => groups.receiveRemote(effects) });
+  // Effects may have been lost: sessions resume and read the current state.
+  storage.cluster?.onResync(() => {
+    let closed = 0;
+    for (const connection of connections) {
+      const session = connection.session;
+      if (session === undefined) continue;
+      if (session.membership === undefined && session.parked === undefined) {
+        if (session.pendingJoin === undefined) continue;
+      }
+      closed += 1;
+      connection.ws.close(CloseCode.GOING_AWAY, 'temporarily unavailable');
+    }
+    logger.warn({ event: 'pubsub_resync', sessions: closed }, 'sessions closed to resync');
+  });
+  storage.cluster?.onFence(() => {
+    let closed = 0;
+    for (const connection of connections) {
+      const session = connection.session;
+      if (session === undefined || !groups.quietDetach(session)) continue;
+      closed += 1;
+      connection.ws.close(CloseCode.GOING_AWAY, 'temporarily unavailable');
+    }
+    groups.onFenced();
+    logger.info({ event: 'fence_closed', sessions: closed }, 'sessions closed after a fence');
+  });
 
   httpServer.on(
     'upgrade',
@@ -293,7 +331,9 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
     storage: () => storage.status(),
     async listen(listenPort, host) {
       try {
-        await storage.start((namespace, groupId) => groups.sweepAfterRestart(namespace, groupId));
+        await storage.start((namespace, groupId, restart) =>
+          groups.sweepGroup(namespace, groupId, restart),
+        );
       } catch (err) {
         throw new StorageStartError(err);
       }

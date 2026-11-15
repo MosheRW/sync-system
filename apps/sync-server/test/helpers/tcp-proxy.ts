@@ -7,7 +7,7 @@ import { type AddressInfo, type Server, type Socket, connect, createServer } fro
  */
 export class TcpProxy {
   private readonly server: Server;
-  private readonly pairs = new Set<{ client: Socket; upstream: Socket }>();
+  private readonly pairs = new Set<{ client: Socket; upstream: Socket; stalled: boolean }>();
   private mode: 'open' | 'cut' | 'stall' = 'open';
   port = 0;
 
@@ -33,7 +33,7 @@ export class TcpProxy {
     }
     const upstream = connect(this.targetPort, this.host);
     upstream.on('error', () => client.destroy());
-    const pair = { client, upstream };
+    const pair = { client, upstream, stalled: false };
     this.pairs.add(pair);
     const close = () => {
       this.pairs.delete(pair);
@@ -43,10 +43,10 @@ export class TcpProxy {
     client.on('close', close);
     upstream.on('close', close);
     client.on('data', (data) => {
-      if (this.mode === 'open') upstream.write(data);
+      if (this.mode === 'open' && !pair.stalled) upstream.write(data);
     });
     upstream.on('data', (data) => {
-      if (this.mode === 'open') client.write(data);
+      if (this.mode === 'open' && !pair.stalled) client.write(data);
     });
   }
 
@@ -66,6 +66,22 @@ export class TcpProxy {
 
   restore(): void {
     this.mode = 'open';
+    for (const pair of this.pairs) pair.stalled = false;
+  }
+
+  /**
+   * Stalls one open connection only (in accept order, 0 = oldest): e.g. an
+   * instance's subscriber link while its command link works (#35 F20).
+   */
+  stallConnection(index: number): void {
+    const pair = [...this.pairs][index];
+    if (pair === undefined) throw new Error(`no connection ${index}`);
+    pair.stalled = true;
+  }
+
+  /** Number of open connections. */
+  get connections(): number {
+    return this.pairs.size;
   }
 
   async close(): Promise<void> {

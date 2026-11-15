@@ -101,6 +101,20 @@ points the sync server at it with a public development password
 (`dev-only-insecure-redis-password-change-me`). The server refuses that
 password unless `NODE_ENV` is `development` or `test`.
 
+To try two instances behind a load balancer (see
+[Several instances](#several-instances)), add `compose.multi.yaml` too:
+
+```sh
+docker compose -f compose.yaml -f compose.redis.yaml -f compose.multi.yaml up --build
+```
+
+It starts a second sync server from the same image and an unprivileged nginx
+(pinned by digest, read-only, no capabilities) on `127.0.0.1:8080`, which
+balances WebSocket connections round robin with no sticky sessions. The two
+servers publish no port of their own, so `ws://127.0.0.1:8080/ws` (and the
+reading app) now reaches the load balancer, and clients of one group land on
+both instances. Development only, like the other compose files.
+
 To run the image yourself, mount your own registry and point
 `SYNC_CONFIG_PATH` at it. The image never contains a config file:
 
@@ -266,10 +280,8 @@ By default the server keeps groups in memory, and a restart forgets them
 Redis instead; nothing else changes for clients (same protocol, same
 messages).
 
-**One instance only, for now.** This release supports **one sync server per
-Redis key prefix**. Never run two instances on the same Redis and prefix:
-their writes to one group can interleave and break the "exactly one wins"
-rules. Running several instances on one Redis comes with the next release.
+Any number of sync server instances can share one Redis and key prefix; see
+[Several instances](#several-instances).
 
 Turning it on:
 
@@ -295,9 +307,11 @@ Run Redis like this:
   Anyone who can write under the prefix can rewrite any group.
 - **A Redis ACL user limited to the prefix** with only the commands the
   server uses, for example
-  `ACL SETUSER sync on >password resetkeys ~sync:* resetchannels -@all +@read +@write +@scripting +@connection +time -@dangerous +info`
+  `ACL SETUSER sync on >password resetkeys ~sync:* resetchannels &sync:v1:ch:* -@all +@read +@write +@scripting +@connection +time -@dangerous +info +publish +subscribe +unsubscribe +ping`
   (adjust `sync` to your prefix). Several deployments on one Redis then
-  cannot read each other's groups.
+  cannot read each other's groups or listen to each other's instances. The
+  pub/sub commands are named one by one rather than the whole pub/sub category, which would
+  also allow pattern subscriptions.
 - **`maxmemory-policy noeviction`**, with a `maxmemory` that fits. Any other
   policy lets Redis silently drop live groups, and dropping the epoch or
   ended-group entries voids the "an ended group stays ended" guarantee: an
@@ -315,7 +329,8 @@ What survives a restart of the sync server, with Redis:
   pause, term, handoff mode, block list), its join codes and the code index,
   its timers, its door-code failure count and pause, and ended groups (so
   their tokens keep getting `GROUP_ENDED`). Pending method B approval
-  requests do not survive (the joiner's socket is gone; it asks again).
+  requests stay in Redis until their deadline, but a joiner whose socket
+  closed asks again: its old request is withdrawn or times out.
 - A member resumes at once with the current position; a leader resumes its
   group (not recreated, same codes and term). A removed or blocked member is
   refused (`PARTICIPANT_BLOCKED`) even before the leader returns.
@@ -345,6 +360,11 @@ While Redis is unreachable (or answers nothing for `REDIS_COMMAND_TIMEOUT_MS`):
 - The sessions of an affected group are closed with `1001` (going away /
   temporarily unavailable); clients resume once it is back. Nothing half
   done is stored.
+- **An outage longer than 10 seconds closes every group session of the
+  instance with `1001`**, even with a single instance: the instance can no
+  longer prove it is alive, so it stops serving groups before other
+  instances may take over its participants (it fences itself). Clients
+  resume when Redis is back; the instance comes back under a new ID.
 - New WebSocket upgrades get HTTP 503; `/health` stays 200 (readiness comes
   with a later release).
 - The server never falls back to memory and stays up. When a `PING`
@@ -354,13 +374,80 @@ While Redis is unreachable (or answers nothing for `REDIS_COMMAND_TIMEOUT_MS`):
 
 Limits stay per instance: `MAX_CONNECTIONS`, the per-app connection cap, the
 join and token-check budgets and the leader update rate are counted by the
-process, as without Redis.
+process, as without Redis (with several instances, see the table below).
 
 Sizing: the group document is about 45 KB at `MAX_GROUP_SIZE_CEILING` 100 with
 the longest names, a full block list and 4 KiB of metadata. A position update
 writes only a small separate key (the position and the last activity, at most
 about `maxMessageBytes`), but every request of a group reads the document
 once.
+
+### Several instances
+
+Run as many sync server instances as you need on one Redis and one
+`REDIS_KEY_PREFIX`, behind a load balancer. Every group works across all of
+them: a leader on one instance and members on others see every event in
+order, each "exactly one wins" rule holds across instances (a lease per
+group, checked by every write), codes are unique across instances, and each
+timer fires once.
+
+Requirements:
+
+- **The same `REDIS_URL` and `REDIS_KEY_PREFIX`** on every instance.
+- **The same configuration on every instance**: `TOKEN_SECRET` (and
+  `TOKEN_SECRET_PREVIOUS`), the apps config file, and every env ceiling and
+  cap. The server does not check this; a difference shows up as refused
+  tokens or codes, or keys that expire at different times.
+- **NTP on every host and on Redis.** Liveness is judged on Redis's clock,
+  deadlines on each instance's clock.
+- **A load balancer that passes the WebSocket upgrade** (HTTP/1.1, `Upgrade`
+  and `Connection` headers) with an idle timeout above the 30 s heartbeat.
+  No sticky sessions are needed: any instance serves any client. See
+  `compose.multi.yaml` and `config/nginx-multi.conf` for a development
+  example.
+- Redis as in [Storage (Redis)](#storage-redis), with the pub/sub commands
+  in the ACL. A slow subscriber that Redis disconnects
+  (`client-output-buffer-limit pubsub`) closes that instance's group
+  sessions with `1001`; clients resume.
+
+When an instance stops or dies:
+
+- **Clean stop** (SIGTERM): its sockets close with `1001` and clients
+  reconnect through the load balancer. Another instance notices within about
+  5 seconds and puts the stopped instance's participants through the usual
+  disconnect rules: a leader gets the normal `disconnectGraceSeconds` before
+  any handoff, and keeps the lead if it resumes within it.
+- **Killed or cut off**: other instances treat it as dead once its liveness
+  key expires (15 s) and sweep it within about 20 seconds; its group timers
+  fire on another instance within 30 seconds. An instance cut off from Redis
+  closes its own group sessions within 10 seconds, before anyone else may
+  take over.
+- A client that resumes on another instance before the sweep simply takes
+  its place again (a leader keeps the lead with no grace).
+
+What travels through Redis: besides the group data, events for participants
+on another instance go through Redis pub/sub as serialized server frames,
+including leader-only frames with display names (`roster.*`,
+`join.requested`), and a pending method B joiner's chosen name is stored in
+Redis until the request is settled or its deadline. Keep Redis private (see
+above). Frames in transit are not stored by Redis.
+
+Limits with several instances:
+
+| Limit                                                                               | Counted                        |
+| ----------------------------------------------------------------------------------- | ------------------------------ |
+| `MAX_CONNECTIONS`, the per-app connection cap, inbound message rates                | Per instance                   |
+| Join attempts per connection and **per app** (`group.joinByCode`, `group.joinByQr`) | Per instance                   |
+| `tokens.check`, QR tickets, recreations, code rotations                             | Per instance                   |
+| Leader update rate                                                                  | On the leader's own instance   |
+| Wrong door codes per group (rotation after 5) and the method A pause                | Global (stored with the group) |
+
+**The join-attempt budget multiplies by the number of instances.** The
+per-app join budget, and with it the code-guessing budget for group and
+alphanumeric codes, is counted by each instance, so N instances allow N
+times as many attempts per minute. Door codes stay bounded by the global
+door-failure rotation and pause. A Redis-backed global join limiter is
+tracked in issue #41.
 
 ### Joining (methods A to D)
 
@@ -436,6 +523,13 @@ Known limits and trade-offs:
   ceiling allows tickets of up to 24 hours.
 
 ### Upgrading
+
+- **Several instances (#35):** to upgrade from the release with Redis for one
+  instance, **stop every instance before starting the new ones**. Running
+  old and new instances on one Redis prefix is not supported: the old ones
+  take no group lease, so their writes can interleave with the new ones'.
+  Going back to the older release is safe for the data (it ignores the new
+  keys, which expire with their groups).
 
 - **Roles and lifecycle (#13):**
   - Tokens use format 2 with a leadership `term` claim. Format 1 tokens are
@@ -681,11 +775,12 @@ group).
 
 ### Deployment security
 
-- **Run one instance per token secret, and restart it as an operator
-  action.** The recovery and supersede rules assume one process at a time
-  on a keyring: stop the old instance before starting the new one; no
-  replicas or rolling deploys on one secret. With Redis, also one instance
-  per Redis key prefix (see [Storage (Redis)](#storage-redis)).
+- **Without Redis: one instance per token secret, and restart it as an
+  operator action.** The recovery and supersede rules assume one process at
+  a time on a keyring: stop the old instance before starting the new one; no
+  replicas or rolling deploys on one secret. **With Redis: any number of
+  instances on one key prefix, all on one keyring** (see
+  [Several instances](#several-instances)).
 - **Keep the clock right (NTP).** A server clock that steps back across a
   restart can let a stale displaced leader keep the lead for good (the real
   leader's token then looks granted after the restart), and can make the
