@@ -9,13 +9,13 @@ opaque payload and never reads it.
 
 A pnpm workspace (Node 24, pnpm 10, TypeScript, ESM).
 
-| Package                 | Path                | What                                           |
-| ----------------------- | ------------------- | ---------------------------------------------- |
-| `@sync-system/protocol` | `packages/protocol` | Wire protocol: versions, error codes, schemas. |
-| `@sync-system/server`   | `apps/sync-server`  | The sync server (HTTP `/health` + WebSocket).  |
-| `@sync-system/client`   | `packages/client`   | Framework-free client for browsers and Node.   |
-| `@sync-system/react`    | `packages/react`    | React/Next provider and hooks over the client. |
-| `@sync-system/reader`   | `apps/reader`       | The reading app (React + Vite, Node server).   |
+| Package                 | Path                | What                                                    |
+| ----------------------- | ------------------- | ------------------------------------------------------- |
+| `@sync-system/protocol` | `packages/protocol` | Wire protocol: versions, error codes, schemas.          |
+| `@sync-system/server`   | `apps/sync-server`  | The sync server (HTTP `/health`, `/ready` + WebSocket). |
+| `@sync-system/client`   | `packages/client`   | Framework-free client for browsers and Node.            |
+| `@sync-system/react`    | `packages/react`    | React/Next provider and hooks over the client.          |
+| `@sync-system/reader`   | `apps/reader`       | The reading app (React + Vite, Node server).            |
 
 `packages/*` holds libraries and `apps/*` holds deployables.
 
@@ -62,9 +62,14 @@ Production build: `pnpm build`, then from the repo root
 default).
 
 - WebSocket endpoint: `ws://localhost:8080/ws`
-- Health: `GET http://localhost:8080/health` returns
-  `{"status":"ok","protocolVersion":1,"minProtocolVersion":1}` and nothing else.
-  Every other path is a 404.
+- Health (liveness): `GET http://localhost:8080/health` returns
+  `{"status":"ok","protocolVersion":1,"minProtocolVersion":1,"version":"0.1.0","storage":"memory"}`
+  and nothing else.
+- Readiness: `GET http://localhost:8080/ready` returns
+  `{"status":"ready","storage":"memory"}` (see
+  [Health and readiness](#health-and-readiness)). Every other path is a 404.
+- A bad config prints one `Config error: ...` line per problem and exits 1;
+  every message and its fix is in [`docs/startup-errors.md`](docs/startup-errors.md).
 
 ### Run with Docker Compose
 
@@ -125,6 +130,39 @@ docker run -p 127.0.0.1:8080:8080 \
   -e SYNC_CONFIG_PATH=/config/apps.json \
   -e TOKEN_SECRET="$(cat /run/secrets/sync_token_secret)" sync-server
 ```
+
+### Health and readiness
+
+Two unauthenticated `GET` endpoints, per instance. Both answer with
+`Content-Type: application/json`, `Cache-Control: no-store` and
+`X-Content-Type-Options: nosniff`, ignore the query string, and send no Redis
+command. Any other method or path is a 404 `{"error":"not_found"}`.
+
+| Endpoint      | Answers                                                                                                                                               | Use it for                                    |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
+| `GET /health` | Always 200 while the process serves HTTP: `{"status":"ok","protocolVersion":1,"minProtocolVersion":1,"version":"<semver>","storage":"memory\|redis"}` | Liveness: restart the container if it fails.  |
+| `GET /ready`  | 200 `{"status":"ready","storage":"<kind>"}`, or 503 `{"status":"not_ready","storage":"<kind>"}`                                                       | Readiness: send traffic only while it is 200. |
+
+- `version` is the server's own version, read from its `package.json` at
+  startup. `storage` is the storage kind only (`memory` or `redis`), never
+  whether Redis is reachable.
+- `/ready` is 503 while the Redis store is unreachable (a link down or
+  stalled, the instance fenced, or its pub/sub link unhealthy) and from the
+  moment shutdown starts. The memory store is always ready until shutdown.
+  The 503 carries no reason: the logs have it (`redis_unreachable`,
+  `instance_fenced`, `pubsub_resync`).
+- **Do not route on `/health`.** It stays 200 while Redis is down or the
+  instance is fenced, and then every WebSocket upgrade gets 503: a load
+  balancer that checks `/health` keeps sending clients to an instance that
+  refuses them. Point the load balancer's health check at `/ready`.
+- The compose files keep `/health` as the container healthcheck: a Redis
+  outage must not restart the server.
+- Shutdown closes the listener at once, so a new probe is refused and only a
+  request already on an open connection sees the 503. Both mean "not ready".
+- `/health` shows the exact version to anyone who reaches the port. Keep the
+  port private behind the proxy, and if the version is sensitive allow
+  `/health` and `/ready` only from the load balancer or a private network
+  (see the nginx example under [Deployment security](#deployment-security)).
 
 ### Config file (registered client apps)
 
@@ -201,6 +239,22 @@ people to a group, and codes resolve only within their own app.
 
 Numeric variables must be positive integers; anything else (empty, `0`, `-1`,
 `1.5`, `abc`) is a startup error naming the variable. Unset means the default.
+The server checks every variable and the apps file before it stops, and prints
+one `Config error: ...` line per problem, never a value; the list of messages
+and their fixes is [`docs/startup-errors.md`](docs/startup-errors.md).
+
+Unknown look-alike variables stop startup too
+([ADR 0015](docs/decisions/0015-unknown-environment-variables.md)): a set
+variable whose name starts with `MAX_`, `TOKEN_`, `REDIS_`, `SYNC_`, `JOIN_`,
+`QR_`, `APPROVAL_`, `DISCONNECT_`, `KEEP_ALIVE_` or `INACTIVITY_`, or ends with
+`_CEILING`, and is not in the table below, is a `Config error` naming it (with
+a "did you mean" for a near miss such as `MAX_GROUP_SIZE_CIELING`). Names
+compare in upper case, so `redis_url` is caught too. Never flagged:
+`SYNC_TEST_*` (the repo's tests) and names Kubernetes service links or Docker
+`--link` inject (ending in `_SERVICE_HOST`, `_SERVICE_PORT`, `_PORT`,
+`_PORT_<n>_TCP`, `_NAME`, `_ENV_...`). Typos of `PORT`, `HOST`, `LOG_LEVEL`
+and `NODE_ENV` are not caught. Keep helper variables of your own (for example
+`REDIS_PASSWORD` used to build `REDIS_URL`) outside these prefixes.
 
 | Variable                               | Default              | Purpose                                                                  |
 | -------------------------------------- | -------------------- | ------------------------------------------------------------------------ |
@@ -365,8 +419,8 @@ While Redis is unreachable (or answers nothing for `REDIS_COMMAND_TIMEOUT_MS`):
   longer prove it is alive, so it stops serving groups before other
   instances may take over its participants (it fences itself). Clients
   resume when Redis is back; the instance comes back under a new ID.
-- New WebSocket upgrades get HTTP 503; `/health` stays 200 (readiness comes
-  with a later release).
+- New WebSocket upgrades get HTTP 503 and `/ready` gets 503; `/health` stays
+  200 (see [Health and readiness](#health-and-readiness)).
 - The server never falls back to memory and stays up. When a `PING`
   answers again, it replays the disconnects it could not store, runs the
   timers that came due, and accepts connections again. Redis errors that
@@ -523,6 +577,28 @@ Known limits and trade-offs:
   ceiling allows tickets of up to 24 hours.
 
 ### Upgrading
+
+- **Health, readiness and config errors (#36):**
+  - **Unknown look-alike variables now stop startup.** A set variable in the
+    server's name families that is not one of its variables (see
+    [Environment variables](#environment-variables)) is a `Config error`, and
+    the server exits 1. There is no switch to turn this off. Check your
+    deployment for typos (they never worked) and for helper variables of your
+    own, such as `REDIS_PASSWORD`, `REDIS_HOST` or `SYNC_*` names that a shared
+    `env_file` or Helm chart puts into every container: rename them outside
+    the families (for example `PW_REDIS`, `HOST_REDIS`).
+  - Every config problem of one run is printed, one `Config error:` line each
+    (before, only the first stage's problems were shown, and only the first
+    line had the prefix). Some messages now end with what to change; scripts
+    that match on the exact text need updating. The list is in
+    [`docs/startup-errors.md`](docs/startup-errors.md).
+  - The server reads its version from its own `package.json` at startup and
+    refuses to start without it (`Startup error: cannot read the server
+version: ...`). The image has it at `/app/package.json`; a custom image
+    must keep `package.json` next to `dist/`.
+  - `/health` has two more fields, `version` and `storage`; `/ready` is new.
+    Point load balancers at `/ready` (see
+    [Health and readiness](#health-and-readiness)).
 
 - **Several instances (#35):** to upgrade from the release with Redis for one
   instance, **stop every instance before starting the new ones**. Running
@@ -850,7 +926,17 @@ server {
     proxy_read_timeout 120s;
   }
 
+  # Health and readiness for the load balancer and monitoring only: they
+  # show the server version (see "Health and readiness").
   location = /health {
+    allow 10.0.0.0/8;
+    deny all;
+    proxy_pass http://127.0.0.1:8080;
+  }
+
+  location = /ready {
+    allow 10.0.0.0/8;
+    deny all;
     proxy_pass http://127.0.0.1:8080;
   }
 }

@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { contentSecurityPolicy } from '../server/headers.js';
+import { KNOWN_READER_VARIABLES } from '../src/config/known-vars.js';
 import { CONTENT_ID_PATTERN } from '../src/content/content-id.js';
 import { CONTENT_LIMITS, SUPPORTED_SCHEMA } from '../src/content/limits.js';
 
@@ -101,5 +102,22 @@ describe('root README', () => {
   it('lists the reader package and links its README', () => {
     expect(rootReadme).toContain('`@sync-system/reader`');
     expect(rootReadme).toContain('apps/reader/README.md');
+  });
+});
+
+describe('README documents config errors (#36 AC39, AC40)', () => {
+  it('names the startup-error list, the echo rule and the unknown READER_ rule', () => {
+    const section = readme.slice(
+      readme.indexOf('## Configuration'),
+      readme.indexOf('### Interface language'),
+    );
+    expect(section).toContain('[`docs/startup-errors.md`](../../docs/startup-errors.md)');
+    expect(section).toContain('`READER_SYNC_API_KEY` is never shown');
+    expect(section).toContain('READER_SYNC_ULR');
+  });
+
+  it('documents exactly the known READER_ variables', () => {
+    const names = new Set([...readme.matchAll(/^\| `(READER_[A-Z0-9_]+)` +\|/gm)].map((m) => m[1]));
+    expect([...names].sort()).toEqual([...KNOWN_READER_VARIABLES].sort());
   });
 });

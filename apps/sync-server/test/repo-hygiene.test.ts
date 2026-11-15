@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { KNOWN_SERVER_VARIABLES } from '../src/config/known-vars.js';
 import { DEV_REDIS_PASSWORD } from '../src/config/redis.js';
 import { DEV_TOKEN_SECRET } from '../src/config/token-secret.js';
 
@@ -369,5 +370,50 @@ describe('README documents the lifecycle (#13 AC4, AC38, RC14)', () => {
     ]) {
       expect(readme, text).toContain(text);
     }
+  });
+});
+
+describe('README documents health, readiness and config errors (#36 AC36, AC40, AC41)', () => {
+  const readme = read('README.md');
+
+  it('lists exactly the known server variables in the env table', () => {
+    const table = readme.slice(
+      readme.indexOf('### Environment variables'),
+      readme.indexOf('### Storage (Redis)'),
+    );
+    const names = [...table.matchAll(/^\| `([A-Z][A-Z0-9_]*)` +\|/gm)].map((m) => m[1]);
+    expect([...names].sort()).toEqual([...KNOWN_SERVER_VARIABLES].sort());
+  });
+
+  it('documents /ready for load balancers and why /health must not route', () => {
+    const section = readme.slice(
+      readme.indexOf('### Health and readiness'),
+      readme.indexOf('### Config file'),
+    );
+    expect(section).toContain('GET /ready');
+    expect(section).toContain('{"status":"not_ready","storage":"<kind>"}');
+    expect(section).toContain('Do not route on `/health`');
+    expect(section).toContain('only from the load balancer');
+  });
+
+  it('keeps /health as the compose healthcheck', () => {
+    for (const file of ['compose.yaml']) {
+      const compose = read(file);
+      expect(compose).toContain("fetch('http://127.0.0.1:8080/health')");
+      expect(compose).not.toContain('/ready');
+    }
+  });
+
+  it('states the unknown-variable rule in the upgrade notes and links the startup-error list', () => {
+    const upgrading = readme.slice(
+      readme.indexOf('### Upgrading'),
+      readme.indexOf('### Token secret'),
+    );
+    expect(upgrading).toContain('Unknown look-alike variables now stop startup');
+    expect(upgrading).toContain('REDIS_PASSWORD');
+    expect(upgrading).toContain('REDIS_HOST');
+    expect(upgrading).toContain('rename them outside');
+    expect(readme).toContain('[`docs/startup-errors.md`](docs/startup-errors.md)');
+    expect(readme).toContain('docs/decisions/0015-unknown-environment-variables.md');
   });
 });
