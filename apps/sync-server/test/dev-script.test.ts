@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { childEnv } from './helpers/child-env.js';
 
 const serverDir = fileURLToPath(new URL('..', import.meta.url));
 
@@ -29,7 +30,7 @@ describe('dev script', () => {
         '-e',
         "console.log(import.meta.resolve('@sync-system/protocol'))",
       ],
-      { cwd: serverDir, env: { ...process.env, NODE_OPTIONS: '' }, encoding: 'utf8' },
+      { cwd: serverDir, env: childEnv({ NODE_OPTIONS: '' }), encoding: 'utf8' },
     );
     expect(child.status).toBe(0);
     expect(child.stdout.trim()).toMatch(/\/packages\/protocol\/src\/index\.ts$/);

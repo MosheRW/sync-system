@@ -1,6 +1,7 @@
 import { JOIN_METHODS, type JoinMethod } from '@sync-system/protocol';
 import { z } from 'zod';
 import { ConfigError } from './config-error.js';
+import type { ServerVariable } from './known-vars.js';
 import { type RedisSettings, collectRedisSettings } from './redis.js';
 import {
   ROSTER_SNAPSHOT_HEADROOM_BYTES,
@@ -61,7 +62,8 @@ export type EnvSource = Readonly<Record<string, string | undefined>>;
 
 interface NumericVar {
   key: keyof ServerEnv;
-  name: string;
+  /** Typed by KNOWN_SERVER_VARIABLES, so a variable cannot be parsed without being known. */
+  name: ServerVariable;
   defaultValue: number;
   /** Lower bound; defaults to 1. */
   min?: number;

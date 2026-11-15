@@ -10,6 +10,7 @@ import type { SyncServer } from '../src/server.js';
 import { DEV_TOKEN_SECRET } from '../src/config/token-secret.js';
 import { LogCapture } from './helpers/log-capture.js';
 import { httpGet } from './helpers/test-server.js';
+import { childEnv } from './helpers/child-env.js';
 
 const SECRET_KEY = 'SENTINEL-main-key-0123456789-0123456789-xyz';
 /** A strong-looking test token secret (not a real one). */
@@ -256,11 +257,10 @@ describe('process entry (AC6)', () => {
     );
     const child = spawnSync(process.execPath, ['--import', 'tsx', 'src/index.ts'], {
       cwd: serverDir,
-      env: {
-        ...process.env,
+      env: childEnv({
         SYNC_CONFIG_PATH: path,
         NODE_OPTIONS: '--conditions=@sync-system/source',
-      },
+      }),
       encoding: 'utf8',
       timeout: 30_000,
     });

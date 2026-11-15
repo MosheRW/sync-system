@@ -3,6 +3,7 @@ import { collectAppsConfigFile } from './apps-config.js';
 import { ConfigError } from './config-error.js';
 import { devKeyProblems } from './dev-key.js';
 import { type EnvSource, type ServerEnv, collectEnv } from './env.js';
+import { collectUnknownVariables } from './known-vars.js';
 import type { RedisSettings } from './redis.js';
 import { type TokenSecrets, collectTokenSecrets } from './token-secret.js';
 
@@ -18,9 +19,10 @@ export interface LoadedConfig {
 
 /**
  * Loads and checks the whole startup config: env variables (REDIS_*
- * included), token secrets, the apps file and dev keys. Every problem of
- * every step is collected, in this fixed order, and thrown together as one
- * ConfigError, so an operator sees them all in one run (#36 AC37, AC38).
+ * included), token secrets, unknown look-alike variables, the apps file and
+ * dev keys. Every problem of every step is collected, in this fixed order,
+ * and thrown together as one ConfigError, so an operator sees them all in
+ * one run (#36 AC37, AC37a, AC38).
  *
  * Fail closed (#36 security C1): the config is returned only when there is
  * no problem at all. Collectors return `undefined` for a value that failed,
@@ -31,6 +33,8 @@ export function loadConfig(source: EnvSource): LoadedConfig {
 
   const collected = collectEnv(source, problems);
   const tokenSecrets = collectTokenSecrets(source, source.NODE_ENV, problems);
+  // Names only, never values (#36 AC37a, ADR 0015, security C4).
+  collectUnknownVariables(source, problems);
 
   let apps: AppConfig[] | undefined;
   if (collected.configPath !== undefined) {
