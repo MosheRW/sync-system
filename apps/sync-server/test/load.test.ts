@@ -69,7 +69,7 @@ describe('loadConfig (#36 AC37, AC38)', () => {
       'REDIS_KEY_PREFIX must be 1-32 characters of a-z, 0-9, _ and -, starting with a letter or digit',
       'TOKEN_SECRET must be at least 32 bytes (use `openssl rand -base64 32`)',
       `${path}: apps[1] (namespace "b"): minAppVersion must be a semver string of at most 64 characters`,
-      `${path}: apps[2] (namespace "c") has the same apiKey as apps[0] (namespace "a")`,
+      `${path}: apps[2] (namespace "c") has the same apiKey as apps[0] (namespace "a") (each app needs its own key)`,
       'apps[0] (namespace "a") uses the public development API key; set a real key',
     ]);
   });
@@ -121,7 +121,7 @@ describe('invalid ceilings (#36 Gate 2 Q-4)', () => {
     const problems = problemsOf({ ...base, SYNC_CONFIG_PATH: path, MAX_GROUP_SIZE_CEILING: 'abc' });
     expect(problems).toEqual([
       'MAX_GROUP_SIZE_CEILING must be a positive integer',
-      `${path}: apps[0] (namespace "a"): maxMessageBytes 99999 exceeds MAX_MESSAGE_SIZE_CEILING 16384`,
+      `${path}: apps[0] (namespace "a"): maxMessageBytes 99999 exceeds MAX_MESSAGE_SIZE_CEILING 16384 (lower maxMessageBytes or raise MAX_MESSAGE_SIZE_CEILING)`,
     ]);
   });
 

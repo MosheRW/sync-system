@@ -268,7 +268,7 @@ describe('process entry (AC6)', () => {
     expect(child.stderr).toContain(
       'Config error: ' +
         path +
-        ': apps[1] (namespace "b") has the same apiKey as apps[0] (namespace "a")',
+        ': apps[1] (namespace "b") has the same apiKey as apps[0] (namespace "a") (each app needs its own key)',
     );
     expect(child.stderr).not.toContain('SENTINEL');
     expect(child.stdout).not.toContain('SENTINEL');

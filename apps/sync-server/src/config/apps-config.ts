@@ -140,7 +140,7 @@ const FIELD_RULES: Record<string, string> = {
  */
 function describeIssue(issue: z.core.$ZodIssue, entry: Record<string, unknown>): string {
   if (issue.code === 'unrecognized_keys') {
-    return `unknown field(s): ${issue.keys.join(', ')}`;
+    return `unknown field(s): ${issue.keys.map(shownText).join(', ')} (remove them or fix their names)`;
   }
   // Every problem inside the array is reported as the field's rule.
   if (issue.path[0] === 'joinMethods') return `joinMethods ${FIELD_RULES.joinMethods}`;
@@ -175,6 +175,22 @@ export function describeJsonSyntaxError(err: unknown, text: string): string {
   return 'not valid JSON';
 }
 
+/** Longest operator-supplied text (file path, JSON key name) echoed in a problem. */
+export const MAX_SHOWN_TEXT = 64;
+
+/**
+ * Operator-supplied text that a problem echoes (the config file path, JSON
+ * key names): control and line-separator characters become `?` and the text
+ * is cut to MAX_SHOWN_TEXT characters plus `...`, so one problem is always
+ * exactly one line (#36 security C6).
+ */
+export function shownText(text: string): string {
+  // eslint-disable-next-line no-control-regex
+  const safe = text.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, '?');
+  const chars = Array.from(safe);
+  return chars.length > MAX_SHOWN_TEXT ? `${chars.slice(0, MAX_SHOWN_TEXT).join('')}...` : safe;
+}
+
 function label(index: number, namespace: unknown): string {
   return typeof namespace === 'string' && NAMESPACE_PATTERN.test(namespace)
     ? `apps[${index}] (namespace "${namespace}")`
@@ -200,21 +216,22 @@ export function collectAppsConfig(
   source: string,
   problems: string[],
 ): AppConfig[] | undefined {
+  const shown = shownText(source);
   let data: unknown;
   try {
     data = JSON.parse(text.startsWith(BOM) ? text.slice(1) : text);
   } catch (err) {
-    problems.push(`${source}: ${describeJsonSyntaxError(err, text)}`);
+    problems.push(`${shown}: ${describeJsonSyntaxError(err, text)}`);
     return undefined;
   }
 
   if (typeof data !== 'object' || data === null || Array.isArray(data)) {
-    problems.push(`${source}: must be a JSON object with an "apps" array`);
+    problems.push(`${shown}: must be a JSON object with an "apps" array`);
     return undefined;
   }
   const apps = (data as Record<string, unknown>).apps;
   if (!Array.isArray(apps) || apps.length === 0) {
-    problems.push(`${source}: "apps" must be a non-empty array`);
+    problems.push(`${shown}: "apps" must be a non-empty array`);
     return undefined;
   }
 
@@ -264,7 +281,9 @@ export function collectAppsConfig(
         errors.push(`${where}: ${spec.field} must be an integer >= ${spec.min}`);
         entryOk = false;
       } else if (ceiling !== undefined && value > ceiling) {
-        errors.push(`${where}: ${spec.field} ${value} exceeds ${spec.ceilingName} ${ceiling}`);
+        errors.push(
+          `${where}: ${spec.field} ${value} exceeds ${spec.ceilingName} ${ceiling} (lower ${spec.field} or raise ${spec.ceilingName})`,
+        );
         entryOk = false;
       }
       limits[spec.field] = value;
@@ -298,7 +317,7 @@ export function collectAppsConfig(
     const firstWithNamespace = seenNamespaces.get(app.namespace);
     if (firstWithNamespace !== undefined) {
       errors.push(
-        `apps[${index}] has the same namespace "${app.namespace}" as apps[${firstWithNamespace}]`,
+        `apps[${index}] has the same namespace "${app.namespace}" as apps[${firstWithNamespace}] (each app needs its own namespace)`,
       );
       entryOk = false;
     } else {
@@ -309,7 +328,7 @@ export function collectAppsConfig(
     const firstWithKey = seenKeys.get(apiKeyHash);
     if (firstWithKey !== undefined) {
       errors.push(
-        `apps[${index}] (namespace "${app.namespace}") has the same apiKey as apps[${firstWithKey.index}] (namespace "${firstWithKey.namespace}")`,
+        `apps[${index}] (namespace "${app.namespace}") has the same apiKey as apps[${firstWithKey.index}] (namespace "${firstWithKey.namespace}") (each app needs its own key)`,
       );
       entryOk = false;
     } else {
@@ -328,7 +347,7 @@ export function collectAppsConfig(
     }
   });
 
-  problems.push(...errors.map((e) => `${source}: ${e}`));
+  problems.push(...errors.map((e) => `${shown}: ${e}`));
   return result;
 }
 
@@ -404,11 +423,14 @@ export function collectAppsConfigFile(
     text = readFileSync(path, 'utf8');
   } catch (err) {
     // Only the errno code: never the fs message (#36 security C3).
+    const shown = shownText(path);
     const code = (err as NodeJS.ErrnoException).code;
     if (code === 'ENOENT') {
-      problems.push(`${path}: config file not found (set SYNC_CONFIG_PATH)`);
+      problems.push(`${shown}: config file not found (set SYNC_CONFIG_PATH)`);
     } else {
-      problems.push(`${path}: cannot read config file (${code ?? 'unknown error'})`);
+      problems.push(
+        `${shown}: cannot read config file (${code ?? 'unknown error'}; check that the server user can read it)`,
+      );
     }
     return undefined;
   }

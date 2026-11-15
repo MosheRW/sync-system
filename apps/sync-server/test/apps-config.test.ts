@@ -4,7 +4,12 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { AppRegistry, hashApiKey } from '../src/apps/app-registry.js';
 import { ConfigError } from '../src/config/config-error.js';
-import { loadAppsConfigFile, parseAppsConfig } from '../src/config/apps-config.js';
+import {
+  collectAppsConfig,
+  loadAppsConfigFile,
+  parseAppsConfig,
+  shownText,
+} from '../src/config/apps-config.js';
 import { parseEnv } from '../src/config/env.js';
 
 const env = parseEnv({});
@@ -136,7 +141,7 @@ describe('parseAppsConfig', () => {
     it(`rejects ${field} above ${ceilingName} and accepts it at the ceiling (AC5)`, () => {
       const err = errorOf(config(app({ [field]: ceiling + 1 })));
       expect(err.message).toBe(
-        `apps.json: apps[0] (namespace "reading-app"): ${field} ${ceiling + 1} exceeds ${ceilingName} ${ceiling}`,
+        `apps.json: apps[0] (namespace "reading-app"): ${field} ${ceiling + 1} exceeds ${ceilingName} ${ceiling} (lower ${field} or raise ${ceilingName})`,
       );
       const [loaded] = parseAppsConfig(config(app({ [field]: ceiling })), env);
       expect(loaded?.[field]).toBe(ceiling);
@@ -284,8 +289,24 @@ describe('parseAppsConfig', () => {
 
   it('rejects unknown fields to catch typos', () => {
     expect(errorOf(config(app({ maxGroupsize: 10 }))).message).toContain(
-      'unknown field(s): maxGroupsize',
+      'unknown field(s): maxGroupsize (remove them or fix their names)',
     );
+  });
+
+  it('escapes and cuts echoed key names and paths, so a problem is one line (#36 C6)', () => {
+    const longKey = 'k'.repeat(80);
+    const err = errorOf(config(app({ 'evil\nConfig error: forged': 1, [longKey]: 2 })));
+    expect(err.problems).toEqual([
+      `apps.json: apps[0] (namespace "reading-app"): unknown field(s): evil?Config error: forged, ${'k'.repeat(64)}... (remove them or fix their names)`,
+    ]);
+    const problems: string[] = [];
+    collectAppsConfig('{', parseEnv({}), 'bad\r\npath \u0007', problems);
+    expect(problems).toEqual(['bad??path??: not valid JSON (line 1, column 2)']);
+  });
+
+  it('cuts an echoed path at 64 characters', () => {
+    expect(shownText('/'.repeat(70))).toBe(`${'/'.repeat(64)}...`);
+    expect(shownText('/srv/apps.json')).toBe('/srv/apps.json');
   });
 
   it('requires a non-empty apps array', () => {
@@ -302,14 +323,16 @@ describe('parseAppsConfig', () => {
       }),
     );
     expect(err.message).toBe(
-      'apps.json: apps[2] (namespace "c") has the same apiKey as apps[0] (namespace "a")',
+      'apps.json: apps[2] (namespace "c") has the same apiKey as apps[0] (namespace "a") (each app needs its own key)',
     );
     expect(err.message).not.toContain(SECRET_KEY);
   });
 
   it('reports a duplicate namespace (AC6)', () => {
     const err = errorOf(config(app({ apiKey: KEY_A }), app({ apiKey: KEY_B })));
-    expect(err.message).toContain('apps[1] has the same namespace "reading-app" as apps[0]');
+    expect(err.message).toContain(
+      'apps[1] has the same namespace "reading-app" as apps[0] (each app needs its own namespace)',
+    );
   });
 
   it('requires keys of 32 to 256 characters (L7, L2)', () => {
