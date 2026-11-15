@@ -12,7 +12,7 @@ import {
   checkJson,
   parseClientMessage,
 } from '@sync-system/protocol';
-import type { RawData, WebSocket } from 'ws';
+import { type RawData, WebSocket } from 'ws';
 import type { AppRegistry } from '../apps/app-registry.js';
 import { newParticipantId } from '../groups/ids.js';
 import type { GroupActions, Session } from '../groups/session.js';
@@ -95,6 +95,8 @@ export class Connection implements HeartbeatTarget {
   private requestMembership: Session['membership'] | null = null;
   /** Frames queued behind a reply, not sent yet: later frames queue too (order). */
   private heldFrames = 0;
+  /** Their bytes: they count against `maxBufferedBytes` like sent ones (security S5). */
+  private heldBytes = 0;
   /** True while a queued task (afterPending or a held frame) runs. */
   private draining = false;
 
@@ -334,9 +336,25 @@ export class Connection implements HeartbeatTarget {
         }
         // A group frame never goes out before the reply that attached the
         // session (#35 fix round 1): it waits in the queue, behind the reply.
+        // Held frames count against the outbound buffer limit as if sent
+        // (H2, security S5): over it, the socket is cut like a slow consumer.
+        const bytes = Buffer.byteLength(text, 'utf8');
+        if (
+          this.ws.readyState === WebSocket.OPEN &&
+          this.ws.bufferedAmount + this.heldBytes + bytes > this.deps.maxBufferedBytes
+        ) {
+          this.ws.terminate();
+          this.deps.logger.warn(
+            { event: 'slow_consumer_terminated', namespace: this.session?.app.namespace },
+            'outbound buffer limit exceeded',
+          );
+          return;
+        }
         this.heldFrames += 1;
+        this.heldBytes += bytes;
         this.enqueueNow(() => {
           this.heldFrames -= 1;
+          this.heldBytes -= bytes;
           this.transmit(text);
         });
       },

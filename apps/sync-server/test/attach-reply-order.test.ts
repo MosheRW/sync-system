@@ -28,7 +28,10 @@ afterEach(async () => {
  * the session, and a frame for it arrives (as a remote effect or another
  * task's flush would) before the join's reply is sent.
  */
-async function connectWith(groups: Partial<GroupActions>): Promise<TestClient> {
+async function connectWith(
+  groups: Partial<GroupActions>,
+  maxBufferedBytes = 1 << 20,
+): Promise<TestClient> {
   const env = parseEnv({});
   const registry = new AppRegistry(
     parseAppsConfig(
@@ -46,7 +49,7 @@ async function connectWith(groups: Partial<GroupActions>): Promise<TestClient> {
       handshakeTimeoutMs: 5_000,
       inbound: { ratePerSecond: 100, burst: 100 },
       now: Date.now,
-      maxBufferedBytes: 1 << 20,
+      maxBufferedBytes,
       maxQueuedBytes: 1 << 20,
       onClosed: () => undefined,
     });
@@ -112,4 +115,41 @@ it('a frame for an existing member is not held behind its other requests', async
   expect(await client.next()).toMatchObject({ position: { page: 5 } });
   release!();
   expect((await client.next()).type).toBe('position.ack');
+});
+
+it('held frames count against the outbound buffer limit: over it, the socket is cut (security S5)', async () => {
+  const client = await connectWith(
+    {
+      async joinByCode(session) {
+        session.membership = { groupId: GROUP, participantId: 'p', attachId: 'a' };
+        // A busy group: frames for the session pile up while the join is in flight.
+        for (let page = 1; page <= 20; page++) session.deliver(moved(page) + ' '.repeat(500));
+        await sleep(20);
+        return joined(session);
+      },
+    },
+    4_096,
+  );
+  client.send({ type: 'group.joinByCode', joinCode: '123456', doorCode: '123456' });
+  // Twenty frames of over 500 bytes are past the 4 KiB limit: terminated, not held.
+  expect(await client.closed()).toMatchObject({ code: 1006 });
+});
+
+it('held frames under the limit all go out after the reply', async () => {
+  const client = await connectWith(
+    {
+      async joinByCode(session) {
+        session.membership = { groupId: GROUP, participantId: 'p', attachId: 'a' };
+        for (let page = 1; page <= 5; page++) session.deliver(moved(page) + ' '.repeat(500));
+        await sleep(20);
+        return joined(session);
+      },
+    },
+    4_096,
+  );
+  client.send({ type: 'group.joinByCode', joinCode: '123456', doorCode: '123456' });
+  expect((await client.next()).type).toBe('group.joined');
+  for (let page = 1; page <= 5; page++) {
+    expect(await client.next()).toMatchObject({ position: { page } });
+  }
 });

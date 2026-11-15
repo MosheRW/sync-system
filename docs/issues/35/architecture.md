@@ -791,7 +791,11 @@ New `storage/redis/instance.ts`.
      (`pubsub_barrier_timeout`, warn): it is replaced and resyncs, as below.
 
   Frames to members are sent at once (`later: false`); frames to the leader keep the
-  single-instance "after pending replies" rule.
+  single-instance "after pending replies" rule. A frame for a session whose join or
+  resume is still in flight waits behind that request's reply (fix round 1); held
+  frames count against `maxBufferedBytes` as if sent, and a frame that would go over
+  it cuts the socket like a slow consumer (`slow_consumer_terminated`, fix round 2,
+  security S5).
 - **At-most-once (ADR 0012 rule).** When the subscriber link drops (as built: at once,
   not only when it comes back), is found stalled by its probe, or lags past the
   barrier, the instance closes every local session that is in a group, parked or
