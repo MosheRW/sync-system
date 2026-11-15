@@ -286,5 +286,14 @@ export const PUBSUB_EFFECTS_MAX = 512;
  */
 export const PUBSUB_BARRIER_MS = 1_000;
 
+/**
+ * A received sequence this far (1 s of Redis time, in microseconds) or more
+ * below the last one is not a stale message but a sequence that went back
+ * (`P:seq` lost while Redis time is behind, or a forged `s`): the link is
+ * treated as lost and restarts from the current sequence (#35 security S1).
+ * A smaller step back is dropped as stale.
+ */
+export const PUBSUB_SEQUENCE_REWIND_MAX = 1_000_000;
+
 /** How long the instance list keeps an instance ID after its last registration (24 h). */
 export const INSTANCE_LIST_RETENTION_MS = 86_400_000;

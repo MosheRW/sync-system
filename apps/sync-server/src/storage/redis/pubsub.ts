@@ -11,6 +11,7 @@ import {
   PUBSUB_EFFECTS_MAX,
   PUBSUB_FRAME_MAX_CHARS,
   PUBSUB_MESSAGE_MAX_BYTES,
+  PUBSUB_SEQUENCE_REWIND_MAX,
 } from '../../limits/constants.js';
 import type { Logger } from '../../logging/logger.js';
 import { ATTACH_ID_PATTERN } from './attachments.js';
@@ -220,16 +221,23 @@ export class RedisPubSub {
 
   /**
    * Everything published before now is behind us (it was received, or it
-   * was lost and the sessions it was for were closed).
+   * was lost and the sessions it was for were closed). The counter is set
+   * to the current sequence, lower or not (security S1): a sequence that
+   * went back (`P:seq` lost, Redis time behind) or a forged high `s` must
+   * not make every later message look stale.
    */
   private async baseline(): Promise<void> {
     const raw = await this.options.link.send(['GET', this.options.keys.sequence()]);
     const seq = typeof raw === 'string' && /^[0-9]{1,16}$/.test(raw) ? Number(raw) : 0;
-    this.advance(seq);
+    this.settle(seq);
   }
 
   private advance(seq: number): void {
-    if (seq <= this.received) return;
+    if (seq > this.received) this.settle(seq);
+  }
+
+  /** `seq` is the last sequence received: waiters up to it go on. */
+  private settle(seq: number): void {
     this.received = seq;
     const ready = this.waiters.filter((waiter) => waiter.seq <= seq);
     this.waiters = this.waiters.filter((waiter) => waiter.seq > seq);
@@ -244,6 +252,12 @@ export class RedisPubSub {
     }
     // Commits only move forward: an older sequence is stale (Q-B10).
     if (parsed.s < this.received) {
+      // Far older: the sequence went back, not one late message. Effects
+      // would be dropped from now on: resync and start again (security S1).
+      if (this.received - parsed.s >= PUBSUB_SEQUENCE_REWIND_MAX) {
+        this.replace('regressed');
+        return;
+      }
       this.options.logger.debug({ event: 'pubsub_message_stale' }, 'stale pub/sub message');
       return;
     }

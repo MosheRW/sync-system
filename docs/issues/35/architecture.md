@@ -783,7 +783,10 @@ New `storage/redis/instance.ts`.
      are applied first (the group's inbox is drained before the task runs). Only then
      does the task run and flush its own frames.
   3. A message with `s` below the highest one received is stale and dropped
-     (`pubsub_message_stale`, debug).
+     (`pubsub_message_stale`, debug). A message 1 s of Redis time
+     (`PUBSUB_SEQUENCE_REWIND_MAX`) or more below it means the sequence went back
+     (`P:seq` lost while Redis time is behind, or a forged `s`): the link is
+     replaced and resyncs (`cause: regressed`), as below (fix round 2, security S1).
   4. A link that does not reach the mark within the bound is lagging
      (`pubsub_barrier_timeout`, warn): it is replaced and resyncs, as below.
 
@@ -795,7 +798,8 @@ New `storage/redis/instance.ts`.
   pending with `1001` (`pubsub_link_lost {cause}`, then `pubsub_resync {sessions}`).
   While the link is down, storage reports `unreachable` (503 on upgrades). When a new
   link has subscribed, it reads `P:seq` as its baseline: everything published before
-  is behind it. Clients resume and read the current state.
+  is behind it. The last received sequence is set to that baseline, also when it is
+  lower than before (security S1). Clients resume and read the current state.
 
 ### 12.8 Orphan sweep and stops (AC21, AC11 kept, AC12 kept)
 
@@ -934,7 +938,7 @@ Parking only happens when a group is missing from Redis (AC14 path).
     `fence_error {err}` (error, a fence step failed);
   - `orphan_sweep {instances, groups, invalid}`; `orphan_sweep_failed {err}` (warn);
   - `pubsub_resync {sessions}`; `pubsub_link_lost {cause}` (warn; `dropped`,
-    `stalled`, `lagging`, `subscribe_failed` or `baseline_failed`);
+    `stalled`, `lagging`, `regressed`, `subscribe_failed` or `baseline_failed`);
     `pubsub_barrier_timeout` (warn, Q-B10); `pubsub_message_stale` (debug, Q-B10);
     `pubsub_message_invalid` (warn);
   - `remote_effect_dropped {op}` (debug); `remote_effect_too_large {op}` (error);
