@@ -8,6 +8,27 @@ import { KEY_A, type TestServer, httpGet } from './helpers/test-server.js';
 import { sleep, waitUntil } from './helpers/wait.js';
 
 const MINUTE = 60_000;
+/** Past the default disconnect grace (30 s). */
+const GRACE = 31_000;
+/** Rounds of each AC18 race (architecture 12.17). */
+const ROUNDS = 20;
+/** Instance metadata that survives a loss of the group data (as in multi-parking). */
+const KEEP = [':inst:', ':insts', ':ig:', ':seq', ':lock:'];
+
+/** Grace timers this instance claimed (the `timer_claimed` debug log). */
+function graceClaims(ts: TestServer): number {
+  return ts.logs.records().filter((r) => r.event === 'timer_claimed' && r.kind === 'grace').length;
+}
+
+/** Whether the client leads now, by its last `leader.granted` / `leader.lost`. */
+function leads(client: TestClient): boolean {
+  let lead = false;
+  for (const frame of client.received) {
+    if (frame.type === 'leader.granted') lead = true;
+    if (frame.type === 'leader.lost') lead = false;
+  }
+  return lead;
+}
 
 interface Registry {
   a: Record<string, { i: string; t: string }>;
@@ -151,7 +172,7 @@ describeRedis(
         apps: [{ namespace: 'app-a', apiKey: KEY_A, maxGroupSize: 2 }],
       });
       const [a, b] = cluster.nodes;
-      for (let round = 0; round < 5; round++) {
+      for (let round = 0; round < ROUNDS; round++) {
         const group = await groupAcross(a!.ts, []);
         const joiners = await Promise.all([a!.ts.connectReady(), b!.ts.connectReady()]);
         for (const j of joiners) j.send({ type: 'group.joinByCode', ...group.join });
@@ -178,6 +199,139 @@ describeRedis(
         expect(Object.keys(reg.a)).toContain(group.leaderId);
       }
     });
+
+    it('a take-back on A racing a grace handoff fired on B leaves exactly one leader (AC18)', async () => {
+      const scheduler = new ManualScheduler();
+      cluster = await startCluster({ scheduler });
+      // A handoff only picks a member whose instance its peers know is live.
+      await cluster.converged();
+      const [a, b] = cluster.nodes;
+      for (let round = 0; round < ROUNDS; round++) {
+        // The leader on A drops; after the grace a member on B leads.
+        const group = await groupAcross(a!.ts, [b!.ts, b!.ts]);
+        group.leader.terminate();
+        await waitUntil(() =>
+          group.members.every((m) => m.received.some((f) => f.type === 'leader.offline')),
+        );
+        scheduler.advance(GRACE);
+        await waitUntil(() => group.members.some(leads), 5_000);
+        const first = group.members.findIndex(leads);
+        const other = group.members[1 - first]!;
+        const otherId = group.memberIds[1 - first]!;
+        // The displaced leader comes back on A as a member and is offered the lead.
+        const back = await a!.ts.connectReady();
+        back.send({ type: 'group.resume', token: group.leaderToken });
+        await waitUntil(() => back.received.some((f) => f.type === 'takeback.offered'), 5_000);
+        // The new leader on B drops: its grace timer is armed on B.
+        group.members[first]!.terminate();
+        await waitUntil(() => back.received.some((f) => f.type === 'leader.offline'), 5_000);
+        // B's wake-up for that grace end is set (after B's commit).
+        await waitUntil(
+          () => scheduler.nextAt !== undefined && scheduler.nextAt <= scheduler.now() + GRACE,
+          5_000,
+          'the grace wake-up',
+        );
+        // The race, in both orders: the take-back on A, the grace end on B
+        // (in odd rounds the take-back goes once B claimed the timer).
+        if (round % 2 === 0) {
+          back.send({ type: 'leader.takeBack', reqId: 't' });
+          scheduler.advance(GRACE);
+        } else {
+          const claimed = graceClaims(b!.ts);
+          scheduler.advance(GRACE);
+          await waitUntil(() => graceClaims(b!.ts) > claimed, 5_000, 'the grace claim');
+          back.send({ type: 'leader.takeBack', reqId: 't' });
+        }
+        // The take-back is answered: the lead, or an error.
+        await waitUntil(
+          () => back.received.some((f) => 'reqId' in f && f.reqId === 't'),
+          5_000,
+          'take-back reply',
+        );
+        await waitUntil(
+          async () => {
+            const record = (await doc(group.groupId))?.record;
+            return record?.leaderOnline === true && [back, other].some(leads);
+          },
+          5_000,
+          'a leader',
+        );
+        await sleep(200);
+        const leaders = [back, other].filter(leads);
+        expect(
+          leaders,
+          JSON.stringify([back, other].map((c) => c.received.map((f) => f.type))),
+        ).toHaveLength(1);
+        const record = (await doc(group.groupId))!.record;
+        expect(record.leaderId).toBe(leaders[0] === back ? group.leaderId : otherId);
+        // The take-back's reply matches who won.
+        const reply = back.received.find((f) => 'reqId' in f && f.reqId === 't')!;
+        expect(reply).toMatchObject(
+          leaders[0] === back
+            ? { type: 'leader.granted', reason: 'take_back' }
+            : { type: 'error', code: 'NOT_ALLOWED' },
+        );
+        back.terminate();
+        other.terminate();
+      }
+    }, 120_000);
+
+    it('two recreations of one group on two instances give one group (AC18 create-if-absent)', async () => {
+      cluster = await startCluster();
+      const [a, b] = cluster.nodes;
+      const groups: Array<{ groupId: string; token: string; leaderId: string }> = [];
+      for (let round = 0; round < ROUNDS; round++) {
+        const leader = await a!.ts.connectReady();
+        leader.send({ type: 'group.create', metadata: { contentId: 'c' } });
+        const created = await leader.next('group.created');
+        groups.push({
+          groupId: created.groupId,
+          token: created.token,
+          leaderId: created.participantId,
+        });
+        leader.terminate();
+      }
+      // Tokens older than the next epoch, then Redis loses the groups (AC14).
+      await sleep(1_100);
+      for (const key of await inspect.keys(cluster.prefix)) {
+        if (!KEEP.some((part) => key.includes(part))) await inspect.client.del(key);
+      }
+      for (const [round, group] of groups.entries()) {
+        const resumers = await Promise.all([a!.ts.connectReady(), b!.ts.connectReady()]);
+        for (const r of resumers) {
+          r.send({ type: 'group.resume', token: group.token, metadata: { contentId: 'c' } });
+        }
+        const replies = await Promise.all(resumers.map((r) => r.next(undefined, 8_000)));
+        const context = JSON.stringify(replies);
+        // One recreates; the other resumes the recreated group (and one of
+        // the two sessions is replaced) or is refused.
+        expect(
+          replies.filter((r) => r.type === 'group.resumed' && r.recreated === true),
+          context,
+        ).toHaveLength(1);
+        const refused = replies.filter((r) => r.type === 'error').length;
+        await waitUntil(
+          () =>
+            refused +
+              resumers.filter((r) =>
+                r.received.some((f) => f.type === 'group.ended' && f.reason === 'replaced'),
+              ).length ===
+            1,
+          5_000,
+          'one replaced or refused',
+        );
+        // One group, led by its leader, and only the groups recreated so far.
+        const docs = (await inspect.keys(`${cluster.prefix}:v1:g`)).filter((k) =>
+          k.includes(group.groupId),
+        );
+        expect(docs).toHaveLength(1);
+        expect(await inspect.keys(`${cluster.prefix}:v1:g`)).toHaveLength(round + 1);
+        const record = (await doc(group.groupId))!.record;
+        expect(record.leaderId).toBe(group.leaderId);
+        expect(record.leaderOnline).toBe(true);
+        for (const r of resumers) r.terminate();
+      }
+    }, 120_000);
 
     it("a commit whose lease lapsed aborts; the other instance's write stands (AC18 fence)", async () => {
       let delayNext = false;
