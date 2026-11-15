@@ -21,6 +21,11 @@ export interface RunIO {
   versionUrl?: URL;
 }
 
+/** The `Startup error` text when the port cannot be bound (docs/startup-errors.md). */
+export function listenErrorMessage(port: number, code: string): string {
+  return `cannot listen on port ${port} (${code})`;
+}
+
 export type RunResult =
   { ok: true; server: SyncServer; logger: Logger } | { ok: false; exitCode: number };
 
@@ -103,7 +108,7 @@ export async function run(env: EnvSource, io: RunIO = {}): Promise<RunResult> {
         stderr(`Startup error: ${storageStartMessage(err)}\n`);
       } else {
         const code = (err as NodeJS.ErrnoException).code ?? 'unknown';
-        stderr(`Startup error: cannot listen on port ${serverEnv.port} (${code})\n`);
+        stderr(`Startup error: ${listenErrorMessage(serverEnv.port, code)}\n`);
       }
       // Closes the Redis connection too, so nothing keeps the process alive.
       await server.close().catch(() => undefined);

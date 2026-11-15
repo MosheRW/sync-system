@@ -8,7 +8,7 @@ import {
   REDIS_RECONNECT_MAX_MS,
 } from '../../limits/constants.js';
 import { type Logger, safeErr } from '../../logging/logger.js';
-import { StorageReplyError, StorageUnavailableError } from '../errors.js';
+import { STORAGE_START_MESSAGES, StorageReplyError, StorageUnavailableError } from '../errors.js';
 
 /** The client module, loaded only when REDIS_URL is set (#35 ADR 0010, AC28). */
 type ClientModule = typeof RedisModule;
@@ -136,28 +136,41 @@ export function isUnavailable(err: unknown): boolean {
 }
 
 /**
+ * The fixed `Startup error` texts of a failed Redis connection (#35 AC4;
+ * listed in docs/startup-errors.md, #36 AC40). No host, port, user or
+ * password.
+ */
+export const STARTUP_MESSAGES = {
+  authentication: STORAGE_START_MESSAGES.authentication,
+  tls: 'Redis TLS handshake failed (REDIS_URL)',
+  unreachable: 'Redis is unreachable (REDIS_URL)',
+  failed: STORAGE_START_MESSAGES.failed,
+  tooOld: 'Redis 7.2 or later is required',
+} as const;
+
+/**
  * The `Startup error` text for a failed connection (#35 AC4), from the
  * error code only: never the message, host, port, user or password.
  */
 export function startupMessage(err: unknown): string {
   const reply = replyCode(err);
   if (reply !== undefined && AUTH_REPLIES.has(reply)) {
-    return 'Redis authentication failed (REDIS_URL)';
+    return STARTUP_MESSAGES.authentication;
   }
   const code = errnoCode(err) ?? '';
   if (code.startsWith('ERR_TLS_') || code.startsWith('ERR_SSL_') || TLS_CODES.has(code)) {
-    return 'Redis TLS handshake failed (REDIS_URL)';
+    return STARTUP_MESSAGES.tls;
   }
-  if (code.startsWith('CERT_')) return 'Redis TLS handshake failed (REDIS_URL)';
+  if (code.startsWith('CERT_')) return STARTUP_MESSAGES.tls;
   if (
     UNREACHABLE_CODES.has(code) ||
     errorClass(err) === 'ConnectionTimeoutError' ||
     errorClass(err) === 'TimeoutError' ||
     errorClass(err) === 'StartupTimeout'
   ) {
-    return 'Redis is unreachable (REDIS_URL)';
+    return STARTUP_MESSAGES.unreachable;
   }
-  return 'Redis connection failed (REDIS_URL)';
+  return STARTUP_MESSAGES.failed;
 }
 
 /** One `field:value` of an INFO section, or undefined. */
@@ -251,7 +264,7 @@ export async function connectRedis(
     const version = semver.coerce(infoField(server, 'redis_version') ?? '');
     if (version === null || semver.lt(version, MIN_REDIS_VERSION)) {
       await link.close();
-      return { ok: false, message: 'Redis 7.2 or later is required' };
+      return { ok: false, message: STARTUP_MESSAGES.tooOld };
     }
     const memory = String(await link.send(['INFO', 'memory']));
     const policy = infoField(memory, 'maxmemory_policy');
@@ -266,8 +279,7 @@ export async function connectRedis(
     await link.close();
     return {
       ok: false,
-      message:
-        replyCode(err) === 'NOPERM' ? startupMessage(err) : 'Redis connection failed (REDIS_URL)',
+      message: replyCode(err) === 'NOPERM' ? startupMessage(err) : STARTUP_MESSAGES.failed,
     };
   }
   if (deps.nodeEnv === 'production' && !settings.hasPassword) {

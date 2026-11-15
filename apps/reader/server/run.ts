@@ -36,6 +36,13 @@ const DEFAULT_TIMEOUTS: ServerTimeouts = {
   checkIntervalMs: 30_000,
 };
 
+/** The `Startup error` texts of the reader (listed in docs/startup-errors.md, #36 AC40). */
+export const STARTUP_MESSAGES = {
+  libraryIndex: 'dist/library-index.json is missing or invalid (run the build first)',
+  indexHtml: 'dist/index.html is missing or has no config placeholder',
+  listen: (port: number, code: string) => `cannot listen on port ${port} (${code})`,
+} as const;
+
 export type RunResult =
   | { ok: true; server: Server; port: number; close: () => Promise<void> }
   | { ok: false; exitCode: number };
@@ -68,7 +75,7 @@ export async function run(env: EnvSource, io: RunIO = {}): Promise<RunResult> {
 
   const libraryIds = readLibraryIds(distDir);
   if (libraryIds === null) {
-    stderr('Startup error: dist/library-index.json is missing or invalid (run the build first)\n');
+    stderr(`Startup error: ${STARTUP_MESSAGES.libraryIndex}\n`);
     return { ok: false, exitCode: 1 };
   }
 
@@ -88,7 +95,7 @@ export async function run(env: EnvSource, io: RunIO = {}): Promise<RunResult> {
   try {
     indexHtml = renderIndexHtml(readFileSync(join(distDir, 'index.html'), 'utf8'), config);
   } catch {
-    stderr('Startup error: dist/index.html is missing or has no config placeholder\n');
+    stderr(`Startup error: ${STARTUP_MESSAGES.indexHtml}\n`);
     return { ok: false, exitCode: 1 };
   }
 
@@ -121,7 +128,7 @@ export async function run(env: EnvSource, io: RunIO = {}): Promise<RunResult> {
     });
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code ?? 'unknown';
-    stderr(`Startup error: cannot listen on port ${config.port} (${code})\n`);
+    stderr(`Startup error: ${STARTUP_MESSAGES.listen(config.port, code)}\n`);
     return { ok: false, exitCode: 1 };
   }
 

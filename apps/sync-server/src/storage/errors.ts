@@ -95,6 +95,15 @@ export class StorageStartError extends Error {
   }
 }
 
+/**
+ * The fixed `Startup error` texts of a storage failure while starting
+ * (listed in docs/startup-errors.md, #36 AC40). No host, key, value or user.
+ */
+export const STORAGE_START_MESSAGES = {
+  authentication: 'Redis authentication failed (REDIS_URL)',
+  failed: 'Redis connection failed (REDIS_URL)',
+} as const;
+
 /** Reply codes that mean the Redis user may not do this (#35 AC4). */
 const AUTH_CODES = new Set(['WRONGPASS', 'NOAUTH', 'NOPERM']);
 
@@ -105,7 +114,7 @@ const AUTH_CODES = new Set(['WRONGPASS', 'NOAUTH', 'NOPERM']);
 export function storageStartMessage(err: StorageStartError): string {
   const { failure } = err;
   if (failure instanceof StorageReplyError && AUTH_CODES.has(failure.code)) {
-    return 'Redis authentication failed (REDIS_URL)';
+    return STORAGE_START_MESSAGES.authentication;
   }
-  return 'Redis connection failed (REDIS_URL)';
+  return STORAGE_START_MESSAGES.failed;
 }
