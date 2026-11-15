@@ -548,6 +548,13 @@ export const APPS_CASES: readonly ConfigCase[] = [
     problems: ['<path>: config file not found (set SYNC_CONFIG_PATH)'],
   },
   {
+    id: 'apps file empty',
+    target: 'file',
+    apps: { kind: 'text', text: '' },
+    sentinels: [],
+    problems: ['<path>: not valid JSON'],
+  },
+  {
     id: 'apps file not an object',
     target: 'file',
     apps: json([baseApp()]),
