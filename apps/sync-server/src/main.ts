@@ -10,12 +10,15 @@ import { type SyncServer, createSyncServer } from './server.js';
 import { StorageStartError, storageStartMessage } from './storage/errors.js';
 import type { Storage } from './storage/storage.js';
 import { realScheduler } from './time/scheduler.js';
+import { VersionError, readServerVersion } from './version.js';
 
 export interface RunIO {
   /** Where startup errors go; defaults to process.stderr. */
   stderr?: (text: string) => void;
   /** Log destination; defaults to stdout. */
   destination?: DestinationStream;
+  /** The server's package.json; tests only. Never taken from env (#36 security C8). */
+  versionUrl?: URL;
 }
 
 export type RunResult =
@@ -41,6 +44,17 @@ export async function run(env: EnvSource, io: RunIO = {}): Promise<RunResult> {
     const config = loadConfig(env);
     const serverEnv = config.env;
     const { apps, tokenSecrets, redis } = config;
+    // A packaging fault, not a config fault: after the config, before Redis.
+    let version: string;
+    try {
+      version =
+        io.versionUrl === undefined ? readServerVersion() : readServerVersion(io.versionUrl);
+    } catch (err) {
+      if (!(err instanceof VersionError)) throw err;
+      stderr(`Startup error: ${err.message}
+`);
+      return { ok: false, exitCode: 1 };
+    }
     logger = createLogger({
       level: serverEnv.logLevel,
       ...(io.destination ? { destination: io.destination } : {}),
@@ -77,8 +91,11 @@ export async function run(env: EnvSource, io: RunIO = {}): Promise<RunResult> {
 
     try {
       const port = await server.listen(serverEnv.port, serverEnv.host);
-      // The port only: never the host or any address (AC24).
-      logger.info({ event: 'server_listening', port, apps: apps.length }, 'sync server listening');
+      // The port and version only: never the host or any address (AC24).
+      logger.info(
+        { event: 'server_listening', port, apps: apps.length, version },
+        'sync server listening',
+      );
     } catch (err) {
       if (err instanceof StorageStartError) {
         // Epoch, past-due timers or sweep failed (#35 AC4, architecture 3 step 7).

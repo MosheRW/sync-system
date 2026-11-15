@@ -75,6 +75,19 @@ describe('pinned supply chain (L8)', () => {
     }
   });
 
+  it('keeps package.json in the runtime image, next to dist/ (#36 AC33)', () => {
+    const dockerfile = read('apps/sync-server/Dockerfile');
+    const runtime = dockerfile.slice(dockerfile.search(/^FROM\s.*\sAS runtime$/m));
+    const copies = runtime.split(/\r?\n/).filter((line) => /^COPY\s/.test(line));
+    // Either the whole `pnpm deploy` output (which always holds package.json)
+    // or package.json by name.
+    const whole = copies.some((line) => /^COPY\s+--from=build\s+\/out\/?\s+\.\/?$/.test(line));
+    const explicit = copies.some((line) => /package\.json/.test(line));
+    expect(whole || explicit, copies.join('\n')).toBe(true);
+    expect(dockerfile).toMatch(/pnpm --filter @sync-system\/server deploy --prod --legacy \/out/);
+    expect(runtime).toMatch(/^CMD \["node", "dist\/index\.js"\]$/m);
+  });
+
   it('runs as the unprivileged node user', () => {
     expect(read('apps/sync-server/Dockerfile')).toMatch(/^USER node$/m);
   });
