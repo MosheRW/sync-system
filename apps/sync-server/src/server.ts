@@ -10,7 +10,7 @@ import { ClusterNotifier } from './groups/cluster-notifier.js';
 import type { ServerEnv } from './config/env.js';
 import { ConfigError } from './config/config-error.js';
 import { MIN_TOKEN_SECRET_BYTES, type TokenSecrets } from './config/token-secret.js';
-import { handleHttpRequest } from './http/health.js';
+import { createHttpHandler } from './http/health.js';
 import {
   CLOSE_TIMEOUT_MS,
   ENDED_SWEEP_MS,
@@ -40,6 +40,7 @@ import { Heartbeat } from './ws/heartbeat.js';
 import { createUpgradeHandler } from './ws/upgrade.js';
 import { type Storage, type StorageStatus, memoryStorage } from './storage/storage.js';
 import { StorageStartError } from './storage/errors.js';
+import { readServerVersion } from './version.js';
 
 export interface SyncServerOptions {
   env: ServerEnv;
@@ -77,6 +78,11 @@ export interface SyncServerOptions {
   endedGroupsCap?: number;
   /** Groups waiting for a disconnect replay; defaults to MAX_CONNECTIONS. Tests lower it. */
   replayCap?: number;
+  /**
+   * The server version for `/health` (#36 AC33), from `readServerVersion()`.
+   * Read once here when omitted (tests).
+   */
+  version?: string;
 }
 
 export interface SyncServer {
@@ -92,7 +98,7 @@ export interface SyncServer {
   stats(): ConnectionStats;
   /**
    * Which storage serves groups and, for Redis, whether it is reachable
-   * (#35 AC27). Not exposed over HTTP in 9a.
+   * (#35 AC27). `/health` shows the kind only (#36 AC34).
    */
   storage(): StorageStatus;
 }
@@ -136,7 +142,9 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
   const scheduler = options.scheduler ?? realScheduler(options.now ?? Date.now);
   const now = (): number => scheduler.now();
 
-  const httpServer = createServer(handleHttpRequest);
+  const version = options.version ?? readServerVersion();
+  // The request handler is attached once the storage kind is known.
+  const httpServer = createServer();
   // Slowloris protection and a hard socket backstop above the WS cap (H1).
   httpServer.headersTimeout = HTTP_HEADERS_TIMEOUT_MS;
   httpServer.requestTimeout = HTTP_REQUEST_TIMEOUT_MS;
@@ -177,6 +185,7 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
       ...(options.store === undefined ? {} : { groups: options.store }),
       ...(options.endedGroupsCap === undefined ? {} : { endedGroupsCap: options.endedGroupsCap }),
     });
+  httpServer.on('request', createHttpHandler({ version, storageKind: storage.status().kind }));
   const appsByNamespace = new Map(registry.apps().map((app) => [app.namespace, app]));
   let sweepTimer: NodeJS.Timeout | undefined;
   // Read once, before any token is issued (#13 6.9 layer 2, RC18).

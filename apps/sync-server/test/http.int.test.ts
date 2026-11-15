@@ -1,5 +1,10 @@
+import { readFileSync } from 'node:fs';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type TestServer, httpGet, startTestServer } from './helpers/test-server.js';
+
+const { version } = JSON.parse(
+  readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+) as { version: string };
 
 let ts: TestServer;
 
@@ -12,11 +17,28 @@ afterAll(async () => {
 });
 
 describe('HTTP', () => {
-  it('GET /health returns 200 with status and versions only (AC23)', async () => {
+  it('GET /health returns 200 with status, versions and storage kind only (AC23, #36 AC33, AC34)', async () => {
     const res = await httpGet(ts.port, '/health');
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toBe('application/json');
-    expect(res.body).toEqual({ status: 'ok', protocolVersion: 1, minProtocolVersion: 1 });
+    expect(res.headers.get('cache-control')).toBe('no-store');
+    expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+    // The helper runs on memory or, with SYNC_TEST_STORE=redis, on Redis.
+    const storage = ts.server.storage().kind;
+    expect(res.body).toEqual({
+      status: 'ok',
+      protocolVersion: 1,
+      minProtocolVersion: 1,
+      version,
+      storage,
+    });
+    expect(Object.keys(res.body as object)).toEqual([
+      'status',
+      'protocolVersion',
+      'minProtocolVersion',
+      'version',
+      'storage',
+    ]);
   });
 
   it('ignores a query string on /health', async () => {

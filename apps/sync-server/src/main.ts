@@ -86,6 +86,7 @@ export async function run(env: EnvSource, io: RunIO = {}): Promise<RunResult> {
       registry,
       logger,
       tokenSecrets,
+      version,
       ...(storage === undefined ? {} : { storage }),
     });
 

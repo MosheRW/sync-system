@@ -108,7 +108,10 @@ describeRedis('while Redis is unreachable (#35 AC26, AC27, ADR 0014, security C4
     await waitUntil(() => server.server.storage().kind === 'redis' && link.state === 'unreachable');
     expect(server.server.storage()).toEqual({ kind: 'redis', state: 'unreachable' });
     await expect(server.connect()).rejects.toThrow();
-    expect((await httpGet(server.port, '/health')).status).toBe(200);
+    const health = await httpGet(server.port, '/health');
+    expect(health.status).toBe(200);
+    // The kind only, never the connectivity state (#36 AC34).
+    expect(health.body).toMatchObject({ status: 'ok', storage: 'redis' });
     // Nothing of the failed update was stored, and nothing lives in memory.
     expect(await inspect.client.get(docKey)).toBe(before);
 
