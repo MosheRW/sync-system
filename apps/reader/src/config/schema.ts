@@ -3,6 +3,7 @@ import { checkAllowedOrigin, isLoopbackHttpOrigin, type OriginIssue } from '../c
 import { truncate } from '../content/quote.js';
 import { z } from '../content/zod.js';
 import { ConfigError } from './config-error.js';
+import { collectUnknownReaderVariables } from './known-vars.js';
 import { type SyncUrlIssue, checkSyncUrl } from './sync-url.js';
 import { READER_VERSION } from './version.js';
 
@@ -317,6 +318,8 @@ export function parseReaderConfig(env: EnvSource, libraryIds: readonly string[])
   const sync = parseSync(env, problems, warnings);
   const port = parseInteger(env, 'PORT', CONFIG_LIMITS.port, problems);
   const host = read(env, 'HOST') ?? '0.0.0.0';
+  // A typo such as READER_SYNC_ULR would silently turn sync off (#36 Q-2).
+  collectUnknownReaderVariables(env, problems);
 
   if (problems.length > 0) throw new ConfigError(problems);
   return {
