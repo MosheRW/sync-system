@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest';
 import { type TestCluster, startCluster } from './helpers/cluster.js';
 import { type TestGroup, codesOf } from './helpers/groups.js';
 import { ManualScheduler } from './helpers/manual-scheduler.js';
@@ -23,6 +23,8 @@ function claims(ts: TestServer, kind: string): number {
 }
 
 describeRedis('effects across instances over pub/sub (#35 AC17, architecture 12.7)', () => {
+  // The 20 paced moves alone take over 4 s; other suites run in parallel.
+  vi.setConfig({ testTimeout: 30_000 });
   let inspect: Awaited<ReturnType<typeof inspector>>;
   let cluster: TestCluster | undefined;
 
