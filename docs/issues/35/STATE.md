@@ -132,7 +132,7 @@
 - engineer implement (PR 2): opus (Implementer model line; security-sensitive) → DONE
 - security code (PR 2, round 1): opus (rule) → PASS (0 critical, 0 high; medium F22 accepted (#41); low S1-S4, F23-F25)
 - qa validate (PR 2, round 1): opus (NEXT_MODEL; first run cut off by a usage limit, re-run 2026-11-15) → FAIL (missing AC17/AC18/AC19/12.18 tests; architecture.md lacks the Q-B10 contract)
-- engineer fix (PR 2, round 1): opus (rule) → (running)
+- engineer fix (PR 2, round 1): opus (rule) → DONE (QA 1-5 fixed; product fix 457edd9 in ws/connection.ts)
 ## Open questions
 - PR 2 Gate 3 (fix round 1 finding): a peer sees a just-started instance as live only after its next heartbeat (up to 5 s), so a grace ending then skips that instance's members as successors (architecture 12.18). Accept, or a follow-up (architect + security, touches C12)?
 - PR 2 Gate 2 (architecture 12.22, recommendation first): Q-B1 fold #39 in as chunk 1 (yes), Q-B2 refinements inside ADRs 0011/0012 (registry in its own key, PUBLISH inside COMMIT, lease-wait timeout closes the requester only), Q-B3 approve racing a joiner disconnect (accept), Q-B4 busy closes requester only (yes), Q-B5 fixed timings (lease 10/3/5/30 s, liveness 15 s, heartbeat 5 s, self-fence 10 s, sweep 5 s; outage > 10 s closes group sessions), Q-B6 follow-up issue for a global join-attempt limiter, Q-B7 stop all PR 1 instances before upgrading, Q-B8 nginx-unprivileged image, Q-B9 config consistency documented only.
