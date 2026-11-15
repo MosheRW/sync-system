@@ -1,6 +1,6 @@
 # State: #35 feat: redis storage with restart survival and several instances (PRD item 9a)
 - Path: full
-- Phase: implementation (PR 2)
+- Phase: validation (PR 2)
 - Branch: feat/35-redis-multi-instance
 - PR: #40 (PR 2, draft, `Closes #35`, `Closes #39`; PR 1 #38 merged 2026-11-12 as 46f4af3)
 - Plan approved by user: yes (PR 2 Gate 2, 2026-11-12, "Approve all"; PR 1 plan approved 2026-11-12)
@@ -18,8 +18,9 @@
   - Security required controls C1-C10 and C11-C17 are mandatory; F16-F26 read.
 - Security-sensitive: yes (PR 2: architecture 12.19)
 - Security plan review (PR 2, round 1, 2026-11-12): PASS, security.md "PR 2" section 7. 0 critical, 0 high, 6 medium (F16-F20, F22 advisory), 5 low (F21, F23-F26). P2-3/P2-4/P2-6/P2-7/P2-8 settled. Required controls C11-C17 join the PR 2 plan (C1-C10 stay mandatory). Advisories for Gate 2: F22-F26. Security view on Q-B1-Q-B9: all recommendations acceptable (7.5).
-- Review rounds: 0 (for PR 2; PR 1 had 2)
-- Last updated by: engineer
+- Review rounds: 1 (for PR 2; PR 1 had 2)
+- QA verdict (PR 2, round 1, head ff37d42): FAIL. Local CI in Docker (fresh clone as a git bundle, no `dist/`, node:24, pinned redis:7.2.17-alpine with password, no persistence, noeviction, private network; Test before Build): install, audit, lint, typecheck, test (protocol 207, sync-server 1614, client 574, react 227, reader 1010), sync-server with SYNC_TEST_STORE=redis 1614/1614, build, the three compose config checks, reader e2e 5/5: all green. Multi-instance suites 8/8 runs green. Mutations of the Q-B10 barrier, inbox drain and stale check each fail the Q-B10 test. Manual two-instance run (built image twice, pinned nginx-unprivileged with config/nginx-multi.conf): group split 2+2, SIGKILL of the leader's instance (before and after the sweep), all resumed through nginx, leader kept the lead, moves in order. AC: #35 32/32 met, #39 2/2 met (AC17-AC19 partly by QA ad-hoc tests). Findings: (1) AC18 take-back vs handoff and create-if-absent races across instances missing (plan 12.17); (2) AC17 event types (pause/resume, lifecycle prompts, leader changes) to another instance not asserted; (3) AC19 only maxSession tested across instances; (4) 12.18 hot-group fairness test missing; (5) architecture.md 12.3/12.7/12.13 lack the Q-B10 contract (`s`, `P:seq`, `P:q`, new log events) although this file says `s` was added. Deviations judged sound. Observations: security S3 confirmed by reading, plus a related baseline/stale-drop window (low). 21/23 commits signed (ae0dd26, ff37d42: orchestrator Model log commits). Review: PR #40 pullrequestreview-5911248887.
+- Last updated by: qa
 - Issue #35 stays open after PR 1 (`Refs #35`); board card moved back to In Progress.
 
 ## PR 2 implementation (engineer, 2026-11-12)
