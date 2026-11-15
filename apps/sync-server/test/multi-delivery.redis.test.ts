@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeAll, expect, it } from 'vitest';
 import { type TestCluster, startCluster } from './helpers/cluster.js';
 import { type TestGroup, codesOf } from './helpers/groups.js';
+import { ManualScheduler } from './helpers/manual-scheduler.js';
 import { describeRedis, inspector } from './helpers/redis.js';
 import type { TestClient } from './helpers/test-client.js';
 import { KEY_A, type TestServer } from './helpers/test-server.js';
@@ -8,6 +9,17 @@ import { sleep, waitUntil } from './helpers/wait.js';
 
 interface Registry {
   a: Record<string, { i: string; t: string }>;
+}
+
+/** Default inactivity limit 20 min and countdown 60 s: the prompt is due after 19 min. */
+const PROMPT_AFTER = 19 * 60_000;
+const COUNTDOWN = 60_000;
+/** Past the default disconnect grace (30 s). */
+const GRACE = 31_000;
+
+/** Timers of `kind` this instance claimed (the `timer_claimed` debug log). */
+function claims(ts: TestServer, kind: string): number {
+  return ts.logs.records().filter((r) => r.event === 'timer_claimed' && r.kind === kind).length;
 }
 
 describeRedis('effects across instances over pub/sub (#35 AC17, architecture 12.7)', () => {
@@ -111,7 +123,7 @@ describeRedis('effects across instances over pub/sub (#35 AC17, architecture 12.
     expect(seen).toEqual(Array.from({ length: 50 }, (_v, i) => i + 2));
   });
 
-  it('removal, lifecycle frames and the end reach a member on another instance', async () => {
+  it('lock, removal with 4004 and the end reach a member on another instance', async () => {
     cluster = await startCluster();
     const [a, b] = cluster.nodes;
     const group = await groupAcross(a!.ts, [b!.ts, b!.ts]);
@@ -131,6 +143,84 @@ describeRedis('effects across instances over pub/sub (#35 AC17, architecture 12.
     // B's sessions no longer hold the group: a leave says so.
     kept!.send({ type: 'group.leave' });
     expect(await kept!.next('error')).toMatchObject({ code: 'NOT_IN_GROUP' });
+  });
+
+  it('roster, vice, a keep-alive prompt, pause and resume and leader changes reach the other instance', async () => {
+    // One clock per instance, kept in step, except while the keep-alive
+    // prompt is due on A only: then only A can claim the timer, so the
+    // prompt to the leader on B crosses instances.
+    const clockA = new ManualScheduler();
+    const clockB = new ManualScheduler();
+    cluster = await startCluster({
+      perNode: (index) => ({ scheduler: index === 0 ? clockA : clockB }),
+    });
+    const [a, b] = cluster.nodes;
+    const group = await groupAcross(b!.ts, [a!.ts, a!.ts]);
+    const [vice, other] = group.members as [TestClient, TestClient];
+    const seen = (client: TestClient, type: string) =>
+      client.received.filter((f) => f.type === type);
+
+    // Roster: the leader on B sees both joins made on A.
+    await waitUntil(() =>
+      group.memberIds.every((id) =>
+        group.leader.rosterFrames.some(
+          (f) => f.type === 'roster.updated' && f.participant.participantId === id,
+        ),
+      ),
+    );
+
+    // Vice: set on B, told to the member on A.
+    group.leader.send({ type: 'vice.set', participantId: group.memberIds[0] });
+    await group.leader.next('vice.updated');
+    await waitUntil(() => seen(vice, 'vice.changed').length === 1);
+    expect(seen(vice, 'vice.changed')[0]).toMatchObject({ isVice: true });
+
+    // Lifecycle prompt: the keep-alive timer fires on A, the leader is on B.
+    clockA.advance(PROMPT_AFTER);
+    expect(await group.leader.next('keepalive.prompt', 5_000)).toMatchObject({
+      groupId: group.groupId,
+      countdownMs: COUNTDOWN,
+    });
+    expect(claims(a!.ts, 'keepAlivePrompt')).toBe(1);
+    expect(claims(b!.ts, 'keepAlivePrompt')).toBe(0);
+    clockB.advance(PROMPT_AFTER);
+    group.leader.send({ type: 'keepalive.ack' });
+    await group.leader.next('activity.ack');
+    await group.leader.next('keepalive.cleared');
+
+    // Pause and resume: the leader drops and comes back on B.
+    group.leader.terminate();
+    await waitUntil(() => [vice, other].every((m) => seen(m, 'leader.offline').length === 1));
+    for (const member of [vice, other]) {
+      expect(seen(member, 'leader.offline')[0]).toMatchObject({ cause: 'disconnected' });
+    }
+    const back = await b!.ts.connectReady();
+    back.send({ type: 'group.resume', token: group.leaderToken });
+    await back.next('group.resumed');
+    await waitUntil(() => [vice, other].every((m) => seen(m, 'leader.online').length === 1));
+
+    // A handoff fired on B: the vice and the other member on A are told.
+    back.terminate();
+    await waitUntil(() => [vice, other].every((m) => seen(m, 'leader.offline').length === 2));
+    clockB.advance(GRACE);
+    await waitUntil(() => claims(b!.ts, 'grace') === 1, 5_000);
+    clockA.advance(GRACE);
+    await waitUntil(() => seen(vice, 'leader.granted').length === 1, 5_000);
+    expect(seen(vice, 'leader.granted')[0]).toMatchObject({ reason: 'handoff_disconnect' });
+    await waitUntil(() => seen(other, 'leader.changed').length === 1);
+    expect(seen(other, 'leader.changed')[0]).toMatchObject({ reason: 'handoff_disconnect' });
+
+    // A take-back on B: the displaced vice and the other member on A are told.
+    const again = await b!.ts.connectReady();
+    again.send({ type: 'group.resume', token: group.leaderToken });
+    await waitUntil(() => seen(again, 'takeback.offered').length === 1, 5_000);
+    again.send({ type: 'leader.takeBack', reqId: 't' });
+    await waitUntil(() => seen(again, 'leader.granted').length === 1, 5_000);
+    expect(seen(again, 'leader.granted')[0]).toMatchObject({ reqId: 't', reason: 'take_back' });
+    await waitUntil(() => seen(vice, 'leader.lost').length === 1, 5_000);
+    expect(seen(vice, 'leader.lost')[0]).toMatchObject({ reason: 'take_back' });
+    await waitUntil(() => seen(other, 'leader.changed').length === 2);
+    expect(seen(other, 'leader.changed')[1]).toMatchObject({ reason: 'take_back' });
   });
 
   it('a resume on A replaces the session on B, which then acts as nobody (C14)', async () => {
