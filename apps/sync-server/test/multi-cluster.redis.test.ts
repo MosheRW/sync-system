@@ -232,14 +232,16 @@ describeRedis(
           'the grace wake-up',
         );
         // The race, in both orders: the take-back on A, the grace end on B
-        // (in odd rounds the take-back goes once B claimed the timer).
+        // (in odd rounds the take-back goes once the timer was claimed).
         if (round % 2 === 0) {
           back.send({ type: 'leader.takeBack', reqId: 't' });
           scheduler.advance(GRACE);
         } else {
-          const claimed = graceClaims(b!.ts);
+          // B's wake-up usually claims it; A's safety poll may be first.
+          const claims = () => graceClaims(a!.ts) + graceClaims(b!.ts);
+          const claimed = claims();
           scheduler.advance(GRACE);
-          await waitUntil(() => graceClaims(b!.ts) > claimed, 5_000, 'the grace claim');
+          await waitUntil(() => claims() > claimed, 5_000, 'the grace claim');
           back.send({ type: 'leader.takeBack', reqId: 't' });
         }
         // The take-back is answered: the lead, or an error.
