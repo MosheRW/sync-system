@@ -12,7 +12,7 @@ import {
 import { type AppConfig, hashApiKey } from '../apps/app-registry.js';
 import { defaultAppMethods } from '../joins/join-methods.js';
 import { ConfigError } from './config-error.js';
-import type { ServerEnv } from './env.js';
+import type { AppCeilings, PartialAppCeilings } from './env.js';
 
 export { NAMESPACE_PATTERN };
 export const MIN_API_KEY_LENGTH = 32;
@@ -35,26 +35,12 @@ export const APP_DEFAULTS = {
 /** Handoff mode of an app that does not set one (#13 AC3, Q2.1). */
 export const DEFAULT_HANDOFF = 'auto';
 
-type Ceilings = Pick<
-  ServerEnv,
-  | 'maxGroupSizeCeiling'
-  | 'maxLeaderUpdateRateCeiling'
-  | 'maxMessageSizeCeiling'
-  | 'maxAppConnectionsCeiling'
-  | 'maxSessionMinutesCeiling'
-  | 'inactivityLimitMinutesCeiling'
-  | 'qrTicketSecondsCeiling'
-  | 'approvalTimeoutSecondsCeiling'
-  | 'disconnectGraceSecondsCeiling'
-  | 'keepAliveCountdownSecondsCeiling'
-  | 'joinMethodsAllowed'
->;
-
 interface LimitField {
   field: keyof typeof APP_DEFAULTS;
   min: number;
   ceilingName: string;
-  ceiling: (env: Ceilings) => number;
+  /** Undefined when the ceiling itself is invalid (#36 Gate 2 Q-4). */
+  ceiling: (env: PartialAppCeilings) => number | undefined;
 }
 
 const LIMIT_FIELDS: readonly LimitField[] = [
@@ -196,24 +182,40 @@ function label(index: number, namespace: unknown): string {
 }
 
 /**
- * Parses and validates the apps registry. `source` (usually the file path)
- * prefixes every error. Values above an env ceiling are startup errors and
- * are never clamped (AC5). Omitted limits use min(default, ceiling).
+ * Checks the apps registry, pushing every problem to `problems`, each
+ * prefixed with `source` (usually the file path). Values above an env
+ * ceiling are problems and are never clamped (AC5). Omitted limits use
+ * min(default, ceiling). A comparison that needs a ceiling which is itself
+ * invalid (`undefined`) is skipped (#36 Gate 2 Q-4); the invalid ceiling is
+ * a problem of its own, so the run still fails.
+ *
+ * Returns the entries that passed every check, or undefined when the file
+ * as a whole is unusable (not JSON, no `apps` array). The caller must not
+ * use the result when any problem was pushed (#36 security C1); it is only
+ * used to look for more problems (dev keys).
  */
-export function parseAppsConfig(text: string, env: Ceilings, source = 'apps config'): AppConfig[] {
+export function collectAppsConfig(
+  text: string,
+  env: PartialAppCeilings,
+  source: string,
+  problems: string[],
+): AppConfig[] | undefined {
   let data: unknown;
   try {
     data = JSON.parse(text.startsWith(BOM) ? text.slice(1) : text);
   } catch (err) {
-    throw new ConfigError(`${source}: ${describeJsonSyntaxError(err, text)}`);
+    problems.push(`${source}: ${describeJsonSyntaxError(err, text)}`);
+    return undefined;
   }
 
   if (typeof data !== 'object' || data === null || Array.isArray(data)) {
-    throw new ConfigError(`${source}: must be a JSON object with an "apps" array`);
+    problems.push(`${source}: must be a JSON object with an "apps" array`);
+    return undefined;
   }
   const apps = (data as Record<string, unknown>).apps;
   if (!Array.isArray(apps) || apps.length === 0) {
-    throw new ConfigError(`${source}: "apps" must be a non-empty array`);
+    problems.push(`${source}: "apps" must be a non-empty array`);
+    return undefined;
   }
 
   const errors: string[] = [];
@@ -244,17 +246,24 @@ export function parseAppsConfig(text: string, env: Ceilings, source = 'apps conf
     }
 
     const limits = {} as Record<keyof typeof APP_DEFAULTS, number>;
+    // A limit is unknown when it is omitted and its ceiling is invalid: its
+    // default would be min(default, ceiling), which cannot be computed.
+    const unknown = new Set<keyof typeof APP_DEFAULTS>();
     for (const spec of LIMIT_FIELDS) {
       const ceiling = spec.ceiling(env);
       const value = app[spec.field];
       if (value === undefined) {
-        limits[spec.field] = Math.min(APP_DEFAULTS[spec.field], ceiling);
+        if (ceiling === undefined) unknown.add(spec.field);
+        limits[spec.field] = Math.min(
+          APP_DEFAULTS[spec.field],
+          ceiling ?? APP_DEFAULTS[spec.field],
+        );
         continue;
       }
       if (value < spec.min) {
         errors.push(`${where}: ${spec.field} must be an integer >= ${spec.min}`);
         entryOk = false;
-      } else if (value > ceiling) {
+      } else if (ceiling !== undefined && value > ceiling) {
         errors.push(`${where}: ${spec.field} ${value} exceeds ${spec.ceilingName} ${ceiling}`);
         entryOk = false;
       }
@@ -269,7 +278,11 @@ export function parseAppsConfig(text: string, env: Ceilings, source = 'apps conf
         1,
         Math.min(limits.keepAliveCountdownSeconds, Math.floor(inactivitySeconds / 2)),
       );
-    } else if (entryOk && limits.keepAliveCountdownSeconds >= inactivitySeconds) {
+    } else if (
+      entryOk &&
+      !unknown.has('inactivityLimitMinutes') &&
+      limits.keepAliveCountdownSeconds >= inactivitySeconds
+    ) {
       errors.push(
         `${where}: keepAliveCountdownSeconds ${limits.keepAliveCountdownSeconds} must be less than inactivityLimitMinutes in seconds (${inactivitySeconds})`,
       );
@@ -315,10 +328,23 @@ export function parseAppsConfig(text: string, env: Ceilings, source = 'apps conf
     }
   });
 
-  if (errors.length > 0) {
-    throw new ConfigError(errors.map((e) => `${source}: ${e}`));
-  }
+  problems.push(...errors.map((e) => `${source}: ${e}`));
   return result;
+}
+
+/**
+ * Parses and validates the apps registry against valid ceilings. Throws one
+ * ConfigError with every problem, each prefixed with `source`.
+ */
+export function parseAppsConfig(
+  text: string,
+  env: AppCeilings,
+  source = 'apps config',
+): AppConfig[] {
+  const problems: string[] = [];
+  const apps = collectAppsConfig(text, env, source, problems);
+  if (problems.length > 0 || apps === undefined) throw new ConfigError(problems);
+  return apps;
 }
 
 type JoinMethodsResult =
@@ -328,13 +354,16 @@ type JoinMethodsResult =
  * An app's join methods (#10 AC2): the listed ones, each allowed by
  * JOIN_METHODS_ALLOWED, or `["A", "D"]` intersected with it when omitted.
  * Never clamped or dropped: a listed method the env does not allow is an
- * error. The result is frozen and in canonical order.
+ * error. The result is frozen and in canonical order. When
+ * JOIN_METHODS_ALLOWED is itself invalid (`undefined`), only the checks that
+ * do not need it run (#36 Gate 2 Q-4).
  */
 function resolveAppJoinMethods(
   listed: readonly JoinMethod[] | undefined,
-  allowed: readonly JoinMethod[],
+  allowed: readonly JoinMethod[] | undefined,
 ): JoinMethodsResult {
   if (listed === undefined) {
+    if (allowed === undefined) return { ok: true, methods: Object.freeze([]) };
     const methods = defaultAppMethods(allowed);
     if (methods.length === 0) {
       return {
@@ -347,9 +376,10 @@ function resolveAppJoinMethods(
   if (new Set(listed).size !== listed.length) {
     return { ok: false, errors: [`joinMethods ${FIELD_RULES.joinMethods}`] };
   }
-  const notAllowed = JOIN_METHODS.filter(
-    (method) => listed.includes(method) && !allowed.includes(method),
-  );
+  const notAllowed =
+    allowed === undefined
+      ? []
+      : JOIN_METHODS.filter((method) => listed.includes(method) && !allowed.includes(method));
   if (notAllowed.length > 0) {
     return {
       ok: false,
@@ -359,17 +389,36 @@ function resolveAppJoinMethods(
   return { ok: true, methods: Object.freeze(JOIN_METHODS.filter((m) => listed.includes(m))) };
 }
 
-/** Reads and parses the apps registry file at `path`. */
-export function loadAppsConfigFile(path: string, env: Ceilings): AppConfig[] {
+/**
+ * Reads and checks the apps registry file at `path`, pushing every problem.
+ * A missing or unreadable file is one problem. See `collectAppsConfig` for
+ * the result.
+ */
+export function collectAppsConfigFile(
+  path: string,
+  env: PartialAppCeilings,
+  problems: string[],
+): AppConfig[] | undefined {
   let text: string;
   try {
     text = readFileSync(path, 'utf8');
   } catch (err) {
+    // Only the errno code: never the fs message (#36 security C3).
     const code = (err as NodeJS.ErrnoException).code;
     if (code === 'ENOENT') {
-      throw new ConfigError(`${path}: config file not found (set SYNC_CONFIG_PATH)`);
+      problems.push(`${path}: config file not found (set SYNC_CONFIG_PATH)`);
+    } else {
+      problems.push(`${path}: cannot read config file (${code ?? 'unknown error'})`);
     }
-    throw new ConfigError(`${path}: cannot read config file (${code ?? 'unknown error'})`);
+    return undefined;
   }
-  return parseAppsConfig(text, env, path);
+  return collectAppsConfig(text, env, path, problems);
+}
+
+/** Reads and parses the apps registry file at `path`; throws one ConfigError. */
+export function loadAppsConfigFile(path: string, env: AppCeilings): AppConfig[] {
+  const problems: string[] = [];
+  const apps = collectAppsConfigFile(path, env, problems);
+  if (problems.length > 0 || apps === undefined) throw new ConfigError(problems);
+  return apps;
 }

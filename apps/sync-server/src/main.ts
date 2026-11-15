@@ -1,11 +1,10 @@
 import type { DestinationStream } from 'pino';
 import { AppRegistry } from './apps/app-registry.js';
-import { loadAppsConfigFile } from './config/apps-config.js';
 import { ConfigError } from './config/config-error.js';
-import { checkDevKeys } from './config/dev-key.js';
-import { type EnvSource, parseEnv } from './config/env.js';
-import { parseRedisSettings } from './config/redis.js';
-import { parseTokenSecrets, warnAboutSecrets } from './config/token-secret.js';
+import { warnDevKeys } from './config/dev-key.js';
+import type { EnvSource } from './config/env.js';
+import { loadConfig } from './config/load.js';
+import { warnAboutSecrets } from './config/token-secret.js';
 import { type Logger, createLogger } from './logging/logger.js';
 import { type SyncServer, createSyncServer } from './server.js';
 import { StorageStartError, storageStartMessage } from './storage/errors.js';
@@ -23,9 +22,10 @@ export type RunResult =
   { ok: true; server: SyncServer; logger: Logger } | { ok: false; exitCode: number };
 
 /**
- * Parses env, loads the app registry, checks dev keys and token secrets,
- * creates the logger and starts the server. Configuration problems print `Config error: <message>`
- * and return exit code 1; the message never contains key values (AC6).
+ * Loads the whole config (env, token secrets, apps file, dev keys), creates
+ * the logger and starts the server. Every configuration problem prints one
+ * `Config error: <problem>` line and the run returns exit code 1; no line
+ * contains a key or secret value (AC6, #36 AC37, AC38).
  */
 export async function run(env: EnvSource, io: RunIO = {}): Promise<RunResult> {
   const stderr =
@@ -37,19 +37,17 @@ export async function run(env: EnvSource, io: RunIO = {}): Promise<RunResult> {
   let server: SyncServer;
   let logger: Logger;
   try {
-    const serverEnv = parseEnv(env);
+    // First, before anything that depends on config (#36 security C1).
+    const config = loadConfig(env);
+    const serverEnv = config.env;
+    const { apps, tokenSecrets, redis } = config;
     logger = createLogger({
       level: serverEnv.logLevel,
       ...(io.destination ? { destination: io.destination } : {}),
     });
-    const apps = loadAppsConfigFile(serverEnv.configPath, serverEnv);
-    checkDevKeys(apps, serverEnv.nodeEnv, logger);
-    // Never stored in ServerEnv and never logged (R4).
-    const tokenSecrets = parseTokenSecrets(env, serverEnv.nodeEnv);
+    warnDevKeys(apps, logger);
     warnAboutSecrets(tokenSecrets, logger);
     const registry = new AppRegistry(apps);
-    // Never stored in ServerEnv and never logged (#35 security C9).
-    const redis = parseRedisSettings(env);
     let storage: Storage | undefined;
     if (redis !== undefined) {
       const { connectRedis } = await import('./storage/redis/connect.js');
