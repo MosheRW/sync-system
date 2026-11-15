@@ -1,7 +1,7 @@
 # Spec: 9b health, readiness and config errors (#36)
 
 Issue: https://github.com/MosheRW/sync-system/issues/36
-Parent spec: `docs/issues/35/spec.md` (section "9b (#36): AC33-AC42"; Q11 accepted at Gate 1, Q20 open).
+Parent spec: `docs/issues/35/spec.md` (section "9b (#36): AC33-AC42"; Q11 accepted at Gate 1; Q20-Q26 decided at Gate 1, 2026-11-15).
 Path: full. Change type: feat. No UI impact (server and reader config, plus HTTP only), so no design step.
 
 ## Problem / motivation
@@ -31,18 +31,19 @@ Path: full. Change type: feat. No UI impact (server and reader config, plus HTTP
 
 Numbers AC33-AC42 are kept from `docs/issues/35/spec.md`. Where the post-9a code makes something concrete, the text says so.
 
-- [ ] AC33. `GET /health` stays a liveness check (200 while the process serves) and adds the server's semver version (`version`; source per Q21). It still carries no app, group, host or address data.
+- [ ] AC33. `GET /health` stays a liveness check (200 while the process serves) and adds the server's semver version (`version`), read from the server's `package.json` at runtime (no checked-in constant). The architect makes sure `package.json` is present in the built image. It still carries no app, group, host or address data.
 - [ ] AC34. `GET /health` adds the storage kind `storage` (`"memory"` or `"redis"`), read from `SyncServer.storage().kind` (9a AC27). It does not include the connectivity state: that belongs to `/ready`.
-- [ ] AC35. A new `GET /ready` returns 200 when the instance can serve and 503 while its Redis store state is `unreachable` (the same condition under which WebSocket upgrades are refused). It always returns 200 with the in-memory store, uses the same headers and data rules as `/health` (no app, group, host or address data; `Cache-Control: no-store`), and answers per instance. The body carries `status` (`ready` or `not_ready`) and the storage kind. Further 503 conditions per Q22 and Q23.
+- [ ] AC35. A new `GET /ready` returns 200 when the instance can serve and 503 while its Redis store state is `unreachable` (the same condition under which WebSocket upgrades are refused). It always returns 200 with the in-memory store, uses the same headers and data rules as `/health` (no app, group, host or address data; `Cache-Control: no-store`), and answers per instance. The body carries `status` (`ready` or `not_ready`) and the storage kind. It also returns 503 from the moment shutdown (`close()`) starts, and 503 when the instance has fenced itself or its pub/sub is unhealthy (9a architecture 12.5), provided that state is already observable without new machinery; if it is not, the architect raises it at Gate 2 instead of adding machinery. There is no `/ready` for the reader.
 - [ ] AC36. The compose healthchecks keep using `/health`, and the README documents `/ready` for load balancers (and why `/health` must not be used for routing).
 - [ ] AC37. Every server env variable and every apps-config field has a test: an invalid value gives `Config error` naming the variable or field (with the JSON path for the config file), never echoes the value, and the run exits 1.
 - [ ] AC38. Rules that span fields (for example app values above an env ceiling, the `MAX_BUFFERED_BYTES` minimum, the token-secret rules, unreadable or invalid JSON config files) each give a message that says what to change, and every problem is reported in one run.
-- [ ] AC39. The reader's startup config (`READER_*`) meets the same standard as AC37 and AC38. How the reader treats echoed values: Q24.
+- [ ] AC39. The reader's startup config (`READER_*`) meets the same standard as AC37 and AC38. The reader keeps its truncated echo for non-secret values (URL credentials redacted, API key never shown); this rule is documented in the startup-error list (AC40).
 - [ ] AC40. A list of every startup error the server and the reader can print (`Config error`, and the server's `Startup error` family: Redis unreachable, cannot listen, storage start), with the fix for each, lives in the docs (moved here from 9c). A test fails if an error message produced by the invalid-config tests is missing from the list.
-- [ ] AC41. No existing valid config stops working: the current compose files and test configs still start. Q20 (if accepted) only warns and never fails.
+- [ ] AC41. No existing valid config stops working: every known variable and config field keeps accepting what it accepted before, and the repo's compose files and test configs still start. The README / upgrade notes state that unknown look-alike variables now fail startup (consequence of AC37a). There is no escape-hatch switch.
+- [ ] AC37a. (Q20, decided: check and fail.) At startup, a set env variable that matches the server's naming rule but is not a known server variable (for example the typo `MAX_GROUP_SIZE_CIELING`) is a `Config error` naming the variable, never its value. It is reported together with every other problem in one run, and the run exits 1. The architect proposes the naming rule (prefixes/suffixes) at Gate 2. The rule must not flag variables set by the repo's own compose files and Dockerfiles, or by the Node/Docker runtime. A test covers a typo case and a no-false-positive case.
 - [ ] AC42. CI runs locally in Docker, as for #38 and #40 (GitHub Actions is blocked by billing): node:24, pinned `redis:7.2.17-alpine`, no bind mounts, from a fresh clone. When Actions works again, the normal pipeline applies (same checks as 9a AC31).
 
-If Q20 is accepted it adds one more criterion (numbered after Gate 1): a warning, never a failure, for set variables that look like the server's own but are unknown; the warning names the variable (not its value).
+AC37a is the extra criterion for Q20. It is numbered as a sub-number of AC37 because AC43+ are already used by 9c in `docs/issues/35/spec.md`.
 
 ## Out of scope
 
@@ -53,15 +54,19 @@ If Q20 is accepted it adds one more criterion (numbered after Gate 1): a warning
 - Public docs beyond the startup-error list, the changelog and releases (9c, #37).
 - Auth on `/health` and `/ready` (they carry no sensitive data by AC33-AC35).
 
-## Open questions (Gate 1)
+## Decisions (Gate 1, 2026-11-15)
 
-- **Q20. Unknown env variables.** Recommended: at startup, warn (do not fail) about set variables that look like the server's own but are unknown (a likely typo, such as `MAX_GROUP_SIZE_CIELING`). Needs a naming rule to tell which variables are the server's (for example a prefix list: `MAX_`, `TOKEN_`, `REDIS_`, ending in `_CEILING`). Alternative: no check, which avoids false warnings and a naming rule that can rot.
-- **Q21. Where the server version comes from.** Recommended: a checked constant (like the reader's `READER_VERSION`, kept equal to `package.json` by a test), so it works in a bundled and a source run. Alternative: read `package.json` at runtime. 9c will use Changesets with one fixed version group, so the release flow must bump the constant (the equality test catches drift).
-- **Q22. Should `/ready` also fail while the server is shutting down or draining?** Recommended: yes, 503 from the moment `close()` starts, so a load balancer stops routing before sockets close. Alternative: Redis state only, as in the AC.
-- **Q23. Should `/ready` fail when the instance has fenced itself or pub/sub is unhealthy (9a architecture 12.5), even if the Redis command connection is up?** Recommended: yes, if that state is already observable from the store without new machinery, because a fenced instance cannot act and closes sessions with 1001. Alternative: connectivity only (simpler); the architect confirms what is observable.
-- **Q24. Reader config messages echo truncated values; the server never does (AC37).** Recommended: keep the reader's truncated echo for non-secret values (URL with credentials redacted, version string, choice values), never echo secrets (the API key already is not shown), and state that rule in the error list. Alternative: make the reader match the server and never echo any value.
-- **Q25. Does the reader get a `/ready`?** Recommended: no. The reader is a static file server with no dependency to be unready on, and its `/health` suffices. Alternative: add a `/ready` that mirrors `/health` for symmetry.
-- **Q26. `/health` body field names.** Recommended: additive only (`version`, `storage`), so existing consumers (compose healthchecks) are unaffected and `status` is not renamed. Alternative: none; flagged so the architect does not rename fields.
+- **Q20. Unknown env variables: CHECK AND FAIL.** The user overrode the PM recommendation (warn only). A set variable that matches the server's naming rule but is unknown is a `Config error` naming the variable (never its value), reported with all other problems, exit 1. See AC37a and AC41. The naming rule is for the architect to propose at Gate 2.
+- **Q21. Server version source: read `package.json` at runtime** (the alternative; no checked constant). The architect makes sure `package.json` is available in the built image. See AC33.
+- **Q22. `/ready` during shutdown: yes.** 503 from the moment `close()` starts. See AC35.
+- **Q23. `/ready` on fenced / pub-sub unhealthy: yes, if the state is already observable without new machinery;** otherwise the architect raises it at Gate 2. See AC35.
+- **Q24. Reader echo: keep the truncated echo for non-secret values** (URL credentials redacted, API key never shown) and document the rule. See AC39, AC40.
+- **Q25. Reader `/ready`: no.**
+- **Q26. `/health` body: additive only** (`version`, `storage`); `status` unchanged. See AC33, AC34.
+
+## Open questions
+
+- None open from Gate 1. Items deferred to the architect for Gate 2: the naming rule for AC37a, how `package.json` reaches the built image (AC33), and whether fenced / pub-sub state is observable without new machinery (AC35).
 
 ## Security note (for the orchestrator)
 
