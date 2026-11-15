@@ -154,6 +154,8 @@ describeRedis('effects across instances over pub/sub (#35 AC17, architecture 12.
     cluster = await startCluster({
       perNode: (index) => ({ scheduler: index === 0 ? clockA : clockB }),
     });
+    // The handoff below picks a member on A only once B knows A is live.
+    await cluster.converged();
     const [a, b] = cluster.nodes;
     const group = await groupAcross(b!.ts, [a!.ts, a!.ts]);
     const [vice, other] = group.members as [TestClient, TestClient];

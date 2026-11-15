@@ -6,6 +6,7 @@ import { type RedisLink, connectRedis } from '../../src/storage/redis/connect.js
 import type { ClusterTimings } from '../../src/storage/redis/redis-storage.js';
 import { TEST_REDIS_URL, randomPrefix } from './redis.js';
 import { TcpProxy } from './tcp-proxy.js';
+import { waitUntil } from './wait.js';
 import { type StartOptions, type TestServer, startTestServer } from './test-server.js';
 
 /**
@@ -36,6 +37,14 @@ export interface TestCluster {
   nodes: ClusterNode[];
   /** Starts one more instance on the same prefix. */
   add(): Promise<ClusterNode>;
+  /**
+   * Waits until every live instance's live-instance cache lists every
+   * other one: each one renewed twice after this call (its first renewal's
+   * reply, which holds the cache, is applied before the second starts).
+   * Right after a start, a peer is not in the others' caches until their
+   * next heartbeat, so its participants look disconnected to them.
+   */
+  converged(): Promise<void>;
   /** A clean stop of one instance (its stored attachments stay for the sweep). */
   stop(node: ClusterNode): Promise<void>;
   close(): Promise<void>;
@@ -104,6 +113,33 @@ export async function startCluster(options: ClusterOptions = {}): Promise<TestCl
     secrets,
     nodes,
     add,
+    async converged() {
+      const link = nodes[0]!.link;
+      const key = `${prefix}:v1:insts`;
+      const [seconds, micros] = (await link.send(['TIME'])) as [string, string];
+      const livenessMs = { ...FAST_TIMINGS, ...rest.redisTimings }.livenessMs!;
+      const base = Number(seconds) * 1000 + Math.floor(Number(micros) / 1000) + livenessMs;
+      // The live instances (deadline not passed).
+      const ids = (await link.send([
+        'ZRANGE',
+        key,
+        String(base - livenessMs),
+        '+inf',
+        'BYSCORE',
+      ])) as string[];
+      const seen = new Map<string, number[]>(ids.map((id) => [id, []]));
+      await waitUntil(
+        async () => {
+          for (const [id, scores] of seen) {
+            const score = Number(await link.send(['ZSCORE', key, id]));
+            if (score > base && !scores.includes(score)) scores.push(score);
+          }
+          return [...seen.values()].every((scores) => scores.length >= 2);
+        },
+        10_000,
+        'every instance cache',
+      );
+    },
     async stop(node) {
       nodes.splice(nodes.indexOf(node), 1);
       // The server closes its sockets with 1001 itself (no disconnect rules).
