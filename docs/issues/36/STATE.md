@@ -1,17 +1,18 @@
 # State: #36 feat: 9b health, readiness and config errors
 - Path: full
-- Phase: implementation
+- Phase: validation
 - Branch: feat/36-health-readiness-config-errors
 - PR: #43
 - Plan approved by user: yes
 - Security-sensitive: yes
-- Review rounds: 0
-- Last updated by: engineer
+- Review rounds: 1
+- Last updated by: qa
 ## Model log
 - pm grooming: sonnet (default) → DONE
 - pm gate-1 update: sonnet (default) → DONE
 - architect plan: opus (default + pm NEXT_MODEL) → DONE
 - engineer implement: opus (architect Implementer model; security-sensitive) → DONE
+- qa validation round 1: opus (engineer NEXT_MODEL) → PASS
 ## Gate 1 decisions (2026-11-15)
 - Q20: check and fail (overrides the warn recommendation); new AC37a; naming rule proposed by architect.
 - Q21: read version from package.json at runtime; package.json must be in the built image.
@@ -38,6 +39,12 @@
 - Local CI in Docker at 02da5e7 (fresh clone from a git bundle, no `dist/`, no bind mounts, node:24 (24.22.3), pinned redis:7.2.17-alpine with password, no persistence, noeviction, private network; Test before Build): install --frozen-lockfile, audit (no known vulnerabilities), lint, typecheck, test (protocol 207, sync-server 1816, client 574, react 227, reader 1054), sync-server with SYNC_TEST_STORE=redis 1816/1816, build: all green. The three `docker compose ... config -q` checks pass. Reader e2e 5/5 (in the node:24 container).
 - Image checks (architecture 9.3, image built from the fresh clone, dev registry baked into a throwaway layer): memory store `/health` `{"status":"ok","protocolVersion":1,"minProtocolVersion":1,"version":"0.1.0","storage":"memory"}` 200, `/ready` 200, `POST /ready` 404; with `REDIS_URL` to a private Redis: `storage` `redis`, `/ready` 200; `docker pause` Redis: `/ready` 503 `not_ready`, `/health` 200; unpause: `/ready` 200; the Redis password never in the logs. `MAX_GROUP_SIZE_CIELING=1`: `Config error: MAX_GROUP_SIZE_CIELING is not a sync server variable; did you mean MAX_GROUP_SIZE_CEILING?`, exit 1. `/app/package.json` deleted in a derived image: `Startup error: cannot read the server version: package.json not found next to the server code`, exit 1.
 - The first container run (at a379d7b) failed in `packages/react` (integration test starting the real server under jsdom): fixed by 02da5e7, then the whole run above passed.
+## QA verdict (round 1, 2026-11-15)
+- PASS at b0f2513: checks 13/13, acceptance criteria 11/11 met (AC33-AC42, AC37a), no blocking findings.
+- Local CI in Docker (fresh clone from a git bundle, no dist/, no bind mounts, node:24, pinned redis:7.2.17-alpine with password, no persistence, noeviction, private network): install, audit, lint, typecheck, test (207/1816/574/227/1054, none skipped), SYNC_TEST_STORE=redis 1816/1816, build, the three compose config checks, reader e2e 5/5. Built-image checks (9.3): /health and /ready for memory and Redis, Redis paused gives 503 then 200, typo gives the AC37a line and exit 1, missing /app/package.json gives the version Startup error and exit 1.
+- GitHub Actions did not start (billing block), not a code failure.
+- Advisories (no fix needed): no real pub/sub-unhealthy /ready test (covered by status() by construction); roadmap still says 9b "in grooming" (update on merge); README Upgrading has a wrapped inline code span.
+- Attribution: all 23 commits signed.
 ## Open questions
 - None (Gate 2 answered every question).
 - Resolved by the plan: `package.json` is already in the image (pnpm deploy output, runtime copies /out whole); fenced and pub/sub-unhealthy are already observable via `storage.status()` (Q23 met without new machinery).
