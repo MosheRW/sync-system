@@ -154,6 +154,7 @@
 - security code (PR 2, round 2, delta): opus (rule) → PASS (1 new low S5; S1-S4, F23-F25 unchanged)
 - pm follow-up issue (Gate 3: liveness window + S4): sonnet (default) → DONE (#42)
 - engineer fix (PR 2, round 2: S1, S3, S5): opus (rule) → DONE (checks on the Windows host; Docker could not start containers)
+- security code (PR 2, round 3, delta): opus (rule) → PASS (S1, S3, S5 closed; 1 residual low inside the accepted S2 Redis trust boundary)
 ## Open questions
 - Decided at PR 2 Gate 3 (follow-up #42): a peer sees a just-started instance as live only after its next heartbeat (up to 5 s), so a grace ending then skips that instance's members as successors (architecture 12.18).
 - PR 2 Gate 2 (architecture 12.22, recommendation first): Q-B1 fold #39 in as chunk 1 (yes), Q-B2 refinements inside ADRs 0011/0012 (registry in its own key, PUBLISH inside COMMIT, lease-wait timeout closes the requester only), Q-B3 approve racing a joiner disconnect (accept), Q-B4 busy closes requester only (yes), Q-B5 fixed timings (lease 10/3/5/30 s, liveness 15 s, heartbeat 5 s, self-fence 10 s, sweep 5 s; outage > 10 s closes group sessions), Q-B6 follow-up issue for a global join-attempt limiter, Q-B7 stop all PR 1 instances before upgrading, Q-B8 nginx-unprivileged image, Q-B9 config consistency documented only.
