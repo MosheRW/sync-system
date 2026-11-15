@@ -56,8 +56,7 @@ export async function run(env: EnvSource, io: RunIO = {}): Promise<RunResult> {
         io.versionUrl === undefined ? readServerVersion() : readServerVersion(io.versionUrl);
     } catch (err) {
       if (!(err instanceof VersionError)) throw err;
-      stderr(`Startup error: ${err.message}
-`);
+      stderr(`Startup error: ${err.message}\n`);
       return { ok: false, exitCode: 1 };
     }
     logger = createLogger({
