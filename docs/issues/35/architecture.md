@@ -1149,11 +1149,11 @@ No other job changes.
   - frames published to it are lost, and those clients resume anyway.
 - **Timers on a killed instance** fire up to 30 s late (ADR 0013 lease).
 - **A newly started instance** is in a peer's live-instance cache only after that
-  peer's next heartbeat (up to 5 s). Until then its participants look disconnected to
-  the peer: a grace ending on the peer in that window skips them as successors, and a
-  resume on the peer that replaces one of their sessions publishes no `detach` (C14
-  still makes the old session act as nobody). Found by the fix round 1 tests
-  (`cluster.converged()` waits it out); not changed in PR 2.
+  peer's next heartbeat (up to 5 s). Until then the peer treats its participants as
+  not connected wherever it checks `isOpen()`: for example, a grace ending on the peer
+  in that window skips them as successors (with nobody else eligible, the group stays
+  paused). Frames and detaches are still published to them. Found by the fix round 1
+  tests (`cluster.converged()` waits it out); not changed in PR 2.
 - **Self-fence on a slow Redis** (renewals take more than 10 s) closes sessions without
   a real partition. This fails safe; clients resume.
 - **Large frames through pub/sub**: a roster snapshot is up to about 45 KB, under the
