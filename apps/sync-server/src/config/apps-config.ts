@@ -126,6 +126,9 @@ const appEntrySchema = z.strictObject({
   joinMethods: z.array(z.enum(JOIN_METHODS)).min(1).max(JOIN_METHODS.length).optional(),
 });
 
+/** Every field an apps entry may have (the AC37 coverage test checks each one). */
+export const APP_ENTRY_FIELDS: readonly string[] = Object.freeze(Object.keys(appEntrySchema.shape));
+
 const FIELD_RULES: Record<string, string> = {
   namespace: 'must match ^[a-z0-9][a-z0-9_-]{0,62}$',
   apiKey: `must be a string of ${MIN_API_KEY_LENGTH}-${MAX_API_KEY_LENGTH} characters`,
