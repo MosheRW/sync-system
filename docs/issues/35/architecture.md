@@ -799,7 +799,13 @@ New `storage/redis/instance.ts`.
   While the link is down, storage reports `unreachable` (503 on upgrades). When a new
   link has subscribed, it reads `P:seq` as its baseline: everything published before
   is behind it. The last received sequence is set to that baseline, also when it is
-  lower than before (security S1). Clients resume and read the current state.
+  lower than before (security S1). The read goes over the command link and can
+  overtake messages still on their way, so a PING on the subscriber link follows it:
+  its reply comes after every message published before the read, which apply
+  normally meanwhile, and only then is the baseline in place (QA round 1 window).
+  From a self-fence (the old channel is left) and from every new subscription until
+  its baseline is in place, storage reports `unreachable` and tasks wait for the
+  baseline (security S3). Clients resume and read the current state.
 
 ### 12.8 Orphan sweep and stops (AC21, AC11 kept, AC12 kept)
 

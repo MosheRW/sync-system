@@ -159,15 +159,23 @@ export interface PubSubOptions {
  * commit's sequence, which only grows. A task waits until every message
  * up to its group's high-water mark arrived (Gate 2 Q-B10). A dropped,
  * stalled (failed probe) or lagging link resyncs: sessions close with 1001
- * and the link starts again from the current sequence.
+ * and the link starts again from the current sequence. A link that is
+ * (re)subscribing is unhealthy until its baseline is in place (security S3).
  */
 export class RedisPubSub {
   private sub: SubscriberLink | undefined;
   private channel: string | undefined;
-  /** The highest sequence received (or skipped by a resync). */
+  /** The highest sequence received on the current subscription, or its baseline. */
   private received = 0;
   private down = false;
   private replacing = false;
+  /**
+   * Left its channel (self-fence), or subscribed but its baseline is not in
+   * place yet (security S3): unhealthy, and tasks wait for the baseline.
+   */
+  private syncing = false;
+  /** Bumped by every new subscription or leave: an older baseline read is ignored. */
+  private generation = 0;
   private closed = false;
   private waiters: Array<{ seq: number; resolve: () => void }> = [];
   private receiver: RemoteReceiver | undefined;
@@ -179,9 +187,9 @@ export class RedisPubSub {
     this.receiver = receiver;
   }
 
-  /** False while the subscriber link is down or being replaced. */
+  /** False while the subscriber link is down, being replaced or (re)subscribing. */
   get healthy(): boolean {
-    return !this.down && !this.replacing && this.sub !== undefined;
+    return !this.down && !this.replacing && !this.syncing && this.sub !== undefined;
   }
 
   /** Opens the subscriber link and subscribes to this instance's channel. */
@@ -194,10 +202,16 @@ export class RedisPubSub {
     await this.subscribe(this.options.instanceId());
   }
 
-  /** After a self-fence: the old channel is left (best effort). */
+  /**
+   * After a self-fence: the old channel is left (best effort). Unhealthy
+   * until the channel of a new ID is subscribed (security S3).
+   */
   async leave(): Promise<void> {
     const { sub, channel } = this;
     this.channel = undefined;
+    this.generation += 1;
+    this.syncing = true;
+    this.release();
     if (sub === undefined || channel === undefined) return;
     await sub.unsubscribe(channel).catch(() => undefined);
   }
@@ -213,10 +227,23 @@ export class RedisPubSub {
   }
 
   private async subscribe(id: string): Promise<void> {
+    const sub = this.sub!;
     const channel = this.options.keys.channel(id);
-    await this.sub!.subscribe(channel, (message) => this.onMessage(message));
+    const generation = this.begin();
+    await sub.subscribe(channel, (message) => {
+      // A replaced link's late messages are not this subscription's.
+      if (sub === this.sub) this.onMessage(message);
+    });
     this.channel = channel;
-    await this.baseline();
+    await this.baseline(sub, generation);
+  }
+
+  /** A new subscription starts: unhealthy, counting from zero until its baseline. */
+  private begin(): number {
+    this.generation += 1;
+    this.syncing = true;
+    this.received = 0;
+    return this.generation;
   }
 
   /**
@@ -225,11 +252,28 @@ export class RedisPubSub {
    * to the current sequence, lower or not (security S1): a sequence that
    * went back (`P:seq` lost, Redis time behind) or a forged high `s` must
    * not make every later message look stale.
+   *
+   * `P:seq` is read on the command link, which can overtake messages still
+   * on their way on the subscriber link (QA round 1). A PING on the
+   * subscriber link, sent after the read, is answered only after every
+   * message published before the read was delivered; until then messages
+   * apply normally and the link stays unhealthy.
    */
-  private async baseline(): Promise<void> {
-    const raw = await this.options.link.send(['GET', this.options.keys.sequence()]);
-    const seq = typeof raw === 'string' && /^[0-9]{1,16}$/.test(raw) ? Number(raw) : 0;
-    this.settle(seq);
+  private async baseline(sub: SubscriberLink, generation: number): Promise<void> {
+    let seq: number;
+    let answered: boolean;
+    try {
+      const raw = await this.options.link.send(['GET', this.options.keys.sequence()]);
+      seq = typeof raw === 'string' && /^[0-9]{1,16}$/.test(raw) ? Number(raw) : 0;
+      answered = await sub.probe();
+    } catch (err) {
+      if (generation !== this.generation || sub !== this.sub) return;
+      throw err;
+    }
+    if (generation !== this.generation || sub !== this.sub) return;
+    if (!answered) throw new Error('subscriber link did not answer');
+    this.settle(Math.max(this.received, seq));
+    this.syncing = false;
   }
 
   private advance(seq: number): void {
@@ -272,7 +316,11 @@ export class RedisPubSub {
    * link that lags past the bound is treated as stalled: resync.
    */
   awaitReceived(seq: number): Promise<void> {
-    if (seq <= this.received || !this.healthy) return Promise.resolve();
+    // A link being lost or not on a channel: its sessions are being closed.
+    // A link reading its baseline: the task waits for it (security S3).
+    const lost =
+      this.down || this.replacing || this.closed || this.sub === undefined || !this.channel;
+    if (seq <= this.received || lost) return Promise.resolve();
     return new Promise((resolve) => {
       const waiter = { seq, resolve };
       this.waiters.push(waiter);
@@ -309,9 +357,10 @@ export class RedisPubSub {
     }
     if (!this.down) return;
     // Back: anything published meanwhile may be lost.
+    const generation = this.begin();
     this.down = false;
     this.resync('dropped');
-    void this.baseline().catch(() => this.replace('baseline_failed'));
+    void this.baseline(sub, generation).catch(() => this.replace('baseline_failed'));
   }
 
   /** Drops the link and opens a new one (stalled or lagging); sessions resync. */

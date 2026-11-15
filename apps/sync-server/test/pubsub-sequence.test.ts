@@ -45,6 +45,14 @@ function effectOf(s: number): RemoteEffect {
   return { op: 'forget', ns: 'app-a', gid: String(s).padStart(43, '0') };
 }
 
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
 const tick = async (times = 5) => {
   for (let i = 0; i < times; i++) await new Promise((resolve) => setImmediate(resolve));
 };
@@ -151,5 +159,63 @@ describe('pub/sub sequence after a resync (#35 security S1)', () => {
     expect(t.received).toEqual([10_000_000_000]);
     expect(t.resyncs()).toBe(0);
     expect(t.logs.find('pubsub_message_stale')).toBeDefined();
+  });
+});
+
+describe('pub/sub health and baseline while a link (re)subscribes (#35 security S3, QA round 1)', () => {
+  it('is unhealthy from a self-fence until the new channel is subscribed and its baseline read', async () => {
+    const t = setup();
+    await t.pubsub.start();
+    const sub = t.subs[0]!;
+    expect(t.pubsub.healthy).toBe(true);
+    await t.pubsub.leave();
+    // Fenced: the old channel is gone, nothing is subscribed yet.
+    expect(t.pubsub.healthy).toBe(false);
+    expect(sub.listeners.size).toBe(0);
+    const read = deferred<unknown>();
+    t.setSequence(() => read.promise);
+    const next = 'b'.repeat(32);
+    t.setId(next);
+    const rejoined = t.pubsub.rejoin(next);
+    await tick();
+    // Subscribed, but the baseline is not read yet.
+    expect([...sub.listeners.keys()]).toEqual([`t:v1:ch:${next}`]);
+    expect(t.pubsub.healthy).toBe(false);
+    read.resolve('42');
+    await rejoined;
+    expect(t.pubsub.healthy).toBe(true);
+  });
+
+  it('applies messages still in flight when the baseline is read, and holds waiters until they arrived', async () => {
+    const t = setup();
+    t.setSequence(() => Promise.resolve('100'));
+    await t.pubsub.start();
+    const sub = t.subs[0]!;
+    sub.emit(200);
+    // The subscriber link drops and comes back.
+    sub.state!('down');
+    const ping = deferred<boolean>();
+    sub.probeImpl = () => ping.promise;
+    t.setSequence(() => Promise.resolve('2000'));
+    sub.state!('up');
+    await tick();
+    // The command link read 2000; commits 1500 and 2000 were published to this
+    // instance before that read, and are still on their way on the subscriber link.
+    let released = false;
+    void t.pubsub.awaitReceived(2000).then(() => {
+      released = true;
+    });
+    await tick();
+    expect(released).toBe(false);
+    expect(t.pubsub.healthy).toBe(false);
+    sub.emit(1500);
+    sub.emit(2000);
+    // The PING sent after the read comes back behind them.
+    ping.resolve(true);
+    await tick();
+    expect(t.received).toEqual([200, 1500, 2000]);
+    expect(released).toBe(true);
+    expect(t.pubsub.healthy).toBe(true);
+    expect(t.logs.find('pubsub_message_stale')).toBeUndefined();
   });
 });
