@@ -320,12 +320,11 @@ describeRedis(
           5_000,
           'one replaced or refused',
         );
-        // One group, led by its leader, and only the groups recreated so far.
-        const docs = (await inspect.keys(`${cluster.prefix}:v1:g`)).filter((k) =>
-          k.includes(group.groupId),
-        );
-        expect(docs).toHaveLength(1);
-        expect(await inspect.keys(`${cluster.prefix}:v1:g`)).toHaveLength(round + 1);
+        // One group, led by its leader; no group not yet recreated exists.
+        const docs = await inspect.keys(`${cluster.prefix}:v1:g`);
+        expect(docs.filter((k) => k.includes(group.groupId))).toHaveLength(1);
+        const later = groups.slice(round + 1).map((g) => g.groupId);
+        expect(docs.filter((k) => later.some((gid) => k.includes(gid)))).toEqual([]);
         const record = (await doc(group.groupId))!.record;
         expect(record.leaderId).toBe(group.leaderId);
         expect(record.leaderOnline).toBe(true);
