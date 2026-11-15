@@ -191,6 +191,7 @@ describeRedis('instances: liveness and self-fencing (#35 architecture 12.5, P2-3
     // Under a new ID the instance serves again.
     await waitFor(async () => (await httpGet(ts.port, '/health')).status === 200);
     await waitFor(() => ts.server.storage().kind === 'redis' && isConnected(ts));
+    expect((await httpGet(ts.port, '/ready')).body).toEqual({ status: 'ready', storage: 'redis' });
     expect(await ts.connectReady()).toBeDefined();
   });
 
@@ -205,9 +206,15 @@ describeRedis('instances: liveness and self-fencing (#35 architecture 12.5, P2-3
     });
     servers.push(ts);
     expect(ts.server.storage()).toEqual({ kind: 'redis', state: 'connected' });
+    expect((await httpGet(ts.port, '/ready')).status).toBe(200);
     clock += TIMINGS.selfFenceMs;
     expect(ts.server.storage()).toEqual({ kind: 'redis', state: 'unreachable' });
     await expect(ts.connect()).rejects.toThrow();
+    // Fenced: not ready (#36 AC35, Q23), still alive.
+    const ready = await httpGet(ts.port, '/ready');
+    expect(ready.status).toBe(503);
+    expect(ready.body).toEqual({ status: 'not_ready', storage: 'redis' });
+    expect((await httpGet(ts.port, '/health')).status).toBe(200);
   });
 });
 

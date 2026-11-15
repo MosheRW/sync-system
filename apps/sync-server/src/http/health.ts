@@ -8,6 +8,11 @@ export interface HttpDeps {
   version: string;
   /** Which storage serves groups; never its connectivity state (#36 AC34). */
   storageKind: StorageKind;
+  /**
+   * Whether this instance can serve now (#36 AC35). Synchronous and reads
+   * in-memory state only: a probe never sends a Redis command.
+   */
+  ready: () => boolean;
 }
 
 const NOT_FOUND_BODY = JSON.stringify({ error: 'not_found' });
@@ -25,6 +30,17 @@ export function healthBody(deps: HttpDeps): string {
     version: deps.version,
     storage: deps.storageKind,
   });
+}
+
+/**
+ * The two readiness bodies: `status` and the storage kind only, never a
+ * reason, host, address, instance ID or key prefix (#36 AC35, security C7).
+ */
+export function readyBodies(storageKind: StorageKind): { ready: string; notReady: string } {
+  return {
+    ready: JSON.stringify({ status: 'ready', storage: storageKind }),
+    notReady: JSON.stringify({ status: 'not_ready', storage: storageKind }),
+  };
 }
 
 /** Pathname of a request URL, or undefined if it cannot be parsed. */
@@ -47,16 +63,24 @@ function sendJson(res: ServerResponse, status: number, body: string): void {
 }
 
 /**
- * `GET /health` returns 200 with a prebuilt body; every other path or method
- * returns 404. No per-request I/O.
+ * `GET /health` (liveness) always returns 200; `GET /ready` (readiness)
+ * returns 200 or 503 from `deps.ready()`; every other path or method returns
+ * 404. Every body is prebuilt; no per-request I/O.
  */
 export function createHttpHandler(
   deps: HttpDeps,
 ): (req: IncomingMessage, res: ServerResponse) => void {
   const health = healthBody(deps);
+  const ready = readyBodies(deps.storageKind);
   return (req, res) => {
-    if (req.method === 'GET' && pathOf(req.url) === '/health') {
+    const path = req.method === 'GET' ? pathOf(req.url) : undefined;
+    if (path === '/health') {
       sendJson(res, 200, health);
+      return;
+    }
+    if (path === '/ready') {
+      if (deps.ready()) sendJson(res, 200, ready.ready);
+      else sendJson(res, 503, ready.notReady);
       return;
     }
     sendJson(res, 404, NOT_FOUND_BODY);
