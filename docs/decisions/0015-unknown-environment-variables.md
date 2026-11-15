@@ -1,6 +1,6 @@
 # 0015. Which unknown environment variables stop startup
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-11-15
 - Issue: #36
 
@@ -73,18 +73,20 @@ Constraints:
 
 ## Decision
 
-Option 1 (recommended). Each flagged name gives one problem line:
+Option 1, accepted by the user at Gate 2 of #36 (2026-11-15, Q-1). Each
+flagged name gives one problem line:
 
 - `<NAME> is not a sync server variable; did you mean <KNOWN>?` when a known
   name is within 2 edits (Damerau-Levenshtein, case-insensitive), else
 - `<NAME> is not a sync server variable; remove it or fix the name (see "Environment variables" in README.md)`.
 
-Names longer than 64 characters are cut to 64 plus `...`. Lines are sorted
-by name, so the output is stable.
+Names longer than 48 characters are cut to 48 plus `...` (the longest
+known name has 36; the security plan review, L4, asked for a cut shorter
+than the 64 first proposed). Lines are sorted by name, so the output is
+stable.
 
 The reader applies the same rule with the single family `READER_` and the
-same platform-shaped exclusions (Gate 2 question Q-2 in
-`docs/issues/36/architecture.md`).
+same platform-shaped exclusions (Gate 2 Q-2: accepted).
 
 ## Consequences
 

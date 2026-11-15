@@ -92,3 +92,21 @@ Rules that follow from these choices:
   registry under the lease (the local check may only deny); liveness for
   removals is read from Redis, never from a cache; every pub/sub message is
   schema-checked and applied only to the session with the same attach ID.
+
+## Sync server config and health (#36)
+
+| Decision                         | Choice                                                                                                                                                                                                                                                                     | ADR                                                       |
+| -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
+| Unknown look-alike env variables | A set name starting with `MAX_`, `TOKEN_`, `REDIS_`, `SYNC_`, `JOIN_`, `QR_`, `APPROVAL_`, `DISCONNECT_`, `KEEP_ALIVE_`, `INACTIVITY_` or ending with `_CEILING` that is not a known variable is a `Config error`; `SYNC_TEST_*` and platform link names are never flagged | [0015](decisions/0015-unknown-environment-variables.md)   |
+| Reader env variables             | Same rule with the single family `READER_`                                                                                                                                                                                                                                 | [0015](decisions/0015-unknown-environment-variables.md)   |
+| Config echo rule (Gate 2 Q-3)    | The server prints no raw value; it may print validated integers, namespaces matching the pattern, the config file path and JSON key names (escaped, cut), env names (cut at 48) and `errno` codes                                                                          | [architecture.md](issues/36/architecture.md) (Gate 2 Q-3) |
+| Invalid ceiling (Gate 2 Q-4)     | Only the app comparisons that need an invalid ceiling are skipped; the run still exits 1                                                                                                                                                                                   | [architecture.md](issues/36/architecture.md) (Gate 2 Q-4) |
+| Shutdown drain (Gate 2 Q-6)      | None: `/ready` is 503 from the start of `close()`, which stops the listener at once                                                                                                                                                                                        | [architecture.md](issues/36/architecture.md) (Gate 2 Q-6) |
+
+Rules that follow from these choices:
+
+- Every config problem of one run is printed, one `Config error:` line each,
+  then the process exits 1. Nothing that depends on config runs before the
+  whole config loaded without a problem.
+- `known-vars.ts` (server and reader) is the one list of known names; adding a
+  variable means adding it there.
