@@ -225,6 +225,41 @@ describeRedis('effects across instances over pub/sub (#35 AC17, architecture 12.
     expect(seen(other, 'leader.changed')[1]).toMatchObject({ reason: 'take_back' });
   });
 
+  it('a join on B completes in under a second while the leader on A moves 10 times a second (12.18)', async () => {
+    cluster = await startCluster({
+      env: { MAX_LEADER_UPDATE_RATE_CEILING: '20', MAX_INBOUND_MESSAGES_PER_SECOND: '40' },
+      apps: [{ namespace: 'app-a', apiKey: KEY_A, maxLeaderUpdatesPerSecond: 20 }],
+    });
+    const [a, b] = cluster.nodes;
+    const group = await groupAcross(a!.ts, []);
+    let moving = true;
+    const replies: string[] = [];
+    // A hot group: one update every 100 ms, each waiting for its ack.
+    const mover = (async () => {
+      for (let page = 2; moving; page++) {
+        group.leader.send({ type: 'position.update', position: { page } });
+        replies.push((await group.leader.next(undefined, 5_000)).type);
+        await sleep(100);
+      }
+    })();
+    await sleep(300);
+    let worst = 0;
+    // Joins on B for about 2 s, while the updates go on.
+    for (let i = 0; i < 6; i++) {
+      const joiner = await b!.ts.connectReady();
+      const sent = Date.now();
+      joiner.send({ type: 'group.joinByCode', ...group.join });
+      await joiner.next('group.joined', 5_000);
+      worst = Math.max(worst, Date.now() - sent);
+      await sleep(300);
+    }
+    moving = false;
+    await mover;
+    expect(worst).toBeLessThan(1_000);
+    expect(replies.length).toBeGreaterThanOrEqual(10);
+    expect(new Set(replies)).toEqual(new Set(['position.ack']));
+  });
+
   it('a resume on A replaces the session on B, which then acts as nobody (C14)', async () => {
     cluster = await startCluster();
     const [a, b] = cluster.nodes;
