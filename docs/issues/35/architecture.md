@@ -528,14 +528,16 @@ This replaces the PR 2 rows of the section 4.1 table.
 | `P:insts` | sorted set | instance IDs, score = liveness deadline (Redis time) | shared; expiry moved to now + 24 h on each registration (`extend`) |
 | `P:ig:<id>` | set | `<ns>:<gid>` of groups with an attachment on instance `<id>` | `extend` to the latest `E` of its groups; deleted when its instance has been swept |
 | `P:ap:<ns>:<gid>:<rid>` | string | pending method B request `{i, n?, d}` (owner instance, chosen display name, deadline) | `PX` to the request deadline (never past `E`); deleted when settled and with the group (AC20) |
-| `P:aq:<ns>:<gid>` | sorted set | request IDs, score = deadline (oldest first) | `extend` to the latest pending deadline (never past `E`); deleted with the group |
+| `P:aq:<ns>:<gid>` | sorted set | members `<rid>.<instanceId>` (request ID and the joiner's instance, so a timeout after the request key expired still reaches that instance), score = deadline (oldest first) | `extend` to the latest pending deadline (never past `E`); deleted with the group |
 | `P:pk:<ns>:<gid>` | set | instance IDs holding a parked member of a missing group (no personal data) | `extend` to the latest parking bound; deleted by the recreation commit |
+| `P:seq` | string | the last commit sequence (Gate 2 Q-B10, 12.7): an integer, `max(last + 1, Redis time in microseconds)`, so it never goes back even after the key expired | shared; `PX` 24 h, set again by every commit that publishes |
+| `P:q:<ns>:<gid>` | hash | per receiving instance ID: the sequence of the group's last commit that published to it (its high-water mark, Q-B10) | `keep` to `E`, like the document; deleted with the group |
 | channel `P:ch:<id>` | pub/sub | remote effects for instance `<id>` (12.7) | n/a |
 
 - `attachId`: 16 random bytes, base64url (22 characters), new on every attach. It lives
   in `Session.membership.attachId` and in the registry. It is never sent to clients or
   logged.
-- **Ends (AC24).** The commit that ends a group deletes `P:a`, `P:aq` and every
+- **Ends (AC24).** The commit that ends a group deletes `P:a`, `P:q`, `P:aq` and every
   `P:ap:<rid>` of the group. Each instance's set `P:ig:*` drops the group in the same
   commit (`srem`). `endInvalid` does the same (12.21 chunk 1).
 - **Invariant**, kept by every commit: a pid has a registry entry if and only if it is
@@ -544,11 +546,19 @@ This replaces the PR 2 rows of the section 4.1 table.
   keys. New in Redis, all inside the trust zone (P2-5): the chosen display name of a
   pending joiner (until settled or deadline), and serialized server frames in transit
   on the channels. Channel messages are not stored by Redis.
-- **`COMMIT` script** (`scripts.ts`) gets three write ops:
+- **`COMMIT` script** (`scripts.ts`) gets four write ops and a sequence:
   - `sadd` and `srem`, for `P:ig:*`;
-  - `pub`, which publishes a payload on a channel name passed in the spec. The name is
-    built in `keys.ts`. The script still returns `{'abort', reason}` on the first
-    failed check, before any write or publish.
+  - `pub`, which publishes `{"v":1,"s":<seq>,"effects":<payload>}` on a channel name
+    passed in the spec. The name is built in `keys.ts`. Every `pub` comes after every
+    other write (the script refuses a write after a publish);
+  - `hw`, which sets one field of `P:q:<ns>:<gid>` to the commit's sequence;
+  - with a sequence key in the spec (only when the commit publishes), the script first
+    takes the next sequence from `P:seq` (Q-B10) and returns it.
+
+  The script still returns `{'abort', reason}` on the first failed check, before any
+  write or publish.
+- **`PRELOAD` script** (Q-B10): one read for a task's own group: `MGET` of the
+  document, position and registry, plus `HGET P:q:<ns>:<gid> <own instance ID>`.
 - **New constant scripts**, each in `scripts.ts`, with `KEYS`/`ARGV` only (C6):
   - `LEASE_RENEW`: `PEXPIRE` if the value matches.
   - `LEASE_RELEASE`: compare-and-delete.
@@ -610,7 +620,7 @@ New `storage/redis/instance.ts`.
 - **Heartbeat** every `INSTANCE_HEARTBEAT_MS` (5 000) with `INSTANCE_HEARTBEAT`
   (`PX INSTANCE_LIVENESS_MS`, 15 000). Each tick also refreshes the **live-instance
   cache** (`ZRANGEBYSCORE P:insts now +inf`) and drains the replay queue when
-  connected.
+  connected (as built, a replay also admits parked members).
 - **Self-fence (P2-3).** Triggers:
   - (a) a heartbeat answers "fenced": the key was gone, so others may already have
     swept us;
@@ -622,6 +632,10 @@ New `storage/redis/instance.ts`.
   2. every local session that is in a group, parked or pending gets `1001`;
   3. the local registry, parking, pending joiners and refreshers are cleared;
   4. the old channel is unsubscribed.
+
+  As built, the sessions close quietly (no disconnect rules, C13: the peers' sweep
+  applies them) and the disconnect replay queue is cleared too. Storage stays
+  `unreachable` while fenced.
 
   When Redis answers again, the instance re-registers under a **new** ID, subscribes to
   the new channel and turns `connected`.
@@ -701,8 +715,13 @@ New `storage/redis/instance.ts`.
   instance, in queue order. It adds one `pub` op per instance. If a payload would pass
   `PUBSUB_MESSAGE_MAX_BYTES` (1 MiB), it adds several ordered `pub` ops; they stay
   ordered because one script runs atomically. An effect for an instance missing from
-  the live cache is dropped (the sweep handles its attachments). The rare remote effect
-  outside a task (parking expiry paths) is sent with a plain `PUBLISH`.
+  the live cache is dropped (the sweep handles its attachments).
+  - *As built:* a commit that publishes takes the next sequence from `P:seq` and sets
+    the receiving instances' fields of `P:q:<ns>:<gid>` to it (Q-B10, below). Every
+    group effect comes from a group task, so a remote effect outside a task is dropped
+    with a debug log instead of a plain `PUBLISH`.
+  - A single frame above `PUBSUB_FRAME_MAX_CHARS` is not sent
+    (`remote_effect_too_large {op}`, error).
 - **Message contract** (`storage/redis/pubsub.ts`). This is the only input accepted on
   the channel; it is parsed after a byte-length check (at most 1 MiB, else dropped):
 
@@ -724,8 +743,12 @@ New `storage/redis/instance.ts`.
     z.object({ op: z.literal('admitParked'), ns, gid }).strict(),
     z.object({ op: z.literal('forget'), ns, gid }).strict(),                              // group ended: drop local per-group state
   ]);
-  export const remoteMessage = z.object({ v: z.literal(1), effects: z.array(effect).min(1).max(512) }).strict();
+  // s: the publishing commit's sequence (Gate 2 Q-B10), from P:seq.
+  const s = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+  export const remoteMessage = z.object({ v: z.literal(1), s, effects: z.array(effect).min(1).max(512) }).strict();
   ```
+
+  On the wire: `{"v":1,"s":<seq>,"effects":[...]}`, written by the `COMMIT` script.
 
 - **Receiving.** Messages are applied in arrival order. Each effect runs through
   `GroupLock.runLocal(ns, gid)` and is checked against **local** state before anything
@@ -747,9 +770,32 @@ New `storage/redis/instance.ts`.
   part of the commits. Redis keeps the order of one connection's messages, and the
   receiver applies them in order through the local queue. So every recipient sees a
   group's events in commit order.
-- **At-most-once (ADR 0012 rule).** When the subscriber link comes back after a drop,
-  the instance closes every local session that is in a group, parked or pending with
-  `1001` (`pubsub_resync {sessions}`). Clients resume and read the current state.
+- **Order against the instance's own frames (Gate 2 Q-B10, as built).** Dropping an
+  older effect would lose events (a remote frame of an earlier commit can be the only
+  copy), so the order is enforced instead:
+  1. Every commit that publishes takes a sequence from `P:seq` inside `COMMIT`:
+     `max(last + 1, Redis time in microseconds)`, so it only grows, even if the key
+     expired. Each message carries it as `s`, and the commit sets each receiving
+     instance's field of the group's high-water hash `P:q:<ns>:<gid>` to it.
+  2. A task first reads its group with `PRELOAD`, which includes its own instance's
+     high-water mark. It then waits until its instance received every message up to
+     that mark (at most `PUBSUB_BARRIER_MS`, 1 s), and the group's received effects
+     are applied first (the group's inbox is drained before the task runs). Only then
+     does the task run and flush its own frames.
+  3. A message with `s` below the highest one received is stale and dropped
+     (`pubsub_message_stale`, debug).
+  4. A link that does not reach the mark within the bound is lagging
+     (`pubsub_barrier_timeout`, warn): it is replaced and resyncs, as below.
+
+  Frames to members are sent at once (`later: false`); frames to the leader keep the
+  single-instance "after pending replies" rule.
+- **At-most-once (ADR 0012 rule).** When the subscriber link drops (as built: at once,
+  not only when it comes back), is found stalled by its probe, or lags past the
+  barrier, the instance closes every local session that is in a group, parked or
+  pending with `1001` (`pubsub_link_lost {cause}`, then `pubsub_resync {sessions}`).
+  While the link is down, storage reports `unreachable` (503 on upgrades). When a new
+  link has subscribed, it reads `P:seq` as its baseline: everything published before
+  is behind it. Clients resume and read the current state.
 
 ### 12.8 Orphan sweep and stops (AC21, AC11 kept, AC12 kept)
 
@@ -762,7 +808,10 @@ New `storage/redis/instance.ts`.
   - a member is removed and marked disconnected in the roster;
   - an empty group is held.
 
-  The Q-A3 floor stays as in PR 1. Nobody is told who left, beyond the usual
+  The Q-A3 floor stays as in PR 1, and as built it applies only to groups no live
+  instance attends (a single-instance restart). A peer dying in a running cluster is
+  not a restart: its participants can resume on a live instance, and its leader gets
+  the normal grace from the sweep. Nobody is told who left, beyond the usual
   `leader.offline` and roster frames, which reach the participants still attached on
   other instances.
 - **Periodic.** Every `ORPHAN_SWEEP_MS` (5 000, ±1 000 jitter):
@@ -803,7 +852,8 @@ New `storage/redis/instance.ts`.
   lease plus fence).
   - Joiner local to A: as today. The `isOpen` and `busy` re-check gives
     `REQUEST_NOT_FOUND` when the joiner is gone.
-  - Joiner on B, B not live: `REQUEST_NOT_FOUND` (settled `disconnected`).
+  - Joiner on B, B not live: `REQUEST_NOT_FOUND` (settled `disconnected`). As built,
+    B's liveness is read from Redis here (C12), not from the live cache.
   - Joiner on B, B live: A runs the store-side admission (size, block list, roster) and
     writes the registry entry `{i: B, t: new attachId}`. The same commit publishes
     `admit` with the `group.joined` frame. The leader gets
@@ -858,7 +908,7 @@ Parking only happens when a group is missing from Redis (AC14 path).
 | Event | Effect |
 | ----- | ------ |
 | Command link down or stalled | PR 1 rules: `1001` for the group on failed commits, 503 on upgrades, replay queue. After 10 s without a heartbeat: self-fence (12.5). |
-| Subscriber link dropped and back | resync: local group sessions get `1001` (12.7) |
+| Subscriber link dropped, stalled or lagging past the 1 s barrier (Q-B10) | resync at once: local group sessions get `1001`; storage `unreachable` (503) until a new link has subscribed (12.7) |
 | Lease lost (`LeaseLostError`) | nothing written or published; the group's local sessions get `1001` |
 | Lease wait over 5 s (`StorageBusyError`) | the requester gets `1001`; disconnects are replayed; timers retry after their lease |
 | Invalid pub/sub message | dropped, `pubsub_message_invalid` |
@@ -871,15 +921,25 @@ Parking only happens when a group is missing from Redis (AC14 path).
 - **Env and config:** no new variable. All instances on one prefix must share
   `TOKEN_SECRET` (and the previous keyring), the apps config and the env ceilings
   (README; Q-B9).
-- **Server API:** `redisStorage` gains test-only `timings` overrides. `SyncServer` is
-  unchanged.
-- **Redis data:** 12.3. **Pub/sub:** 12.7 (`v: 1`). A future change uses `v: 2`, and
-  receivers drop versions they don't know.
+- **Server API:** `redisStorage` gains test-only options: `timings` overrides
+  (including `sweepMs` and `timerLeaseMs`), `monotonic` (the self-fence clock) and
+  `beforeCommit` (a hook before every group commit). `SyncServer` is unchanged.
+- **Redis data:** 12.3. **Pub/sub:** 12.7, `v: 1` as shipped: `{v: 1, s, effects}`,
+  with `s` the commit sequence (Q-B10). A future change uses `v: 2`, and receivers
+  drop versions they don't know.
 - **Logs** (new events; no URL, host, key, code, name, participant ID or full
-  instance ID): `instance_registered {instanceRef}`, `instance_fenced {instanceRef,
-  reason}`, `orphan_sweep {instances, groups}`, `pubsub_resync {sessions}`,
-  `pubsub_message_invalid`, `remote_effect_dropped {op}` (debug),
-  `group_lock_busy {groupRef}` (debug), `group_lease_lost {groupRef}` (warn).
+  instance ID):
+  - `instance_registered {instanceRef}`; `instance_fenced {instanceRef, cause}` (the
+    field is `cause`, since a repo test forbids a log field named `reason`);
+    `fence_error {err}` (error, a fence step failed);
+  - `orphan_sweep {instances, groups, invalid}`; `orphan_sweep_failed {err}` (warn);
+  - `pubsub_resync {sessions}`; `pubsub_link_lost {cause}` (warn; `dropped`,
+    `stalled`, `lagging`, `subscribe_failed` or `baseline_failed`);
+    `pubsub_barrier_timeout` (warn, Q-B10); `pubsub_message_stale` (debug, Q-B10);
+    `pubsub_message_invalid` (warn);
+  - `remote_effect_dropped {op}` (debug); `remote_effect_too_large {op}` (error);
+  - `group_lock_busy {groupRef}` (debug); `group_lease_lost {groupRef}` (warn);
+    `group_lease_hold_cap {groupRef}` (warn, renewals stopped at the 30 s hold cap).
 
 ### 12.14 `compose.multi.yaml` (AC23, P2-8)
 
@@ -901,6 +961,8 @@ docker compose -f compose.yaml -f compose.redis.yaml -f compose.multi.yaml up --
   read-only and waits for both servers to be healthy.
 - `config/nginx-multi.conf`:
   - `upstream` with both servers, round robin (no `ip_hash`, `hash` or `sticky`);
+    as built, with a shared `zone` so every nginx worker uses one rotation, and
+    `proxy_connect_timeout 2s` so a stopped instance is skipped quickly;
   - WebSocket upgrade (`proxy_http_version 1.1`, `Upgrade` and `Connection` from a
     `map`);
   - `proxy_read_timeout 120s` (above the 30 s heartbeat);
@@ -1086,6 +1148,12 @@ No other job changes.
     that leader offline with a new grace;
   - frames published to it are lost, and those clients resume anyway.
 - **Timers on a killed instance** fire up to 30 s late (ADR 0013 lease).
+- **A newly started instance** is in a peer's live-instance cache only after that
+  peer's next heartbeat (up to 5 s). Until then its participants look disconnected to
+  the peer: a grace ending on the peer in that window skips them as successors, and a
+  resume on the peer that replaces one of their sessions publishes no `detach` (C14
+  still makes the old session act as nobody). Found by the fix round 1 tests
+  (`cluster.converged()` waits it out); not changed in PR 2.
 - **Self-fence on a slow Redis** (renewals take more than 10 s) closes sessions without
   a real partition. This fails safe; clients resume.
 - **Large frames through pub/sub**: a roster snapshot is up to about 45 KB, under the
