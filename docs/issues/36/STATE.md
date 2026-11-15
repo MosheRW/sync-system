@@ -2,11 +2,11 @@
 - Path: full
 - Phase: architecture
 - Branch: feat/36-health-readiness-config-errors
-- PR: none
+- PR: #43
 - Plan approved by user: no
 - Security-sensitive: yes
 - Review rounds: 0
-- Last updated by: architect
+- Last updated by: security
 ## Model log
 - pm grooming: sonnet (default) → DONE
 - pm gate-1 update: sonnet (default) → DONE
@@ -20,6 +20,8 @@
 - Q25: no /ready for the reader.
 - Q26: /health additive only (version, storage).
 - AC41 narrowed; no escape-hatch switch.
+## Security plan review (round 1)
+- PASS: critical 0, high 0, medium 1 (M1 fail-open risk of collect-mode refactor), low 6. Required controls C1-C10 in docs/issues/36/security.md are part of the plan.
 ## Open questions
 - Gate 2 (architecture.md section 13): Q-1 ADR 0015 naming rule; Q-2 reader gets the same check; Q-3 echo of validated numbers; Q-4 apps checks skipped against an invalid ceiling; Q-5 "did you mean"; Q-6 shutdown drain (informational).
 - Resolved by the plan: `package.json` is already in the image (pnpm deploy output, runtime copies /out whole); fenced and pub/sub-unhealthy are already observable via `storage.status()` (Q23 met without new machinery).
