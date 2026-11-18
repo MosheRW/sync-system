@@ -10,6 +10,7 @@ import type { SyncServer } from '../src/server.js';
 import { DEV_TOKEN_SECRET } from '../src/config/token-secret.js';
 import { LogCapture } from './helpers/log-capture.js';
 import { httpGet } from './helpers/test-server.js';
+import { childEnv } from './helpers/child-env.js';
 
 const SECRET_KEY = 'SENTINEL-main-key-0123456789-0123456789-xyz';
 /** A strong-looking test token secret (not a real one). */
@@ -103,6 +104,17 @@ describe('run', () => {
     expect(stderr).toContain('MAX_GROUP_SIZE_CEILING must be a positive integer');
     expect(stderr).toContain('REDIS_URL is not a valid redis:// or rediss:// URL');
     expect(stderr).not.toContain('SENTINEL');
+  });
+
+  it('prints one Config error line per problem (#36 AC38)', async () => {
+    const { result, stderr } = await runCapture({
+      MAX_GROUP_SIZE_CEILING: 'abc',
+      LOG_LEVEL: 'loud',
+    });
+    expect(result).toEqual({ ok: false, exitCode: 1 });
+    const lines = stderr.trimEnd().split('\n');
+    expect(lines.length).toBeGreaterThanOrEqual(2);
+    for (const line of lines) expect(line).toMatch(/^Config error: /);
   });
 
   it('returns exit code 1 for an invalid env variable (AC6)', async () => {
@@ -245,11 +257,10 @@ describe('process entry (AC6)', () => {
     );
     const child = spawnSync(process.execPath, ['--import', 'tsx', 'src/index.ts'], {
       cwd: serverDir,
-      env: {
-        ...process.env,
+      env: childEnv({
         SYNC_CONFIG_PATH: path,
         NODE_OPTIONS: '--conditions=@sync-system/source',
-      },
+      }),
       encoding: 'utf8',
       timeout: 30_000,
     });
@@ -257,7 +268,7 @@ describe('process entry (AC6)', () => {
     expect(child.stderr).toContain(
       'Config error: ' +
         path +
-        ': apps[1] (namespace "b") has the same apiKey as apps[0] (namespace "a")',
+        ': apps[1] (namespace "b") has the same apiKey as apps[0] (namespace "a") (each app needs its own key)',
     );
     expect(child.stderr).not.toContain('SENTINEL');
     expect(child.stdout).not.toContain('SENTINEL');

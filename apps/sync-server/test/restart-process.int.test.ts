@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { TestClient } from './helpers/test-client.js';
 import { claimsOf } from './helpers/tokens.js';
+import { childEnv } from './helpers/child-env.js';
 
 /** Test-only values, never real ones. */
 const API_KEY = 'restart-test-key-0123456789-0123456789-abc';
@@ -43,7 +44,7 @@ function startProcess(env: Record<string, string>): Promise<ChildProcess> {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, ['--import', 'tsx', 'src/index.ts'], {
       cwd: serverDir,
-      env: { ...process.env, ...env, NODE_OPTIONS: '--conditions=@sync-system/source' },
+      env: childEnv({ ...env, NODE_OPTIONS: '--conditions=@sync-system/source' }),
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     children.push(child);

@@ -109,6 +109,22 @@ Rules (each violation is a startup error naming the variable):
 - `READER_SRC_MAX_BYTES`: keep the default unless you need more. A large
   file is parsed, validated and hashed on the reader's device; tens of
   megabytes can freeze a phone's browser tab.
+- Every set `READER_*` name must be one of the reader's variables (this table
+  and [Sync settings](#sync-settings)): an unknown one, such as the typo
+  `READER_SYNC_ULR` (which would silently turn groups off), is a startup error
+  naming it, with a "did you mean" for a near miss
+  ([ADR 0015](../../docs/decisions/0015-unknown-environment-variables.md)).
+  Names that Kubernetes or Docker inject for a service named `reader`
+  (`READER_SERVICE_HOST`, `READER_PORT`, `READER_PORT_8080_TCP`, ...) are
+  never flagged. `HOST` and `NODE_ENV` have no invalid value; a `HOST` that
+  cannot be bound gives `Startup error: cannot listen on port ...`.
+
+The reader checks every variable before it stops and prints one
+`Config error: ...` line per problem, then exits 1. A message shows the
+offending value of a non-secret variable, cut at 40 characters, so you can see
+what the reader read; in a URL everything up to the last `@` is replaced by
+`***`, and `READER_SYNC_API_KEY` is never shown. Every message and its fix is
+in [`docs/startup-errors.md`](../../docs/startup-errors.md).
 
 ### Interface language
 

@@ -92,10 +92,16 @@ function checkSecret(
  * - TOKEN_SECRET_PREVIOUS follows the same rules and must differ from
  *   TOKEN_SECRET.
  *
- * Every problem is reported in one ConfigError. Values are never echoed.
+ * Every problem is pushed to `errors`; values are never echoed. Returns
+ * undefined when any problem was found: never a random or dev fallback for a
+ * secret that failed (#36 security C1).
  */
-export function parseTokenSecrets(env: EnvSource, nodeEnv: string | undefined): TokenSecrets {
-  const errors: string[] = [];
+export function collectTokenSecrets(
+  env: EnvSource,
+  nodeEnv: string | undefined,
+  errors: string[],
+): TokenSecrets | undefined {
+  const before = errors.length;
   const raw = env.TOKEN_SECRET;
   const rawPrevious = env.TOKEN_SECRET_PREVIOUS;
 
@@ -117,13 +123,21 @@ export function parseTokenSecrets(env: EnvSource, nodeEnv: string | undefined): 
     }
   }
 
-  if (errors.length > 0) throw new ConfigError(errors.join('\n'));
+  if (errors.length > before) return undefined;
 
   const current =
     source === 'random' ? randomBytes(MIN_TOKEN_SECRET_BYTES) : Buffer.from(raw!, 'utf8');
   return rawPrevious === undefined
     ? { current, source }
     : { current, previous: Buffer.from(rawPrevious, 'utf8'), source };
+}
+
+/** `collectTokenSecrets` that throws one ConfigError with every problem. */
+export function parseTokenSecrets(env: EnvSource, nodeEnv: string | undefined): TokenSecrets {
+  const errors: string[] = [];
+  const secrets = collectTokenSecrets(env, nodeEnv, errors);
+  if (errors.length > 0 || secrets === undefined) throw new ConfigError(errors);
+  return secrets;
 }
 
 export interface SecretWarnLogger {

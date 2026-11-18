@@ -108,7 +108,14 @@ describeRedis('while Redis is unreachable (#35 AC26, AC27, ADR 0014, security C4
     await waitUntil(() => server.server.storage().kind === 'redis' && link.state === 'unreachable');
     expect(server.server.storage()).toEqual({ kind: 'redis', state: 'unreachable' });
     await expect(server.connect()).rejects.toThrow();
-    expect((await httpGet(server.port, '/health')).status).toBe(200);
+    const health = await httpGet(server.port, '/health');
+    expect(health.status).toBe(200);
+    // The kind only, never the connectivity state (#36 AC34).
+    expect(health.body).toMatchObject({ status: 'ok', storage: 'redis' });
+    // Readiness follows the store state (#36 AC35).
+    const notReady = await httpGet(server.port, '/ready');
+    expect(notReady.status).toBe(503);
+    expect(notReady.body).toEqual({ status: 'not_ready', storage: 'redis' });
     // Nothing of the failed update was stored, and nothing lives in memory.
     expect(await inspect.client.get(docKey)).toBe(before);
 
@@ -119,6 +126,9 @@ describeRedis('while Redis is unreachable (#35 AC26, AC27, ADR 0014, security C4
       const status = server.server.storage();
       return status.kind === 'redis' && status.state === 'connected';
     }, 10_000);
+    const ready = await httpGet(server.port, '/ready');
+    expect(ready.status).toBe(200);
+    expect(ready.body).toEqual({ status: 'ready', storage: 'redis' });
     // The disconnects of the closed sessions were replayed: the leader is
     // offline, the member is gone from the group.
     await waitUntil(async () => {
@@ -152,11 +162,13 @@ describeRedis('while Redis is unreachable (#35 AC26, AC27, ADR 0014, security C4
     expect(await group.leader.closed()).toMatchObject({ code: 1001 });
     expect(server.server.storage()).toEqual({ kind: 'redis', state: 'unreachable' });
     await expect(server.connect()).rejects.toThrow();
+    expect((await httpGet(server.port, '/ready')).status).toBe(503);
     proxy.restore();
     await waitUntil(() => {
       const status = server.server.storage();
       return status.kind === 'redis' && status.state === 'connected';
     }, 10_000);
+    expect((await httpGet(server.port, '/ready')).status).toBe(200);
     const client = await server.connectReady();
     expect(client.isClosed).toBe(false);
   }, 20_000);

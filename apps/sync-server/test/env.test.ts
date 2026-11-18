@@ -201,6 +201,11 @@ describe('parseEnv', () => {
     const err = errorOf({ PORT: 'x', MAX_CONNECTIONS: '0' });
     expect(err.message).toContain('PORT');
     expect(err.message).toContain('MAX_CONNECTIONS');
+    expect(err.problems).toEqual([
+      'PORT must be a positive integer',
+      'MAX_CONNECTIONS must be a positive integer',
+    ]);
+    expect(err.message).toBe(err.problems.join('\n'));
   });
 
   describe('cross-field rules (H1, H2, H3, M5)', () => {

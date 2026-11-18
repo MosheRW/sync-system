@@ -1,31 +1,39 @@
 import type { DestinationStream } from 'pino';
 import { AppRegistry } from './apps/app-registry.js';
-import { loadAppsConfigFile } from './config/apps-config.js';
 import { ConfigError } from './config/config-error.js';
-import { checkDevKeys } from './config/dev-key.js';
-import { type EnvSource, parseEnv } from './config/env.js';
-import { parseRedisSettings } from './config/redis.js';
-import { parseTokenSecrets, warnAboutSecrets } from './config/token-secret.js';
+import { warnDevKeys } from './config/dev-key.js';
+import type { EnvSource } from './config/env.js';
+import { loadConfig } from './config/load.js';
+import { warnAboutSecrets } from './config/token-secret.js';
 import { type Logger, createLogger } from './logging/logger.js';
 import { type SyncServer, createSyncServer } from './server.js';
 import { StorageStartError, storageStartMessage } from './storage/errors.js';
 import type { Storage } from './storage/storage.js';
 import { realScheduler } from './time/scheduler.js';
+import { VersionError, readServerVersion } from './version.js';
 
 export interface RunIO {
   /** Where startup errors go; defaults to process.stderr. */
   stderr?: (text: string) => void;
   /** Log destination; defaults to stdout. */
   destination?: DestinationStream;
+  /** The server's package.json; tests only. Never taken from env (#36 security C8). */
+  versionUrl?: URL;
+}
+
+/** The `Startup error` text when the port cannot be bound (docs/startup-errors.md). */
+export function listenErrorMessage(port: number, code: string): string {
+  return `cannot listen on port ${port} (${code})`;
 }
 
 export type RunResult =
   { ok: true; server: SyncServer; logger: Logger } | { ok: false; exitCode: number };
 
 /**
- * Parses env, loads the app registry, checks dev keys and token secrets,
- * creates the logger and starts the server. Configuration problems print `Config error: <message>`
- * and return exit code 1; the message never contains key values (AC6).
+ * Loads the whole config (env, token secrets, apps file, dev keys), creates
+ * the logger and starts the server. Every configuration problem prints one
+ * `Config error: <problem>` line and the run returns exit code 1; no line
+ * contains a key or secret value (AC6, #36 AC37, AC38).
  */
 export async function run(env: EnvSource, io: RunIO = {}): Promise<RunResult> {
   const stderr =
@@ -37,19 +45,27 @@ export async function run(env: EnvSource, io: RunIO = {}): Promise<RunResult> {
   let server: SyncServer;
   let logger: Logger;
   try {
-    const serverEnv = parseEnv(env);
+    // First, before anything that depends on config (#36 security C1).
+    const config = loadConfig(env);
+    const serverEnv = config.env;
+    const { apps, tokenSecrets, redis } = config;
+    // A packaging fault, not a config fault: after the config, before Redis.
+    let version: string;
+    try {
+      version =
+        io.versionUrl === undefined ? readServerVersion() : readServerVersion(io.versionUrl);
+    } catch (err) {
+      if (!(err instanceof VersionError)) throw err;
+      stderr(`Startup error: ${err.message}\n`);
+      return { ok: false, exitCode: 1 };
+    }
     logger = createLogger({
       level: serverEnv.logLevel,
       ...(io.destination ? { destination: io.destination } : {}),
     });
-    const apps = loadAppsConfigFile(serverEnv.configPath, serverEnv);
-    checkDevKeys(apps, serverEnv.nodeEnv, logger);
-    // Never stored in ServerEnv and never logged (R4).
-    const tokenSecrets = parseTokenSecrets(env, serverEnv.nodeEnv);
+    warnDevKeys(apps, logger);
     warnAboutSecrets(tokenSecrets, logger);
     const registry = new AppRegistry(apps);
-    // Never stored in ServerEnv and never logged (#35 security C9).
-    const redis = parseRedisSettings(env);
     let storage: Storage | undefined;
     if (redis !== undefined) {
       const { connectRedis } = await import('./storage/redis/connect.js');
@@ -74,20 +90,24 @@ export async function run(env: EnvSource, io: RunIO = {}): Promise<RunResult> {
       registry,
       logger,
       tokenSecrets,
+      version,
       ...(storage === undefined ? {} : { storage }),
     });
 
     try {
       const port = await server.listen(serverEnv.port, serverEnv.host);
-      // The port only: never the host or any address (AC24).
-      logger.info({ event: 'server_listening', port, apps: apps.length }, 'sync server listening');
+      // The port and version only: never the host or any address (AC24).
+      logger.info(
+        { event: 'server_listening', port, apps: apps.length, version },
+        'sync server listening',
+      );
     } catch (err) {
       if (err instanceof StorageStartError) {
         // Epoch, past-due timers or sweep failed (#35 AC4, architecture 3 step 7).
         stderr(`Startup error: ${storageStartMessage(err)}\n`);
       } else {
         const code = (err as NodeJS.ErrnoException).code ?? 'unknown';
-        stderr(`Startup error: cannot listen on port ${serverEnv.port} (${code})\n`);
+        stderr(`Startup error: ${listenErrorMessage(serverEnv.port, code)}\n`);
       }
       // Closes the Redis connection too, so nothing keeps the process alive.
       await server.close().catch(() => undefined);
@@ -95,7 +115,8 @@ export async function run(env: EnvSource, io: RunIO = {}): Promise<RunResult> {
     }
   } catch (err) {
     if (err instanceof ConfigError) {
-      stderr(`Config error: ${err.message}\n`);
+      // One prefixed line per problem (#36 AC38).
+      stderr(err.problems.map((problem) => `Config error: ${problem}\n`).join(''));
       return { ok: false, exitCode: 1 };
     }
     throw err;

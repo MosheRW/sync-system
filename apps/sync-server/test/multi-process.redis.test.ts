@@ -8,6 +8,7 @@ import { afterAll, afterEach, beforeAll, expect, it } from 'vitest';
 import { codesOf } from './helpers/groups.js';
 import { TEST_REDIS_URL, describeRedis, inspector, randomPrefix } from './helpers/redis.js';
 import { TestClient } from './helpers/test-client.js';
+import { childEnv } from './helpers/child-env.js';
 
 /** Test-only values, never real ones. */
 const API_KEY = 'multi-process-key-0123456789-0123456789-ab';
@@ -33,7 +34,7 @@ function startProcess(env: Record<string, string>): Promise<ChildProcess> {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, ['--import', 'tsx', 'src/index.ts'], {
       cwd: serverDir,
-      env: { ...process.env, ...env, NODE_OPTIONS: '--conditions=@sync-system/source' },
+      env: childEnv({ ...env, NODE_OPTIONS: '--conditions=@sync-system/source' }),
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     children.push(child);

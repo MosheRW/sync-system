@@ -166,6 +166,7 @@ function parseUrl(
  * Redis is turned on.
  */
 export function collectRedisSettings(env: EnvSource, errors: string[]): RedisSettings | undefined {
+  const before = errors.length;
   let keyPrefix = DEFAULT_REDIS_KEY_PREFIX;
   if (env.REDIS_KEY_PREFIX !== undefined) {
     if (REDIS_KEY_PREFIX_PATTERN.test(env.REDIS_KEY_PREFIX)) {
@@ -196,7 +197,8 @@ export function collectRedisSettings(env: EnvSource, errors: string[]): RedisSet
   }
   if (env.REDIS_URL === undefined) return undefined;
   const endpoint = parseUrl(env.REDIS_URL, env.NODE_ENV, errors);
-  if (endpoint === undefined) return undefined;
+  // Never settings built from a default after a problem (#36 security C1).
+  if (endpoint === undefined || errors.length > before) return undefined;
   return new RedisSettings(endpoint, keyPrefix, connectSeconds * 1000, commandMs);
 }
 
@@ -208,6 +210,6 @@ export function collectRedisSettings(env: EnvSource, errors: string[]): RedisSet
 export function parseRedisSettings(env: EnvSource): RedisSettings | undefined {
   const errors: string[] = [];
   const settings = collectRedisSettings(env, errors);
-  if (errors.length > 0) throw new ConfigError(errors.join('\n'));
+  if (errors.length > 0) throw new ConfigError(errors);
   return settings;
 }

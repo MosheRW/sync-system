@@ -27,6 +27,8 @@ FROM base AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
 # Files stay owned by root, so the node user cannot modify the app.
+# /out holds package.json next to dist/: the server reads its version from
+# /app/package.json at startup (/health) and refuses to start without it.
 COPY --from=build /out ./
 USER node
 EXPOSE 8080

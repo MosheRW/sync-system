@@ -10,7 +10,7 @@ import { ClusterNotifier } from './groups/cluster-notifier.js';
 import type { ServerEnv } from './config/env.js';
 import { ConfigError } from './config/config-error.js';
 import { MIN_TOKEN_SECRET_BYTES, type TokenSecrets } from './config/token-secret.js';
-import { handleHttpRequest } from './http/health.js';
+import { createHttpHandler } from './http/health.js';
 import {
   CLOSE_TIMEOUT_MS,
   ENDED_SWEEP_MS,
@@ -40,6 +40,7 @@ import { Heartbeat } from './ws/heartbeat.js';
 import { createUpgradeHandler } from './ws/upgrade.js';
 import { type Storage, type StorageStatus, memoryStorage } from './storage/storage.js';
 import { StorageStartError } from './storage/errors.js';
+import { readServerVersion } from './version.js';
 
 export interface SyncServerOptions {
   env: ServerEnv;
@@ -77,6 +78,11 @@ export interface SyncServerOptions {
   endedGroupsCap?: number;
   /** Groups waiting for a disconnect replay; defaults to MAX_CONNECTIONS. Tests lower it. */
   replayCap?: number;
+  /**
+   * The server version for `/health` (#36 AC33), from `readServerVersion()`.
+   * Read once here when omitted (tests).
+   */
+  version?: string;
 }
 
 export interface SyncServer {
@@ -92,9 +98,15 @@ export interface SyncServer {
   stats(): ConnectionStats;
   /**
    * Which storage serves groups and, for Redis, whether it is reachable
-   * (#35 AC27). Not exposed over HTTP in 9a.
+   * (#35 AC27). `/health` shows the kind only (#36 AC34).
    */
   storage(): StorageStatus;
+  /**
+   * Whether this instance can serve (#36 AC35, `GET /ready`): false from the
+   * start of `close()`, and while the Redis store is unreachable, which
+   * includes a fenced instance and an unhealthy pub/sub link. Synchronous.
+   */
+  ready(): boolean;
 }
 
 /** How long close() waits for clients to complete the close handshake. */
@@ -136,7 +148,9 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
   const scheduler = options.scheduler ?? realScheduler(options.now ?? Date.now);
   const now = (): number => scheduler.now();
 
-  const httpServer = createServer(handleHttpRequest);
+  const version = options.version ?? readServerVersion();
+  // The request handler is attached once the storage kind is known.
+  const httpServer = createServer();
   // Slowloris protection and a hard socket backstop above the WS cap (H1).
   httpServer.headersTimeout = HTTP_HEADERS_TIMEOUT_MS;
   httpServer.requestTimeout = HTTP_REQUEST_TIMEOUT_MS;
@@ -177,6 +191,17 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
       ...(options.store === undefined ? {} : { groups: options.store }),
       ...(options.endedGroupsCap === undefined ? {} : { endedGroupsCap: options.endedGroupsCap }),
     });
+  // Set by the first statement of close() (#36 Q22, security C7).
+  let closing = false;
+  const available = (): boolean => {
+    const status = storage.status();
+    return status.kind === 'memory' || status.state === 'connected';
+  };
+  const ready = (): boolean => !closing && available();
+  httpServer.on(
+    'request',
+    createHttpHandler({ version, storageKind: storage.status().kind, ready }),
+  );
   const appsByNamespace = new Map(registry.apps().map((app) => [app.namespace, app]));
   let sweepTimer: NodeJS.Timeout | undefined;
   // Read once, before any token is issued (#13 6.9 layer 2, RC18).
@@ -265,10 +290,7 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
       counter,
       env,
       logger,
-      available: () => {
-        const status = storage.status();
-        return status.kind === 'memory' || status.state === 'connected';
-      },
+      available,
       onConnection(ws) {
         const connection = new Connection(ws, {
           logger,
@@ -329,6 +351,7 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
     httpServer,
     stats: () => counter.snapshot(),
     storage: () => storage.status(),
+    ready,
     async listen(listenPort, host) {
       try {
         await storage.start((namespace, groupId, restart) =>
@@ -360,6 +383,8 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
       });
     },
     async close() {
+      // First: /ready answers 503 from here on (#36 Q22).
+      closing = true;
       heartbeat.stop();
       clearInterval(sweepTimer);
       groups.close();

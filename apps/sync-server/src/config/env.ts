@@ -1,7 +1,8 @@
 import { JOIN_METHODS, type JoinMethod } from '@sync-system/protocol';
 import { z } from 'zod';
 import { ConfigError } from './config-error.js';
-import { collectRedisSettings } from './redis.js';
+import type { ServerVariable } from './known-vars.js';
+import { type RedisSettings, collectRedisSettings } from './redis.js';
 import {
   ROSTER_SNAPSHOT_HEADROOM_BYTES,
   TOKENS_CHECK_MAX_FRAME_BYTES,
@@ -61,7 +62,8 @@ export type EnvSource = Readonly<Record<string, string | undefined>>;
 
 interface NumericVar {
   key: keyof ServerEnv;
-  name: string;
+  /** Typed by KNOWN_SERVER_VARIABLES, so a variable cannot be parsed without being known. */
+  name: ServerVariable;
   defaultValue: number;
   /** Lower bound; defaults to 1. */
   min?: number;
@@ -153,140 +155,233 @@ const positiveIntegerText = z
 
 const logLevelSchema = z.enum(LOG_LEVELS);
 
+/** The env values an apps file is checked against. */
+export type AppCeilings = Pick<
+  ServerEnv,
+  | 'maxGroupSizeCeiling'
+  | 'maxLeaderUpdateRateCeiling'
+  | 'maxMessageSizeCeiling'
+  | 'maxAppConnectionsCeiling'
+  | 'maxSessionMinutesCeiling'
+  | 'inactivityLimitMinutesCeiling'
+  | 'qrTicketSecondsCeiling'
+  | 'approvalTimeoutSecondsCeiling'
+  | 'disconnectGraceSecondsCeiling'
+  | 'keepAliveCountdownSecondsCeiling'
+  | 'joinMethodsAllowed'
+>;
+
 /**
- * Parses and validates the server's env variables. Unset means the default.
- * Every problem is collected and reported together in one ConfigError, which
- * names the variables involved. Raw values are never echoed.
+ * The ceilings as far as they are valid: a ceiling (or JOIN_METHODS_ALLOWED)
+ * that failed its own check is `undefined`, never a default, so the apps file
+ * skips only the comparisons that need it (#36 Gate 2 Q-4).
  */
-export function parseEnv(env: EnvSource): ServerEnv {
-  const errors: string[] = [];
-  const numbers: Partial<Record<keyof ServerEnv, number>> = {};
+export type PartialAppCeilings = {
+  readonly [K in keyof AppCeilings]: AppCeilings[K] | undefined;
+};
+
+export interface CollectedEnv {
+  /** The whole env, or undefined when any env problem was found (security C1). */
+  env: ServerEnv | undefined;
+  ceilings: PartialAppCeilings;
+  /** SYNC_CONFIG_PATH (or its default), or undefined when it is invalid. */
+  configPath: string | undefined;
+  /** REDIS_* settings; undefined when unset or when any env problem was found. Never logged. */
+  redis: RedisSettings | undefined;
+}
+
+type Numbers = Partial<Record<keyof ServerEnv, number>>;
+
+/**
+ * Cross-field rules. Each runs only when every number it compares is valid,
+ * so a rule never reports against a value that is itself wrong. Messages
+ * print validated integers only (#36 Gate 2 Q-3).
+ */
+function crossFieldProblems(n: Numbers, problems: string[]): void {
+  const rule = (
+    values: ReadonlyArray<number | undefined>,
+    ok: () => boolean,
+    message: () => string,
+  ) => {
+    if (values.every((value) => value !== undefined) && !ok()) problems.push(message());
+  };
+  rule(
+    [n.maxAppConnectionsCeiling, n.maxConnections],
+    () => n.maxAppConnectionsCeiling! <= n.maxConnections!,
+    () =>
+      `MAX_APP_CONNECTIONS_CEILING (${n.maxAppConnectionsCeiling}) must be <= MAX_CONNECTIONS (${n.maxConnections})`,
+  );
+  rule(
+    [n.maxPendingHandshakes, n.maxConnections],
+    () => n.maxPendingHandshakes! <= n.maxConnections!,
+    () =>
+      `MAX_PENDING_HANDSHAKES (${n.maxPendingHandshakes}) must be <= MAX_CONNECTIONS (${n.maxConnections})`,
+  );
+  rule(
+    [n.maxInboundMessagesPerSecond, n.maxLeaderUpdateRateCeiling],
+    () => n.maxInboundMessagesPerSecond! > n.maxLeaderUpdateRateCeiling!,
+    () =>
+      `MAX_INBOUND_MESSAGES_PER_SECOND (${n.maxInboundMessagesPerSecond}) must be > MAX_LEADER_UPDATE_RATE_CEILING (${n.maxLeaderUpdateRateCeiling})`,
+  );
+  rule(
+    [n.maxInboundBurst, n.maxInboundMessagesPerSecond],
+    () => n.maxInboundBurst! >= n.maxInboundMessagesPerSecond!,
+    () =>
+      `MAX_INBOUND_BURST (${n.maxInboundBurst}) must be >= MAX_INBOUND_MESSAGES_PER_SECOND (${n.maxInboundMessagesPerSecond})`,
+  );
+  rule(
+    [n.maxBufferedBytes, n.maxMessageSizeCeiling],
+    () => n.maxBufferedBytes! >= 4 * n.maxMessageSizeCeiling!,
+    () =>
+      `MAX_BUFFERED_BYTES (${n.maxBufferedBytes}) must be >= 4 * MAX_MESSAGE_SIZE_CEILING (${4 * n.maxMessageSizeCeiling!})`,
+  );
+  // A tokens.result with the most re-signed tokens (secret rotation) must fit
+  // in an empty outbound buffer, or sending it terminates the socket (#5).
+  rule(
+    [n.maxBufferedBytes],
+    () => n.maxBufferedBytes! >= TOKENS_CHECK_MAX_FRAME_BYTES,
+    () =>
+      `MAX_BUFFERED_BYTES (${n.maxBufferedBytes}) must be >= the largest tokens.result frame (${TOKENS_CHECK_MAX_FRAME_BYTES})`,
+  );
+  // A roster snapshot of the largest group, with the frames right behind
+  // it, must fit an empty outbound buffer (#13 5.5).
+  const rosterBytes = () =>
+    rosterSnapshotMaxBytes(n.maxGroupSizeCeiling!) + ROSTER_SNAPSHOT_HEADROOM_BYTES;
+  rule(
+    [n.maxBufferedBytes, n.maxGroupSizeCeiling],
+    () => n.maxBufferedBytes! >= rosterBytes(),
+    () =>
+      `MAX_BUFFERED_BYTES (${n.maxBufferedBytes}) must be >= the largest roster snapshot plus headroom (${rosterBytes()}) for MAX_GROUP_SIZE_CEILING (${n.maxGroupSizeCeiling})`,
+  );
+  rule(
+    [n.tokenRefreshMinSeconds, n.tokenRefreshMaxSeconds],
+    () => n.tokenRefreshMinSeconds! <= n.tokenRefreshMaxSeconds!,
+    () =>
+      `TOKEN_REFRESH_MIN_SECONDS (${n.tokenRefreshMinSeconds}) must be <= TOKEN_REFRESH_MAX_SECONDS (${n.tokenRefreshMaxSeconds})`,
+  );
+}
+
+/**
+ * Checks every server env variable (REDIS_* included), pushing one problem
+ * per failed rule to `problems`. Unset means the default. Problems name the
+ * variables, never a raw value. A value that failed is `undefined` in the
+ * result, never a default (security C1).
+ */
+export function collectEnv(env: EnvSource, problems: string[]): CollectedEnv {
+  const before = problems.length;
+  const n: Numbers = {};
 
   for (const variable of NUMERIC_VARS) {
     const raw = env[variable.name];
     if (raw === undefined) {
-      numbers[variable.key] = variable.defaultValue;
+      n[variable.key] = variable.defaultValue;
       continue;
     }
     const parsed = positiveIntegerText.safeParse(raw);
     if (!parsed.success) {
-      errors.push(`${variable.name} must be a positive integer`);
+      problems.push(`${variable.name} must be a positive integer`);
       continue;
     }
     const min = variable.min ?? 1;
     const max = variable.max ?? Number.MAX_SAFE_INTEGER;
     if (parsed.data < min || parsed.data > max) {
-      errors.push(`${variable.name} must be between ${min} and ${max}`);
+      problems.push(`${variable.name} must be between ${min} and ${max}`);
       continue;
     }
-    numbers[variable.key] = parsed.data;
+    n[variable.key] = parsed.data;
   }
 
-  let logLevel: LogLevel = 'info';
+  let logLevel: LogLevel | undefined = 'info';
   if (env.LOG_LEVEL !== undefined) {
     const parsed = logLevelSchema.safeParse(env.LOG_LEVEL);
-    if (parsed.success) {
-      logLevel = parsed.data;
-    } else {
-      errors.push(`LOG_LEVEL must be one of ${LOG_LEVELS.join(', ')}`);
-    }
+    logLevel = parsed.success ? parsed.data : undefined;
+    if (!parsed.success) problems.push(`LOG_LEVEL must be one of ${LOG_LEVELS.join(', ')}`);
   }
 
   const host = env.HOST ?? '0.0.0.0';
-  if (host.trim() === '') errors.push('HOST must not be empty');
+  if (host.trim() === '') problems.push('HOST must not be empty');
 
-  let joinMethodsAllowed: readonly JoinMethod[] = JOIN_METHODS;
+  let joinMethodsAllowed: readonly JoinMethod[] | undefined = JOIN_METHODS;
   if (env.JOIN_METHODS_ALLOWED !== undefined) {
-    const parsed = parseJoinMethodsAllowed(env.JOIN_METHODS_ALLOWED);
-    if (parsed === undefined) {
-      // The value is never echoed.
-      errors.push(JOIN_METHODS_ERROR);
-    } else {
-      joinMethodsAllowed = parsed;
-    }
+    // The value is never echoed.
+    joinMethodsAllowed = parseJoinMethodsAllowed(env.JOIN_METHODS_ALLOWED);
+    if (joinMethodsAllowed === undefined) problems.push(JOIN_METHODS_ERROR);
   }
 
-  const configPath = env.SYNC_CONFIG_PATH ?? './config/apps.json';
-  if (configPath.trim() === '') errors.push('SYNC_CONFIG_PATH must not be empty');
-
-  // REDIS_* problems are reported with the rest (#35 AC3). The settings
-  // themselves are built by parseRedisSettings and never kept in ServerEnv.
-  collectRedisSettings(env, errors);
-
-  if (errors.length === 0) {
-    const n = numbers as Record<keyof ServerEnv, number>;
-    const rule = (ok: boolean, message: string) => {
-      if (!ok) errors.push(message);
-    };
-    rule(
-      n.maxAppConnectionsCeiling <= n.maxConnections,
-      `MAX_APP_CONNECTIONS_CEILING (${n.maxAppConnectionsCeiling}) must be <= MAX_CONNECTIONS (${n.maxConnections})`,
-    );
-    rule(
-      n.maxPendingHandshakes <= n.maxConnections,
-      `MAX_PENDING_HANDSHAKES (${n.maxPendingHandshakes}) must be <= MAX_CONNECTIONS (${n.maxConnections})`,
-    );
-    rule(
-      n.maxInboundMessagesPerSecond > n.maxLeaderUpdateRateCeiling,
-      `MAX_INBOUND_MESSAGES_PER_SECOND (${n.maxInboundMessagesPerSecond}) must be > MAX_LEADER_UPDATE_RATE_CEILING (${n.maxLeaderUpdateRateCeiling})`,
-    );
-    rule(
-      n.maxInboundBurst >= n.maxInboundMessagesPerSecond,
-      `MAX_INBOUND_BURST (${n.maxInboundBurst}) must be >= MAX_INBOUND_MESSAGES_PER_SECOND (${n.maxInboundMessagesPerSecond})`,
-    );
-    rule(
-      n.maxBufferedBytes >= 4 * n.maxMessageSizeCeiling,
-      `MAX_BUFFERED_BYTES (${n.maxBufferedBytes}) must be >= 4 * MAX_MESSAGE_SIZE_CEILING (${4 * n.maxMessageSizeCeiling})`,
-    );
-    // A tokens.result with the most re-signed tokens (secret rotation) must fit
-    // in an empty outbound buffer, or sending it terminates the socket (#5).
-    rule(
-      n.maxBufferedBytes >= TOKENS_CHECK_MAX_FRAME_BYTES,
-      `MAX_BUFFERED_BYTES (${n.maxBufferedBytes}) must be >= the largest tokens.result frame (${TOKENS_CHECK_MAX_FRAME_BYTES})`,
-    );
-    // A roster snapshot of the largest group, with the frames right behind
-    // it, must fit an empty outbound buffer (#13 5.5).
-    const rosterBytes =
-      rosterSnapshotMaxBytes(n.maxGroupSizeCeiling) + ROSTER_SNAPSHOT_HEADROOM_BYTES;
-    rule(
-      n.maxBufferedBytes >= rosterBytes,
-      `MAX_BUFFERED_BYTES (${n.maxBufferedBytes}) must be >= the largest roster snapshot plus headroom (${rosterBytes}) for MAX_GROUP_SIZE_CEILING (${n.maxGroupSizeCeiling})`,
-    );
-    rule(
-      n.tokenRefreshMinSeconds <= n.tokenRefreshMaxSeconds,
-      `TOKEN_REFRESH_MIN_SECONDS (${n.tokenRefreshMinSeconds}) must be <= TOKEN_REFRESH_MAX_SECONDS (${n.tokenRefreshMaxSeconds})`,
-    );
+  let configPath: string | undefined = env.SYNC_CONFIG_PATH ?? './config/apps.json';
+  if (configPath.trim() === '') {
+    problems.push('SYNC_CONFIG_PATH must not be empty');
+    configPath = undefined;
   }
 
-  if (errors.length > 0) {
-    throw new ConfigError(errors.join('\n'));
-  }
+  // REDIS_* problems are reported with the rest (#35 AC3). The settings are
+  // never kept in ServerEnv.
+  const redis = collectRedisSettings(env, problems);
 
-  const n = numbers as Record<keyof ServerEnv, number>;
-  return {
-    configPath,
-    port: n.port,
-    host,
-    logLevel,
-    nodeEnv: env.NODE_ENV,
+  crossFieldProblems(n, problems);
+
+  const ceilings: PartialAppCeilings = {
     maxGroupSizeCeiling: n.maxGroupSizeCeiling,
     maxLeaderUpdateRateCeiling: n.maxLeaderUpdateRateCeiling,
     maxMessageSizeCeiling: n.maxMessageSizeCeiling,
     maxAppConnectionsCeiling: n.maxAppConnectionsCeiling,
-    maxConnections: n.maxConnections,
-    maxPendingHandshakes: n.maxPendingHandshakes,
-    maxInboundMessagesPerSecond: n.maxInboundMessagesPerSecond,
-    maxInboundBurst: n.maxInboundBurst,
-    maxBufferedBytes: n.maxBufferedBytes,
     maxSessionMinutesCeiling: n.maxSessionMinutesCeiling,
     inactivityLimitMinutesCeiling: n.inactivityLimitMinutesCeiling,
-    tokenRefreshActivities: n.tokenRefreshActivities,
-    tokenRefreshMinSeconds: n.tokenRefreshMinSeconds,
-    tokenRefreshMaxSeconds: n.tokenRefreshMaxSeconds,
-    joinMethodsAllowed: Object.freeze([...joinMethodsAllowed]),
     qrTicketSecondsCeiling: n.qrTicketSecondsCeiling,
     approvalTimeoutSecondsCeiling: n.approvalTimeoutSecondsCeiling,
     disconnectGraceSecondsCeiling: n.disconnectGraceSecondsCeiling,
     keepAliveCountdownSecondsCeiling: n.keepAliveCountdownSecondsCeiling,
+    joinMethodsAllowed:
+      joinMethodsAllowed === undefined ? undefined : Object.freeze([...joinMethodsAllowed]),
   };
+
+  if (
+    problems.length > before ||
+    logLevel === undefined ||
+    configPath === undefined ||
+    ceilings.joinMethodsAllowed === undefined
+  ) {
+    return { env: undefined, ceilings, configPath, redis: undefined };
+  }
+
+  const v = n as Record<keyof ServerEnv, number>;
+  const serverEnv: ServerEnv = {
+    configPath,
+    port: v.port,
+    host,
+    logLevel,
+    nodeEnv: env.NODE_ENV,
+    maxGroupSizeCeiling: v.maxGroupSizeCeiling,
+    maxLeaderUpdateRateCeiling: v.maxLeaderUpdateRateCeiling,
+    maxMessageSizeCeiling: v.maxMessageSizeCeiling,
+    maxAppConnectionsCeiling: v.maxAppConnectionsCeiling,
+    maxConnections: v.maxConnections,
+    maxPendingHandshakes: v.maxPendingHandshakes,
+    maxInboundMessagesPerSecond: v.maxInboundMessagesPerSecond,
+    maxInboundBurst: v.maxInboundBurst,
+    maxBufferedBytes: v.maxBufferedBytes,
+    maxSessionMinutesCeiling: v.maxSessionMinutesCeiling,
+    inactivityLimitMinutesCeiling: v.inactivityLimitMinutesCeiling,
+    tokenRefreshActivities: v.tokenRefreshActivities,
+    tokenRefreshMinSeconds: v.tokenRefreshMinSeconds,
+    tokenRefreshMaxSeconds: v.tokenRefreshMaxSeconds,
+    joinMethodsAllowed: ceilings.joinMethodsAllowed,
+    qrTicketSecondsCeiling: v.qrTicketSecondsCeiling,
+    approvalTimeoutSecondsCeiling: v.approvalTimeoutSecondsCeiling,
+    disconnectGraceSecondsCeiling: v.disconnectGraceSecondsCeiling,
+    keepAliveCountdownSecondsCeiling: v.keepAliveCountdownSecondsCeiling,
+  };
+  return { env: serverEnv, ceilings, configPath, redis };
+}
+
+/**
+ * Parses and validates the server's env variables. Every problem (REDIS_*
+ * included) is reported together in one ConfigError, which names the
+ * variables involved. Raw values are never echoed.
+ */
+export function parseEnv(env: EnvSource): ServerEnv {
+  const problems: string[] = [];
+  const collected = collectEnv(env, problems);
+  if (problems.length > 0 || collected.env === undefined) throw new ConfigError(problems);
+  return collected.env;
 }
