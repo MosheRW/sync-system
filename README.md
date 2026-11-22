@@ -717,9 +717,12 @@ Durations go on the wire as remaining milliseconds (`graceMs`, `countdownMs`,
 - **Escalation:** a leader that got the lead through a missed keep-alive and
   misses its own ends the group with `inactivity` (no second handoff), unless
   it acted once in between.
-- **Take-back:** the most recent displaced leader rejoins as a member with
-  its old token (`takeback.offered`) and may send `leader.takeBack` to swap
-  back (3 per group per minute). Leaving or being removed clears the offer.
+- **Take-back:** the leader displaced by the last handoff (disconnect or
+  inactivity) rejoins as a member with its old token (`takeback.offered`) and
+  may send `leader.takeBack` to swap back (3 per group per minute). A
+  take-back cannot be taken back: the leader it replaced gets
+  `takeBackAvailable: false` and `NOT_ALLOWED`. Leaving or being removed
+  clears the offer.
 - **Lock:** `group.lock` / `group.unlock` stop all new joining by every method
   and approvals with one `GROUP_LOCKED` answer; admitted members still
   rejoin by token, and pending requests wait.
@@ -896,8 +899,9 @@ group).
   proxy logs short-lived.
 - **Tokens are bearer credentials.** Whoever holds the current leader's token
   leads: resuming with it replaces the leader's connection. A displaced
-  leader's token only rejoins as a member; while it is the most recent
-  displaced leader (not removed, not left) it may take the lead back. After a
+  leader's token only rejoins as a member; while it is the leader displaced
+  by the last handoff (no take-back since, not removed, not left) it may take
+  the lead back. After a
   restart, a leader token still inside its window (about 25 minutes by
   default) can recreate the group, and a later leader token of the same group
   supersedes it (see "Recovery and tokens"). `wss://` keeps tokens off the

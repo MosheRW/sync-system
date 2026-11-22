@@ -128,10 +128,10 @@ export class LeaderControls {
 
   /**
    * leader.takeBack (#13 AC24, AC25, 6.6, RC2): only the session that owns
-   * the most recent displaced leader may take back; anyone else gets
+   * the leader displaced by the last handoff may take back; anyone else gets
    * NOT_ALLOWED with no state change and no budget spent. Then the per-group
    * limiter, then the swap (term from nextTerm, escalated false, the slot
-   * now holds the leader it replaced).
+   * cleared: only a later handoff fills it again, #32).
    */
   takeBack(session: Session, _message: LeaderTakeBackMessage): Promise<ServerMessage> {
     return this.host.asMember(session, async (record, membership) => {

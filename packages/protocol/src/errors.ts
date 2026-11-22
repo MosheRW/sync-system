@@ -93,7 +93,7 @@ export const ErrorCode = {
   /**
    * The participant may not be the target of this action: the leader
    * itself, an offline participant for vice.set, or a take-back by anyone
-   * but the displaced leader (#13 5.3).
+   * but the leader displaced by the last handoff (#13 5.3, #32).
    */
   NOT_ALLOWED: 'NOT_ALLOWED',
   /**

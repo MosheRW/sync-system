@@ -169,7 +169,7 @@ export function useLeadershipFlow(options: LeadershipFlowOptions): LeadershipFlo
     dismissNowLeading,
     // Server-driven offer, with the reader's own suppression only (R17).
     // Q-A2: no card after a `take_back` loss, so the lead doesn't pass back
-    // and forth; the server still allows it until #32 is fixed (M1).
+    // and forth; the server refuses that take-back too (#32).
     takeBackCard: isMember && leadership.takeBackAvailable && !declined && lastLoss !== 'take_back',
     declineTakeBack,
     takeBackRefused,

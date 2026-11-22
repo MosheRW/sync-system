@@ -256,8 +256,9 @@ export interface KeepAliveAckMessage {
 }
 
 /**
- * The most recent displaced leader takes the lead back (#13 AC24, Q2.4).
- * Reply: `leader.granted` with reason `take_back`.
+ * The leader displaced by the last handoff takes the lead back (#13 AC24,
+ * Q2.4). Anyone else, including the leader a take-back replaced, gets
+ * `NOT_ALLOWED` (#32). Reply: `leader.granted` with reason `take_back`.
  */
 export interface LeaderTakeBackMessage {
   type: 'leader.takeBack';
@@ -723,7 +724,8 @@ export interface LeaderGrantedMessage {
 /**
  * To the displaced leader, if attached: it leads no more (#13 AC23). A member
  * token replaces its leader token; `takeBackAvailable` says whether it may
- * send `leader.takeBack`.
+ * send `leader.takeBack`: `true` after a handoff, `false` after a `take_back`
+ * or `superseded` loss (#32).
  */
 export interface LeaderLostMessage {
   type: 'leader.lost';

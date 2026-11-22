@@ -521,7 +521,7 @@ Everything here follows the server's roles; the reader only shows them (#25).
   that stays until dismissed and keeps reading as a member, not following if
   they were previewing. After a handoff the original leader is offered Take
   the lead; the reader doesn't offer it after losing the lead to a take-back
-  (the server still allows it until #32). The offer goes away on any later
+  (the server refuses that take-back too). The offer goes away on any later
   leader change. Members see a short notice when the leader changes, never a
   name.
 - **Pasted QR link.** A `#t=` link pasted into an open tab is removed from the
