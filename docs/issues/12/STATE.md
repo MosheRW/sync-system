@@ -21,6 +21,8 @@
 - security plan round 2: opus (rule) → PASS (H1, M3 closed; new advisories M4 app-wide flood DoS while it runs, L6-L9; required controls R1-R14 in security.md R2.4)
 - architect plan amendment (revision 2): opus (rule: plan revision touching config/security) → DONE (Gate 2 decisions recorded; four MAX_ env variables with startup validation; R13/R14 adopted; new config chunk, 6 chunks)
 - security plan round 3 (delta, env config): opus (rule) → PASS (H1 bound holds for every valid config; transition bound < cap confirmed; advisories L10 cap mismatch across instances, L11 large burst vs reset margin, L12 tiny refill formatting; R15 added)
+- engineer implement: opus (rule: architect Implementer model opus, security-sensitive) → DONE
+- security code round 1: opus (rule) → PASS (0 critical/high; low A1 budget-key TTL when burst > cap/4, A2 unbatched CLAIM_DUE walk)
 - qa validation round 1: opus (NEXT_MODEL from engineer: security-sensitive, plan deviations) → PASS
 ## QA verdict
 - Round 1: PASS (2026-11-22, head 05ea216). Checks run locally in Docker (node:24 + redis:7.2.17-alpine, private network, repo with .git copied in): lint, typecheck, test (all 5 packages, Redis suites included), build, audit all pass; only failure is the pre-existing repo-hygiene "CI workflow ... runs on push and pull_request", which fails identically on main 085700a. CI: no checks (Actions billing-blocked). AC 8/8 met. All six recorded deviations judged acceptable. Advisories A1-A4 (forgetGroup regression test, README wording, unbounded CLAIM_DUE range, #32 commits on this branch), none blocking. All 19 commits signed.
