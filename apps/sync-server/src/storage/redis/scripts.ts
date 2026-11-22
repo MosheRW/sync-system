@@ -436,3 +436,94 @@ if ARGV[1] ~= '' then hw = redis.call('HGET', KEYS[4], ARGV[1]) end
 table.insert(out, hw)
 return out
 `);
+
+/**
+ * Live groups of one app and its create budget (#12 architecture 3.1, R5).
+ * KEYS: the app's live set (`appLive`), its bucket (`appCreateBudget`).
+ * ARGV: mode (`reserve` | `register`), member (a checked group ID),
+ * expiresAt (ms, instance clock: the score), and for `reserve` cap, burst
+ * and refill per minute. `now` is Redis TIME (L7). Steps: prune -> held
+ * member (no charge) -> `register` -> effective r/b/u and refill -> rate
+ * refusal (no write) -> cap refusal (no charge) -> charge + ZADD. Every
+ * number written to a command is an integer string (`%.0f`, L8); float
+ * fields are stored with `%.17g`. Returns `{'ok', fresh}` (1 when the
+ * member was added, 0 when it was held), `{'rate', ms}` or `{'cap'}`; `ms` is an integer (ceil, clamped to 1e13).
+ */
+export const RESERVE_LIVE = new LuaScript(
+  `
+local set, bucket = KEYS[1], KEYS[2]
+local mode, member = ARGV[1], ARGV[2]
+if mode ~= 'reserve' and mode ~= 'register' then return redis.error_reply('ERR live: mode') end
+local expiresAt = tonumber(ARGV[3])
+if expiresAt == nil or expiresAt ~= expiresAt or expiresAt == math.huge or expiresAt == -math.huge then
+  return redis.error_reply('ERR live: expiresAt')
+end
+local cap, burst, refill
+if mode == 'reserve' then
+  cap, burst, refill = tonumber(ARGV[4]), tonumber(ARGV[5]), tonumber(ARGV[6])
+  if cap == nil or cap < 1 or cap ~= math.floor(cap) or cap == math.huge then
+    return redis.error_reply('ERR live: cap')
+  end
+  if burst == nil or burst < 1 or burst ~= math.floor(burst) or burst == math.huge then
+    return redis.error_reply('ERR live: burst')
+  end
+  if refill == nil or not (refill > 0) or refill == math.huge then
+    return redis.error_reply('ERR live: refill')
+  end
+end
+` +
+    REDIS_NOW +
+    `
+local MAXT = 1e13
+local function int(x) return string.format('%.0f', x) end
+local function num(x) return string.format('%.17g', x) end
+local function extend_set()
+  local target = math.ceil(math.max(math.min(expiresAt, now + MAXT), now + 1000))
+  local current = redis.call('PEXPIRETIME', set)
+  if current == -1 or (current >= 0 and target > current) then
+    redis.call('PEXPIREAT', set, int(target))
+  end
+end
+redis.call('ZREMRANGEBYSCORE', set, '-inf', '(' .. int(now))
+local held = redis.call('ZSCORE', set, member)
+if held then
+  if expiresAt > tonumber(held) then redis.call('ZADD', set, ARGV[3], member) end
+  extend_set()
+  return {'ok', 0}
+end
+if mode == 'register' then
+  redis.call('ZADD', set, ARGV[3], member)
+  extend_set()
+  return {'ok', 1}
+end
+local f = redis.call('HMGET', bucket, 't', 'a', 'r', 'b', 'u')
+local t, a, r, b, u = tonumber(f[1]), tonumber(f[2]), tonumber(f[3]), tonumber(f[4]), tonumber(f[5])
+local tokens, at
+if t == nil or a == nil or r == nil or b == nil or u == nil or not (r > 0) or not (b >= 1) then
+  r, b, u = refill, burst, expiresAt
+  tokens, at = burst, now
+else
+  if now < u then
+    r = math.min(r, refill)
+    b = math.min(b, burst)
+    u = math.max(u, expiresAt)
+  else
+    r, b, u = refill, burst, expiresAt
+  end
+  tokens = math.min(b, t + math.max(0, now - a) * r / 60000)
+  at = a
+end
+if tokens < 1 then
+  return {'rate', math.min(math.ceil((1 - tokens) * 60000 / r), MAXT)}
+end
+if redis.call('ZCARD', set) >= cap then return {'cap'} end
+tokens = tokens - 1
+at = math.max(at, now)
+redis.call('HSET', bucket, 't', num(tokens), 'a', num(at), 'r', num(r), 'b', num(b), 'u', num(u))
+local ttl = math.min(math.ceil(math.max((b - tokens) * 60000 / r, u - now) + 1000), MAXT)
+redis.call('PEXPIRE', bucket, int(ttl))
+redis.call('ZADD', set, ARGV[3], member)
+extend_set()
+return {'ok', 1}
+`,
+);

@@ -29,6 +29,8 @@ describe('RedisKeys (#35 security C6)', () => {
     expect(keys.live()).toBe('sync:v1:live');
     expect(keys.liveMember(NS, ID)).toBe(`${NS}:${ID}`);
     expect(keys.ended(REF)).toBe(`sync:v1:e:${REF}`);
+    expect(keys.appLive(NS)).toBe(`sync:v1:lg:${NS}`);
+    expect(keys.appCreateBudget(NS)).toBe(`sync:v1:lb:${NS}`);
   });
 
   it.each([...HOSTILE, 'Sync', '-sync', 'a'.repeat(33)])('rejects the prefix %j', (prefix) => {
@@ -44,6 +46,8 @@ describe('RedisKeys (#35 security C6)', () => {
       () => keys.timers(ns, ID),
       () => keys.dueMember(ns, ID, 'grace'),
       () => keys.liveMember(ns, ID),
+      () => keys.appLive(ns),
+      () => keys.appCreateBudget(ns),
     ]) {
       expect(build).toThrow(KeyPartError);
     }

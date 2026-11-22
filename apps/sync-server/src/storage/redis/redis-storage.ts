@@ -9,6 +9,7 @@ import { RedisDoorStates } from './doors.js';
 import { RedisEndedGroups } from './ended.js';
 import { RedisGroupStore } from './group-store.js';
 import { RedisKeys } from './keys.js';
+import { RedisLiveGroups } from './live-groups.js';
 import { RedisTimerBackend } from './timers.js';
 import { RedisEpoch } from './epoch.js';
 import { INSTANCE_TIMINGS, type InstanceTimings, RedisInstance } from './instance.js';
@@ -196,6 +197,7 @@ export function redisStorage(options: RedisStorageOptions): Storage {
     },
     groups: new RedisGroupStore(ctx, work),
     codes: new RedisCodeIndex(ctx, work),
+    liveGroups: new RedisLiveGroups(ctx, work),
     ended,
     doors: new RedisDoorStates(work),
     work,
