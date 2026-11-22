@@ -78,8 +78,9 @@ describe('the displaced leader comes back (#13 AC24, AC25, D4)', () => {
     expect(reply).toMatchObject({ type: 'group.joined', role: 'member' });
   });
 
-  it('takes the lead back: the roles swap and the slot moves to the replaced leader', async () => {
+  it('takes the lead back: the roles swap and the slot is left empty (#32)', async () => {
     const { scheduler, store, group, next, other } = await handedOff();
+    expect((await store.get('app-a', group.groupId))?.displacedLeaderId).toBe(group.leaderId);
     const { client: back } = await resumeWith(ts!, group.leaderToken);
     await back.next('takeback.offered');
     back.send({ type: 'leader.takeBack', reqId: 't' });
@@ -87,7 +88,7 @@ describe('the displaced leader comes back (#13 AC24, AC25, D4)', () => {
     expect(granted).toMatchObject({ reqId: 't', reason: 'take_back', groupId: group.groupId });
     expect(claimsOf(granted.token)).toMatchObject({ role: 'leader', pid: group.leaderId });
     const lost = await next.next('leader.lost');
-    expect(lost).toMatchObject({ reason: 'take_back', takeBackAvailable: true });
+    expect(lost).toMatchObject({ reason: 'take_back', takeBackAvailable: false });
     expect(claimsOf(lost.token)).toMatchObject({ role: 'member', pid: group.memberIds[0] });
     expect(await other.next('leader.changed')).toEqual({
       type: 'leader.changed',
@@ -96,7 +97,7 @@ describe('the displaced leader comes back (#13 AC24, AC25, D4)', () => {
     });
     expect(await store.get('app-a', group.groupId)).toMatchObject({
       leaderId: group.leaderId,
-      displacedLeaderId: group.memberIds[0],
+      displacedLeaderId: undefined,
       escalated: false,
     });
     // The new leader leads; the old one is refused at once.
@@ -126,21 +127,23 @@ describe('the displaced leader comes back (#13 AC24, AC25, D4)', () => {
     expect(await frameOf(back, 'leader.granted')).toMatchObject({ reason: 'take_back' });
   });
 
-  it('rate-limits a take-back ping-pong to 3 per group per minute', async () => {
-    const { group, next } = await handedOff();
+  it('refuses a take-back ping-pong: the interim leader cannot take back (#32 AC5)', async () => {
+    const { store, group, next } = await handedOff();
     const { client: back } = await resumeWith(ts!, group.leaderToken);
-    const pair = [back, next];
-    for (let i = 0; i < TAKE_BACKS_PER_GROUP_PER_MINUTE; i++) {
-      const client = pair[i % 2]!;
-      client.send({ type: 'leader.takeBack' });
-      expect(await frameOf(client, 'leader.granted')).toMatchObject({ reason: 'take_back' });
-    }
-    const client = pair[TAKE_BACKS_PER_GROUP_PER_MINUTE % 2]!;
-    client.send({ type: 'leader.takeBack' });
-    expect(await frameOf(client, 'error')).toMatchObject({
-      code: 'RATE_LIMITED',
-      message: 'Too many take-backs',
+    back.send({ type: 'leader.takeBack' });
+    expect(await frameOf(back, 'leader.granted')).toMatchObject({ reason: 'take_back' });
+    await next.next('leader.lost');
+    next.send({ type: 'leader.takeBack' });
+    expect(await frameOf(next, 'error')).toMatchObject({
+      code: 'NOT_ALLOWED',
+      message: 'Only the displaced leader can take back the lead',
     });
+    expect(await store.get('app-a', group.groupId)).toMatchObject({
+      leaderId: group.leaderId,
+      displacedLeaderId: undefined,
+    });
+    back.send({ type: 'position.update', position: 3 });
+    await back.next('position.ack');
   });
 
   it('a displaced leader that leaves loses the slot (L3)', async () => {

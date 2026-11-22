@@ -52,9 +52,10 @@ export interface GroupRecord {
   /** A keep-alive prompt is outstanding (#13 6.3). */
   keepAlivePending: boolean;
   /**
-   * The most recent displaced leader: the only one that may take back the
-   * lead (#13 Q2.4). Never the leader; cleared when it leaves, is removed
-   * or the group is recreated.
+   * The leader displaced by the last handoff: the only one that may take
+   * back the lead (#13 Q2.4). Set by a handoff only; a take-back leaves it
+   * empty (#32). Never the leader; cleared when it leaves, is removed or
+   * the group is recreated.
    */
   displacedLeaderId: string | undefined;
   /**

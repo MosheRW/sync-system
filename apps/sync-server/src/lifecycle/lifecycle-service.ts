@@ -335,7 +335,9 @@ export class LifecycleService {
   /**
    * Hands the lead to `successor` (#13 6.5, AC20, AC23, RC13), in one step
    * under the group lock: a new term from `nextTerm` with the recovery
-   * floor, the old leader displaced (the take-back slot), the escalation
+   * floor, the take-back slot set to the old leader for a handoff and
+   * cleared for a take-back (#32: a take-back cannot be taken back), the
+   * escalation
    * flag set only for an inactivity handoff, the vice cleared if it is the
    * successor, the pause and keep-alive cleared, and a fresh inactivity
    * period. The old leader leaves the leader slot if it is offline. Then
@@ -361,7 +363,7 @@ export class LifecycleService {
       (await this.host.store.patch(namespace, record.id, {
         term: nextTerm(record.term, now, record.recoveredAt ?? 0),
         leaderId: successor,
-        displacedLeaderId: old,
+        displacedLeaderId: reason === 'take_back' ? undefined : old,
         escalated: reason === 'handoff_inactivity',
         viceId: record.viceId === successor ? undefined : record.viceId,
         lastActivityAt: now,
