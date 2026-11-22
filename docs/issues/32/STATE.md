@@ -5,13 +5,15 @@
 - PR: #45
 - Plan approved by user: yes (2026-11-22, Q-1 accepted)
 - Security-sensitive: yes (hostile member re-seizing the lead; permissions)
-- Review rounds: 0
-- Last updated by: engineer
+- Review rounds: 1
+- Last updated by: qa
 ## Model log
 - pm grooming: sonnet (default) → DONE
 - architect plan: opus (default, NEXT_MODEL) → DONE
 - security plan: opus (rule) → PASS
 - engineer implement: opus (rule: security-sensitive; Implementer model: opus) → DONE
+## QA verdict
+- Round 1: PASS. Checks 7/7 run locally (Docker), AC 8/8 met, RC-1..RC-8 met, no unsigned commits. GitHub Actions billing-blocked.
 ## Open questions
 - none (Q-1 accepted at Gate 2: after a take-back the interim leader is a plain member and may be picked again as successor by the normal rule; the change to #13 AC25's first clause is accepted)
 - Gate 3 advisories from security.md: L1 (upgrade window, in the PR body), L2 (in-memory restart and old leader tokens, pre-existing, possible follow-up)
