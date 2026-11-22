@@ -256,38 +256,42 @@ compare in upper case, so `redis_url` is caught too. Never flagged:
 and `NODE_ENV` are not caught. Keep helper variables of your own (for example
 `REDIS_PASSWORD` used to build `REDIS_URL`) outside these prefixes.
 
-| Variable                               | Default              | Purpose                                                                  |
-| -------------------------------------- | -------------------- | ------------------------------------------------------------------------ |
-| `SYNC_CONFIG_PATH`                     | `./config/apps.json` | Apps registry file (relative to the working directory).                  |
-| `PORT`                                 | `8080`               | Listen port, 1-65535.                                                    |
-| `HOST`                                 | `0.0.0.0`            | Bind address.                                                            |
-| `LOG_LEVEL`                            | `info`               | `fatal`, `error`, `warn`, `info`, `debug`, `trace` or `silent`.          |
-| `NODE_ENV`                             | unset                | The public dev API key is refused unless this is `development`/`test`.   |
-| `TOKEN_SECRET`                         | none                 | Token signing secret; see [Token secret](#token-secret). Never logged.   |
-| `TOKEN_SECRET_PREVIOUS`                | unset                | Old secret, verify only, during a rotation.                              |
-| `MAX_GROUP_SIZE_CEILING`               | `100`                | Ceiling for `maxGroupSize`.                                              |
-| `MAX_LEADER_UPDATE_RATE_CEILING`       | `10`                 | Ceiling for `maxLeaderUpdatesPerSecond`.                                 |
-| `MAX_MESSAGE_SIZE_CEILING`             | `16384`              | Ceiling for `maxMessageBytes` (bytes).                                   |
-| `MAX_APP_CONNECTIONS_CEILING`          | `10000`              | Ceiling for `maxConnections`. Must be <= `MAX_CONNECTIONS`.              |
-| `MAX_CONNECTIONS`                      | `10000`              | Concurrent WebSockets, pending and authenticated. Over it: HTTP 503.     |
-| `MAX_PENDING_HANDSHAKES`               | `1000`               | Sockets that have not sent hello yet. Must be <= `MAX_CONNECTIONS`.      |
-| `MAX_INBOUND_MESSAGES_PER_SECOND`      | `20`                 | Per-connection message rate. Must be > `MAX_LEADER_UPDATE_RATE_CEILING`. |
-| `MAX_INBOUND_BURST`                    | `40`                 | Per-connection burst. Must be >= `MAX_INBOUND_MESSAGES_PER_SECOND`.      |
-| `MAX_BUFFERED_BYTES`                   | `262144`             | Outbound buffer per socket before drop. See the rule below.              |
-| `MAX_SESSION_MINUTES_CEILING`          | `480`                | Ceiling for `maxSessionMinutes`.                                         |
-| `INACTIVITY_LIMIT_MINUTES_CEILING`     | `60`                 | Ceiling for `inactivityLimitMinutes`.                                    |
-| `TOKEN_REFRESH_ACTIVITIES`             | `10`                 | Leader updates that allow a token refresh after the min interval.        |
-| `TOKEN_REFRESH_MIN_SECONDS`            | `60`                 | Min seconds between leader token refreshes. <= the max.                  |
-| `TOKEN_REFRESH_MAX_SECONDS`            | `300`                | Max seconds between refreshes (<= 3600); also the recovery slack.        |
-| `JOIN_METHODS_ALLOWED`                 | `A,B,C,D`            | Join methods any app may use: distinct `A`-`D`, comma-separated.         |
-| `QR_TICKET_SECONDS_CEILING`            | `3600`               | Ceiling for `qrTicketSeconds`; 30-86400.                                 |
-| `APPROVAL_TIMEOUT_SECONDS_CEILING`     | `600`                | Ceiling for `approvalTimeoutSeconds`; 15-3600.                           |
-| `DISCONNECT_GRACE_SECONDS_CEILING`     | `120`                | Ceiling for `disconnectGraceSeconds`; 1-3600.                            |
-| `KEEP_ALIVE_COUNTDOWN_SECONDS_CEILING` | `120`                | Ceiling for `keepAliveCountdownSeconds`; 1-3600.                         |
-| `REDIS_URL`                            | unset                | Redis storage, `redis://` or `rediss://`; unset: memory. Never logged.   |
-| `REDIS_KEY_PREFIX`                     | `sync`               | Key prefix, `[a-z0-9][a-z0-9_-]`, at most 32 characters.                 |
-| `REDIS_CONNECT_TIMEOUT_SECONDS`        | `10`                 | Bound for the startup connection and each reconnect attempt; 1-120.      |
-| `REDIS_COMMAND_TIMEOUT_MS`             | `2000`               | A Redis command not answered in time counts as unreachable; 100-30000.   |
+| Variable                                      | Default              | Purpose                                                                                                                                                 |
+| --------------------------------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SYNC_CONFIG_PATH`                            | `./config/apps.json` | Apps registry file (relative to the working directory).                                                                                                 |
+| `PORT`                                        | `8080`               | Listen port, 1-65535.                                                                                                                                   |
+| `HOST`                                        | `0.0.0.0`            | Bind address.                                                                                                                                           |
+| `LOG_LEVEL`                                   | `info`               | `fatal`, `error`, `warn`, `info`, `debug`, `trace` or `silent`.                                                                                         |
+| `NODE_ENV`                                    | unset                | The public dev API key is refused unless this is `development`/`test`.                                                                                  |
+| `TOKEN_SECRET`                                | none                 | Token signing secret; see [Token secret](#token-secret). Never logged.                                                                                  |
+| `TOKEN_SECRET_PREVIOUS`                       | unset                | Old secret, verify only, during a rotation.                                                                                                             |
+| `MAX_GROUP_SIZE_CEILING`                      | `100`                | Ceiling for `maxGroupSize`.                                                                                                                             |
+| `MAX_LEADER_UPDATE_RATE_CEILING`              | `10`                 | Ceiling for `maxLeaderUpdatesPerSecond`.                                                                                                                |
+| `MAX_MESSAGE_SIZE_CEILING`                    | `16384`              | Ceiling for `maxMessageBytes` (bytes).                                                                                                                  |
+| `MAX_APP_CONNECTIONS_CEILING`                 | `10000`              | Ceiling for `maxConnections`. Must be <= `MAX_CONNECTIONS`.                                                                                             |
+| `MAX_CONNECTIONS`                             | `10000`              | Concurrent WebSockets, pending and authenticated. Over it: HTTP 503.                                                                                    |
+| `MAX_PENDING_HANDSHAKES`                      | `1000`               | Sockets that have not sent hello yet. Must be <= `MAX_CONNECTIONS`.                                                                                     |
+| `MAX_INBOUND_MESSAGES_PER_SECOND`             | `20`                 | Per-connection message rate. Must be > `MAX_LEADER_UPDATE_RATE_CEILING`.                                                                                |
+| `MAX_INBOUND_BURST`                           | `40`                 | Per-connection burst. Must be >= `MAX_INBOUND_MESSAGES_PER_SECOND`.                                                                                     |
+| `MAX_BUFFERED_BYTES`                          | `262144`             | Outbound buffer per socket before drop. See the rule below.                                                                                             |
+| `MAX_SESSION_MINUTES_CEILING`                 | `480`                | Ceiling for `maxSessionMinutes`.                                                                                                                        |
+| `INACTIVITY_LIMIT_MINUTES_CEILING`            | `60`                 | Ceiling for `inactivityLimitMinutes`.                                                                                                                   |
+| `TOKEN_REFRESH_ACTIVITIES`                    | `10`                 | Leader updates that allow a token refresh after the min interval.                                                                                       |
+| `TOKEN_REFRESH_MIN_SECONDS`                   | `60`                 | Min seconds between leader token refreshes. <= the max.                                                                                                 |
+| `TOKEN_REFRESH_MAX_SECONDS`                   | `300`                | Max seconds between refreshes (<= 3600); also the recovery slack.                                                                                       |
+| `JOIN_METHODS_ALLOWED`                        | `A,B,C,D`            | Join methods any app may use: distinct `A`-`D`, comma-separated.                                                                                        |
+| `QR_TICKET_SECONDS_CEILING`                   | `3600`               | Ceiling for `qrTicketSeconds`; 30-86400.                                                                                                                |
+| `APPROVAL_TIMEOUT_SECONDS_CEILING`            | `600`                | Ceiling for `approvalTimeoutSeconds`; 15-3600.                                                                                                          |
+| `DISCONNECT_GRACE_SECONDS_CEILING`            | `120`                | Ceiling for `disconnectGraceSeconds`; 1-3600.                                                                                                           |
+| `KEEP_ALIVE_COUNTDOWN_SECONDS_CEILING`        | `120`                | Ceiling for `keepAliveCountdownSeconds`; 1-3600.                                                                                                        |
+| `MAX_GROUP_CREATES_PER_CONNECTION_PER_MINUTE` | `6`                  | `group.create` attempts per connection per minute; 1-600. Same value on every instance.                                                                 |
+| `MAX_GROUP_CREATE_BURST_PER_APP`              | `120`                | Creates an app may start at once (its global create budget). `MAX_LIVE_GROUPS_PER_APP` must be > 2 x this. Same value on every instance.                |
+| `MAX_GROUP_CREATES_PER_APP_PER_MINUTE`        | `120`                | Upper bound of an app's sustained create rate, which is derived from the cap, the burst and `maxSessionMinutes`; 1-60000. Same value on every instance. |
+| `MAX_LIVE_GROUPS_PER_APP`                     | `10000`              | Live groups per app, over all instances; 3-100000, > 2 x `MAX_GROUP_CREATE_BURST_PER_APP`. Same value on every instance.                                |
+| `REDIS_URL`                                   | unset                | Redis storage, `redis://` or `rediss://`; unset: memory. Never logged.                                                                                  |
+| `REDIS_KEY_PREFIX`                            | `sync`               | Key prefix, `[a-z0-9][a-z0-9_-]`, at most 32 characters.                                                                                                |
+| `REDIS_CONNECT_TIMEOUT_SECONDS`               | `10`                 | Bound for the startup connection and each reconnect attempt; 1-120.                                                                                     |
+| `REDIS_COMMAND_TIMEOUT_MS`                    | `2000`               | A Redis command not answered in time counts as unreachable; 100-30000.                                                                                  |
 
 `MAX_BUFFERED_BYTES` must be at least `4 x MAX_MESSAGE_SIZE_CEILING`, at least
 45056 (the largest `tokens.result`), and at least the largest roster snapshot

@@ -72,6 +72,15 @@ describe('unknown look-alike variables (#36 AC37a, ADR 0015)', () => {
     ]);
   });
 
+  it('flags a typo of a group creation limit with its suggestion (#12 R15)', () => {
+    expect(problemsOf({ MAX_GROUP_CREATE_BURST_PERAPP: '500' })).toEqual([
+      'MAX_GROUP_CREATE_BURST_PERAPP is not a sync server variable; did you mean MAX_GROUP_CREATE_BURST_PER_APP?',
+    ]);
+    expect(problemsOf({ MAX_LIVE_GROUP_PER_APP: '1' })).toEqual([
+      'MAX_LIVE_GROUP_PER_APP is not a sync server variable; did you mean MAX_LIVE_GROUPS_PER_APP?',
+    ]);
+  });
+
   it('reports the typo together with every other problem and exits 1', async () => {
     let stderr = '';
     const logs = new LogCapture();
@@ -153,7 +162,7 @@ describe('unknown look-alike variables (#36 AC37a, ADR 0015)', () => {
 
 describe('no false positives (#36 AC37a, AC41)', () => {
   it('never flags a known variable', () => {
-    expect(KNOWN_SERVER_VARIABLES).toHaveLength(30);
+    expect(KNOWN_SERVER_VARIABLES).toHaveLength(34);
     expect(
       problemsOf(Object.fromEntries(KNOWN_SERVER_VARIABLES.map((name) => [name, 'x']))),
     ).toEqual([]);

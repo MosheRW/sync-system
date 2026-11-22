@@ -153,6 +153,46 @@ export const JOIN_ATTEMPTS_PER_APP_PER_MINUTE = 600;
 export const JOIN_WINDOW_MS = 60_000;
 
 /**
+ * Default of `MAX_GROUP_CREATES_PER_CONNECTION_PER_MINUTE`: `group.create`
+ * attempts per connection per window, any outcome (#12 Q-1, Q-2).
+ */
+export const DEFAULT_GROUP_CREATES_PER_CONNECTION_PER_MINUTE = 6;
+
+/**
+ * Upper bound of `MAX_GROUP_CREATES_PER_CONNECTION_PER_MINUTE` (#12 Q-2.1):
+ * the sliding window keeps one timestamp per accepted attempt.
+ */
+export const MAX_GROUP_CREATES_PER_CONNECTION_PER_MINUTE_LIMIT = 600;
+
+/**
+ * Default of `MAX_GROUP_CREATE_BURST_PER_APP`: the size of the app's global
+ * create budget, creates admitted at once (#12 Q-1).
+ */
+export const DEFAULT_GROUP_CREATE_BURST_PER_APP = 120;
+
+/**
+ * Default of `MAX_GROUP_CREATES_PER_APP_PER_MINUTE`: the upper bound of the
+ * app's sustained create rate; the rate used is derived from the cap, the
+ * burst and the app's max session (#12 Q-1).
+ */
+export const DEFAULT_GROUP_CREATES_PER_APP_PER_MINUTE = 120;
+
+/** Upper bound of `MAX_GROUP_CREATES_PER_APP_PER_MINUTE` (1 per ms, #12 Q-2.1). */
+export const MAX_GROUP_CREATES_PER_APP_PER_MINUTE_LIMIT = 60_000;
+
+/** Default of `MAX_LIVE_GROUPS_PER_APP`: live groups per app, global (#12 Q-1). */
+export const DEFAULT_MAX_LIVE_GROUPS_PER_APP = 10_000;
+
+/** Smallest `MAX_LIVE_GROUPS_PER_APP`: the cross rule needs cap > 2 x burst >= 2 (#12 Q-2.1). */
+export const MIN_LIVE_GROUPS_PER_APP = 3;
+
+/**
+ * Largest `MAX_LIVE_GROUPS_PER_APP` (#12 Q-2.1): creates hold at most half
+ * the cap, so at most 5 % of the 10^6 group codes.
+ */
+export const MAX_LIVE_GROUPS_PER_APP_LIMIT = 100_000;
+
+/**
  * Wrong door codes per app per window, over all of the app's groups (#10
  * R1b, Gate 2 Q-E). Checked before the door code is compared and charged
  * only when it is wrong. Fixed, not an app setting.

@@ -4,6 +4,14 @@ import { ConfigError } from './config-error.js';
 import type { ServerVariable } from './known-vars.js';
 import { type RedisSettings, collectRedisSettings } from './redis.js';
 import {
+  DEFAULT_GROUP_CREATES_PER_APP_PER_MINUTE,
+  DEFAULT_GROUP_CREATES_PER_CONNECTION_PER_MINUTE,
+  DEFAULT_GROUP_CREATE_BURST_PER_APP,
+  DEFAULT_MAX_LIVE_GROUPS_PER_APP,
+  MAX_GROUP_CREATES_PER_APP_PER_MINUTE_LIMIT,
+  MAX_GROUP_CREATES_PER_CONNECTION_PER_MINUTE_LIMIT,
+  MAX_LIVE_GROUPS_PER_APP_LIMIT,
+  MIN_LIVE_GROUPS_PER_APP,
   ROSTER_SNAPSHOT_HEADROOM_BYTES,
   TOKENS_CHECK_MAX_FRAME_BYTES,
   rosterSnapshotMaxBytes,
@@ -56,6 +64,14 @@ export interface ServerEnv {
   disconnectGraceSecondsCeiling: number;
   /** Ceiling for app `keepAliveCountdownSeconds` (#13 AC1). */
   keepAliveCountdownSecondsCeiling: number;
+  /** `group.create` attempts per connection per minute (#12 Q-2). */
+  maxGroupCreatesPerConnectionPerMinute: number;
+  /** Size of an app's global create budget (#12 Q-2). */
+  maxGroupCreateBurstPerApp: number;
+  /** Upper bound of an app's derived sustained create rate, per minute (#12 Q-2). */
+  maxGroupCreatesPerAppPerMinute: number;
+  /** Live groups per app, global (#12 Q-2). */
+  maxLiveGroupsPerApp: number;
 }
 
 export type EnvSource = Readonly<Record<string, string | undefined>>;
@@ -127,6 +143,32 @@ const NUMERIC_VARS: readonly NumericVar[] = [
     name: 'KEEP_ALIVE_COUNTDOWN_SECONDS_CEILING',
     defaultValue: 120,
     max: 3600,
+  },
+  // #12 Q-2.1: group.create limits. Not app ceilings; the burst is bounded
+  // by the cross rule with the cap.
+  {
+    key: 'maxGroupCreatesPerConnectionPerMinute',
+    name: 'MAX_GROUP_CREATES_PER_CONNECTION_PER_MINUTE',
+    defaultValue: DEFAULT_GROUP_CREATES_PER_CONNECTION_PER_MINUTE,
+    max: MAX_GROUP_CREATES_PER_CONNECTION_PER_MINUTE_LIMIT,
+  },
+  {
+    key: 'maxGroupCreateBurstPerApp',
+    name: 'MAX_GROUP_CREATE_BURST_PER_APP',
+    defaultValue: DEFAULT_GROUP_CREATE_BURST_PER_APP,
+  },
+  {
+    key: 'maxGroupCreatesPerAppPerMinute',
+    name: 'MAX_GROUP_CREATES_PER_APP_PER_MINUTE',
+    defaultValue: DEFAULT_GROUP_CREATES_PER_APP_PER_MINUTE,
+    max: MAX_GROUP_CREATES_PER_APP_PER_MINUTE_LIMIT,
+  },
+  {
+    key: 'maxLiveGroupsPerApp',
+    name: 'MAX_LIVE_GROUPS_PER_APP',
+    defaultValue: DEFAULT_MAX_LIVE_GROUPS_PER_APP,
+    min: MIN_LIVE_GROUPS_PER_APP,
+    max: MAX_LIVE_GROUPS_PER_APP_LIMIT,
   },
 ];
 
@@ -259,6 +301,14 @@ function crossFieldProblems(n: Numbers, problems: string[]): void {
     () =>
       `TOKEN_REFRESH_MIN_SECONDS (${n.tokenRefreshMinSeconds}) must be <= TOKEN_REFRESH_MAX_SECONDS (${n.tokenRefreshMaxSeconds})`,
   );
+  // Keeps the derived sustained create rate (cap/2 - burst) / L above 0, so
+  // creates alone hold at most half the cap (#12 Q-2.2, H1).
+  rule(
+    [n.maxLiveGroupsPerApp, n.maxGroupCreateBurstPerApp],
+    () => n.maxLiveGroupsPerApp! > 2 * n.maxGroupCreateBurstPerApp!,
+    () =>
+      `MAX_LIVE_GROUPS_PER_APP (${n.maxLiveGroupsPerApp}) must be > 2 * MAX_GROUP_CREATE_BURST_PER_APP (${2 * n.maxGroupCreateBurstPerApp!})`,
+  );
 }
 
 /**
@@ -370,6 +420,10 @@ export function collectEnv(env: EnvSource, problems: string[]): CollectedEnv {
     approvalTimeoutSecondsCeiling: v.approvalTimeoutSecondsCeiling,
     disconnectGraceSecondsCeiling: v.disconnectGraceSecondsCeiling,
     keepAliveCountdownSecondsCeiling: v.keepAliveCountdownSecondsCeiling,
+    maxGroupCreatesPerConnectionPerMinute: v.maxGroupCreatesPerConnectionPerMinute,
+    maxGroupCreateBurstPerApp: v.maxGroupCreateBurstPerApp,
+    maxGroupCreatesPerAppPerMinute: v.maxGroupCreatesPerAppPerMinute,
+    maxLiveGroupsPerApp: v.maxLiveGroupsPerApp,
   };
   return { env: serverEnv, ceilings, configPath, redis };
 }
