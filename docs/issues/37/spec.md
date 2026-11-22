@@ -43,7 +43,7 @@ Decided at Gate 1 of #35 (Q15): #32, #12 and #21 are fixed as their own issues b
 | #12   | fix(server): limit group creation and live groups per app (follow-up to #10) | OPEN  |
 | #21   | fix(reader): enforce trusted types in the csp (follow-up to #19)            | OPEN  |
 
-These block 9c: they change behaviour the docs and the 1.0.0 changelog must describe (the take-back rule, new per-app limits and their env variables, the reader CSP). See Q-A. Not blockers: #9, #27, #28, #41, #42, #44 (Q15). #41 (join-attempt limits shared across instances) and #42 (just-started instance as successor) are known limits of 1.0.0, and the docs must state them if still open at release.
+These block 9c: they change behaviour the docs and the 1.0.0 changelog must describe (the take-back rule, new per-app limits and their env variables, the reader CSP). Decided at Gate 1 (Q-A): fix them first; 9c is paused until all three are merged. Not blockers: #9, #27, #28, #41, #42, #44 (Q15). #41 (join-attempt limits shared across instances) and #42 (just-started instance as successor) are known limits of 1.0.0, and the docs must state them if still open at release.
 
 ## User stories
 
@@ -73,19 +73,19 @@ Versioning and changelog
   - what counts as breaking for the protocol, the client API, the React API, and the server's config and env
   - how `PROTOCOL_VERSION` and `MIN_CLIENT_PROTOCOL_VERSION` move
   - which package versions work with which server
-- [ ] AC48. The first release is 1.0.0 for the three packages and the server, and ships protocol version 1 with minimum 1 (no bump, since nothing was released before; Q7). The changelog states this. The reader stays private, outside the version group (Q-C).
+- [ ] AC48. The first release is 1.0.0 for the three packages and the server, all sharing one version number (Q-F), and ships protocol version 1 with minimum 1 (no bump, since nothing was released before; Q7). The changelog states this. The reader stays private, outside the version group; the private server and reader packages are renamed `@mosherw/sync-system-server` and `@mosherw/sync-system-reader` (Q-C).
 - [ ] AC49. A changelog made with Changesets (Q6), with the protocol, client and React packages in one fixed version group. The first entry summarises v1 and includes notes for anyone who ran pre-release builds: the removal of join by group ID (#10), token format 2 (#13) and the `MAX_BUFFERED_BYTES` minimum. It also says that storage can now be Redis, that upgrading from the 9a PR 1 build means stopping every instance, and that unknown look-alike env variables now stop startup (#36).
 
 Packages, license and release
 
-- [ ] AC50. The protocol, client and React packages are published under the `@mosherw` npm scope (three packages: `@mosherw/sync-system-protocol`, `@mosherw/sync-system-client` and `@mosherw/sync-system-react`; Q16 decided 2026-11-12). They are no longer `private`, and carry the license, repository and public-access fields. Their published contents are only the build output, README, changelog and license (a check runs `pnpm pack` and lists the tarball contents). The workspace is renamed consistently (imports, workspace dependencies, the custom export condition, Dockerfiles, docs), and install, lint, typecheck, test and build still pass. Each published package has its own README (the protocol package gets one).
+- [ ] AC50. The protocol, client and React packages are published under the `@mosherw` npm scope (three packages: `@mosherw/sync-system-protocol`, `@mosherw/sync-system-client` and `@mosherw/sync-system-react`; Q16 decided 2026-11-12). They are no longer `private`, and carry the license, repository and public-access fields. Their published contents are only the build output, README, changelog and license (a check runs `pnpm pack` and lists the tarball contents). The workspace, including the private server and reader packages, is renamed consistently to the `@mosherw` scope (imports, workspace dependencies, the custom export condition, Dockerfiles, docs), and install, lint, typecheck, test and build still pass. Each published package has its own README (the protocol package gets one).
 - [ ] AC51. A smoke test installs the packed tarballs into a clean temporary project, then imports each package (ESM), type-checks against its types, and renders the React provider on the server (SSR safety, #15).
-- [ ] AC52. The server ships as a Docker image tagged with its semver, in the registry chosen at Gate 1 (Q17). The reader and the server stay `private` on npm. The image's `/health` `version` equals the tag.
+- [ ] AC52. The server ships as a Docker image tagged with its semver, in both registries (Q17): `ghcr.io/mosherw/sync-system-server` (canonical) and `docker.io/mosherw/sync-system-server` (mirror), with the same tags pushed to both. The docs list both. The reader and the server stay `private` on npm. The image's `/health` `version` equals the tag.
 - [ ] AC53. The license is GPL-3.0 with SPDX identifier `GPL-3.0-only` (Q3):
   - The full text is in a root `LICENSE` file and in each published package.
   - Every `package.json` has `"license": "GPL-3.0-only"`.
   - The docs state that the GPL also covers the client and React packages. An app that bundles them and ships that bundle (including browser bundles) is bound by the GPL's terms.
-- [ ] AC54. A release process document (for example `RELEASING.md`) gives the steps to release from a clean clone inside a `node:24` Docker container, without GitHub Actions: checks, version bump, changelog, tag, `pnpm publish`, image push, and GitHub release notes. A dry run of those steps (no publish, no push) succeeds, and QA runs it. The publish path is decided at Gate 1 (Q-D).
+- [ ] AC54. A release process document (for example `RELEASING.md`) gives the steps to release from a clean clone inside a `node:24` Docker container, without GitHub Actions: checks, version bump, changelog, tag, `pnpm publish`, image push to both registries (with both credentials passed at run time only, never stored), and GitHub release notes. A dry run of those steps (no publish, no push) succeeds, and QA runs it. The publish path (Q-D): the maintainer publishes by hand from the release container, `pnpm publish --access public` without provenance, `docker push` to both registries, and a hand-created GitHub release. The document states the missing provenance as a known limit and how to adopt an Actions workflow later.
 - [ ] AC55. Agents never publish packages, push images or create releases. The plan ends at a release candidate on the branch, and the human runs or approves each outward step after the merge.
 - [ ] AC56. CI as in AC31, with the pack and smoke checks added to `ci.yml`. GitHub Actions is blocked by billing, so QA runs the `ci.yml` jobs locally in Docker as for #31, #35 and #36: `node:24`, a pinned `redis:7.2.17-alpine` container on the same Docker network, no bind mounts, from a fresh clone (git bundle), Test before Build, with the Redis-backed tests not silently skipped.
 
@@ -96,18 +96,22 @@ Packages, license and release
 - Persisting anything beyond a group's life (PRD), session history, analytics.
 - Redis Cluster or Sentinel topologies: a single Redis endpoint only (Q5).
 - Global connection or rate limits across instances (Q12; #41).
-- GitHub Actions release automation and npm provenance (Actions is blocked, provenance needs CI OIDC), unless Q-D changes this.
+- GitHub Actions release automation and npm provenance (Actions is blocked, provenance needs CI OIDC), (Q-D decided: everything by hand, the limit is documented).
 - Re-doing `docs/startup-errors.md` or the 9a/9b README sections.
 - The parked follow-ups #9, #27, #28, #41, #42, #44 (Q15). #32, #12 and #21 are prerequisites, not part of this item.
 - Re-licensing to MIT, a contributor agreement.
+- A GitHub organization, splitting the monorepo into submodules or separate repos (Q18).
 
-## Open questions (for Gate 1)
+## Gate 1 decisions (2026-11-22)
 
-- Q-A. Blockers #32, #12, #21 are still open. Recommended: fix them first as their own issues (as Q15 decided), then start 9c's architecture, so the docs and changelog describe final behaviour. Alternative: run 9c architecture and docs now and reserve the sections that depend on them, risking rework.
-- Q17. Server image registry. Recommended: GitHub Container Registry (`ghcr.io/mosherw/sync-system-server`), same account as the repo and no extra credentials. Alternative: Docker Hub.
-- Q18. Repo visibility. Recommended: make the repo public at the first release, so docs links and the `repository` field work. Alternative: stay private (npm users cannot follow source links; the GHCR image visibility must then be set separately). Making it public is a human action after merge.
-- Q-C. Names for the unpublished workspace packages. They stay `private`, but the `@sync-system/` scope is a placeholder. Recommended: rename them too, to `@mosherw/sync-system-server` and `@mosherw/sync-system-reader`, so no stale scope remains. Alternative: leave them as `@sync-system/server` and `@sync-system/reader` (smaller diff, but two scopes in one repo).
-- Q-D. Publishing while GitHub Actions is blocked. A release pipeline normally runs in Actions. Recommended: the maintainer publishes from the release Docker container on their machine with an npm granular token passed at run time (never stored), `pnpm publish --access public` without provenance (provenance needs CI OIDC; local provenance is not available), plus `docker push` and a hand-created GitHub release; the document states the missing provenance as a known limit and how to adopt an Actions workflow once billing is fixed. Alternative: wait to release until Actions works, and add provenance then (1.0.0 then depends on an external fix). The human-only rule (AC55) applies either way.
-- Q-E. Package `repository`, `homepage` and `bugs` URLs, and npm 2FA. Recommended: `https://github.com/MosheRW/sync-system` with a per-package `directory`, publishing with 2FA on writes. Confirm the repo URL stays `MosheRW/sync-system`.
-- Q-F. Server version relative to the packages. Recommended: the server and the three packages all move together (same number), which keeps the "which versions work together" table simple. Alternative: independent server versions with a compatibility table by protocol version.
-- Q-G. Docs layout. Recommended: `docs/` files (`operator-guide.md`, `protocol.md`, `integration-guide.md`; the client and React API stay in their package READMEs), with the root README trimmed to an overview that links to them. Alternative: keep the 964-line root README as the operator guide and add only the missing pieces (smaller diff, harder to navigate). Left to the architect if the user has no preference.
+- Q-A. Fix #32, #12 and #21 first, each as its own fast-path issue, then start 9c architecture. 9c stays paused (Phase: grooming) until all three are merged.
+- Q17. The server image is published to both registries: GitHub Container Registry (`ghcr.io/mosherw/sync-system-server`, canonical) and Docker Hub (`docker.io/mosherw/sync-system-server`, mirror). The same tags are pushed to both on every release. The docs list both. The release procedure covers both pushes and both credentials, passed at run time only and never stored.
+- Q18. The repo becomes public at the first release (a human action after merge). It stays a monorepo (no submodules, no separate repos). The owner stays MosheRW and the npm scope stays `@mosherw` (no GitHub organization for now).
+- Q-C. The private workspace packages are renamed `@mosherw/sync-system-server` and `@mosherw/sync-system-reader`. No `@sync-system/` scope remains.
+- Q-D. Everything is released by hand. The maintainer publishes from the release Docker container with tokens passed at run time, `pnpm publish --access public` without provenance, `docker push` to both registries, and a hand-created GitHub release. The release document states the missing provenance as a known limit and how to adopt an Actions workflow later. The human-only rule (AC55) applies.
+- Q-F. The server and the three packages share one version number.
+- Q-G. Docs layout: `docs/operator-guide.md`, `docs/protocol.md`, `docs/integration-guide.md`. The client API and the React API stay in the package READMEs. The root README is trimmed to an overview that links to them.
+
+## Open questions
+
+- Q-E. Package `repository`, `homepage` and `bugs` URLs, and npm 2FA. Deferred to Gate 2 (the user said it is too early); the architect proposes it. It follows from Q18: the repo stays `MosheRW/sync-system` unless changed. Recommended: `https://github.com/MosheRW/sync-system` with a per-package `directory`, publishing with 2FA on writes.
