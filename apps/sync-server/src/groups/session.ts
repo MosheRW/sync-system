@@ -136,7 +136,7 @@ export interface GroupActions {
     session: Session,
     message: LeaderActivityMessage | KeepAliveAckMessage,
   ): Promise<ServerMessage>;
-  /** The most recent displaced leader takes the lead back (#13 AC24). */
+  /** The leader displaced by the last handoff takes the lead back (#13 AC24, #32). */
   takeBack(session: Session, message: LeaderTakeBackMessage): Promise<ServerMessage>;
   /** Runs the disconnect rules (member removal, group end). */
   disconnect(session: Session): Promise<void>;

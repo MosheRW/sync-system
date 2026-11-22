@@ -14,7 +14,7 @@ export function nextTerm(prev: number, now: number, floor = 0): number {
  * Who takes the lead when the grace period ends (#13 AC20, Q2.2, AC12): the
  * vice-leader if it is connected, else the earliest admitted connected
  * member. Never the current leader, never the displaced leader (the take-back
- * holder), never a blocked participant; pending joiners and parked
+ * holder, set only by a handoff), never a blocked participant; pending joiners and parked
  * participants are not on the roster, so they never are either. Undefined
  * when nobody qualifies.
  */

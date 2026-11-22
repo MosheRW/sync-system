@@ -77,7 +77,7 @@ describe('roles on a real server (#13 AC23, AC24, AC31, AC32)', () => {
       const lost = nextEvent(member, 'leadershipLost');
       await back.takeBackLeadership();
       expect(back.getSnapshot().group).toMatchObject({ role: 'leader' });
-      expect(await lost).toMatchObject({ reason: 'take_back', takeBackAvailable: true });
+      expect(await lost).toMatchObject({ reason: 'take_back', takeBackAvailable: false });
       expect(member.getRoster()).toEqual([]);
     },
   );
