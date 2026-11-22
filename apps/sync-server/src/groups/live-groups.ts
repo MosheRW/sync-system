@@ -122,9 +122,10 @@ export function bucketStep(
   }
   const t = tokens - 1;
   const next: BucketState = { t, a: Math.max(at, now), r, b, u };
-  const ttlMs = Math.min(
-    Math.ceil(Math.max(((b - t) * MINUTE_MS) / r, u - now) + 1_000),
-    MAX_RETRY_AFTER_MS,
+  // When the bucket expires it is full again and its strict values lapse.
+  const ttlMs = Math.max(
+    1,
+    Math.min(Math.ceil(Math.max(((b - t) * MINUTE_MS) / r, u - now)), MAX_RETRY_AFTER_MS),
   );
   return { ok: true, next, ttlMs };
 }

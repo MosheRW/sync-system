@@ -47,6 +47,7 @@ export class RedisLiveGroups implements LiveGroupsStore {
         'reserve',
         member,
         arg(budget.expiresAt),
+        arg(budget.now),
         arg(budget.cap),
         arg(budget.burst),
         arg(budget.refillPerMinute),
@@ -75,7 +76,7 @@ export class RedisLiveGroups implements LiveGroupsStore {
     const reply = await this.ctx.link.script(
       RESERVE_LIVE,
       [set, keys.appCreateBudget(namespace)],
-      ['register', member, arg(expiresAt)],
+      ['register', member, arg(expiresAt), arg(this.ctx.now())],
     );
     const [, fresh] = Array.isArray(reply) ? (reply as unknown[]) : [];
     if (Number(fresh) === 1) this.undoOnAbandon(set, member);

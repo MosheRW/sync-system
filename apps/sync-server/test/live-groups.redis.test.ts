@@ -66,15 +66,16 @@ describeRedis('RedisLiveGroups (#12 R5, R13, R14, AC2, AC3)', () => {
     expect(await store.reserve('app-a', G('A'), budget({ expiresAt: late }))).toEqual({ ok: true });
     expect(await inspect.keys(prefix)).toEqual([bucketKey(), setKey()].sort());
     const setExpiry = await inspect.client.pExpireTime(setKey());
-    expect(setExpiry).toBe(Math.ceil(late));
+    // At the group's end in Redis time: its remaining life from now.
+    expect(Math.abs(setExpiry - late)).toBeLessThan(1_000);
     // An earlier group does not shorten it.
     expect(await store.reserve('app-a', G('B'), budget())).toEqual({ ok: true });
     expect(await inspect.client.pExpireTime(setKey())).toBe(setExpiry);
     const bucketTtl = await inspect.client.pTTL(bucketKey());
     expect(Number.isSafeInteger(bucketTtl)).toBe(true);
-    // max(time to full = 2 tokens at 1/s, u - now = 2 h) + 1 s.
-    expect(bucketTtl).toBeGreaterThan(2 * HOUR);
-    expect(bucketTtl).toBeLessThanOrEqual(2 * HOUR + 1_000);
+    // max(time to full = 2 tokens at 1/s, u - now = 2 h).
+    expect(bucketTtl).toBeGreaterThan(2 * HOUR - 1_000);
+    expect(bucketTtl).toBeLessThanOrEqual(2 * HOUR);
     expect(await inspect.client.hGetAll(bucketKey())).toMatchObject({ b: '10', r: '60' });
   });
 
@@ -102,12 +103,12 @@ describeRedis('RedisLiveGroups (#12 R5, R13, R14, AC2, AC3)', () => {
     const ahead = () => Date.now() + 1e9;
     const store = await instance(ahead);
     const one = { burst: 1, refillPerMinute: 60 };
-    // Scored a minute from now (Redis time): an instance clock 11 days ahead must not prune it.
+    // A minute of life: an instance clock 11 days ahead must not prune it.
     expect(
       await store.reserve(
         'app-a',
         G('A'),
-        budget({ ...one, now: ahead(), expiresAt: Date.now() + 60_000 }),
+        budget({ ...one, now: ahead(), expiresAt: ahead() + 60_000 }),
       ),
     ).toEqual({ ok: true });
     // Nor mint tokens: the bucket is empty in Redis time.
@@ -125,19 +126,22 @@ describeRedis('RedisLiveGroups (#12 R5, R13, R14, AC2, AC3)', () => {
     links.push(link);
     const keys = [setKey(), bucketKey()];
     const exp = String(Date.now() + HOUR);
+    const at = String(Date.now());
     const bad: string[][] = [
       ['delete', G('A'), exp],
       ['', G('A'), exp],
-      ['reserve', G('A'), 'x', '10', '10', '60'],
-      ['reserve', G('A'), exp, 'x', '10', '60'],
-      ['reserve', G('A'), exp, '-1', '10', '60'],
-      ['reserve', G('A'), exp, '1.5', '10', '60'],
-      ['reserve', G('A'), exp, '10', '0', '60'],
-      ['reserve', G('A'), exp, '10', 'nan', '60'],
-      ['reserve', G('A'), exp, '10', '10', '0'],
-      ['reserve', G('A'), exp, '10', '10', '-1'],
-      ['reserve', G('A'), exp, '10', '10'],
-      ['register', G('A'), 'x'],
+      ['reserve', G('A'), 'x', at, '10', '10', '60'],
+      ['reserve', G('A'), exp, at, 'x', '10', '60'],
+      ['reserve', G('A'), exp, at, '-1', '10', '60'],
+      ['reserve', G('A'), exp, at, '1.5', '10', '60'],
+      ['reserve', G('A'), exp, at, '10', '0', '60'],
+      ['reserve', G('A'), exp, at, '10', 'nan', '60'],
+      ['reserve', G('A'), exp, at, '10', '10', '0'],
+      ['reserve', G('A'), exp, at, '10', '10', '-1'],
+      ['reserve', G('A'), exp, at, '10', '10'],
+      ['register', G('A'), 'x', at],
+      ['register', G('A'), exp, 'x'],
+      ['register', G('A'), exp],
     ];
     for (const args of bad) {
       await expect(link.script(RESERVE_LIVE, keys, args), args.join(' ')).rejects.toThrow(
