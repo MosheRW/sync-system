@@ -2,7 +2,7 @@
 - Path: fast
 - Phase: architecture
 - Branch: fix/32-take-back-after-handoff-only
-- PR: none
+- PR: #45
 - Plan approved by user: no
 - Security-sensitive: yes (hostile member re-seizing the lead; permissions)
 - Review rounds: 0
