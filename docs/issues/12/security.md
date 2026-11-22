@@ -1,8 +1,9 @@
 # Security review (plan): #12 Limit group creation and live groups per app
 
-**Current verdict (round 2, plan head a379b8d): PASS.** No critical or high
-finding. H1 and M3 are closed. The current required controls are in
-[Round 2](#round-2-revised-plan-a379b8d), section R2.4; they replace section 4.
+**Current verdict (round 3, delta check of plan head afd1d71): PASS.** No
+critical or high finding. H1 and M3 stay closed for every valid env
+configuration. The current required controls are R2.4 as amended by
+[Round 3](#round-3-delta-env-config-afd1d71), section R3.5.
 
 Mode: plan, round 1. Reviewed: `docs/issues/12/spec.md` (AC1-AC8, open
 questions) and `docs/issues/12/architecture.md` (head fab7539), against advisory
@@ -408,3 +409,172 @@ controls:
 Yes. Creates can hold at most about 5 000 groups (0.5 % of the code space).
 The cap cannot be filled by creates. The remaining flood DoS (M4) lasts only
 while the attack runs, and it is documented with the operator mitigation.
+
+## Round 3 (delta: env config, afd1d71)
+
+Mode: plan, round 3, scoped to "Revision 2" of `architecture.md` (Q-2
+decided as env variables, Q-2.1/Q-2.2, the `GroupCreateLimits` and
+`appCreateRefillPerMinute` code in section 3, R13/R14 in 3.1, the new test
+rows in section 7, chunk 2). Checked against `config/env.ts` (`NUMERIC_VARS`,
+`crossFieldProblems` l. 200-256; messages print only validated integers),
+`config/known-vars.ts` (`MAX_` family l. 45, typo suggestion within 2 edits)
+and the README's Redis `noeviction` requirement (l. 369).
+
+**Verdict: PASS.** No critical or high finding. Three new lows (L10-L12),
+all about operator configuration and none triggerable by a client.
+
+### R3.1 Does the H1 bound hold for every valid config?
+
+Yes. With `rate = min(maxRate, (cap/2 - burst) / L)`, a token bucket admits
+at most `burst + rate x L <= burst + (cap/2 - burst) = cap/2` creates in any
+window of length `L`. `min(maxRate, .)` only lowers that. The admitted count
+is an integer, so it is `<= floor(cap/2)`. The cross rule `cap > 2 x burst`
+(both integers) gives `cap/2 - burst >= 0.5`, so the rate is `> 0` and
+finite for every finite `L`. I checked the range ends:
+
+| Config | Bound in any window `L` | Notes |
+| --- | --- | --- |
+| cap 3, burst 1 (smallest) | `<= 1.5`, so 1 live group from creates | Valid but nearly unusable. It is documented, and it is not a security problem |
+| cap 100 000, burst 49 999 | `<= 50 000` | The rate is about `1 / L`; the burst is almost the whole budget |
+| cap 100 000, burst 1, maxRate 60 000 | `<= 50 000` | The derived term binds for every `L` above about 0.83 min |
+| maxRate 1, defaults otherwise | `<= 120 + L` | Stricter only |
+| per connection 600 | n/a | Does not touch the app bound. Sliding-window memory is at most `600 x connections` timestamps per instance: operator-chosen and bounded. No finding |
+
+The per-variable ranges, the cross rule (checked only when both values are
+valid on their own) and messages that print integers, never raw values,
+follow the existing `env.ts` pattern. The `MAX_` names are covered by the
+ADR 0015 typo check, so a mistyped name fails at startup instead of silently
+keeping the default. That is the right call, and it is a security
+improvement over the `GROUP_` names.
+
+### R3.2 Is a cap of 100 000 acceptable against M2 squatting?
+
+Yes, as an operator opt-in. Creates hold at most `cap/2 = 50 000` groups,
+which is 5 % of the 10^6 group codes. Recreations after an epoch change can
+push that to the cap (10 %) for at most one max session. That is not
+attacker-triggerable (L3). `CODES_EXHAUSTED` needs 20 hits in a row
+(`0.1^20`), so it stays impossible in practice. A mistyped method B code
+reaches a squatter with probability of at most about 5 %. That is below the
+11.5 % rejected in round 1, and it only applies to an operator who raises the
+default (0.5 %) tenfold for capacity. Condition: the README states the
+trade-off with `cap / 2 / 10^6` and both end values (R11 below; already
+planned in architecture.md section 6).
+
+### R3.3 R13 adoption, Redis TIME, R14, `groupLimits`
+
+**Mismatched `maxSessionMinutes`, burst or rate bound (same cap): sound.**
+While `now < u` the bucket uses `r = min` and `b = min` of every *charged*
+reserve. I checked the mixed case, where the minimal `r` comes from one
+instance and the minimal `b` from another. Let `j` be the instance with the
+longest lifetime `L_max`. Then
+`b_eff + r_eff x L_max <= b_j + r_j x L_max = cap/2`. Refused reserves write
+nothing, so a starved strict instance records nothing. But it also creates
+no groups, so the bound only depends on the instances that did create.
+Clamping tokens to the new smaller `b` at the next refill closes the
+"leftover larger burst" path.
+
+**Transition bound (the architect's question): confirmed below the cap.**
+Let `t` be the moment the first slow, long-lived create lands while fast
+groups (lifetime `L_s`, rate `r_s`) are live. Creates in
+`[t - L_s, t + L_s]` are at most
+`tokens(t - L_s) + r_s x L_s + r_l x L_s <= cap/2 + r_l x L_s`. Since
+`r_l x L_s < r_l x L_l <= cap/2 - b`, the live count is `< cap - b`. It
+falls back to `<= cap/2` within `L_s`. The architect's looser sum
+(`cap/2 + b + r_l x L_s`) is also below the cap whenever `L_s < L_l`. Creates
+never reach the cap during a transition. The reverse direction is safe too:
+when `u` passes, every group charged under the strict values has passed its
+`expiresAt <= u`. Only the skew is left over (L7).
+
+**Redis TIME (L7): closed.** The refill, the charge, the `u` comparison and
+the prune use `REDIS_NOW`. The scores and `u` (taken from `expiresAt`) stay
+on the instance clock. Comparing them with Redis time is off by at most the
+instance skew, which the NTP requirement already bounds.
+
+**R14 (L8): adopted.** `retryAfterMs` and both TTLs are computed with `ceil`
+and clamped to `1e13`. The bucket TTL covers `u - now`, so `r` and `b` are
+not forgotten before `u`. One formatting detail remains (L12).
+
+**`groupLimits`: still test-only.** Every value is validated, the cross rule
+is checked after the overrides, it is not read from env, the apps file or
+any client, and `main.ts` does not pass it. `appRefillPerMinute` replaces the
+derived rate, so it is not held to the H1 inequality. That is acceptable only
+because it is test-only, which R7 already requires. Spawned test servers drop
+the parent's `MAX_*` names (`child-env.ts`).
+
+### R3.4 New findings
+
+#### Critical / High
+None.
+
+#### Low (advisory)
+
+**L10. A cap mismatch between instances is not covered by R13.**
+Location: architecture.md Q-2.2 last paragraph, 3.1 (`r`, `b`, `u`), section 8
+"Instances with different values".
+Scenario: each instance derives its rate from its *own* cap. The bucket keeps
+the smallest `r`, but that `r` can come from a large-cap, short-`L` instance
+while another instance creates long-lived groups. Example: X has cap 10 000
+and 60 min (81/min), Y has cap 100 000 and 480 min (104/min). The bucket runs
+at 81/min, so Y's 480-minute groups add up to about 39 000 live groups. X then
+refuses every create with `APP_GROUP_LIMIT` for hours, and its refusals write
+nothing, so it never tightens the bucket. This needs the misconfiguration the
+README forbids, or a long rolling change of the cap. Measured against Y's own
+cap, the bound still holds. Low.
+Fix (recommended): also keep the smallest recent cap `c` and the longest
+recent lifetime `m` (`expiresAt - now`) in the bucket hash under the same `u`
+rule. Use `r_eff = min(r, (c/2 - b) / m)` in the script (and in memory). If
+this is skipped, the README "Several instances" notes must say that one
+instance with a lower cap can refuse every create while the others run, and
+the skip goes under "Deviations from plan".
+
+**L11. A large burst erodes the margin after a bucket reset.**
+Location: architecture.md Q-2.1 (the burst is bounded only by the cross
+rule), section 7 "R1 (H1) simulation" reset case.
+Scenario: each time the bucket starts over within `L` (memory restart, Redis
+data loss, a manual key delete), up to `burst` more creates are admitted.
+After `k` resets the bound is `cap/2 + k x burst`. At the defaults that is
+negligible. With a burst near `cap/2` (for example 49 999 of 100 000), one
+reset brings the count just under the cap and two reach it. Restarts are not
+attacker-triggerable, and `noeviction` is required (README l. 369), so
+eviction cannot reset the bucket. Low.
+Fix: also run the simulation's reset case at cap 100 000 / burst 49 999,
+asserting `<= cap/2 + burst` (`< cap`) and no `cap` return. Add one README
+line: keep the burst well below half the cap (for example `<= cap/4`).
+
+**L12. A tiny rate must not round to 0 on its way to Redis.**
+Location: architecture.md 3.1 "Numbers are passed as integer or fixed-point
+strings, never exponent notation".
+Scenario: `MAX_SESSION_MINUTES_CEILING` has no upper bound, so at cap 3 /
+burst 1 the rate can be `5e-8` per minute or smaller. A fixed-point string
+with too few decimals (for example `toFixed(6)`) gives `"0.000000"`. The
+script's `refill > 0` check then returns `redis.error_reply`, and **every**
+create in the app fails with `INTERNAL_ERROR`. Operator-only, Low.
+Fix: format the refill so the parsed value stays `> 0`, for example
+`toPrecision(17)`. Lua `tonumber` accepts exponent notation for this float;
+the L8 concern is only about integer arguments such as `PEXPIRE`. Or use
+`toFixed(20)` with an assertion that the parsed value is `> 0`. Extend the
+L8/R14 test from `maxSessionMinutes` 10^7 to 10^12 and assert that the
+reserve succeeds.
+
+### R3.5 Required controls: changes to R2.4
+
+R2.4 stays in force, with these changes:
+
+| # | Control | Chunk |
+| --- | --- | --- |
+| R1 | As before, plus: the inequality and simulation tests run at the configured extremes of architecture.md section 7 (smallest valid; cap 100 000 with burst 49 999; cap 100 000 with burst 1 / maxRate 60 000; maxRate 1). The reset case also runs at cap 100 000 / burst 49 999 (L11). `appCreateRefillPerMinute` throws at `cap = 2 x burst` | 2, 4 |
+| R11 | As before, plus: the README env rows (defaults, ranges, the cross rule, "same value on every instance"); squat odds `cap / 2 / 10^6` (0.5 % default, 5 % at 100 000, up to twice that through recreations); the L11 burst guidance; the L10 cap-mismatch note if L10 is not implemented | 2, 6 |
+| R13 | **Done in plan** (min `r`/`b` until `u`; Redis `TIME`). Recommended addition (L10): the smallest recent cap and longest recent lifetime in the bucket, or the README note plus a Deviations entry | 3 |
+| R14 | **Done in plan**, plus (L12): the refill argument stays `> 0` after parsing for every valid config; test at `maxSessionMinutes` 10^12 | 3, 4 |
+| R15 | **New (config):** the four names are in `KNOWN_SERVER_VARIABLES` (`MAX_` family) with the Q-2.1 ranges. The cross rule is checked only when both values are valid. Messages print validated integers only, never raw values. A typo of a new name fails at startup with the suggestion. `groupLimits` overrides pass the same cross rule and are never wired in `main.ts` | 2, 4 |
+
+### R3.6 Additions to what I will check in code mode
+
+- `env.ts`: the four `NUMERIC_VARS` entries, the ranges, the cross-rule text
+  and the skip when a value is invalid. No raw value in any message.
+- `server.ts`: `GroupCreateLimits` built once from `ServerEnv` and frozen;
+  the `groupLimits` overrides validated after merging.
+- `RESERVE_LIVE`: the effective `r`/`b`/`u` computed before the refill,
+  tokens clamped to `b`, nothing written on a refusal.
+- How the refill rate is formatted into ARGV (L12).
+- Whether L10 was implemented, or noted in the README and under Deviations.
