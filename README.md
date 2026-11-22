@@ -456,6 +456,16 @@ Requirements:
   `TOKEN_SECRET_PREVIOUS`), the apps config file, and every env ceiling and
   cap. The server does not check this; a difference shows up as refused
   tokens or codes, or keys that expire at different times.
+- **The same group creation limits on every instance** (the four
+  `MAX_GROUP_CREATE*` and `MAX_LIVE_GROUPS_PER_APP` variables), like the apps
+  file. If they differ, the shared create budget follows the slowest rate and
+  the smallest burst used while groups created under them can be live, so a
+  difference can only make creation stricter. Each instance checks the
+  live-group limit with its own value: **an instance with a lower
+  `MAX_LIVE_GROUPS_PER_APP` can refuse every create with `APP_GROUP_LIMIT`
+  while the others still create**, until the count drops. A change to an
+  app's `maxSessionMinutes` or to these variables takes up to one old max
+  session to settle in the count and the budget.
 - **NTP on every host and on Redis.** Liveness is judged on Redis's clock,
   deadlines on each instance's clock.
 - **A load balancer that passes the WebSocket upgrade** (HTTP/1.1, `Upgrade`
@@ -497,6 +507,8 @@ Limits with several instances:
 | `MAX_CONNECTIONS`, the per-app connection cap, inbound message rates                | Per instance                   |
 | Join attempts per connection and **per app** (`group.joinByCode`, `group.joinByQr`) | Per instance                   |
 | `tokens.check`, QR tickets, recreations, code rotations                             | Per instance                   |
+| `group.create` attempts per connection                                              | Per instance                   |
+| The per-app create budget and the live groups per app                               | Global                         |
 | Leader update rate                                                                  | On the leader's own instance   |
 | Wrong door codes per group (rotation after 5) and the method A pause                | Global (stored with the group) |
 
@@ -526,7 +538,7 @@ the leader. Input is case-insensitive; spaces and hyphens are ignored. A
 recreated group keeps its codes when the leader's client sends the signed
 codes blob and every code is still free; otherwise it gets a full new set.
 
-Fixed join limits (not configurable):
+Join and creation limits. The join limits are fixed (not configurable):
 
 | Limit                               | Value                                              |
 | ----------------------------------- | -------------------------------------------------- |
@@ -539,6 +551,55 @@ Fixed join limits (not configurable):
 | `qr.issue` (leader)                 | 6 per connection per minute                        |
 | Pending approvals                   | 10 per group, 1 per connection                     |
 | Code draws before `CODES_EXHAUSTED` | 20                                                 |
+
+Group creation limits (#12), set by environment variables (the same value on
+every instance):
+
+| Limit                                     | Default (variable)                                                                  |
+| ----------------------------------------- | ----------------------------------------------------------------------------------- |
+| `group.create` attempts per connection    | 6 per minute, any outcome (`MAX_GROUP_CREATES_PER_CONNECTION_PER_MINUTE`)           |
+| Creates per app at once (the app's burst) | 120, over all instances (`MAX_GROUP_CREATE_BURST_PER_APP`)                          |
+| Sustained creates per app                 | derived, see below; at most 120 per minute (`MAX_GROUP_CREATES_PER_APP_PER_MINUTE`) |
+| Live groups per app                       | 10 000, over all instances (`MAX_LIVE_GROUPS_PER_APP`)                              |
+
+Over the per-connection limit or the app's budget, `group.create` gets
+`RATE_LIMITED` with `details.retryAfterMs`; at the live-group limit it gets
+`APP_GROUP_LIMIT` with `details.maxLiveGroups` (the configured limit, never
+the current count). Either way nothing is created and no join code is drawn,
+and the connection stays open. A refused attempt still counts against the
+connection's own limit.
+
+The app's budget is a token bucket shared by every instance (in Redis; in
+the process with the memory store). Its sustained rate is
+
+```
+min(MAX_GROUP_CREATES_PER_APP_PER_MINUTE,
+    (MAX_LIVE_GROUPS_PER_APP / 2 - MAX_GROUP_CREATE_BURST_PER_APP)
+      / (maxSessionMinutes + 5 s))      per minute
+```
+
+so the creates that can still be live at any moment are at most half the
+live-group limit: **creates alone can never fill it**, whatever keep-alive a
+client uses and however many instances run. The limit stays as a backstop
+(for groups recreated after a restart). At the defaults:
+
+| `maxSessionMinutes`   | Sustained creates per minute | First create after the budget empties | Full burst back after |
+| --------------------- | ---------------------------- | ------------------------------------- | --------------------- |
+| 1 to 40               | 120                          | 0.5 s                                 | 1 min                 |
+| 60                    | 81.2                         | 0.7 s                                 | 1.5 min               |
+| **180 (default)**     | **27.1**                     | **2.2 s**                             | **4.4 min**           |
+| 480 (default ceiling) | 10.2                         | 5.9 s                                 | 11.8 min              |
+| 10 080 (one week)     | 0.48                         | 124 s                                 | 4.1 h                 |
+
+Raising `MAX_LIVE_GROUPS_PER_APP` raises the sustained rate (up to
+`MAX_GROUP_CREATES_PER_APP_PER_MINUTE`); raising the burst lowers it, and a
+limit just above twice the burst leaves almost no sustained rate. Keep the
+burst well below half the limit (for example at most a quarter): each
+restart that empties the budget state lets one more burst in. Raising
+`MAX_SESSION_MINUTES_CEILING` lowers the sustained rate of apps that use the
+longer sessions. Creates hold at most `MAX_LIVE_GROUPS_PER_APP / 2 / 10^6` of
+the 6-digit group codes: 0.5 % at the default, 5 % at the largest limit
+(100 000), up to twice that for a while after a restart.
 
 **Brute-force reasoning.** Only per-group and per-app limits count: the
 per-connection budgets reset when an attacker reconnects, so they reduce
@@ -574,13 +635,40 @@ Known limits and trade-offs:
 - _Wrong-door budget as a lever._ One client can use up an app's 60 wrong
   door codes per minute; method A joins with a door code in that app then get
   `RATE_LIMITED` until the minute passes (correct codes are never charged).
-- _Group-code squatting._ Group creation has no per-connection rate or
-  per-app cap yet, so one client could fill an app's 6-digit code space and
-  others would get `CODES_EXHAUSTED`. Tracked in issue #12.
+- _Group-code squatting._ Creates can hold at most half of an app's
+  live-group limit, so at most 0.5 % of its 6-digit group codes at the
+  defaults (`MAX_LIVE_GROUPS_PER_APP / 2 / 10^6` in general; up to twice that
+  after a restart). A mistyped method B code reaches an abandoned group with
+  about that probability, and `CODES_EXHAUSTED` stays practically impossible.
+- _Create budget as a lever._ The app's create budget is shared by every
+  instance, so **while a flood runs, group creation in the app can be refused
+  on every instance for as long as it runs**. One client with a handful of
+  reconnecting sockets is enough (the sustained rate is about 27 creates per
+  minute at the default max session), and a script that polls right after
+  each refill takes almost every token: leaders get `RATE_LIMITED` again and
+  again. It ends when the flood stops (nothing lasts: the budget refills, the
+  live-group limit is never reached by creates), and other apps are not
+  affected. Per-IP limits at the reverse proxy are the operator's
+  mitigation.
+- _Global limits, per-instance connections._ The create budget and the
+  live-group limit are global, while connections are counted per instance.
+  An app with a large `maxConnections`, or several instances, can hold many
+  groups with connected leaders, but each of them needed a create first.
 - _QR tickets are bearer credentials._ Keep `qrTicketSeconds` short; the
   ceiling allows tickets of up to 24 hours.
 
 ### Upgrading
+
+- **Group creation limits (#12):**
+  - `group.create` is now limited per connection and per app, and an app has
+    at most `MAX_LIVE_GROUPS_PER_APP` live groups (see
+    [Joining (methods A to D)](#joining-methods-a-to-d)). The four new
+    variables are optional; the defaults keep the documented limits.
+  - A new error code, `APP_GROUP_LIMIT`. Clients from before this release
+    reject it as an invalid server message (`INVALID_SERVER_MESSAGE`);
+    update them with the server.
+  - Groups that were live before the upgrade are not counted toward the
+    live-group limit until they end (at most one max session).
 
 - **Health, readiness and config errors (#36):**
   - **Unknown look-alike variables now stop startup.** A set variable in the
@@ -850,7 +938,7 @@ Errors carry a stable `code` (`CODE_NOT_FOUND`, `DOOR_CODE_REQUIRED`,
 `RATE_LIMITED`, `MESSAGE_TOO_LARGE`, `TOO_MANY_MESSAGES`, `TOKEN_INVALID`,
 `TOKEN_EXPIRED`, `GROUP_ENDED`, `PARTICIPANT_BLOCKED`, `LEADER_CANNOT_LEAVE`,
 `GROUP_LOCKED`, `NOT_ALLOWED`, `PARTICIPANT_NOT_FOUND`, `BLOCK_LIST_FULL`,
-...). Every token failure gets the same `TOKEN_INVALID`, every unknown code
+`APP_GROUP_LIMIT`, ...). Every token failure gets the same `TOKEN_INVALID`, every unknown code
 the same `CODE_NOT_FOUND` and every bad ticket the same `QR_INVALID`, so
 errors reveal nothing about other groups or apps. A connection that floods messages gets
 `TOO_MANY_MESSAGES` and close 4008, even if it is the leader (which freezes its
