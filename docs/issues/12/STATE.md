@@ -1,12 +1,12 @@
 # State: #12 fix(server): limit group creation and live groups per app (follow-up to #10)
 - Path: fast
-- Phase: architecture
+- Phase: implementation
 - Branch: fix/12-limit-group-creation
 - PR: #46
-- Plan approved by user: yes (conditional: on architecture.md Revision 2 and a passing security delta check; no further Gate 2 stop)
+- Plan approved by user: yes (Gate 2, 2026-11-22; the condition, Revision 2 plus a passing security delta check, is met: round 3 PASS at 7e1a4d5)
 - Security-sensitive: yes
 - Review rounds: 0
-- Last updated by: security
+- Last updated by: engineer
 ## Gate 2 decisions (user, 2026-11-22)
 - Q-1: option A (global per-app token bucket checked with the cap, derived sustained rate).
 - Q-2: env variables with the constants as defaults (overrides the fixed-constants recommendation): `MAX_GROUP_CREATES_PER_CONNECTION_PER_MINUTE` (6), `MAX_GROUP_CREATE_BURST_PER_APP` (120), `MAX_GROUP_CREATES_PER_APP_PER_MINUTE` (120, upper bound of the derived rate), `MAX_LIVE_GROUPS_PER_APP` (10 000); cross rule cap > 2 x burst. Names carry the `MAX_` prefix (ADR 0015 family) instead of the suggested `GROUP_` prefix; see architecture.md Q-2.1.

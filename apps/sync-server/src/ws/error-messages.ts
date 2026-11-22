@@ -98,6 +98,7 @@ export const ERROR_TEXT: Record<GenericErrorCode, string> = {
   PARTICIPANT_NOT_FOUND: 'Participant not found',
   GROUP_LOCKED: 'Group is locked',
   BLOCK_LIST_FULL: 'Block list is full',
+  APP_GROUP_LIMIT: 'The app has too many live groups; try later',
 };
 
 interface ErrorOptions {

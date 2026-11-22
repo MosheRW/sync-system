@@ -97,6 +97,7 @@ interface KnownDetails {
   INVALID_JOIN_CODE: { field: 'code' | 'doorCode' };
   JOIN_PAUSED: { retryAfterMs?: number };
   APPROVAL_QUEUE_FULL: { maxPending?: number };
+  APP_GROUP_LIMIT: { maxLiveGroups?: number };
 }
 
 /** Typed `details` per code; `undefined` for codes without details. */
@@ -144,6 +145,7 @@ const MESSAGES: Record<ClientErrorCode, string> = {
   NOT_ALLOWED: 'Not allowed for this participant',
   PARTICIPANT_NOT_FOUND: 'Participant not found',
   GROUP_LOCKED: 'The group is locked',
+  APP_GROUP_LIMIT: 'The app has too many live groups; try later',
   NOT_CONNECTED: 'Not connected',
   CLOSED: 'The client was closed',
   CONNECTION_LOST: 'The connection was lost',
@@ -344,6 +346,12 @@ function serverDetails(code: ErrorCode, raw: Details): unknown {
       const out: KnownDetails['APPROVAL_QUEUE_FULL'] = {};
       const maxPending = readDetailNumber(raw, 'maxPending');
       if (maxPending !== undefined) out.maxPending = maxPending;
+      return out;
+    }
+    case 'APP_GROUP_LIMIT': {
+      const out: KnownDetails['APP_GROUP_LIMIT'] = {};
+      const maxLiveGroups = readDetailNumber(raw, 'maxLiveGroups');
+      if (maxLiveGroups !== undefined) out.maxLiveGroups = maxLiveGroups;
       return out;
     }
     default:
