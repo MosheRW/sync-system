@@ -36,6 +36,8 @@ Scope of items 7-9 is taken from the PRD ("Product 1: the reading app", "Deliver
 - #32 `fix(server): offer take-back only after a handoff loss (follow-up to #25)` (security M1): done (PR #45 merged 2026-11-22 as 085700a; blocker for 9c).
 - #41 `fix(server): share join-attempt limits across instances through redis (follow-up to #35)` (security F22, Q-B6): open.
 - #42 `fix(server): treat a just-started instance as live when picking a successor (follow-up to #35)` (C12): open. A peer sees a new instance as live only after its next heartbeat, and the S4 `oldAttached` and successor pick read the live cache. Needs architect and security.
+- #47 `fix(storage): bound create-budget key TTL and batch expired live-group cleanup (follow-up to #12)` (security A1, A2; QA A3): open.
+- #48 `test(server): cover forgetGroup slot retention and fix limits README wording (follow-up to #12)` (QA A1, A2): open.
 
 ## Key accepted decisions
 
