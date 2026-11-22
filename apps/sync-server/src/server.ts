@@ -273,6 +273,7 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
   const codesBlobs = new CodesBlobService(new TokenKeyring(tokenSecrets, CODES_BLOB_INFO_PREFIX));
   const notifier = new LocalNotifier();
   const groups = new GroupService({
+    liveGroups: storage.liveGroups,
     createLimits: createLimits.limits,
     ...(createLimits.refillPerMinute === undefined
       ? {}
