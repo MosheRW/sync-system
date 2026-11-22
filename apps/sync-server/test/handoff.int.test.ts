@@ -189,6 +189,27 @@ describe('automatic handoff (#13 AC20, AC23, Q2.2, Q2.3)', () => {
     expect(await group.leader.next('error')).toMatchObject({ code: 'NOT_LEADER' });
   });
 
+  it('after handoff_inactivity the attached old leader can take back (#32 AC2)', async () => {
+    const { scheduler, store } = await startAuto();
+    const group = await createGroupWithMembers(ts!, 1);
+    await missKeepAlive(scheduler, group.leader);
+    await group.members[0]!.next('leader.offline');
+    scheduler.advance(GRACE);
+    await group.members[0]!.next('leader.granted');
+    expect(await group.leader.next('leader.lost')).toMatchObject({ takeBackAvailable: true });
+    group.leader.send({ type: 'leader.takeBack', reqId: 'tb' });
+    let reply = await group.leader.next();
+    while (reply.type !== 'leader.granted' && reply.type !== 'error') {
+      reply = await group.leader.next();
+    }
+    expect(reply).toMatchObject({ type: 'leader.granted', reqId: 'tb', reason: 'take_back' });
+    expect(await store.get('app-a', group.groupId)).toMatchObject({
+      leaderId: group.leaderId,
+      displacedLeaderId: undefined,
+      escalated: false,
+    });
+  });
+
   it('with nobody to hand off to, stays paused until the frozen bound (AC21)', async () => {
     const { scheduler, store } = await startAuto();
     const group = await createGroupWithMembers(ts!, 0);
