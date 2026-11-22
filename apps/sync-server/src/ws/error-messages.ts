@@ -15,6 +15,7 @@ export type GenericErrorCode = Exclude<ErrorCode, ActionErrorCode>;
  */
 export const ACTION_ERROR_TEXT = {
   RATE_LIMITED: {
+    'group.create': 'Too many groups created; try later',
     'position.update': 'Too many position updates',
     'tokens.check': 'Too many token checks',
     'group.joinByCode': 'Too many join attempts',

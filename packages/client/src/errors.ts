@@ -176,6 +176,7 @@ export const ACTION_MESSAGES: {
   readonly [C in 'RATE_LIMITED' | 'NOT_LEADER']: Partial<Record<RequestKind, string>>;
 } = {
   RATE_LIMITED: {
+    'group.create': 'Too many groups created; try later',
     'position.update': 'Too many position updates',
     'tokens.check': 'Too many token checks',
     'group.joinByCode': 'Too many join attempts',

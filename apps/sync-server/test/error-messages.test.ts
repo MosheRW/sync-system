@@ -9,6 +9,7 @@ import {
 
 /** Words each action's text must contain (#7 AC19). */
 const NAMES: Record<string, RegExp> = {
+  'group.create': /groups created/i,
   'position.update': /position/i,
   'tokens.check': /token check/i,
   'group.end': /end the group/i,
@@ -47,6 +48,7 @@ describe('per-action error texts (#7 A1)', () => {
   it('has exactly the planned rows and texts', () => {
     expect(ACTION_ERROR_TEXT).toEqual({
       RATE_LIMITED: {
+        'group.create': 'Too many groups created; try later',
         'position.update': 'Too many position updates',
         'tokens.check': 'Too many token checks',
         'group.joinByCode': 'Too many join attempts',

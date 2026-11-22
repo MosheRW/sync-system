@@ -39,6 +39,8 @@ import type { AppConfig } from '../apps/app-registry.js';
 import { jsonByteLength } from '../limits/json-size.js';
 import {
   END_TTL_SLACK_MS,
+  GROUP_CREATE_WINDOW_MS,
+  type GroupCreateLimits,
   MAX_CLOCK_SKEW_MS,
   RECREATIONS_PER_CONNECTION_PER_MINUTE,
   RECREATION_WINDOW_MS,
@@ -54,6 +56,7 @@ import type { CodesBlobService } from '../tokens/codes-blob.js';
 import type { QrTicketService } from '../tokens/qr-tickets.js';
 import type { RandomInt } from '../joins/codes.js';
 import { GROUP_LOCKED, JoinService } from '../joins/join-service.js';
+import { resolveGroupMethods } from '../joins/join-methods.js';
 import {
   type LeaderAction,
   authorizeLeader,
@@ -179,6 +182,10 @@ export interface GroupServiceDeps {
   approvals?: ApprovalStore;
   /** Which instances hold parked members of a missing group (Redis, 12.10). */
   parked?: ParkingRegistry;
+  /** `group.create` limits (#12), from the env or the test-only `groupLimits`. */
+  createLimits: GroupCreateLimits;
+  /** Test-only: replaces the derived sustained create rate per app (#12 R7). */
+  createRefillPerMinute?: number;
 }
 
 /**
@@ -260,6 +267,8 @@ export class GroupService implements GroupActions {
   private readonly controls: LeaderControls;
   /** Group recreations per connection (#13 RC20). */
   private readonly recreateLimiter: SlidingWindowRateLimiter;
+  /** `group.create` attempts per connection (#12 AC1); forgotten on disconnect. */
+  private readonly createLimiter: SlidingWindowRateLimiter;
   /** When this process started (#13 6.9 layer 2). */
   private readonly processStartedAt: number;
 
@@ -319,6 +328,7 @@ export class GroupService implements GroupActions {
     this.checkLimiter = new SlidingWindowRateLimiter(() => this.now(), TOKENS_CHECK_WINDOW_MS);
     this.appCheckLimiter = new SlidingWindowRateLimiter(() => this.now(), TOKENS_CHECK_WINDOW_MS);
     this.recreateLimiter = new SlidingWindowRateLimiter(() => this.now(), RECREATION_WINDOW_MS);
+    this.createLimiter = new SlidingWindowRateLimiter(() => this.now(), GROUP_CREATE_WINDOW_MS);
     this.controls = new LeaderControls(
       {
         asLeader: (session, action, task) => this.asLeader(session, action, task),
@@ -832,6 +842,7 @@ export class GroupService implements GroupActions {
     this.checkLimiter.clear();
     this.appCheckLimiter.clear();
     this.recreateLimiter.clear();
+    this.createLimiter.clear();
     this.controls.close();
     this.appBudgetWarnedAt.clear();
     this.joins.close();
@@ -1083,11 +1094,29 @@ export class GroupService implements GroupActions {
     const name = nameChoice(message.displayName);
     if (name === undefined) return errorMessage(ErrorCode.INVALID_MESSAGE);
 
+    // Every attempt from here on counts against the connection, whatever
+    // its outcome, so polling an empty app budget costs fresh connections
+    // (#12 AC1, M4). In process and first, so a socket over its own limit
+    // never spends the app's budget.
+    const rate = this.createLimiter.tryAcquire(
+      session.connectionId,
+      this.deps.createLimits.perConnectionPerMinute,
+    );
+    if (!rate.ok) {
+      return actionErrorMessage(ErrorCode.RATE_LIMITED, 'group.create', {
+        details: { retryAfterMs: rate.retryAfterMs },
+      });
+    }
+
+    // A pure check, before the lock and before anything is reserved (#12 M2).
+    const methods = resolveGroupMethods(app.joinMethods, message.joinMethods);
+    if (!methods.ok) return errorMessage(ErrorCode.JOIN_METHOD_NOT_ALLOWED);
+
     const groupId = newGroupId();
     // Under the new group's lock, so the group, its codes and its timers
     // are stored in one step (#35 ADR 0011).
     return this.lock.run(app.namespace, groupId, () =>
-      this.createLocked(session, message, groupId, name),
+      this.createLocked(session, message, groupId, name, methods.methods),
     );
   }
 
@@ -1096,9 +1125,10 @@ export class GroupService implements GroupActions {
     message: GroupCreateMessage,
     groupId: string,
     name: NameChoice,
+    methods: JoinMethod[],
   ): Promise<ServerMessage> {
     const { app } = session;
-    const initial = await this.joins.initialCodes(app, groupId, message.joinMethods);
+    const initial = await this.joins.initialCodes(app, groupId, methods);
     if (!initial.ok) return initial.error;
 
     const participantId = newParticipantId();
@@ -2511,6 +2541,7 @@ export class GroupService implements GroupActions {
   async disconnect(session: Session): Promise<void> {
     this.checkLimiter.forget(session.connectionId);
     this.recreateLimiter.forget(session.connectionId);
+    this.createLimiter.forget(session.connectionId);
     await this.joins.onDisconnect(session);
     // A parked session just stops waiting.
     this.parking.unpark(session);

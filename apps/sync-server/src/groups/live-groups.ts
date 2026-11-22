@@ -4,14 +4,11 @@
  * give the same answers and the same `retryAfterMs`.
  */
 
-const MINUTE_MS = 60_000;
+import { MAX_RETRY_AFTER_MS } from '../limits/constants.js';
 
-/**
- * Largest `retryAfterMs` and bucket TTL (#12 R14, L8): a safe integer
- * (about 317 years), so a tiny sustained rate can never produce an unsafe
- * number, exponent notation in a Redis argument or a fractional TTL.
- */
-export const MAX_RETRY_AFTER_MS = 1e13;
+export { MAX_RETRY_AFTER_MS };
+
+const MINUTE_MS = 60_000;
 
 /** Per-app create budget and limits (#12). Values validated by `reserve`. */
 export interface CreateBudget {
@@ -151,7 +148,8 @@ interface AppLive {
  * The memory store (#12 3.1): with memory storage there is one process, so
  * "global" and "per process" are the same. Every method body is
  * synchronous, so the check, the charge and the add are atomic in-process
- * (like `CodeIndex`). An app's entry is dropped once it has no live group
+ * (like `CodeIndex`). Entries past their end bound are dropped before the
+ * cap is checked and when counted. An app's entry is dropped once it has no live group
  * and its bucket is full with its strict values lapsed, so entries are
  * bounded by apps with live groups or recent creates. A restart loses
  * everything (the bucket starts full; recreations register, Q-4).
@@ -193,7 +191,6 @@ export class MemoryLiveGroups implements LiveGroupsStore {
     checkBudget(budget);
     const { now } = budget;
     const app = this.app(namespace);
-    this.prune(app, now);
     const held = app.live.get(groupId);
     if (held !== undefined) {
       if (budget.expiresAt > held) app.live.set(groupId, budget.expiresAt);
@@ -206,6 +203,9 @@ export class MemoryLiveGroups implements LiveGroupsStore {
       this.tidy(namespace, app, now);
       return { ok: false, reason: 'rate', retryAfterMs: decision.retryAfterMs };
     }
+    // Groups past their end bound are dropped before the count is used
+    // (only then: the prune walks every entry).
+    if (app.live.size >= budget.cap) this.prune(app, now);
     if (app.live.size >= budget.cap) {
       this.tidy(namespace, app, now);
       return { ok: false, reason: 'cap' };
@@ -223,7 +223,6 @@ export class MemoryLiveGroups implements LiveGroupsStore {
       return Promise.reject(err instanceof Error ? err : new Error(String(err)));
     }
     const app = this.app(namespace);
-    this.prune(app, this.clock());
     const held = app.live.get(groupId);
     if (held === undefined || expiresAt > held) app.live.set(groupId, expiresAt);
     return Promise.resolve();
