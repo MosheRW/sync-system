@@ -2,7 +2,7 @@
 - Path: fast
 - Phase: architecture
 - Branch: fix/12-limit-group-creation
-- PR: none
+- PR: #46
 - Plan approved by user: no
 - Security-sensitive: yes
 - Review rounds: 0
