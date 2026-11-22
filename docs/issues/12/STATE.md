@@ -5,8 +5,8 @@
 - PR: #46
 - Plan approved by user: yes (Gate 2, 2026-11-22; the condition, Revision 2 plus a passing security delta check, is met: round 3 PASS at 7e1a4d5)
 - Security-sensitive: yes
-- Review rounds: 0
-- Last updated by: engineer
+- Review rounds: 1
+- Last updated by: qa
 ## Gate 2 decisions (user, 2026-11-22)
 - Q-1: option A (global per-app token bucket checked with the cap, derived sustained rate).
 - Q-2: env variables with the constants as defaults (overrides the fixed-constants recommendation): `MAX_GROUP_CREATES_PER_CONNECTION_PER_MINUTE` (6), `MAX_GROUP_CREATE_BURST_PER_APP` (120), `MAX_GROUP_CREATES_PER_APP_PER_MINUTE` (120, upper bound of the derived rate), `MAX_LIVE_GROUPS_PER_APP` (10 000); cross rule cap > 2 x burst. Names carry the `MAX_` prefix (ADR 0015 family) instead of the suggested `GROUP_` prefix; see architecture.md Q-2.1.
@@ -21,6 +21,9 @@
 - security plan round 2: opus (rule) → PASS (H1, M3 closed; new advisories M4 app-wide flood DoS while it runs, L6-L9; required controls R1-R14 in security.md R2.4)
 - architect plan amendment (revision 2): opus (rule: plan revision touching config/security) → DONE (Gate 2 decisions recorded; four MAX_ env variables with startup validation; R13/R14 adopted; new config chunk, 6 chunks)
 - security plan round 3 (delta, env config): opus (rule) → PASS (H1 bound holds for every valid config; transition bound < cap confirmed; advisories L10 cap mismatch across instances, L11 large burst vs reset margin, L12 tiny refill formatting; R15 added)
+- qa validation round 1: opus (NEXT_MODEL from engineer: security-sensitive, plan deviations) → PASS
+## QA verdict
+- Round 1: PASS (2026-11-22, head 05ea216). Checks run locally in Docker (node:24 + redis:7.2.17-alpine, private network, repo with .git copied in): lint, typecheck, test (all 5 packages, Redis suites included), build, audit all pass; only failure is the pre-existing repo-hygiene "CI workflow ... runs on push and pull_request", which fails identically on main 085700a. CI: no checks (Actions billing-blocked). AC 8/8 met. All six recorded deviations judged acceptable. Advisories A1-A4 (forgetGroup regression test, README wording, unbounded CLAIM_DUE range, #32 commits on this branch), none blocking. All 19 commits signed.
 ## Open questions
 - Resolved at Gate 2 (2026-11-22): Q-1 to Q-5, see "Gate 2 decisions" above.
 - Resolved: security.md R2.4 controls folded into the plan; M4 wording corrected in Q-1 and section 8 (R12).
