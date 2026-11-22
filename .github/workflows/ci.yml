@@ -1,8 +1,9 @@
 name: CI
 
 on:
-  push:
-  pull_request:
+  workflow_dispatch:
+  # push:
+  # pull_request:
 
 # Read-only token, no secrets used anywhere in this workflow.
 permissions:
