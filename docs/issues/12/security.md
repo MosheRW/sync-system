@@ -1,5 +1,9 @@
 # Security review (plan): #12 Limit group creation and live groups per app
 
+**Current verdict (round 2, plan head a379b8d): PASS.** No critical or high
+finding. H1 and M3 are closed. The current required controls are in
+[Round 2](#round-2-revised-plan-a379b8d), section R2.4; they replace section 4.
+
 Mode: plan, round 1. Reviewed: `docs/issues/12/spec.md` (AC1-AC8, open
 questions) and `docs/issues/12/architecture.md` (head fab7539), against advisory
 M2 in `docs/issues/10/security.md` and the code they touch on this branch:
@@ -172,7 +176,7 @@ window, which is an aggregate timing signal about other users of the app. It
 reveals no group, code or identity, and the join budgets already do the same.
 No action needed.
 
-## 4. Required controls (part of the plan)
+## 4. Required controls (round 1, superseded by R2.4)
 
 | # | Control | Chunk |
 | --- | --- | --- |
@@ -215,3 +219,192 @@ No action needed.
 - "Without introducing a worse problem": **not yet**. As planned, the cap that
   closes the squatting opens an app-wide creation DoS from one instance (H1).
   Once R1 is in the plan, M2 is closed.
+
+## Round 2: revised plan (a379b8d)
+
+Mode: plan, round 2. Reviewed: `architecture.md` at a379b8d ("Revision 1",
+Q-1 option A, sections 3, 3.1, 5.2, 7, 8, 9), against round 1 and the code:
+`groups/group-service.ts` (`groupExpiry` l. 844-847, recreation
+`createdAt: claims.gct` l. 1892), `groups/resume.ts` (l. 54, 91),
+`storage/redis/redis-storage.ts` (`expiryOf`),
+`storage/redis/scripts.ts` (`COMMIT` and `REDIS_NOW` use Redis `TIME`),
+`storage/redis/keys.ts` (existing families), `limits/rate-limiter.ts`,
+`config/env.ts` (`MAX_SESSION_MINUTES_CEILING` has no upper `max`),
+README "Several instances" requirements (l. 450-456).
+
+**Verdict: PASS.** H1 and M3 are closed. The revision adds one new medium
+(M4: the remaining flood DoS is app-wide on every instance and needs only a
+few sockets, and the plan understates it) and four lows. None blocks.
+
+### R2.1 H1 and M3: closed
+
+- **Math checked.** `L = maxSessionMinutes + 5 s`,
+  `rate = min(120, (5 000 - 120) / L)`. I get 81.2/min at 60, 27.1 at 180, 10.2
+  at 480, 0.48 at 10 080. The switch to 120 sits between 40 (121.7) and 41
+  (118.8). The table in Q-1 is right. A token bucket of size `b` and rate
+  `r` admits at most `b + r x T` in any window `T`. With `T = L` that is
+  `<= 5 000`. `min(120, .)` only lowers it.
+- **Every live group was charged within the last `L`.** A group's end is
+  `createdAt + maxSessionMinutes + slack` (`groupExpiry`, `expiryOf`). A
+  recreation keeps `createdAt = claims.gct` (group-service.ts:1892), and
+  `resume.ts` refuses tokens whose `gct + maxSession` has passed. So a
+  recreated group was charged at its original create, which was inside the
+  window. Keep-alive cannot stretch a group past `L`. The number of instances
+  does not matter, because the bucket is one Redis hash per app.
+- **Across an epoch change** (memory restart, Redis data loss), the bucket
+  starts full once more. The bound becomes `2 x burst + r x L` = 5 120. That
+  is still about half the cap, so the cap stays a backstop with about 2x
+  margin. **The recreation path is not a budget bypass.** It cannot make
+  groups that were never charged, it cannot extend `gct`, and it is still
+  behind `RECREATIONS_PER_CONNECTION_PER_MINUTE`. L3 stays accepted.
+- **Refill semantics.** The refill is a pure function of `(t, a, now)`.
+  Refusals write nothing. A charge sets `a = max(a, now)`. A missing key means
+  full, and the key expires exactly when the bucket would be full. Cap refusals
+  do not charge, and the idempotent re-reserve of a held ID does not charge
+  either. Group IDs are server-generated, so a client cannot hit that branch.
+  The design is sound. See L7 and L8 for the clock and number formatting.
+- **Atomicity.** The budget check, cap check, charge and `ZADD` run in one
+  script, and concurrent reserves on two instances serialise in Redis. With
+  memory storage every method body is synchronous. Redis is a single endpoint
+  (README: no Cluster), so two KEYS in one script are fine.
+- **Key families.** `lg` and `lb` collide with none of the existing families
+  (`a ap aq c ch due e epoch g ig inst insts live lock p pk q seq t`), and
+  both are built through the `NAMESPACE_PATTERN` check.
+- **The tests** (inequality for {1, 40, 41, 180, 480, 10 080} and the
+  worst-case simulation over `2 x L`) check exactly the property H1 needs.
+  R1 is met at plan level.
+
+### R2.2 Round-1 advisories
+
+| Finding | Status |
+| --- | --- |
+| M1 | Superseded by **M4** (the budget is now global, so the flood residual changed shape) |
+| M2 | Addressed: method set resolved before the lock, stored-or-released guard, failure-path tests (R4) |
+| M3 | Closed by the global bucket |
+| L1 | Addressed: `endInvalid` ZREM (R6) |
+| L2 | Addressed: `reserve` validation, `register` as a separate mode, `groupLimits` validated and not wired (R7) |
+| L3 | Accepted; re-checked above, not a bypass (R8) |
+| L4 | Closed in substance: connected leaders also need a create, so the budget bounds them. README note stays (R11) |
+| L5 | No action |
+
+### R2.3 New findings
+
+#### Critical / High
+None.
+
+#### Medium (advisory)
+
+**M4. A few sockets keep group creation blocked for the whole app, on every instance, while the script runs. The plan understates this.**
+Location: architecture.md Q-1 "What an attacker can still do" (l. 96-101),
+section 8 first bullet (l. 482-488), section 6 README residual.
+Scenario: the budget is now global, so draining it blocks the app on
+**every** instance, not one. Draining it takes only the sustained rate:
+about 27 creates/min at the default (10/min at 480), which is 5 (or 2)
+connections at 6/min. Reconnecting resets the per-connection limit. A script
+that also polls just after each refill takes almost every token. Legitimate
+leaders get `RATE_LIMITED` again and again, not "a wait of at most 2.2 s".
+Their chance per retry is roughly their share of the attempts. It still ends
+when the script stops, there is no lasting state, and other apps are not
+affected. That matches the #10 join-budget precedent, so it stays Medium.
+Fix:
+- Correct the text in Q-1, section 8 and the README. It should say "while a
+  flood runs, creation in the app can be refused on every instance for as long
+  as it runs; one client with a handful of reconnecting sockets is enough;
+  per-IP limits at the reverse proxy are the mitigation". Drop "a wait of at
+  most 2.2 s". The orchestrator must show the corrected sentence at Gate 2 (R12).
+- Optional (not required): count every `group.create` attempt per connection,
+  including attempts refused by the app budget. The plan's order already does
+  this, because the per-connection `tryAcquire` runs before `reserve`. A test
+  should pin it, so that polling costs fresh connections.
+
+#### Low (advisory)
+
+**L6. Instances that disagree on an app's `maxSessionMinutes` share one bucket at different rates.**
+Location: architecture.md 3.1 (ARGV carries the caller's refill rate, the
+bucket stores only `{t, a}`); `expiryOf` and `groupExpiry` use the instance's
+current app config.
+Scenario: the tokens are interchangeable. If instance B runs the app at 60
+min (81/min) and instance A at 480 min, an attacker who can steer connections
+can let B's calls refill the bucket fast and spend the tokens on A, creating
+480-minute groups. That gives about 40 or more long groups a minute, which
+breaks the 5 000 bound and can reach the cap (H1 again). The README already
+requires the same apps config on every instance (l. 451), so this needs a
+misconfiguration, or a rolling config change that lasts for hours. Related:
+after a restart that **raises** `maxSessionMinutes`, existing groups live to
+the new end, but their scores keep the old end. They are pruned early, so the
+cap undercounts for up to one old `L`. That costs some squat margin, not a
+denial of service.
+Fix (recommended, cheap): pass the group's lifetime (`expiresAt - now`)
+instead of a rate, and derive the rate inside the script from the longest
+lifetime seen recently. Store `m` (max lifetime in ms) and `mu` (until when)
+in the bucket hash. Use `max(m, lifetime)` while `now < mu`, and reset it to
+`lifetime` after that. Then every instance refills at the slowest rate any
+instance used in the last `L`. The memory store does the same in process.
+Also add one README line: a change to `maxSessionMinutes` takes up to one
+old max session to settle in the cap count.
+
+**L7. The bucket and the prune use instance clocks, while the rest of the shared Redis state uses Redis `TIME`.**
+Location: architecture.md 3.1 (ARGV `now`), section 8 "Clock" (l. 505-508);
+scripts.ts `COMMIT` and `REDIS_NOW` ("instance clocks never decide liveness").
+Scenario: an instance whose clock runs ahead by `s` gets `s x rate` extra
+tokens once and moves `a` into the future. Every other instance then refills
+nothing for `s`, and their legitimate creates are refused. Its prune also
+drops live entries scored less than `s` ahead, so the cap undercounts. The
+effect is bounded by the skew, and NTP is required.
+Fix (recommended): take `now` from `REDIS_NOW` inside `RESERVE_LIVE` for the
+bucket arithmetic and the prune. Keep the scores (`expiresAt`) on the
+instance clock, as the group deadlines are. If the engineer keeps ARGV
+`now`, they should say so in "Deviations" and keep the "Clock" bullet.
+
+**L8. Lua number hygiene in `RESERVE_LIVE`.**
+Location: architecture.md 3.1 steps 5 and 7, 5.2.
+- `PEXPIRE` takes only integers. "Time to full + 1 s" is fractional, so it
+  must be `math.ceil`. Otherwise every charge returns an error reply, and every
+  create in the app fails with `INTERNAL_ERROR`.
+- A Lua number returned to Redis is truncated to an integer. Compute
+  `retryAfterMs` with `math.ceil` in Lua, or return the token count as a string.
+  Otherwise a `retryAfterMs` of 0.x arrives as 0.
+- `MAX_SESSION_MINUTES_CEILING` has no upper `max` (env.ts:88), so an
+  operator value can make the rate tiny and `retryAfterMs` or the bucket TTL
+  unsafe (> 2^53 ms, or exponent notation when passed to Redis). Clamp both to
+  a safe integer, for example `min(value, 1e13)`. Alternatively, validate that
+  the TTL and `retryAfterMs` are safe integers in TS before the call. It is
+  operator-only, so it stays Low.
+
+**L9. Test the epoch reset in the H1 simulation.**
+The simulation runs on one bucket. Add one case that resets the bucket in the
+middle of the run (a restart), and assert the live count stays
+`<= cap/2 + burst` and no reserve returns `cap`. That pins R2.1's
+`2 x burst + r x L` bound.
+
+### R2.4 Required controls (current list for the engineer)
+
+R2, R3, R4, R6, R7, R8, R9 and R10 from round 1 are unchanged. Updated and new
+controls:
+
+| # | Control | Chunk |
+| --- | --- | --- |
+| R1 | **H1 (option A):** global per-app bucket checked in the same atomic step as the cap. The rate comes from `appCreateRefillPerMinute`, and the inequality test covers {1, 40, 41, 180, 480, 10 080}. The worst-case simulation over `2 x L` at 180 and 480, plus the reset case (L9), never exceeds `cap/2 + burst` and never returns `cap`. The `.redis` two-instance test shares one burst | 2, 3, 4 |
+| R2 | Order: `busy` -> size -> name -> per-connection rate -> method resolution -> under the lock: `reserve` (budget, then cap, then add) -> codes. Zero code draws and zero stored state on every refusal. A disallowed `joinMethods` makes zero `reserve` calls | 3, 4 |
+| R5 | `RESERVE_LIVE` is a constant string. KEYS are only `appLive(ns)` and `appCreateBudget(ns)`. The member is checked against `GROUP_ID_PATTERN` before the call. Every ARGV goes through `tonumber`, with `redis.error_reply` on `nil` or a bad value (cap and burst are integers >= 1, the refill or lifetime is > 0). The mode is exactly `reserve` or `register`, otherwise an error. Steps in order: prune -> held member (no charge) -> `register` -> refill -> rate refusal (no write) -> cap refusal (no charge) -> charge + `ZADD`. TTLs: the set's is only ever extended (`PEXPIRETIME` -1/-2 handled). The bucket's is an integer (`math.ceil`), and the returned `retryAfterMs` is an integer computed with `ceil` in Lua (L8). `keys.test.ts` covers both new keys with a bad namespace | 2 |
+| R11 | README: the residuals corrected per M4 (app-wide, every instance, as long as the flood runs, a handful of sockets, per-IP limits at the proxy). Also L4 (the cap and budget are global, connections per instance), the Q-1 rate table, `APP_GROUP_LIMIT`, Upgrading, and the L6 note on changing `maxSessionMinutes`. No new dependency | 5 |
+| R12 | **Gate 2 text (M4):** Q-1 and section 8 no longer say "a wait of at most 2.2 s". The user is shown that one client can block creation in an app on all instances while it runs | orchestrator / 5 |
+| R13 | Recommended (L6, L7): the rate is derived in the script from the longest recent lifetime (`m`/`mu`), and `now` comes from Redis `TIME` for the bucket and the prune. If either is skipped, record why under "Deviations from plan" | 2 |
+| R14 | Recommended (L8): bucket TTL and `retryAfterMs` clamped to safe integers, with a unit test at a very large `maxSessionMinutes` | 2, 3 |
+
+### R2.5 Additions to what I will check in code mode
+
+- `RESERVE_LIVE` line by line: step order, no write on a refusal, `math.ceil`
+  on every TTL and returned number, mode whitelist, two KEYS only.
+- The bucket arithmetic is shared by memory and Redis, and both give the
+  same `retryAfterMs` (contract test).
+- Recreation passes `claims.gct` to `groupExpiry` for `register`, never
+  `now`.
+- Whether R13 and R14 were done or recorded as deviations.
+- The M4 wording in the README.
+
+### R2.6 Does the plan now close M2 of #10?
+
+Yes. Creates can hold at most about 5 000 groups (0.5 % of the code space).
+The cap cannot be filled by creates. The remaining flood DoS (M4) lasts only
+while the attack runs, and it is documented with the operator mitigation.
