@@ -1,6 +1,6 @@
 # State: #32 fix(server): offer take-back only after a handoff loss (follow-up to #25)
 - Path: fast
-- Phase: validation
+- Phase: merged
 - Branch: fix/32-take-back-after-handoff-only
 - PR: #45
 - Plan approved by user: yes (2026-11-22, Q-1 accepted)
@@ -12,8 +12,13 @@
 - architect plan: opus (default, NEXT_MODEL) → DONE
 - security plan: opus (rule) → PASS
 - engineer implement: opus (rule: security-sensitive; Implementer model: opus) → DONE
+- qa validation: sonnet (NEXT_MODEL) → PASS
+- security code: opus (rule) → PASS
 ## QA verdict
 - Round 1: PASS. Checks 7/7 run locally (Docker), AC 8/8 met, RC-1..RC-8 met, no unsigned commits. GitHub Actions billing-blocked.
+## Gate 3
+- Gate 3: security advisories L1 and L2 accepted by the user, no follow-up issue.
+- Merged 2026-11-22 via PR #45 as 085700a.
 ## Open questions
 - none (Q-1 accepted at Gate 2: after a take-back the interim leader is a plain member and may be picked again as successor by the normal rule; the change to #13 AC25's first clause is accepted)
 - Gate 3 advisories from security.md: L1 (upgrade window, in the PR body), L2 (in-memory restart and old leader tokens, pre-existing, possible follow-up)
