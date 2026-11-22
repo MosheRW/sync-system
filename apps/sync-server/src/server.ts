@@ -23,6 +23,7 @@ import {
   transportMaxPayload,
 } from './limits/constants.js';
 import { SlidingWindowRateLimiter } from './limits/rate-limiter.js';
+import type { GroupCreateLimits } from './limits/constants.js';
 import { type Scheduler, realScheduler } from './time/scheduler.js';
 import { CodesBlobService } from './tokens/codes-blob.js';
 import { QrTicketService } from './tokens/qr-tickets.js';
@@ -79,10 +80,63 @@ export interface SyncServerOptions {
   /** Groups waiting for a disconnect replay; defaults to MAX_CONNECTIONS. Tests lower it. */
   replayCap?: number;
   /**
+   * Test-only `group.create` limits (#12 R7): each value given replaces its
+   * env value; `appRefillPerMinute` replaces the derived sustained rate.
+   * Never read from env, the apps file or any client; `main.ts` never
+   * passes it. Validated: positive safe integers (the refill: finite and
+   * > 0), and the resulting cap above twice the resulting burst.
+   */
+  groupLimits?: GroupLimitsOverride;
+  /**
    * The server version for `/health` (#36 AC33), from `readServerVersion()`.
    * Read once here when omitted (tests).
    */
   version?: string;
+}
+
+/** Test-only overrides of the `group.create` limits (#12). */
+export interface GroupLimitsOverride {
+  perConnection?: number;
+  appBurst?: number;
+  appRefillPerMinute?: number;
+  maxLiveGroups?: number;
+}
+
+/**
+ * The `group.create` limits from the env, with the test-only overrides
+ * applied and checked (#12 R7, R15). Throws a RangeError naming the field.
+ */
+export function groupCreateLimits(
+  env: Pick<
+    ServerEnv,
+    | 'maxGroupCreatesPerConnectionPerMinute'
+    | 'maxGroupCreateBurstPerApp'
+    | 'maxGroupCreatesPerAppPerMinute'
+    | 'maxLiveGroupsPerApp'
+  >,
+  override: GroupLimitsOverride = {},
+): { limits: GroupCreateLimits; refillPerMinute: number | undefined } {
+  const integer = (name: keyof GroupLimitsOverride, value: number | undefined) => {
+    if (value !== undefined && (!Number.isSafeInteger(value) || value < 1)) {
+      throw new RangeError(`groupLimits.${name} must be a positive safe integer`);
+    }
+    return value;
+  };
+  const limits: GroupCreateLimits = Object.freeze({
+    perConnectionPerMinute:
+      integer('perConnection', override.perConnection) ?? env.maxGroupCreatesPerConnectionPerMinute,
+    appBurst: integer('appBurst', override.appBurst) ?? env.maxGroupCreateBurstPerApp,
+    appMaxPerMinute: env.maxGroupCreatesPerAppPerMinute,
+    maxLiveGroups: integer('maxLiveGroups', override.maxLiveGroups) ?? env.maxLiveGroupsPerApp,
+  });
+  const refill = override.appRefillPerMinute;
+  if (refill !== undefined && (!Number.isFinite(refill) || !(refill > 0))) {
+    throw new RangeError('groupLimits.appRefillPerMinute must be finite and > 0');
+  }
+  if (!(limits.maxLiveGroups > 2 * limits.appBurst)) {
+    throw new RangeError('groupLimits: maxLiveGroups must be > 2 * appBurst');
+  }
+  return { limits, refillPerMinute: refill };
 }
 
 export interface SyncServer {
@@ -144,6 +198,8 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
   const tokenSecrets: unknown = options.tokenSecrets;
   assertTokenSecrets(tokenSecrets);
   const { env, logger, registry } = options;
+  // Read once (#12 R15): the env values, or the checked test-only overrides.
+  const createLimits = groupCreateLimits(env, options.groupLimits);
   const handshakeTimeoutMs = options.handshakeTimeoutMs ?? HANDSHAKE_TIMEOUT_MS;
   const scheduler = options.scheduler ?? realScheduler(options.now ?? Date.now);
   const now = (): number => scheduler.now();
@@ -217,6 +273,11 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
   const codesBlobs = new CodesBlobService(new TokenKeyring(tokenSecrets, CODES_BLOB_INFO_PREFIX));
   const notifier = new LocalNotifier();
   const groups = new GroupService({
+    liveGroups: storage.liveGroups,
+    createLimits: createLimits.limits,
+    ...(createLimits.refillPerMinute === undefined
+      ? {}
+      : { createRefillPerMinute: createLimits.refillPerMinute }),
     store: storage.groups,
     ...(storage.epoch === undefined ? {} : { epoch: storage.epoch }),
     keepAttachmentsOnClose: storage.keepAttachmentsOnClose,

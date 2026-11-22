@@ -91,6 +91,22 @@ describe('fromServerError', () => {
       serverError('RATE_LIMITED', { maxLeaderUpdatesPerSecond: 5, retryAfterMs: 120 }),
     );
     expect(rate.details).toEqual({ maxLeaderUpdatesPerSecond: 5, retryAfterMs: 120 });
+
+    const groups = fromServerError(
+      serverError('APP_GROUP_LIMIT', { maxLiveGroups: 10_000, count: 9_999 }),
+      { request: 'group.create' },
+    );
+    expect(groups.details).toEqual({ maxLiveGroups: 10_000 });
+    expect(groups.message).toBe('The app has too many live groups; try later');
+  });
+
+  it('parses APP_GROUP_LIMIT details tolerantly (#12)', () => {
+    for (const maxLiveGroups of [-1, '10000', null, Number.NaN]) {
+      expect(fromServerError(serverError('APP_GROUP_LIMIT', { maxLiveGroups })).details).toEqual(
+        {},
+      );
+    }
+    expect(fromServerError(serverError('APP_GROUP_LIMIT')).details).toEqual({});
   });
 
   it('drops numbers that are not finite and non-negative, or not numbers (M1)', () => {

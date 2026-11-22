@@ -153,6 +153,90 @@ export const JOIN_ATTEMPTS_PER_APP_PER_MINUTE = 600;
 export const JOIN_WINDOW_MS = 60_000;
 
 /**
+ * Default of `MAX_GROUP_CREATES_PER_CONNECTION_PER_MINUTE`: `group.create`
+ * attempts per connection per window, any outcome (#12 Q-1, Q-2).
+ */
+export const DEFAULT_GROUP_CREATES_PER_CONNECTION_PER_MINUTE = 6;
+
+/**
+ * Upper bound of `MAX_GROUP_CREATES_PER_CONNECTION_PER_MINUTE` (#12 Q-2.1):
+ * the sliding window keeps one timestamp per accepted attempt.
+ */
+export const MAX_GROUP_CREATES_PER_CONNECTION_PER_MINUTE_LIMIT = 600;
+
+/**
+ * Default of `MAX_GROUP_CREATE_BURST_PER_APP`: the size of the app's global
+ * create budget, creates admitted at once (#12 Q-1).
+ */
+export const DEFAULT_GROUP_CREATE_BURST_PER_APP = 120;
+
+/**
+ * Default of `MAX_GROUP_CREATES_PER_APP_PER_MINUTE`: the upper bound of the
+ * app's sustained create rate; the rate used is derived from the cap, the
+ * burst and the app's max session (#12 Q-1).
+ */
+export const DEFAULT_GROUP_CREATES_PER_APP_PER_MINUTE = 120;
+
+/** Upper bound of `MAX_GROUP_CREATES_PER_APP_PER_MINUTE` (1 per ms, #12 Q-2.1). */
+export const MAX_GROUP_CREATES_PER_APP_PER_MINUTE_LIMIT = 60_000;
+
+/** Default of `MAX_LIVE_GROUPS_PER_APP`: live groups per app, global (#12 Q-1). */
+export const DEFAULT_MAX_LIVE_GROUPS_PER_APP = 10_000;
+
+/** Smallest `MAX_LIVE_GROUPS_PER_APP`: the cross rule needs cap > 2 x burst >= 2 (#12 Q-2.1). */
+export const MIN_LIVE_GROUPS_PER_APP = 3;
+
+/**
+ * Largest `MAX_LIVE_GROUPS_PER_APP` (#12 Q-2.1): creates hold at most half
+ * the cap, so at most 5 % of the 10^6 group codes.
+ */
+export const MAX_LIVE_GROUPS_PER_APP_LIMIT = 100_000;
+
+/** Window of the per-connection `group.create` limiter (#12 3). */
+export const GROUP_CREATE_WINDOW_MS = 60_000;
+
+/**
+ * Largest `retryAfterMs` and bucket TTL of the per-app create budget (#12
+ * R14, L8): a safe integer (about 317 years), so a tiny sustained rate can
+ * never produce an unsafe number, exponent notation in a Redis argument or
+ * a fractional TTL.
+ */
+export const MAX_RETRY_AFTER_MS = 1e13;
+
+/** `group.create` limits (#12), from the env or the test-only `groupLimits`. */
+export interface GroupCreateLimits {
+  /** MAX_GROUP_CREATES_PER_CONNECTION_PER_MINUTE */
+  readonly perConnectionPerMinute: number;
+  /** MAX_GROUP_CREATE_BURST_PER_APP */
+  readonly appBurst: number;
+  /** MAX_GROUP_CREATES_PER_APP_PER_MINUTE (the upper bound of the derived rate) */
+  readonly appMaxPerMinute: number;
+  /** MAX_LIVE_GROUPS_PER_APP */
+  readonly maxLiveGroups: number;
+}
+
+/**
+ * Sustained `group.create` rate per app, per minute (#12 Q-1, H1):
+ * `min(appMaxPerMinute, (maxLiveGroups / 2 - appBurst) / L)` with `L` the
+ * longest a group lives (max session plus END_TTL_SLACK_MS), so that
+ * `appBurst + rate x L <= maxLiveGroups / 2`: creates alone can never fill
+ * the cap, whatever the keep-alive or the number of instances. Throws (a
+ * programming error) when the cap is not above twice the burst; the env
+ * cross rule and the `groupLimits` check make that unreachable from config.
+ */
+export function appCreateRefillPerMinute(
+  limits: Pick<GroupCreateLimits, 'appBurst' | 'appMaxPerMinute' | 'maxLiveGroups'>,
+  maxSessionMinutes: number,
+): number {
+  if (!(limits.maxLiveGroups > 2 * limits.appBurst)) {
+    throw new RangeError('maxLiveGroups must be > 2 * appBurst');
+  }
+  const lifetimeMinutes = maxSessionMinutes + END_TTL_SLACK_MS / 60_000;
+  const derived = (limits.maxLiveGroups / 2 - limits.appBurst) / lifetimeMinutes;
+  return Math.min(limits.appMaxPerMinute, derived);
+}
+
+/**
  * Wrong door codes per app per window, over all of the app's groups (#10
  * R1b, Gate 2 Q-E). Checked before the door code is compared and charged
  * only when it is wrong. Fixed, not an app setting.

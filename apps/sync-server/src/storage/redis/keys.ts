@@ -134,6 +134,19 @@ export class RedisKeys {
     return this.group_(namespace, groupId);
   }
 
+  /**
+   * The app's live groups (#12 3.1): sorted set, member = group ID, score =
+   * the group's end bound; expires at its largest score.
+   */
+  appLive(namespace: string): string {
+    return `${this.base}:lg:${check(NAMESPACE_PATTERN, namespace, 'namespace')}`;
+  }
+
+  /** The app's create budget (#12 3.1): hash `{t, a, r, b, u}`. */
+  appCreateBudget(namespace: string): string {
+    return `${this.base}:lb:${check(NAMESPACE_PATTERN, namespace, 'namespace')}`;
+  }
+
   /** An ended group, by hashed ref only. */
   ended(ref: string): string {
     return `${this.base}:e:${check(REF_PATTERN, ref, 'ref')}`;

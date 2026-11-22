@@ -1,7 +1,13 @@
 import { EndedGroups } from '../src/groups/ended-groups.js';
 import { CodeIndex } from '../src/joins/code-index.js';
 import { MemoryDoorStates, MemoryEndedGroups } from '../src/storage/memory/memory-state.js';
-import { codeIndexContract, doorStateContract, endedGroupsContract } from './contracts/state.js';
+import { MemoryLiveGroups } from '../src/groups/live-groups.js';
+import {
+  codeIndexContract,
+  doorStateContract,
+  endedGroupsContract,
+  liveGroupsContract,
+} from './contracts/state.js';
 
 codeIndexContract('memory', {
   make: () => {
@@ -27,3 +33,20 @@ endedGroupsContract('memory', {
 });
 
 doorStateContract('memory', { make: () => Promise.resolve(new MemoryDoorStates()) });
+
+liveGroupsContract('memory', {
+  exactClock: true,
+  make: () => {
+    let time = 1_700_000_000_000;
+    const store = new MemoryLiveGroups(() => time);
+    return Promise.resolve({
+      store,
+      now: () => time,
+      advance: (ms: number) => {
+        time += ms;
+        return Promise.resolve();
+      },
+      count: (namespace: string) => Promise.resolve(store.count(namespace)),
+    });
+  },
+});

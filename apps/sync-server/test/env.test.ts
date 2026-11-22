@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { ConfigError } from '../src/config/config-error.js';
 import { parseEnv } from '../src/config/env.js';
+import {
+  DEFAULT_GROUP_CREATES_PER_APP_PER_MINUTE,
+  DEFAULT_GROUP_CREATES_PER_CONNECTION_PER_MINUTE,
+  DEFAULT_GROUP_CREATE_BURST_PER_APP,
+  DEFAULT_MAX_LIVE_GROUPS_PER_APP,
+} from '../src/limits/constants.js';
 
 const NUMERIC = [
   'PORT',
@@ -20,6 +26,10 @@ const NUMERIC = [
   'TOKEN_REFRESH_MAX_SECONDS',
   'QR_TICKET_SECONDS_CEILING',
   'APPROVAL_TIMEOUT_SECONDS_CEILING',
+  'MAX_GROUP_CREATES_PER_CONNECTION_PER_MINUTE',
+  'MAX_GROUP_CREATE_BURST_PER_APP',
+  'MAX_GROUP_CREATES_PER_APP_PER_MINUTE',
+  'MAX_LIVE_GROUPS_PER_APP',
 ];
 
 function errorOf(env: Record<string, string>): ConfigError {
@@ -59,6 +69,109 @@ describe('parseEnv', () => {
       approvalTimeoutSecondsCeiling: 600,
       disconnectGraceSecondsCeiling: 120,
       keepAliveCountdownSecondsCeiling: 120,
+      maxGroupCreatesPerConnectionPerMinute: 6,
+      maxGroupCreateBurstPerApp: 120,
+      maxGroupCreatesPerAppPerMinute: 120,
+      maxLiveGroupsPerApp: 10_000,
+    });
+  });
+
+  describe('group creation limits (#12 Q-2)', () => {
+    const LIMITS = [
+      'MAX_GROUP_CREATES_PER_CONNECTION_PER_MINUTE',
+      'MAX_GROUP_CREATE_BURST_PER_APP',
+      'MAX_GROUP_CREATES_PER_APP_PER_MINUTE',
+      'MAX_LIVE_GROUPS_PER_APP',
+    ] as const;
+
+    it('defaults to the DEFAULT_* constants', () => {
+      expect(parseEnv({})).toMatchObject({
+        maxGroupCreatesPerConnectionPerMinute: DEFAULT_GROUP_CREATES_PER_CONNECTION_PER_MINUTE,
+        maxGroupCreateBurstPerApp: DEFAULT_GROUP_CREATE_BURST_PER_APP,
+        maxGroupCreatesPerAppPerMinute: DEFAULT_GROUP_CREATES_PER_APP_PER_MINUTE,
+        maxLiveGroupsPerApp: DEFAULT_MAX_LIVE_GROUPS_PER_APP,
+      });
+    });
+
+    it('reads set values', () => {
+      expect(
+        parseEnv({
+          MAX_GROUP_CREATES_PER_CONNECTION_PER_MINUTE: '2',
+          MAX_GROUP_CREATE_BURST_PER_APP: '10',
+          MAX_GROUP_CREATES_PER_APP_PER_MINUTE: '30',
+          MAX_LIVE_GROUPS_PER_APP: '500',
+        }),
+      ).toMatchObject({
+        maxGroupCreatesPerConnectionPerMinute: 2,
+        maxGroupCreateBurstPerApp: 10,
+        maxGroupCreatesPerAppPerMinute: 30,
+        maxLiveGroupsPerApp: 500,
+      });
+    });
+
+    it('rejects values that are not positive integers, without the raw value', () => {
+      const tooBig = '9007199254740993';
+      for (const name of LIMITS) {
+        for (const bad of ['abc', '0', '-1', '1.5', '01', '', tooBig]) {
+          const err = errorOf({ [name]: bad });
+          expect(err.problems, `${name}=${bad}`).toEqual([`${name} must be a positive integer`]);
+          if (bad.length > 1) expect(err.message).not.toContain(bad);
+        }
+      }
+    });
+
+    it('enforces the ranges and accepts their ends', () => {
+      const cases: ReadonlyArray<readonly [string, string, string]> = [
+        ['MAX_GROUP_CREATES_PER_CONNECTION_PER_MINUTE', '601', 'between 1 and 600'],
+        ['MAX_GROUP_CREATES_PER_APP_PER_MINUTE', '60001', 'between 1 and 60000'],
+        ['MAX_LIVE_GROUPS_PER_APP', '2', 'between 3 and 100000'],
+        ['MAX_LIVE_GROUPS_PER_APP', '100001', 'between 3 and 100000'],
+      ];
+      for (const [name, value, range] of cases) {
+        expect(errorOf({ [name]: value }).problems).toEqual([`${name} must be ${range}`]);
+      }
+      expect(() =>
+        parseEnv({
+          MAX_GROUP_CREATES_PER_CONNECTION_PER_MINUTE: '1',
+          MAX_GROUP_CREATES_PER_APP_PER_MINUTE: '1',
+          MAX_GROUP_CREATE_BURST_PER_APP: '1',
+          MAX_LIVE_GROUPS_PER_APP: '3',
+        }),
+      ).not.toThrow();
+      expect(() =>
+        parseEnv({
+          MAX_GROUP_CREATES_PER_CONNECTION_PER_MINUTE: '600',
+          MAX_GROUP_CREATES_PER_APP_PER_MINUTE: '60000',
+          MAX_LIVE_GROUPS_PER_APP: '100000',
+        }),
+      ).not.toThrow();
+    });
+
+    it('requires MAX_LIVE_GROUPS_PER_APP > 2 * MAX_GROUP_CREATE_BURST_PER_APP (Q-2.2)', () => {
+      expect(
+        errorOf({ MAX_LIVE_GROUPS_PER_APP: '240', MAX_GROUP_CREATE_BURST_PER_APP: '120' }).problems,
+      ).toEqual([
+        'MAX_LIVE_GROUPS_PER_APP (240) must be > 2 * MAX_GROUP_CREATE_BURST_PER_APP (240)',
+      ]);
+      expect(() =>
+        parseEnv({ MAX_LIVE_GROUPS_PER_APP: '241', MAX_GROUP_CREATE_BURST_PER_APP: '120' }),
+      ).not.toThrow();
+      expect(() =>
+        parseEnv({ MAX_LIVE_GROUPS_PER_APP: '3', MAX_GROUP_CREATE_BURST_PER_APP: '1' }),
+      ).not.toThrow();
+      // The default burst (120) is more than half of a cap of 200.
+      expect(errorOf({ MAX_LIVE_GROUPS_PER_APP: '200' }).problems).toEqual([
+        'MAX_LIVE_GROUPS_PER_APP (200) must be > 2 * MAX_GROUP_CREATE_BURST_PER_APP (240)',
+      ]);
+    });
+
+    it('skips the cross rule when either value is invalid on its own', () => {
+      expect(
+        errorOf({ MAX_LIVE_GROUPS_PER_APP: '2', MAX_GROUP_CREATE_BURST_PER_APP: '120' }).problems,
+      ).toEqual(['MAX_LIVE_GROUPS_PER_APP must be between 3 and 100000']);
+      expect(
+        errorOf({ MAX_LIVE_GROUPS_PER_APP: '100', MAX_GROUP_CREATE_BURST_PER_APP: 'x' }).problems,
+      ).toEqual(['MAX_GROUP_CREATE_BURST_PER_APP must be a positive integer']);
     });
   });
 

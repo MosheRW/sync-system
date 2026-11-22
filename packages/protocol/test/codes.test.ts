@@ -23,6 +23,11 @@ describe('protocol constants', () => {
     expect(ErrorCode.APP_CONNECTION_LIMIT).toBe('APP_CONNECTION_LIMIT');
   });
 
+  it('keeps the live-group cap distinct from rate limiting (#12 AC3)', () => {
+    expect(ErrorCode.APP_GROUP_LIMIT).toBe('APP_GROUP_LIMIT');
+    expect(ErrorCode.APP_GROUP_LIMIT).not.toBe(ErrorCode.RATE_LIMITED);
+  });
+
   it('defines the application close codes', () => {
     expect(CloseCode.HANDSHAKE_REJECTED).toBe(4001);
     expect(CloseCode.HANDSHAKE_TIMEOUT).toBe(4002);

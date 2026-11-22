@@ -80,6 +80,7 @@ export function errorView(error: SyncClientError): ErrorView | null {
       return { key: 'nameInvalidChars', focus: 'name' };
     case 'APP_CONNECTION_LIMIT':
     case 'CODES_EXHAUSTED':
+    case 'APP_GROUP_LIMIT':
       return { key: 'errBusy', focus: 'message' };
     case 'INVALID_API_KEY':
     case 'HANDSHAKE_REJECTED':

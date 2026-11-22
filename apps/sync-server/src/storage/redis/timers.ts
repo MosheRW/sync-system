@@ -208,7 +208,7 @@ export class RedisTimerBackend implements TimerBackend {
     const reply = await this.ctx.link.script(
       CLAIM_DUE,
       [keys.due(), keys.live()],
-      [`${keys.base}:t:`, String(now), String(leaseEnd), String(CLAIM_BATCH)],
+      [`${keys.base}:t:`, String(now), String(leaseEnd), String(CLAIM_BATCH), `${keys.base}:lg:`],
     );
     const items = Array.isArray(reply) ? (reply as unknown[]) : [];
     for (let i = 0; i + 1 < items.length; i += 2) {

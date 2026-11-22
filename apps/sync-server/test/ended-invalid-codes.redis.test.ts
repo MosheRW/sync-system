@@ -78,9 +78,18 @@ describeRedis('an invalid stored group frees its join codes (#39, security C17)'
     // The group had an attachment registry too (security C17).
     const registryKey = `${base}:a:app-a:${broken.groupId}`;
     expect(await inspect.client.exists(registryKey)).toBe(1);
+    // Both groups hold a live-group slot (#12 L1, R6).
+    const liveKey = `${base}:lg:app-a`;
+    const far = Date.now() + 3_600_000;
+    await inspect.client.zAdd(liveKey, [
+      { score: far, value: broken.groupId },
+      { score: far, value: other.groupId },
+    ]);
     const second = await start();
     expect(second.logs.find('startup_sweep')).toMatchObject({ groups: 2, invalid: 1 });
     expect(await inspect.client.exists(registryKey)).toBe(0);
+    // Its slot goes with it; the other group's stays.
+    expect(await inspect.client.zRange(liveKey, 0, -1)).toEqual([other.groupId]);
     expect(await inspect.client.get(own)).toBeNull();
     expect(await inspect.client.get(foreign)).toBe(other.groupId);
     expect(await inspect.client.get(`${base}:c:app-a:g:${other.codes.groupCode}`)).toBe(

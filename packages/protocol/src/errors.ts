@@ -113,6 +113,12 @@ export const ErrorCode = {
    * Entries are never evicted or truncated. `details.maxBlockList`.
    */
   BLOCK_LIST_FULL: 'BLOCK_LIST_FULL',
+  /**
+   * group.create refused: the app already has its maximum number of live
+   * groups; nothing was created (#12 AC3). `details.maxLiveGroups` is the
+   * configured cap, never the current count. No `retryAfterMs`.
+   */
+  APP_GROUP_LIMIT: 'APP_GROUP_LIMIT',
 } as const;
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];

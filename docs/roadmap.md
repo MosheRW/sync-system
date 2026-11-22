@@ -33,9 +33,11 @@ Scope of items 7-9 is taken from the PRD ("Product 1: the reading app", "Deliver
 - #21 `fix(reader): enforce trusted types in the csp (follow-up to #19)`: open. Priority rose with #24 (the reader now holds participant tokens); the #24 e2e CSP-violation check is its test harness (security L7).
 - #27 Hebrew header bidi bugs (follow-up to #19): open. QA saw it again in 8b (#25).
 - #28 native-speaker review of the Hebrew strings (follow-up to #24): open. The 102 Hebrew strings added in 8b (#25) are in its scope, including the vice-leader term "סגן המוביל".
-- #32 `fix(server): offer take-back only after a handoff loss (follow-up to #25)` (security M1): open.
+- #32 `fix(server): offer take-back only after a handoff loss (follow-up to #25)` (security M1): done (PR #45 merged 2026-11-22 as 085700a; blocker for 9c).
 - #41 `fix(server): share join-attempt limits across instances through redis (follow-up to #35)` (security F22, Q-B6): open.
 - #42 `fix(server): treat a just-started instance as live when picking a successor (follow-up to #35)` (C12): open. A peer sees a new instance as live only after its next heartbeat, and the S4 `oldAttached` and successor pick read the live cache. Needs architect and security.
+- #47 `fix(storage): bound create-budget key TTL and batch expired live-group cleanup (follow-up to #12)` (security A1, A2; QA A3): open.
+- #48 `test(server): cover forgetGroup slot retention and fix limits README wording (follow-up to #12)` (QA A1, A2): open.
 
 ## Key accepted decisions
 

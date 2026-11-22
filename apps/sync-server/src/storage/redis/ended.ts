@@ -136,6 +136,8 @@ export class RedisEndedGroups implements EndedGroupsStore {
     plan.del(keys.group(namespace, groupId));
     plan.del(keys.position(namespace, groupId));
     plan.zrem(keys.live(), keys.liveMember(namespace, groupId));
+    // Its live-group slot too (#12 L1, R6).
+    plan.zrem(keys.appLive(namespace), groupId);
     plan.del(keys.timers(namespace, groupId));
     for (const kind of TIMER_KINDS) plan.zrem(keys.due(), keys.dueMember(namespace, groupId, kind));
     // The registry goes; a valid one also names the instance sets to clean
