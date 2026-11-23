@@ -1,17 +1,20 @@
 # State: #21 fix(reader): enforce trusted types in the csp (follow-up to #19)
 - Path: fast
-- Phase: implementation
+- Phase: validation
 - Branch: fix/21-reader-trusted-types
 - PR: #49
 - Plan approved by user: yes (Gate 2, 2026-11-23; security advisories L1 and L2 folded in)
 - Security-sensitive: yes
-- Review rounds: 0
-- Last updated by: engineer
+- Review rounds: 1
+- Last updated by: qa
 ## Model log
 - pm grooming: sonnet (default) → DONE
 - architect plan: opus (NEXT_MODEL) → DONE
 - security plan: opus (rule) → PASS
 - engineer implement: opus (rule) → DONE
+- qa review r1: sonnet (NEXT_MODEL) → PASS
+## QA verdict
+- Round 1: PASS (checks green except the known repo-hygiene CI-workflow test; e2e 9/9; AC1-AC6 met; all commits signed)
 ## Open questions
 - None.
 ## Deviations from plan
