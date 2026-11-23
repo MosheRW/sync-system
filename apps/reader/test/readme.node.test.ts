@@ -90,6 +90,17 @@ describe('README drift guard (AC22)', () => {
     expect(flat).toContain("connect-src 'self' <READER_SRC_ORIGINS>");
   });
 
+  it('documents the Trusted Types enforcement and that no policy exists (#21 AC5)', () => {
+    const section = readme.slice(readme.indexOf('### Trusted Types'));
+    expect(readme).toContain('### Trusted Types');
+    const paragraph = section.slice(0, section.indexOf('\n## ')).replace(/\s+/g, ' ');
+    expect(paragraph).toContain("`require-trusted-types-for 'script'`");
+    expect(paragraph).toContain("`trusted-types 'none'`");
+    expect(paragraph).toContain('**no policy**');
+    expect(paragraph).toContain('security plan review');
+    expect(flat).toContain('zero CSP and Trusted Types violations');
+  });
+
   it('documents CORS, redirects and the loopback warning', () => {
     expect(flat).toContain('`Access-Control-Allow-Origin`');
     expect(flat).toContain("`redirect: 'error'`");

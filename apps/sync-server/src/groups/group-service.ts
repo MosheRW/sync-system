@@ -39,7 +39,10 @@ import type { AppConfig } from '../apps/app-registry.js';
 import { jsonByteLength } from '../limits/json-size.js';
 import {
   END_TTL_SLACK_MS,
+  GROUP_CREATE_WINDOW_MS,
+  type GroupCreateLimits,
   MAX_CLOCK_SKEW_MS,
+  appCreateRefillPerMinute,
   RECREATIONS_PER_CONNECTION_PER_MINUTE,
   RECREATION_WINDOW_MS,
   TOKENS_CHECK_PER_APP_PER_MINUTE,
@@ -54,6 +57,7 @@ import type { CodesBlobService } from '../tokens/codes-blob.js';
 import type { QrTicketService } from '../tokens/qr-tickets.js';
 import type { RandomInt } from '../joins/codes.js';
 import { GROUP_LOCKED, JoinService } from '../joins/join-service.js';
+import { resolveGroupMethods } from '../joins/join-methods.js';
 import {
   type LeaderAction,
   authorizeLeader,
@@ -83,6 +87,7 @@ import {
 import type { EndedGroupsStore } from './ended-groups.js';
 import type { CodeIndexStore } from '../joins/code-index.js';
 import type { DoorStateStore } from '../joins/door-guard.js';
+import type { LiveGroupsStore } from './live-groups.js';
 import {
   GroupTimers,
   MemoryTimerBackend,
@@ -179,6 +184,12 @@ export interface GroupServiceDeps {
   approvals?: ApprovalStore;
   /** Which instances hold parked members of a missing group (Redis, 12.10). */
   parked?: ParkingRegistry;
+  /** Live groups per app and the app's create budget (#12), memory or Redis. */
+  liveGroups: LiveGroupsStore;
+  /** `group.create` limits (#12), from the env or the test-only `groupLimits`. */
+  createLimits: GroupCreateLimits;
+  /** Test-only: replaces the derived sustained create rate per app (#12 R7). */
+  createRefillPerMinute?: number;
 }
 
 /**
@@ -260,6 +271,10 @@ export class GroupService implements GroupActions {
   private readonly controls: LeaderControls;
   /** Group recreations per connection (#13 RC20). */
   private readonly recreateLimiter: SlidingWindowRateLimiter;
+  /** `group.create` attempts per connection (#12 AC1); forgotten on disconnect. */
+  private readonly createLimiter: SlidingWindowRateLimiter;
+  /** When each create-refusal warning was last logged, per event and app (#12 Q-5). */
+  private readonly createWarnedAt = new Map<string, number>();
   /** When this process started (#13 6.9 layer 2). */
   private readonly processStartedAt: number;
 
@@ -319,6 +334,7 @@ export class GroupService implements GroupActions {
     this.checkLimiter = new SlidingWindowRateLimiter(() => this.now(), TOKENS_CHECK_WINDOW_MS);
     this.appCheckLimiter = new SlidingWindowRateLimiter(() => this.now(), TOKENS_CHECK_WINDOW_MS);
     this.recreateLimiter = new SlidingWindowRateLimiter(() => this.now(), RECREATION_WINDOW_MS);
+    this.createLimiter = new SlidingWindowRateLimiter(() => this.now(), GROUP_CREATE_WINDOW_MS);
     this.controls = new LeaderControls(
       {
         asLeader: (session, action, task) => this.asLeader(session, action, task),
@@ -832,6 +848,8 @@ export class GroupService implements GroupActions {
     this.checkLimiter.clear();
     this.appCheckLimiter.clear();
     this.recreateLimiter.clear();
+    this.createLimiter.clear();
+    this.createWarnedAt.clear();
     this.controls.close();
     this.appBudgetWarnedAt.clear();
     this.joins.close();
@@ -1083,11 +1101,29 @@ export class GroupService implements GroupActions {
     const name = nameChoice(message.displayName);
     if (name === undefined) return errorMessage(ErrorCode.INVALID_MESSAGE);
 
+    // Every attempt from here on counts against the connection, whatever
+    // its outcome, so polling an empty app budget costs fresh connections
+    // (#12 AC1, M4). In process and first, so a socket over its own limit
+    // never spends the app's budget.
+    const rate = this.createLimiter.tryAcquire(
+      session.connectionId,
+      this.deps.createLimits.perConnectionPerMinute,
+    );
+    if (!rate.ok) {
+      return actionErrorMessage(ErrorCode.RATE_LIMITED, 'group.create', {
+        details: { retryAfterMs: rate.retryAfterMs },
+      });
+    }
+
+    // A pure check, before the lock and before anything is reserved (#12 M2).
+    const methods = resolveGroupMethods(app.joinMethods, message.joinMethods);
+    if (!methods.ok) return errorMessage(ErrorCode.JOIN_METHOD_NOT_ALLOWED);
+
     const groupId = newGroupId();
     // Under the new group's lock, so the group, its codes and its timers
     // are stored in one step (#35 ADR 0011).
     return this.lock.run(app.namespace, groupId, () =>
-      this.createLocked(session, message, groupId, name),
+      this.createLocked(session, message, groupId, name, methods.methods),
     );
   }
 
@@ -1096,13 +1132,96 @@ export class GroupService implements GroupActions {
     message: GroupCreateMessage,
     groupId: string,
     name: NameChoice,
+    methods: JoinMethod[],
   ): Promise<ServerMessage> {
     const { app } = session;
-    const initial = await this.joins.initialCodes(app, groupId, message.joinMethods);
+    const namespace = app.namespace;
+    const now = this.now();
+    const limits = this.deps.createLimits;
+    // The app's global create budget, then its live-group cap, then the
+    // slot: one atomic step, before any code is drawn (#12 AC2, AC3, R2).
+    const reserved = await this.deps.liveGroups.reserve(namespace, groupId, {
+      now,
+      expiresAt: this.groupExpiry(namespace, now),
+      burst: limits.appBurst,
+      refillPerMinute:
+        this.deps.createRefillPerMinute ?? appCreateRefillPerMinute(limits, app.maxSessionMinutes),
+      cap: limits.maxLiveGroups,
+    });
+    if (!reserved.ok) {
+      if (reserved.reason === 'rate') {
+        this.warnCreateRefused(namespace, 'group_create_app_budget_exhausted');
+        return actionErrorMessage(ErrorCode.RATE_LIMITED, 'group.create', {
+          details: { retryAfterMs: reserved.retryAfterMs },
+        });
+      }
+      this.warnCreateRefused(namespace, 'app_group_limit_reached');
+      return errorMessage(ErrorCode.APP_GROUP_LIMIT, {
+        details: { maxLiveGroups: limits.maxLiveGroups },
+      });
+    }
+    // Stored or released (#12 R4, M2): every path from here that stores no
+    // group gives the slot back. The budget charge stays (no refund).
+    let stored = false;
+    try {
+      return await this.createReserved(session, message, groupId, name, methods, now, () => {
+        stored = true;
+      });
+    } finally {
+      if (!stored) await this.releaseSlot(namespace, groupId);
+    }
+  }
+
+  /** Gives a reserved live-group slot back; a failure is logged, never thrown (#12 R4). */
+  private async releaseSlot(namespace: string, groupId: string): Promise<void> {
+    try {
+      await this.deps.liveGroups.release(namespace, groupId);
+    } catch (err) {
+      // With Redis the task's abandon step drops the slot too; else its score bounds it.
+      this.deps.logger.warn(
+        { event: 'live_group_release_failed', namespace, err: safeErr(err) },
+        'live-group slot not released',
+      );
+    }
+  }
+
+  /**
+   * One warning per minute per app and event when the app's create budget
+   * is empty or its live-group cap is reached (#12 Q-5, R9). Namespace only:
+   * no code, group ID or ref, connection ID or count.
+   */
+  private warnCreateRefused(
+    namespace: string,
+    event: 'group_create_app_budget_exhausted' | 'app_group_limit_reached',
+  ): void {
+    const now = this.now();
+    const key = `${event}:${namespace}`;
+    const last = this.createWarnedAt.get(key);
+    if (last !== undefined && now - last < GROUP_CREATE_WINDOW_MS) return;
+    this.createWarnedAt.set(key, now);
+    this.deps.logger.warn(
+      { event, namespace },
+      event === 'app_group_limit_reached'
+        ? 'the app reached its live-group limit'
+        : 'group.create budget for the app is used up',
+    );
+  }
+
+  /** The create after its slot was reserved; calls `onStored` once the group is stored. */
+  private async createReserved(
+    session: Session,
+    message: GroupCreateMessage,
+    groupId: string,
+    name: NameChoice,
+    methods: JoinMethod[],
+    now: number,
+    onStored: () => void,
+  ): Promise<ServerMessage> {
+    const { app } = session;
+    const initial = await this.joins.initialCodes(app, groupId, methods);
     if (!initial.ok) return initial.error;
 
     const participantId = newParticipantId();
-    const now = this.now();
     const roster = admitToRoster(EMPTY_ROSTER, participantId, name, now);
     const record: GroupRecord = {
       id: groupId,
@@ -1139,6 +1258,7 @@ export class GroupService implements GroupActions {
       await this.joins.releaseCodes(app.namespace, groupId, initial.codes);
       throw err;
     }
+    onStored();
     this.armMaxSession(app, record);
     this.startRefresh(app.namespace, record.id, now);
     this.lifecycle.armKeepAlive(app, record);
@@ -1947,6 +2067,13 @@ export class GroupService implements GroupActions {
       if (status !== 'live') return errorMessage(ErrorCode.TOKEN_EXPIRED);
       return this.resumeLive(session, existing, claims, message, name);
     }
+    // Counted, never refused and not charged (#12 Q-4, R8): it restores a
+    // group that was created (and charged) before. A failed commit undoes it.
+    await this.deps.liveGroups.register(
+      namespace,
+      record.id,
+      this.groupExpiry(namespace, claims.gct),
+    );
     this.armMaxSession(app, record);
     this.startRefresh(namespace, record.id, now);
     this.lifecycle.armKeepAlive(app, record);
@@ -2511,6 +2638,7 @@ export class GroupService implements GroupActions {
   async disconnect(session: Session): Promise<void> {
     this.checkLimiter.forget(session.connectionId);
     this.recreateLimiter.forget(session.connectionId);
+    this.createLimiter.forget(session.connectionId);
     await this.joins.onDisconnect(session);
     // A parked session just stops waiting.
     this.parking.unpark(session);
@@ -2671,6 +2799,9 @@ export class GroupService implements GroupActions {
       return;
     }
     await this.deps.store.delete(namespace, groupId);
+    // In the same commit as the delete (Redis); not in forgetGroup, which
+    // also runs for the cluster `forget` op (#12 R6).
+    await this.deps.liveGroups.release(namespace, groupId);
     await this.forgetGroup(namespace, groupId, record);
     // Remembered until its max-session deadline, as a hashed ref only (Q8),
     // for every end including `empty` (#13 D15). A group recreated in this

@@ -988,30 +988,28 @@ export class JoinService {
   }
 
   /**
-   * The methods and a claimed code set for a new group (#10 AC5-AC9).
-   * JOIN_METHOD_NOT_ALLOWED for a bad method set, CODES_EXHAUSTED when no
-   * free code was found; nothing is claimed in either case.
+   * A claimed code set for a new group with its resolved methods (#10
+   * AC6-AC9; the caller resolves them first, #12 M2). CODES_EXHAUSTED when
+   * no free code was found; nothing is claimed then.
    */
   async initialCodes(
     app: AppConfig,
     groupId: string,
-    requested?: JoinMethod[],
+    methods: JoinMethod[],
   ): Promise<InitialCodesResult> {
-    const resolved = resolveGroupMethods(app.joinMethods, requested);
-    if (!resolved.ok) return { ok: false, error: errorMessage(ErrorCode.JOIN_METHOD_NOT_ALLOWED) };
     const now = this.now();
     const codes = await issueCodeSet(
       this.deps.codes,
       app.namespace,
       groupId,
-      resolved.methods,
+      methods,
       0,
       now,
       this.random,
       this.deps.groupExpiry(app.namespace, now),
     );
     if (codes === 'exhausted') return { ok: false, error: errorMessage(ErrorCode.CODES_EXHAUSTED) };
-    return { ok: true, methods: resolved.methods, codes };
+    return { ok: true, methods, codes };
   }
 
   /**

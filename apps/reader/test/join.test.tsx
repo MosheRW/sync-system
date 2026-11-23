@@ -279,6 +279,7 @@ describe('every join error has its own message, never the code (#24 AC19)', () =
     ['REQUEST_TIMEOUT', undefined, 'errNetwork'],
     ['APP_CONNECTION_LIMIT', undefined, 'errBusy'],
     ['CODES_EXHAUSTED', undefined, 'errBusy'],
+    ['APP_GROUP_LIMIT', { maxLiveGroups: 10_000 }, 'errBusy'],
     ['INVALID_API_KEY', undefined, 'errSetup'],
     ['INTERNAL_ERROR', undefined, 'errServer'],
     ['SOMETHING_NEW', undefined, 'errServer'],

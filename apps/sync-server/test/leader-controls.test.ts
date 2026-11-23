@@ -5,6 +5,7 @@ import type { GroupRecord } from '../src/groups/group-store.js';
 import type { Session } from '../src/groups/session.js';
 import type { GroupCodes } from '../src/joins/codes.js';
 import { LeaderControls, type LeaderControlsHost } from '../src/lifecycle/leader-controls.js';
+import { TAKE_BACKS_PER_GROUP_PER_MINUTE } from '../src/limits/constants.js';
 import type { RosterEntry } from '../src/lifecycle/roster.js';
 import { createLogger } from '../src/logging/logger.js';
 import { LogCapture } from './helpers/log-capture.js';
@@ -128,5 +129,27 @@ describe('LeaderControls per-group budgets (#13 RC2)', () => {
     const reply = await controls.takeBack(session('G1'), { type: 'leader.takeBack' });
     expect(reply).toMatchObject({ code: 'NOT_ALLOWED' });
     expect(controls.limiterSize).toBe(0);
+  });
+  it('limits take-backs to 3 per group per minute; a refusal spends none (#32 AC5, L3)', async () => {
+    const records = new Map([
+      ['G1', { ...record('G1'), displacedLeaderId: undefined }],
+      ['G2', record('G2')],
+    ]);
+    const controls = controlsFor(records);
+    const takeBack = (gid: string) => controls.takeBack(session(gid), { type: 'leader.takeBack' });
+    // Not the slot holder: NOT_ALLOWED, before the limiter.
+    expect(await takeBack('G1')).toMatchObject({ code: 'NOT_ALLOWED' });
+    expect(controls.limiterSize).toBe(0);
+    records.set('G1', record('G1'));
+    for (let i = 0; i < TAKE_BACKS_PER_GROUP_PER_MINUTE; i++) {
+      expect((await takeBack('G1')).type).not.toBe('error');
+    }
+    expect(await takeBack('G1')).toMatchObject({
+      type: 'error',
+      code: 'RATE_LIMITED',
+      message: 'Too many take-backs',
+    });
+    // Another group has its own budget.
+    expect((await takeBack('G2')).type).not.toBe('error');
   });
 });

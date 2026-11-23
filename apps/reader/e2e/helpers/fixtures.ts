@@ -1,4 +1,10 @@
-import { type Browser, type Page, expect, test as base } from '@playwright/test';
+import {
+  type Browser,
+  type BrowserContext,
+  type Page,
+  expect,
+  test as base,
+} from '@playwright/test';
 
 export const BOOK_PATH = '/?book=samples%2Fpride-and-prejudice-en';
 
@@ -21,19 +27,47 @@ export async function cutLeader(ms: number, stack: Stack = 'main'): Promise<void
   expect(response.ok).toBe(true);
 }
 
-/** Collects CSP violations and CSP console errors on a page (#24 AC55, R12). */
-async function guard(page: Page, problems: string[]): Promise<void> {
-  await page.addInitScript(() => {
+/** Console errors Chromium prints for CSP and Trusted Types violations. */
+const VIOLATION_CONSOLE = /Content Security Policy|Trusted ?Type|requires 'Trusted/i;
+
+/** An uncaught Trusted Types `TypeError` (a sink refused a plain string). */
+const TRUSTED_TYPES_ERROR = /\bTrusted(?:HTML|Script|ScriptURL)\b/;
+
+/**
+ * Fails the test on any CSP or Trusted Types violation in `context` (#24
+ * AC55, R12; #21 AC3, security C4). Every `securitypolicyviolation` event is
+ * forwarded to the test as it happens through an exposed binding (#21
+ * security L1), so a page that closes or navigates away can't hide one;
+ * `window.__csp` is kept as a second record read at teardown. Every page of
+ * the context gets the console and page-error listeners from creation.
+ * No allow-list: a violation caused by test tooling is a deviation to report,
+ * not something to filter out here.
+ */
+async function guard(context: BrowserContext, problems: string[]): Promise<void> {
+  await context.exposeBinding('__cspReport', (_source, report: unknown) => {
+    problems.push(`securitypolicyviolation: ${String(report)}`);
+  });
+  await context.addInitScript(() => {
     document.addEventListener('securitypolicyviolation', (event) => {
-      const list = ((window as unknown as { __csp?: string[] }).__csp ??= []);
-      list.push(`${event.violatedDirective} ${event.blockedURI}`);
+      const entry = `${event.violatedDirective} ${event.blockedURI} ${event.sourceFile}:${event.lineNumber}`;
+      const page = window as unknown as { __csp?: string[]; __cspReport?: (r: string) => unknown };
+      (page.__csp ??= []).push(entry);
+      void page.__cspReport?.(entry);
     });
   });
-  page.on('console', (message) => {
-    if (message.type() === 'error' && /Content Security Policy/i.test(message.text())) {
-      problems.push(message.text());
-    }
-  });
+  const watch = (page: Page) => {
+    page.on('console', (message) => {
+      if (message.type() === 'error' && VIOLATION_CONSOLE.test(message.text())) {
+        problems.push(`console: ${message.text()}`);
+      }
+    });
+    page.on('pageerror', (error) => {
+      if (TRUSTED_TYPES_ERROR.test(`${error.name}: ${error.message}`)) {
+        problems.push(`pageerror: ${error.name}: ${error.message}`);
+      }
+    });
+  };
+  context.on('page', watch);
 }
 
 export interface Pages {
@@ -41,29 +75,32 @@ export interface Pages {
   open(): Promise<Page>;
 }
 
-/** Every page fails the test on a CSP violation. */
+/** Every page fails the test on a CSP or Trusted Types violation. */
 export const test = base.extend<{ pages: Pages }>({
   pages: async ({ browser }: { browser: Browser }, use) => {
-    const opened: Page[] = [];
+    const contexts: BrowserContext[] = [];
     const problems: string[] = [];
     await use({
       open: async () => {
         const context = await browser.newContext();
-        const page = await context.newPage();
-        await guard(page, problems);
-        opened.push(page);
-        return page;
+        await guard(context, problems);
+        contexts.push(context);
+        return context.newPage();
       },
     });
-    for (const page of opened) {
-      if (page.isClosed()) continue;
-      const seen = await page.evaluate(
-        () => (window as unknown as { __csp?: string[] }).__csp ?? [],
-      );
-      problems.push(...seen);
-      await page.context().close();
+    for (const context of contexts) {
+      for (const page of context.pages()) {
+        const seen = await page.evaluate(
+          () => (window as unknown as { __csp?: string[] }).__csp ?? [],
+        );
+        for (const entry of seen) {
+          const reported = `securitypolicyviolation: ${entry}`;
+          if (!problems.includes(reported)) problems.push(reported);
+        }
+      }
+      await context.close();
     }
-    expect(problems, 'CSP violations').toEqual([]);
+    expect(problems, 'CSP and Trusted Types violations').toEqual([]);
   },
 });
 

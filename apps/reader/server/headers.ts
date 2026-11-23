@@ -16,6 +16,12 @@ export interface ConnectSources {
  * opens a WebSocket to it, a different origin). Every source is re-checked
  * and re-serialised here, so a malformed value can never add a directive
  * (security C2, #24 L1). Nothing else differs when sync is on.
+ *
+ * Trusted Types (#21, #19 F10) are enforced with no policy at all:
+ * `require-trusted-types-for 'script'` makes the DOM XSS sinks refuse plain
+ * strings, and `trusted-types 'none'` makes `trustedTypes.createPolicy()`
+ * throw for every name (including `default`), so no code can launder a
+ * string into a sink. Both are constants; no input reaches them.
  */
 export function contentSecurityPolicy({ srcOrigins, syncUrl = null }: ConnectSources): string {
   const origins: string[] = [];
@@ -41,6 +47,8 @@ export function contentSecurityPolicy({ srcOrigins, syncUrl = null }: ConnectSou
     "form-action 'none'",
     "frame-ancestors 'none'",
     "object-src 'none'",
+    "require-trusted-types-for 'script'",
+    "trusted-types 'none'",
   ].join('; ');
 }
 

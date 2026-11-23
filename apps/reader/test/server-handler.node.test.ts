@@ -107,7 +107,7 @@ describe('reader server responses (architecture 5.5, security C1)', () => {
   it('sends the CSP with the configured origins (ADR 0006)', async () => {
     const response = await fetch(`${base}/`);
     expect(response.headers.get('content-security-policy')).toBe(
-      "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'self' https://content.example.org; manifest-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'",
+      "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'self' https://content.example.org; manifest-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'; require-trusted-types-for 'script'; trusted-types 'none'",
     );
   });
 });
@@ -207,5 +207,46 @@ describe('CSP construction (security C2, C7)', () => {
       contentSecurityPolicy({ srcOrigins: ["https://a.example; script-src 'unsafe-inline'"] }),
     ).toThrow();
     expect(() => contentSecurityPolicy({ srcOrigins: ['https://a.example/'] })).toThrow();
+  });
+});
+
+describe('CSP enforces Trusted Types with no policy (#21 AC1, AC2, AC4, security C1)', () => {
+  const cases: [string, Parameters<typeof contentSecurityPolicy>[0]][] = [
+    ['no origins, sync off', { srcOrigins: [] }],
+    ['?src origins, sync off', { srcOrigins: ['https://a.example', 'https://b.example:8443'] }],
+    ['no origins, sync on', { srcOrigins: [], syncUrl: 'wss://sync.example/ws' }],
+    [
+      '?src origins, sync on',
+      { srcOrigins: ['https://a.example'], syncUrl: 'ws://127.0.0.1:8080/ws' },
+    ],
+  ];
+
+  function count(csp: string, directive: string): number {
+    return csp.split('; ').filter((part) => part === directive).length;
+  }
+
+  it.each(cases)('%s: both directives, exactly once each', (_name, sources) => {
+    const csp = contentSecurityPolicy(sources);
+    expect(count(csp, "require-trusted-types-for 'script'")).toBe(1);
+    expect(count(csp, "trusted-types 'none'")).toBe(1);
+    expect(csp.split('; ').filter((part) => part.startsWith('trusted-types'))).toEqual([
+      "trusted-types 'none'",
+    ]);
+    expect(csp.split('; ').filter((part) => part.startsWith('require-trusted-types-for'))).toEqual([
+      "require-trusted-types-for 'script'",
+    ]);
+  });
+
+  it.each(cases)('%s: no wildcard, duplicates or policy names', (_name, sources) => {
+    const csp = contentSecurityPolicy(sources);
+    expect(csp).not.toContain('*');
+    expect(csp).not.toContain("'allow-duplicates'");
+    expect(csp).not.toMatch(/trusted-types [^;]*\bdefault\b/);
+  });
+
+  it('ends with the two Trusted Types directives', () => {
+    expect(contentSecurityPolicy({ srcOrigins: [] })).toMatch(
+      /; require-trusted-types-for 'script'; trusted-types 'none'$/,
+    );
   });
 });

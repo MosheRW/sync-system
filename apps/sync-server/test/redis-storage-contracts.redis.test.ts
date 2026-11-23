@@ -8,7 +8,13 @@ import { RedisGroupStore } from '../src/storage/redis/group-store.js';
 import { redisContext } from '../src/storage/redis/redis-storage.js';
 import { RedisWorkSource } from '../src/storage/redis/unit-of-work.js';
 import { record } from './contracts/group-store.js';
-import { codeIndexContract, doorStateContract, endedGroupsContract } from './contracts/state.js';
+import { RedisLiveGroups } from '../src/storage/redis/live-groups.js';
+import {
+  codeIndexContract,
+  doorStateContract,
+  endedGroupsContract,
+  liveGroupsContract,
+} from './contracts/state.js';
 import { describeRedis, inspector, randomPrefix, testLink } from './helpers/redis.js';
 
 describeRedis('Redis state contracts (#35 AC29)', () => {
@@ -62,6 +68,21 @@ describeRedis('Redis state contracts (#35 AC29)', () => {
         size: async () =>
           (await inspect.client.zCard(`${prefix}:v1:e:plain`)) +
           (await inspect.client.zCard(`${prefix}:v1:e:guarded`)),
+      });
+    },
+    cleanup: () => inspect.flush(prefix),
+  });
+
+  liveGroupsContract('redis', {
+    exactClock: false,
+    make: () => {
+      const { ctx, work } = setup(() => Date.now());
+      return Promise.resolve({
+        store: new RedisLiveGroups(ctx, work),
+        now: () => Date.now(),
+        advance: (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
+        count: (namespace: string) =>
+          inspect.client.zCount(`${prefix}:v1:lg:${namespace}`, Date.now(), '+inf'),
       });
     },
     cleanup: () => inspect.flush(prefix),

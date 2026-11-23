@@ -46,6 +46,11 @@ Rules that follow from these choices:
   banned by ESLint in the app.
 - Components use `var(--token)` values, never raw colours or spacing.
 - The reader server never fetches a URL on behalf of a client (no proxy).
+- The reader's CSP enforces Trusted Types with no policy
+  (`require-trusted-types-for 'script'; trusted-types 'none'`, #21): no
+  policy exists and `trusted-types 'none'` forbids creating one. Adding a
+  policy needs a named policy in the CSP (never `*`, `default` or
+  `'allow-duplicates'`), a README note and a security plan review.
 
 ## Reading app groups (`apps/reader`, #24)
 
@@ -110,3 +115,13 @@ Rules that follow from these choices:
   whole config loaded without a problem.
 - `known-vars.ts` (server and reader) is the one list of known names; adding a
   variable means adding it there.
+
+## Sync server group creation limits (`apps/sync-server`, #12)
+
+| Decision                   | Choice                                                                                                                                                                                                                                                                         | ADR                                                       |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------- |
+| Create limits (Gate 2 Q-1) | Per connection: a sliding window in the process. Per app: one token bucket for every instance, checked with the live-group cap in one step; its sustained rate is derived, `min(maxRate, (cap / 2 - burst) / (maxSessionMinutes + 5 s))`, so creates hold at most half the cap | [architecture.md](issues/12/architecture.md) (Gate 2 Q-1) |
+| Configuration (Gate 2 Q-2) | Env variables in the `MAX_` family, defaults as constants: `MAX_GROUP_CREATES_PER_CONNECTION_PER_MINUTE` (6), `MAX_GROUP_CREATE_BURST_PER_APP` (120), `MAX_GROUP_CREATES_PER_APP_PER_MINUTE` (120), `MAX_LIVE_GROUPS_PER_APP` (10 000), with cap > 2 x burst                   | [architecture.md](issues/12/architecture.md) (Gate 2 Q-2) |
+| Cap error (Gate 2 Q-3)     | `APP_GROUP_LIMIT` with `details.maxLiveGroups` (the configured cap, never the count)                                                                                                                                                                                           | [architecture.md](issues/12/architecture.md) (Gate 2 Q-3) |
+| Recreations (Gate 2 Q-4)   | Counted, never refused, never charged                                                                                                                                                                                                                                          | [architecture.md](issues/12/architecture.md) (Gate 2 Q-4) |
+| Refusal logs (Gate 2 Q-5)  | One `warn` per app per minute per instance, `namespace` only                                                                                                                                                                                                                   | [architecture.md](issues/12/architecture.md) (Gate 2 Q-5) |

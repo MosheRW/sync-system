@@ -4,11 +4,20 @@ import type { TokenSecrets } from '../src/config/token-secret.js';
 import { createGroupWithMembers, resumeWith } from './helpers/groups.js';
 import { ManualScheduler } from './helpers/manual-scheduler.js';
 import { describeRedis, inspector, randomPrefix } from './helpers/redis.js';
+import type { TestClient } from './helpers/test-client.js';
 import { type TestServer, startTestServer } from './helpers/test-server.js';
 import { claimsOf } from './helpers/tokens.js';
 
 const MINUTE = 60_000;
 const GRACE_MS = 30_000;
+
+/** The next frame of `type`, skipping any other frame in between. */
+async function frameOf<T extends 'leader.granted' | 'error'>(client: TestClient, type: T) {
+  for (;;) {
+    const message = await client.next();
+    if (message.type === type) return message as Extract<typeof message, { type: T }>;
+  }
+}
 
 describeRedis('restart survival with Redis (#35 AC9-AC15)', () => {
   let inspect: Awaited<ReturnType<typeof inspector>>;
@@ -197,6 +206,46 @@ describeRedis('restart survival with Redis (#35 AC9-AC15)', () => {
     await member.expectNoMessage(50);
     scheduler.advance(1000);
     expect(await member.next('leader.granted')).toMatchObject({ reason: 'handoff_disconnect' });
+  });
+
+  it('a take-back leaves the slot empty across a restart; the interim leader is refused (#32 AC4)', async () => {
+    fresh();
+    const first = await start();
+    const group = await createGroupWithMembers(first, 2);
+    const [next, other] = group.members as [TestClient, TestClient];
+    await group.leader.close();
+    await next.next('leader.offline');
+    await other.next('leader.offline');
+    scheduler.advance(GRACE_MS);
+    await next.next('leader.granted');
+    const { client: back } = await resumeWith(first, group.leaderToken);
+    back.send({ type: 'leader.takeBack' });
+    expect(await frameOf(back, 'leader.granted')).toMatchObject({ reason: 'take_back' });
+    const lost = await next.next('leader.lost');
+    expect(lost).toMatchObject({ reason: 'take_back', takeBackAvailable: false });
+    await stop(first);
+    const raw = await inspect.client.get(`${prefix}:v1:g:app-a:${group.groupId}`);
+    const stored = (JSON.parse(raw!) as { record: Record<string, unknown> }).record;
+    expect(stored).toMatchObject({ leaderId: group.leaderId });
+    expect(stored).not.toHaveProperty('displacedLeaderId');
+    const second = await start();
+    const { client: reloaded, reply } = await resumeWith(second, lost.token);
+    expect(reply).toMatchObject({
+      type: 'group.joined',
+      role: 'member',
+      participantId: group.memberIds[0],
+    });
+    reloaded.send({ type: 'leader.takeBack' });
+    expect(await frameOf(reloaded, 'error')).toMatchObject({
+      code: 'NOT_ALLOWED',
+      message: 'Only the displaced leader can take back the lead',
+    });
+    // The round-trip above flushed anything queued on resume: no offer came.
+    expect(reloaded.received.some((f) => f.type === 'takeback.offered')).toBe(false);
+    const after = await inspect.client.get(`${prefix}:v1:g:app-a:${group.groupId}`);
+    expect((JSON.parse(after!) as { record: { leaderId: string } }).record.leaderId).toBe(
+      group.leaderId,
+    );
   });
 
   it('one invalid stored group never blocks the start: that group ends, the others survive (C1)', async () => {

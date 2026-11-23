@@ -85,6 +85,7 @@ is treated as production.
 | `Config error: MAX_BUFFERED_BYTES (<n>) must be >= the largest tokens.result frame (<n>)`                                            | Raise `MAX_BUFFERED_BYTES` to at least the number shown.                           |
 | `Config error: MAX_BUFFERED_BYTES (<n>) must be >= the largest roster snapshot plus headroom (<n>) for MAX_GROUP_SIZE_CEILING (<n>)` | Raise `MAX_BUFFERED_BYTES` or lower `MAX_GROUP_SIZE_CEILING`.                      |
 | `Config error: TOKEN_REFRESH_MIN_SECONDS (<n>) must be <= TOKEN_REFRESH_MAX_SECONDS (<n>)`                                           | Lower `TOKEN_REFRESH_MIN_SECONDS` or raise `TOKEN_REFRESH_MAX_SECONDS`.            |
+| `Config error: MAX_LIVE_GROUPS_PER_APP (<n>) must be > 2 * MAX_GROUP_CREATE_BURST_PER_APP (<n>)`                                     | Raise `MAX_LIVE_GROUPS_PER_APP` or lower `MAX_GROUP_CREATE_BURST_PER_APP`.         |
 
 A rule is checked only when every number it compares is valid on its own.
 

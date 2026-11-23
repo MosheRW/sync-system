@@ -15,6 +15,7 @@ export type GenericErrorCode = Exclude<ErrorCode, ActionErrorCode>;
  */
 export const ACTION_ERROR_TEXT = {
   RATE_LIMITED: {
+    'group.create': 'Too many groups created; try later',
     'position.update': 'Too many position updates',
     'tokens.check': 'Too many token checks',
     'group.joinByCode': 'Too many join attempts',
@@ -98,6 +99,7 @@ export const ERROR_TEXT: Record<GenericErrorCode, string> = {
   PARTICIPANT_NOT_FOUND: 'Participant not found',
   GROUP_LOCKED: 'Group is locked',
   BLOCK_LIST_FULL: 'Block list is full',
+  APP_GROUP_LIMIT: 'The app has too many live groups; try later',
 };
 
 interface ErrorOptions {

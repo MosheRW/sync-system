@@ -13,6 +13,7 @@ import type { ClusterHost } from '../groups/cluster-notifier.js';
 import type { RemoteReceiver } from './redis/pubsub.js';
 import type { ApprovalStore } from '../joins/approval-store.js';
 import type { ParkingRegistry } from './redis/parking.js';
+import { type LiveGroupsStore, MemoryLiveGroups } from '../groups/live-groups.js';
 
 /** What `SyncServer.storage()` reports (#35 AC27). */
 export type StorageStatus =
@@ -53,6 +54,8 @@ export interface Storage {
   readonly ended: EndedGroupsStore;
   readonly doors: DoorStateStore;
   readonly timers: TimerBackend;
+  /** Live groups per app and the app's create budget (#12). */
+  readonly liveGroups: LiveGroupsStore;
   readonly work: UnitOfWorkSource;
   status(): StorageStatus;
   /** The store's epoch (Redis); the in-memory store uses the process start. */
@@ -104,6 +107,7 @@ export function memoryStorage(options: MemoryStorageOptions): Storage {
     ),
     doors: new MemoryDoorStates(),
     timers: new MemoryTimerBackend(scheduler),
+    liveGroups: new MemoryLiveGroups(() => scheduler.now()),
     work: IMMEDIATE_WORK,
     status: () => ({ kind: 'memory' }),
     keepAttachmentsOnClose: false,

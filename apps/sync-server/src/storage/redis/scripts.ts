@@ -291,14 +291,19 @@ return dropped
  * Claims due timers (#35 ADR 0013): every member of the due set with a
  * score at or before `now` whose timer still exists gets the lease end as
  * its score; members whose group's timer hash entry is gone are dropped,
- * and live-group members past their end bound too (F13). KEYS: due, live;
- * ARGV: timer hash key base, now, lease end, batch size. Returns
- * `{member, timerJson, ...}`. Hash keys are built from members of the due
- * set, which only ever hold checked `ns:gid:kind` members.
+ * and live-group members past their end bound too (F13), with their slot in
+ * their app's live-group set (#12). KEYS: due, live; ARGV: timer hash key
+ * base, now, lease end, batch size, live-group set key base. Returns
+ * `{member, timerJson, ...}`. Hash and set keys are built from members of
+ * the due and live sets, which only ever hold checked members.
  */
 export const CLAIM_DUE = new LuaScript(`
 local due, live = KEYS[1], KEYS[2]
-local tp, now, lease, limit = ARGV[1], ARGV[2], ARGV[3], tonumber(ARGV[4])
+local tp, now, lease, limit, lgp = ARGV[1], ARGV[2], ARGV[3], tonumber(ARGV[4]), ARGV[5]
+for _, m in ipairs(redis.call('ZRANGEBYSCORE', live, '-inf', '(' .. now)) do
+  local i = string.find(m, ':', 1, true)
+  if i ~= nil then redis.call('ZREM', lgp .. string.sub(m, 1, i - 1), string.sub(m, i + 1)) end
+end
 redis.call('ZREMRANGEBYSCORE', live, '-inf', '(' .. now)
 local out = {}
 for _, m in ipairs(redis.call('ZRANGEBYSCORE', due, '-inf', now, 'LIMIT', 0, limit)) do
@@ -436,3 +441,101 @@ if ARGV[1] ~= '' then hw = redis.call('HGET', KEYS[4], ARGV[1]) end
 table.insert(out, hw)
 return out
 `);
+
+/**
+ * Live groups of one app and its create budget (#12 architecture 3.1, R5).
+ * KEYS: the app's live set (`appLive`), its bucket (`appCreateBudget`).
+ * ARGV: mode (`reserve` | `register`), member (a checked group ID),
+ * expiresAt and the caller's now (ms, instance clock), and for `reserve`
+ * cap, burst and refill per minute. Only their difference (the group's
+ * remaining life) is used: every time in the script is Redis TIME (L7),
+ * so the scores, `u`, the prune and the TTLs never mix clocks. Steps:
+ * prune -> held member (no charge) -> `register` -> effective r/b/u and
+ * refill -> rate refusal (no write) -> cap refusal (no charge) -> charge +
+ * ZADD. Every number written to a command is an integer string (`%.0f`,
+ * L8) or a `%.17g` score; float fields are stored with `%.17g`. Returns
+ * `{'ok', fresh}` (1 when the member was added, 0 when it was held),
+ * `{'rate', ms}` or `{'cap'}`; `ms` is an integer (ceil, clamped to 1e13).
+ */
+export const RESERVE_LIVE = new LuaScript(
+  `
+local set, bucket = KEYS[1], KEYS[2]
+local mode, member = ARGV[1], ARGV[2]
+if mode ~= 'reserve' and mode ~= 'register' then return redis.error_reply('ERR live: mode') end
+local function finite(x) return x ~= nil and x == x and x ~= math.huge and x ~= -math.huge end
+local expiresAt, callerNow = tonumber(ARGV[3]), tonumber(ARGV[4])
+if not finite(expiresAt) or not finite(callerNow) then
+  return redis.error_reply('ERR live: time')
+end
+local cap, burst, refill
+if mode == 'reserve' then
+  cap, burst, refill = tonumber(ARGV[5]), tonumber(ARGV[6]), tonumber(ARGV[7])
+  if not finite(cap) or cap < 1 or cap ~= math.floor(cap) then
+    return redis.error_reply('ERR live: cap')
+  end
+  if not finite(burst) or burst < 1 or burst ~= math.floor(burst) then
+    return redis.error_reply('ERR live: burst')
+  end
+  if not finite(refill) or not (refill > 0) then
+    return redis.error_reply('ERR live: refill')
+  end
+end
+` +
+    REDIS_NOW +
+    `
+local MAXT = 1e13
+local function int(x) return string.format('%.0f', x) end
+local function num(x) return string.format('%.17g', x) end
+-- The group's end bound in Redis time.
+local score = now + math.min(expiresAt - callerNow, MAXT)
+local function extend_set()
+  local target = math.ceil(math.max(math.min(score, now + MAXT), now + 1))
+  local current = redis.call('PEXPIRETIME', set)
+  if current == -1 or (current >= 0 and target > current) then
+    redis.call('PEXPIREAT', set, int(target))
+  end
+end
+redis.call('ZREMRANGEBYSCORE', set, '-inf', '(' .. int(now))
+local held = redis.call('ZSCORE', set, member)
+if held then
+  if score > tonumber(held) then redis.call('ZADD', set, num(score), member) end
+  extend_set()
+  return {'ok', 0}
+end
+if mode == 'register' then
+  redis.call('ZADD', set, num(score), member)
+  extend_set()
+  return {'ok', 1}
+end
+local f = redis.call('HMGET', bucket, 't', 'a', 'r', 'b', 'u')
+local t, a, r, b, u = tonumber(f[1]), tonumber(f[2]), tonumber(f[3]), tonumber(f[4]), tonumber(f[5])
+local tokens, at
+if not finite(t) or not finite(a) or not finite(r) or not finite(b) or not finite(u)
+  or not (r > 0) or not (b >= 1) then
+  r, b, u = refill, burst, score
+  tokens, at = burst, now
+else
+  if now < u then
+    r = math.min(r, refill)
+    b = math.min(b, burst)
+    u = math.max(u, score)
+  else
+    r, b, u = refill, burst, score
+  end
+  tokens = math.min(b, t + math.max(0, now - a) * r / 60000)
+  at = a
+end
+if tokens < 1 then
+  return {'rate', math.min(math.ceil((1 - tokens) * 60000 / r), MAXT)}
+end
+if redis.call('ZCARD', set) >= cap then return {'cap'} end
+tokens = tokens - 1
+at = math.max(at, now)
+redis.call('HSET', bucket, 't', num(tokens), 'a', num(at), 'r', num(r), 'b', num(b), 'u', num(u))
+local ttl = math.min(math.ceil(math.max((b - tokens) * 60000 / r, u - now)), MAXT)
+redis.call('PEXPIRE', bucket, int(math.max(ttl, 1)))
+redis.call('ZADD', set, num(score), member)
+extend_set()
+return {'ok', 1}
+`,
+);

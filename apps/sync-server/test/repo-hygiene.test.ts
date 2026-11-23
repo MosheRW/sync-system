@@ -365,7 +365,8 @@ describe('README documents the lifecycle (#13 AC4, AC38, RC14)', () => {
     expect(readme).not.toContain('can take the lead back until the group ends');
     for (const text of [
       "A displaced leader's token only rejoins as a member",
-      'most recent displaced leader',
+      'the leader displaced by the last handoff',
+      'A take-back cannot be taken back',
       'no code or QR ticket of the stale leader survives',
     ]) {
       expect(readme, text).toContain(text);

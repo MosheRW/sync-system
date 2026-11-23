@@ -81,6 +81,10 @@ const NUMERIC: readonly ServerVariable[] = [
   'APPROVAL_TIMEOUT_SECONDS_CEILING',
   'DISCONNECT_GRACE_SECONDS_CEILING',
   'KEEP_ALIVE_COUNTDOWN_SECONDS_CEILING',
+  'MAX_GROUP_CREATES_PER_CONNECTION_PER_MINUTE',
+  'MAX_GROUP_CREATE_BURST_PER_APP',
+  'MAX_GROUP_CREATES_PER_APP_PER_MINUTE',
+  'MAX_LIVE_GROUPS_PER_APP',
 ];
 
 const GENERATE = 'use `openssl rand -base64 32`';
@@ -317,6 +321,20 @@ export const CROSS_FIELD_CASES: readonly ConfigCase[] = [
     problems: [
       'MAX_BUFFERED_BYTES (97663) must be >= the largest roster snapshot plus headroom (97664) for MAX_GROUP_SIZE_CEILING (100)',
     ],
+  },
+  {
+    id: 'MAX_LIVE_GROUPS_PER_APP not above twice the burst',
+    target: 'MAX_LIVE_GROUPS_PER_APP',
+    env: { MAX_LIVE_GROUPS_PER_APP: '240' },
+    sentinels: [],
+    problems: ['MAX_LIVE_GROUPS_PER_APP (240) must be > 2 * MAX_GROUP_CREATE_BURST_PER_APP (240)'],
+  },
+  {
+    id: 'MAX_GROUP_CREATES_PER_CONNECTION_PER_MINUTE above 600',
+    target: 'MAX_GROUP_CREATES_PER_CONNECTION_PER_MINUTE',
+    env: { MAX_GROUP_CREATES_PER_CONNECTION_PER_MINUTE: '601' },
+    sentinels: [],
+    problems: ['MAX_GROUP_CREATES_PER_CONNECTION_PER_MINUTE must be between 1 and 600'],
   },
   {
     id: 'TOKEN_REFRESH_MIN_SECONDS above the max',
@@ -632,6 +650,10 @@ export const VALID_VALUES: Readonly<Record<ServerVariable, readonly string[]>> =
   APPROVAL_TIMEOUT_SECONDS_CEILING: ['600', '300'],
   DISCONNECT_GRACE_SECONDS_CEILING: ['120', '60'],
   KEEP_ALIVE_COUNTDOWN_SECONDS_CEILING: ['120', '90'],
+  MAX_GROUP_CREATES_PER_CONNECTION_PER_MINUTE: ['6', '600'],
+  MAX_GROUP_CREATE_BURST_PER_APP: ['120', '1'],
+  MAX_GROUP_CREATES_PER_APP_PER_MINUTE: ['120', '60000'],
+  MAX_LIVE_GROUPS_PER_APP: ['10000', '100000'],
   TOKEN_SECRET: [STRONG, STRONG_2],
   TOKEN_SECRET_PREVIOUS: [STRONG_2],
   REDIS_URL: ['redis://localhost:6379', 'rediss://user:pw@redis.internal:6380/2'],

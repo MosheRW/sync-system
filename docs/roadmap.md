@@ -22,21 +22,23 @@ Numbering: "item N" means PRD item N of 9, as used in the specs. GitHub issue an
 | 6    | React/Next package with hooks over the core client                                                                                                                                    | #15           | #16           | Done (merged 2026-11-05)                                                                                                                                                                                                        | `docs/issues/15/`                                       |
 | 7    | Reading app content: content schema v1, fingerprint, RTL and mixed direction, library page and content selection, plus the `apps/reader` app with Docker                              | #19           | #20           | Done (merged 2026-11-05)                                                                                                                                                                                                        | `docs/issues/19/`                                       |
 | 8    | Reading app sync UX: 8a join and follow (#24); 8b leader views and lifecycle prompts (#25)                                                                                            | #24, #25      | #26, #31      | Done (8a merged 2026-11-11, 8b merged 2026-11-12)                                                                                                                                                                               | `docs/issues/24/`, `docs/issues/25/`                    |
-| 9    | 9a Redis storage: restart survival, server-side block lists, several instances (#35); 9b health, readiness and config errors (#36); 9c public docs, changelog and first release (#37) | #35, #36, #37 | #38, #40, #43 | 9a done (PR 1 #38 merged 2026-11-12 as 46f4af3; PR 2 #40 merged 2026-11-15 as 1865f02; #35 and #39 closed); 9b done (PR #43 merged 2026-11-18 as 0d1dba3; #36 closed); 9c (#37) in grooming on `feat/37-docs-changelog-release`; 9c Gate 1 passed 2026-11-22 and is paused until #32, #12 and #21 are fixed | `docs/issues/35/`, `docs/issues/36/`, `docs/issues/37/` |
+| 9    | 9a Redis storage: restart survival, server-side block lists, several instances (#35); 9b health, readiness and config errors (#36); 9c public docs, changelog and first release (#37) | #35, #36, #37 | #38, #40, #43 | 9a done (PR 1 #38 merged 2026-11-12 as 46f4af3; PR 2 #40 merged 2026-11-15 as 1865f02; #35 and #39 closed); 9b done (PR #43 merged 2026-11-18 as 0d1dba3; #36 closed); 9c (#37) resumed 2026-11-23 at architecture on `feat/37-docs-changelog-release` (Gate 1 passed 2026-11-22; blockers #32, #12 and #21 all merged) | `docs/issues/35/`, `docs/issues/36/`, `docs/issues/37/` |
 
 Scope of items 7-9 is taken from the PRD ("Product 1: the reading app", "Deliverables and operations") and the item 4, 5 and 6 specs, which defer work to them. The scope will be fixed in each item's own spec.
 
 ## Parked follow-ups
 
 - #9 `fix(client): harden forgetAllGroups cut-off against clock skew (follow-up to #7)`: open.
-- #12 `fix(server): limit group creation and live groups per app (follow-up to #10)`: open.
-- #21 `fix(reader): enforce trusted types in the csp (follow-up to #19)`: open. Priority rose with #24 (the reader now holds participant tokens); the #24 e2e CSP-violation check is its test harness (security L7).
+- #12 `fix(server): limit group creation and live groups per app (follow-up to #10)`: done (PR #46 merged 2026-11-22 as 145ca98).
+- #21 `fix(reader): enforce trusted types in the csp (follow-up to #19)`: done (PR #49 merged 2026-11-23 as 8242f68; blocker for 9c).
 - #27 Hebrew header bidi bugs (follow-up to #19): open. QA saw it again in 8b (#25).
 - #28 native-speaker review of the Hebrew strings (follow-up to #24): open. The 102 Hebrew strings added in 8b (#25) are in its scope, including the vice-leader term "סגן המוביל".
-- #32 `fix(server): offer take-back only after a handoff loss (follow-up to #25)` (security M1): open.
+- #32 `fix(server): offer take-back only after a handoff loss (follow-up to #25)` (security M1): done (PR #45 merged 2026-11-22 as 085700a; blocker for 9c).
 - #44 `fix(reader): escape control characters in echoed config values (follow-up to #36)` (security A1, low): open. The A2 finding (the truncated echo of non-secret values, Q24) is accepted, not a follow-up.
 - #41 `fix(server): share join-attempt limits across instances through redis (follow-up to #35)` (security F22, Q-B6): open.
 - #42 `fix(server): treat a just-started instance as live when picking a successor (follow-up to #35)` (C12): open. A peer sees a new instance as live only after its next heartbeat, and the S4 `oldAttached` and successor pick read the live cache. Needs architect and security.
+- #47 `fix(storage): bound create-budget key TTL and batch expired live-group cleanup (follow-up to #12)` (security A1, A2; QA A3): open.
+- #48 `test(server): cover forgetGroup slot retention and fix limits README wording (follow-up to #12)` (QA A1, A2): open.
 
 ## Key accepted decisions
 
