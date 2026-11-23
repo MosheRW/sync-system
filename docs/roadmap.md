@@ -39,13 +39,14 @@ Scope of items 7-9 is taken from the PRD ("Product 1: the reading app", "Deliver
 - #42 `fix(server): treat a just-started instance as live when picking a successor (follow-up to #35)` (C12): open. A peer sees a new instance as live only after its next heartbeat, and the S4 `oldAttached` and successor pick read the live cache. Needs architect and security.
 - #47 `fix(storage): bound create-budget key TTL and batch expired live-group cleanup (follow-up to #12)` (security A1, A2; QA A3): open.
 - #48 `test(server): cover forgetGroup slot retention and fix limits README wording (follow-up to #12)` (QA A1, A2): open.
-- #51 `fix(docs): operator guide passes TOKEN_SECRET with docker run -e (follow-up to #37)` (security low 2): in progress on `fix/51-operator-guide-token-secret`.
+- #51 `fix(docs): operator guide passes TOKEN_SECRET with docker run -e (follow-up to #37)` (security low 2): done (PR #57 merged 2026-11-23 as 4125318). Follow-ups #58, #59 and #60 are open.
 - #52 `fix(release): move the docker ps check in RELEASING.md step 4 to its own block (follow-up to #37)` (QA A2): open.
 - #53 `chore(release): investigate react tarball hash differences across node:24 images (follow-up to #37)` (QA A3, security L7): open.
 - #54 `fix(ci): repo-hygiene CI trigger test blocks pnpm test in the release procedure (follow-up to #37)`: done (PR #55 merged 2026-11-23 as b42b396; unblocks the real 1.0.0 release, done by hand per `RELEASING.md`).
 - #56 `test(server): harden repo-hygiene ci.yml trigger and permissions checks (follow-up to #54)` (security L1, L2): open.
 - #58 `feat(server): read secrets from files via _FILE variables (follow-up to #51)` (asked for at #51 Gate 2; needs an ADR 0015 amendment): open.
 - #59 `test(server): close remaining gaps in the operator-guide secret check (follow-up to #51)` (security A4, #51 Gate 3): open.
+- #60 `docs: harden the Swarm deployment guidance (follow-up to #51)` (security A5, QA N1): open.
 
 ## Key accepted decisions
 

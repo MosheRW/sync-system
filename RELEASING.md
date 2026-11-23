@@ -204,7 +204,7 @@ tarballs and `INTEGRITY.txt`. Every check runs **before** the token exists
 anywhere. The token goes in once, over `docker exec -i` standard input,
 into a mode-600 `/root/.npmrc` of this container, and nowhere else: not in
 a command line, an environment variable of a container, a host file or the
-shell history. Paste only this block:
+shell history. Paste only the first block below:
 
 ```sh
 ( set -euo pipefail
@@ -277,6 +277,11 @@ mosherw-sync-system-react-$V.tgz"
   verify @mosherw/sync-system-client "mosherw-sync-system-client-$V.tgz"
   verify @mosherw/sync-system-react "mosherw-sync-system-react-$V.tgz"
 )
+```
+
+Run this check separately, after the block above has finished (do not paste it together with that block):
+
+```sh
 docker ps -a --filter name=sync-release-publish   # must list no container
 ```
 
