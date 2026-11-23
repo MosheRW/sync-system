@@ -64,7 +64,7 @@ replaced by `***`, so a user name or password is never shown.
 | Message                                                                                                      | Fix                                                                                   |
 | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------- |
 | `Config error: <name> must be a positive integer`                                                            | Set digits only, no sign, decimal point or leading zero, or unset it for the default. |
-| `Config error: <name> must be between <n> and <n>`                                                           | Set a value in the range (see "Environment variables" in `README.md`).                |
+| `Config error: <name> must be between <n> and <n>`                                                           | Set a value in the range (see "Environment variables" in `docs/operator-guide.md`).   |
 | `Config error: LOG_LEVEL must be one of fatal, error, warn, info, debug, trace, silent`                      | Use one of the listed levels.                                                         |
 | `Config error: HOST must not be empty`                                                                       | Unset `HOST` (default `0.0.0.0`) or set an address to bind.                           |
 | `Config error: SYNC_CONFIG_PATH must not be empty`                                                           | Unset it (default `./config/apps.json`) or set the apps file path.                    |
@@ -125,10 +125,10 @@ ends with `_CEILING`, must be one of the server's variables
 ([ADR 0015](decisions/0015-unknown-environment-variables.md)). Only the name is
 printed, never the value.
 
-| Message                                                                                                                    | Fix                                                                                                                                                                                                 |
-| -------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Config error: <name> is not a sync server variable; did you mean <known>?`                                                | Rename it to the suggested variable.                                                                                                                                                                |
-| `Config error: <name> is not a sync server variable; remove it or fix the name (see "Environment variables" in README.md)` | Remove it, fix the name, or, for a helper variable of your own (for example `REDIS_PASSWORD` or `REDIS_HOST` used to build `REDIS_URL`), rename it outside these prefixes (for example `PW_REDIS`). |
+| Message                                                                                                                                 | Fix                                                                                                                                                                                                 |
+| --------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Config error: <name> is not a sync server variable; did you mean <known>?`                                                             | Rename it to the suggested variable.                                                                                                                                                                |
+| `Config error: <name> is not a sync server variable; remove it or fix the name (see "Environment variables" in docs/operator-guide.md)` | Remove it, fix the name, or, for a helper variable of your own (for example `REDIS_PASSWORD` or `REDIS_HOST` used to build `REDIS_URL`), rename it outside these prefixes (for example `PW_REDIS`). |
 
 ### Config error: apps file
 

@@ -20,7 +20,8 @@ const repoRoot = fileURLToPath(new URL('../../../', import.meta.url));
 const devConfigPath = join(repoRoot, 'config', 'apps.dev.json');
 /** Test-only value, never real. */
 const STRONG = 'q9Zt2Lx7Vb4Nm1Rt6Yw0Ue5Io3AaKd8Fj2Hs7Gp1Wc=';
-const README_HINT = 'remove it or fix the name (see "Environment variables" in README.md)';
+const README_HINT =
+  'remove it or fix the name (see "Environment variables" in docs/operator-guide.md)';
 
 function read(path: string): string {
   return readFileSync(join(repoRoot, path), 'utf8');

@@ -176,7 +176,7 @@ export function collectUnknownVariables(env: EnvSource, problems: string[]): voi
     const known = name.length > MAX_SHOWN_NAME ? undefined : suggestion(name);
     problems.push(
       known === undefined
-        ? `${shown} is not a sync server variable; remove it or fix the name (see "Environment variables" in README.md)`
+        ? `${shown} is not a sync server variable; remove it or fix the name (see "Environment variables" in docs/operator-guide.md)`
         : `${shown} is not a sync server variable; did you mean ${known}?`,
     );
   }
