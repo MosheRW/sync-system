@@ -1,13 +1,13 @@
 # State: #51 fix(docs): operator guide passes TOKEN_SECRET with docker run -e (follow-up to #37)
 
 - Path: fast
-- Phase: validation
+- Phase: ready-to-merge
 - Branch: fix/51-operator-guide-token-secret
 - PR: #57
 - Plan approved by user: yes (Gate 2, 2026-11-23, with security controls C1–C8; follow-up #58)
 - Security-sensitive: yes (secret-handling guidance; security plan review runs)
 - Review rounds: 3
-- Last updated by: qa
+- Last updated by: orchestrator
 
 ## Model log
 
@@ -24,6 +24,8 @@
 - Gate 3 (round 2): 2026-11-23, the user chose to fix A3 now and move A4 to follow-up #59
 - engineer fix r2: opus (rule: fix round) → DONE (A3: Swarm bullet drops `ports:` and puts the proxy on the overlay network, verified in docker:dind 29.10; roadmap lists #59; local Docker CI green)
 - qa review r3: opus (rule: round 2+) → PASS (local Docker CI green; A3 Swarm bullet accurate and consistent; non-blocking N1: routing mesh hides client IPs from the proxy, affects nginx `allow 10.0.0.0/8` and `limit_conn perip`; suggest `mode: host` for the proxy port)
+- security code r3: opus (rule) → PASS (low A5: multi-node Swarm overlay traffic unencrypted by default)
+- Gate 3 (round 3): 2026-11-23, PR #57 ready to merge; open: security A5, QA note N1 (Swarm routing mesh hides client IPs from the nginx example); awaiting user decision
 
 ## Open questions
 
