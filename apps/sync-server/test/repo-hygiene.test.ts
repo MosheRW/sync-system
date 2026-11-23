@@ -64,6 +64,40 @@ describe('secrets stay out of git and the image (M1)', () => {
   });
 });
 
+describe('image license and labels (#37 C8, ADR 0017)', () => {
+  const dockerfile = read('apps/sync-server/Dockerfile');
+  const runtime = dockerfile.slice(dockerfile.search(/^FROM\s.*\sAS runtime$/m));
+
+  it('copies the single LICENSE file into the runtime stage only', () => {
+    const licenseCopies = dockerfile
+      .split(/\r?\n/)
+      .filter((line) => /^COPY\s/.test(line) && /LICENSE/.test(line));
+    expect(licenseCopies).toEqual(['COPY LICENSE ./LICENSE']);
+    expect(runtime).toMatch(/^COPY LICENSE \.\/LICENSE$/m);
+  });
+
+  it('has the static OCI labels and no version or revision label', () => {
+    expect(runtime).toContain(
+      'org.opencontainers.image.source="https://github.com/MosheRW/sync-system"',
+    );
+    expect(runtime).toContain('org.opencontainers.image.licenses="GPL-3.0-only"');
+    expect(runtime).toContain('org.opencontainers.image.title=');
+    expect(runtime).toContain('org.opencontainers.image.description=');
+    expect(dockerfile).not.toMatch(/org\.opencontainers\.image\.(version|revision)/);
+  });
+
+  it('has no ARG or ENV that carries a credential', () => {
+    const names = dockerfile
+      .split(/\r?\n/)
+      .filter((line) => /^(ARG|ENV)\s/.test(line))
+      .map((line) => line.replace(/^(ARG|ENV)\s+/, '').split(/[=\s]/)[0] ?? '');
+    expect(names.length).toBeGreaterThan(0);
+    for (const name of names) {
+      expect(name, name).not.toMatch(/TOKEN|SECRET|PASSWORD|KEY/i);
+    }
+  });
+});
+
 describe('pinned supply chain (L8)', () => {
   it('pins every Dockerfile base image by digest', () => {
     const froms = read('apps/sync-server/Dockerfile')
