@@ -1,6 +1,6 @@
 # 0019. How far the release tarballs are reproducible
 
-- Status: Proposed
+- Status: Accepted (Gate 2, 2026-11-23: user chose the recommended A)
 - Date: 2026-11-23
 - Issue: #53
 
@@ -73,9 +73,9 @@ is not promised across Node image bumps.
 
 ## Decision
 
-Proposed: **A**. The release builds only in the pinned container and
-compares integrity only within that build, and there the output is already
-reproducible. The open problem was the unexplained #37 value, not the build.
+**A** (accepted at Gate 2, 2026-11-23, by the user). The release builds
+only in the pinned container and compares integrity only within that build,
+and there the output is already reproducible. The open problem was the unexplained #37 value, not the build.
 B is the cheap follow-up if an independent second build is ever adopted
 (L7). C is not worth it.
 
