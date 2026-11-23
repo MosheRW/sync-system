@@ -14,7 +14,7 @@ export default tseslint.config(
   },
   js.configs.recommended,
   {
-    files: ['apps/*/**/*.{ts,tsx}', 'packages/*/**/*.{ts,tsx}'],
+    files: ['apps/*/**/*.{ts,tsx}', 'packages/*/**/*.{ts,tsx}', 'scripts/**/*.ts'],
     extends: [...tseslint.configs.recommendedTypeChecked],
     languageOptions: {
       parserOptions: {
@@ -28,6 +28,13 @@ export default tseslint.config(
       '@typescript-eslint/no-misused-promises': 'error',
       '@typescript-eslint/consistent-type-imports': 'error',
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
+    },
+  },
+  {
+    // node:test's describe/it return promises that the runner itself awaits.
+    files: ['scripts/**/*.test.ts'],
+    rules: {
+      '@typescript-eslint/no-floating-promises': 'off',
     },
   },
   {

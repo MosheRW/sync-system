@@ -1,0 +1,13 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    // Run directly by Node 24 (type stripping): erasable syntax and .ts imports.
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "erasableSyntaxOnly": true,
+    "rewriteRelativeImportExtensions": false,
+    "types": ["node"],
+    "customConditions": []
+  },
+  "include": ["**/*.ts"]
+}

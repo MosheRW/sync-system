@@ -15,3 +15,4 @@ config/
 **/*.log
 coverage
 **/coverage
+.release-out

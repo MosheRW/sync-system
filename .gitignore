@@ -14,3 +14,6 @@ dist-server
 # Playwright's local output (snapshots can show codes; never committed or uploaded, #24 L5).
 test-results
 playwright-report
+
+# Release dry-run output: checked tarballs (#37).
+.release-out/
