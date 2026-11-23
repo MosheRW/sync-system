@@ -7,7 +7,7 @@
 - Plan approved by user: yes (Gate 2, 2026-11-23; security round 3 PASS; L12 and L13 also adopted)
 - Security-sensitive: yes
 - Review rounds: 1
-- Last updated by: qa
+- Last updated by: engineer
 
 ## Model log
 
@@ -20,6 +20,8 @@
 - security plan r3: opus (rule) → PASS
 - engineer implement: opus (rule) → DONE
 - qa review r1: opus (NEXT_MODEL) → FAIL
+- security code r1: opus (rule) → PASS
+- engineer fix r1: opus (rule) → DONE
 
 ## Open questions
 
@@ -28,6 +30,7 @@
 ## QA verdict
 
 - Round 1 (commit 32ccee5): **FAIL**, 1 finding. `RELEASING.md` dry run step 3 (`SRC_URL="file://$(pwd)"`, line 435) fails on Git Bash because the step 6 block sets `MSYS_NO_PATHCONV=1`; it needs `cygpath -m`. All checks are otherwise green in local Docker CI (only the known repo-hygiene failure), e2e 9/9, dry-run steps 2, 4 and 6 pass with that fix, and AC55 is confirmed (nothing published). Advisories A1-A4 (stale PR body, step 4 trailing `docker ps` line, react tarball not reproducible across node images, roadmap blank line) are non-blocking. Review comment on PR #50.
+- Fix round 1: QA finding 1 fixed in 63c8190 (dry-run `SRC_URL` uses `cygpath -m` on Git Bash, marker test added; step 6 check block re-run on Git Bash passes, `/health` 1.0.0). Security low 1 fixed in bfe6e84 (ADR 0017 trap logouts `|| true`). QA A4 fixed in 25cf5f5 (roadmap blank line), QA A1 done (PR body refreshed). Left for the user at Gate 3: security low 2 (operator guide `-e TOKEN_SECRET`), QA A2 (step 4 trailing `docker ps` line), QA A3 (react tarball reproducibility).
 
 ## Gate 1 decisions (2026-11-22)
 
