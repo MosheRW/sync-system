@@ -1,21 +1,23 @@
 # State: #37 feat: public docs, changelog and first semver release (PRD item 9c)
 
 - Path: full
-- Phase: architecture (resumed 2026-11-23; blockers #32, #12, #21 merged)
+- Phase: architecture (plan written 2026-11-23, awaiting Gate 2)
 - Branch: feat/37-docs-changelog-release
 - PR: none
 - Plan approved by user: no
 - Security-sensitive: yes
 - Review rounds: 0
-- Last updated by: pm
+- Last updated by: architect
 
 ## Model log
 
 - pm grooming: sonnet (default) → DONE
+- architect plan: opus (NEXT_MODEL) → DONE
 
 ## Open questions
 
-- Q-E (package `repository`, `homepage`, `bugs` URLs, npm 2FA): deferred to Gate 2 for the architect. Follows from Q18: the repo stays `MosheRW/sync-system` unless changed.
+- Gate 2: ADR 0016 (versioning and npm release) and ADR 0017 (server image build, tags, push), both Proposed.
+- Gate 2: Q-E (metadata URLs, npm 2FA), Q-H (no new env maxima before 1.0.0), Q-I (`SECURITY.md`): see `architecture.md` section 2.
 
 ## Gate 1 decisions (2026-11-22)
 
