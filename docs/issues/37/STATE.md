@@ -1,7 +1,7 @@
 # State: #37 feat: public docs, changelog and first semver release (PRD item 9c)
 
 - Path: full
-- Phase: grooming (Gate 1 passed 2026-11-22; paused pending #32, #12, #21)
+- Phase: architecture (resumed 2026-11-23; blockers #32, #12, #21 merged)
 - Branch: feat/37-docs-changelog-release
 - PR: none
 - Plan approved by user: no
