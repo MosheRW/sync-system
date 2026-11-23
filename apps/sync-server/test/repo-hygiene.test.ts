@@ -302,6 +302,8 @@ describe('CI workflow (AC28, L1, L8)', () => {
       'pnpm typecheck',
       'pnpm test',
       'pnpm build',
+      'pnpm pack:check',
+      'pnpm smoke',
     ];
     let last = -1;
     for (const step of steps) {
@@ -309,6 +311,8 @@ describe('CI workflow (AC28, L1, L8)', () => {
       expect(index, step).toBeGreaterThan(last);
       last = index;
     }
+    // Pack and smoke run in the check job, after its Build (#37 AC56).
+    expect(last).toBeLessThan(workflow.indexOf('  e2e:'));
   });
 });
 
