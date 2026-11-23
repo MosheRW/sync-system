@@ -7,7 +7,9 @@ Mode: plan. Reviewed: [`architecture.md`](architecture.md), [`spec.md`](spec.md)
 `.dockerignore`, `.gitignore`, `package.json` files, `ci.yml`, and the full git
 history (626 commits, all refs).
 
-**Round 1 result: FAIL** (H1). **Round 2 result: PASS** (section 6). Round 1 asked the architect to revise the release
+**Round 1 result: FAIL** (H1). **Round 2 result: PASS** (section 6).
+**Round 3 result (Gate 2 choice E2): PASS** (section 7; C1 amended, M6
+folded into C1). Round 1 asked the architect to revise the release
 procedure (ADR 0016 E/D wording, `RELEASING.md` section 7) before Gate 2.
 Everything else is medium/low, and the required controls below go into the plan.
 
@@ -87,19 +89,42 @@ Not findings (checked):
 
 ## 4. Required controls (part of the plan)
 
-- **C1 (H1).** Two-container release: the build container never gets a
-  credential; the publish container is a fresh pinned `node:24` that runs no
-  project code and publishes the exact `pack:check`-verified tarballs by path
-  (`npm publish <tgz> --access public --otp`), with a `sha512` comparison before
-  publish and against `npm view ... dist.integrity` after. `npm logout` on every
-  exit path. ADR 0016 and `RELEASING.md` updated; `release:dry-run` mirrors it
-  (`npm publish <tgz> --dry-run` on the packed files).
+- **C1 (H1; amended in round 3 for ADR 0016 E2).** Two-container release:
+  the build container never gets a credential; the publish container is a
+  fresh `node:24@sha256:<digest>`, run detached, that runs no project code
+  and publishes the exact `pack:check`-verified tarballs by literal path
+  (`npm publish <tgz> --access public --ignore-scripts`, no `--otp`, never
+  `npm login`), in order protocol, client, react. Before the token exists:
+  the L8 checks (exactly the three literal names plus `INTEGRITY.txt`,
+  regular files only, packed `name`/`version`) and the `sha512` comparison;
+  after publish: `npm view ... dist.integrity`. npm auth is a per-release
+  granular token (Read and write, the three packages, or the `@mosherw`
+  scope / "All packages" fallback for the first release only; Organizations
+  no access; shortest expiry, at most 7 days; IP allowlist unless the form
+  lacks it; bypass 2FA). It is read on the host with `read -rs` into an
+  unexported variable inside one `( set -euo pipefail; ... )` subshell,
+  piped with the `printf` builtin over `docker exec -i` into `umask 077`
+  `/root/.npmrc` of the publish container only, and `unset` at once; never
+  argv, env, `-e`/`--env-file`, a host file, history, or the build
+  container. A host `trap ... EXIT` set before `docker run` and before
+  `read` cleans up on every path, and every command in it is
+  failure-tolerant (M6): `unset NPM_TOKEN`, then `docker exec "$C" npm
+  logout || true`, then `docker rm -f "$C" || true`. `npm whoami` must be
+  `mosherw` before the first publish. The token is revoked on the npm page
+  right after the publish, before the image push, and the page is checked
+  empty. Packages' Publishing access: "Require two-factor authentication or
+  a granular access token with bypass 2FA enabled"; account 2FA
+  "Authorization and writes"; no standing tokens between releases. ADR 0016
+  and `RELEASING.md` updated; `release:dry-run` mirrors the packing
+  (`npm publish <tgz> --dry-run`, no token).
 - **C2 (M1).** Tag on the host from the verified merge SHA; containers clone
   the tag read-only and assert HEAD == tag commit and a clean tree; no git
   credential inside any container.
 - **C3 (M2).** Registry logins: `trap` logout + `rm -rf "$DOCKER_CONFIG"`
   before the first login; `read -rs` + `--password-stdin`; least-scope,
-  short-expiry tokens revoked after the release.
+  short-expiry tokens revoked after the release. (Round 3, M6: each trap
+  command is failure-tolerant, `|| true`, so one failing logout cannot
+  skip the `rm -rf`.)
 - **C4 (M3).** A test asserts the set of non-private packages is exactly the
   three published names, and server, reader and root stay `private: true`.
 - **C5 (M4).** First-release checklist confirms ownership of npm `mosherw`,
@@ -209,3 +234,98 @@ L8 and L9 if adopted, the exact `RELEASING.md` commands for steps 1-4, the
 `node -e` integrity line (Node built-ins only), and that `smoke.ts`/
 `pack-check.ts` never use `shell: true` (a Windows `pnpm.cmd` workaround
 must still pass arguments as an array).
+
+## 7. Round 3 (Gate 2 choice E2, plan revision `697e4a0`)
+
+Reviewed: `architecture.md` sections 7 (intro, steps 0-8, residual risk,
+marker list), 8 (E2 fallback, Git Bash), 9, 9a, 9b; ADR 0016 option E and
+Decision; ADR 0017 D1 (trap/subshell). Scope: is the E2 design as safe as
+E2 can be. The choice of E2 over E1 is the user's Gate 2 decision and is
+not reopened.
+
+**Result: PASS.** No critical or high finding. One medium (M6: the cleanup
+trap does not work as written under `set -e`), folded into C1 and C3 as a
+required detail because the fix is a few words per line. Two new lows.
+
+### E2 design checked and fine
+
+- **Token path.** `read -rs` (no echo; history gets the block text, not
+  the token); the variable is never exported, so it is not in
+  `docker.exe`'s environment; `printf` is a builtin, so it is in no argv;
+  `docker exec -i` stdin is not recorded in `docker inspect` or container
+  logs; `umask 077` before `cat`; `unset` straight after. No `-e`,
+  `--env-file`, bind mount or host file. The token never reaches the build
+  container (H1 holds).
+- **Ordering.** `C=` is set, then the trap, then `docker run`, then the L8
+  checks and integrity comparison, and only then `read`. A failed check
+  exits before any token exists. `npm whoami` gates the first publish (it
+  also catches a wrong IP allowlist or a mis-paste, failing safely).
+- **Cleanup layers.** In-block `npm logout` + `rm -f /root/.npmrc`, trap
+  `npm logout` + `docker rm -f`, then the manual revocation (step 5) before
+  the image push with an empty-page check, then the expiry. `npm logout`
+  is best effort and the manual step is written as never skipped. Right
+  shape (see M6 for the trap itself).
+- **Token limits.** Read and write, the three packages from release 2;
+  first release `@mosherw` scope, or "All packages" on an account that
+  step 0 shows owns nothing else, with Organizations no access: same blast
+  radius as the scope. IP allowlist `/32` of the host: Docker Desktop
+  egress is the host's NAT address, so it matches; a VPN change fails
+  `whoami` safely. Dropping the allowlist only when the form lacks it, and
+  never the expiry or the revocation: acceptable.
+- **Account and package settings.** Account 2FA "Authorization and
+  writes", recovery codes offline, no standing tokens (checked in step 0
+  and after step 5). "Require 2FA or a granular token with bypass 2FA" is
+  the strictest package setting E2 can work with; creating such a token
+  needs the account 2FA, so the permanent allowance gives nothing to an
+  attacker without the second factor.
+- **Hostile tarball while the token is present.** `npm publish <tgz>` runs
+  no scripts; a build container able to craft a hostile tarball already
+  controls what gets published (L7 residual). No new exposure.
+- **Residual risk text** (section 7, ADR 0016 Consequences) states the
+  bypass-2FA window honestly.
+- **Marker tests** cover the load-bearing lines: no `--otp`, no `npm
+  login`, `read -rs` + `NPM_TOKEN`, `docker exec -i` + `umask 077`, trap
+  with `docker rm -f` + `npm logout`, `unset NPM_TOKEN`, no `-e NPM_TOKEN`,
+  `--env-file`, `NPM_TOKEN=` or `_authToken=` other than `%s`, both npm
+  setting phrases, "revoke". Add the M6 and L12 markers below.
+
+### Other adopted advisories (round 2), reflected correctly
+
+| # | Where | Status |
+| --- | --- | --- |
+| L1 | Section 7 intro and step 2 (both containers by digest), chunk 6 `packageManager` sha512 | OK |
+| L2 | Chunk 6, PR body note | OK |
+| L4 | Chunk 13 `SECURITY.md`, step 0 enables private reporting | OK |
+| L5 | Step 7 release notes with tarball integrity and manifest-list digest | OK |
+| L6 | Chunk 4 test | OK |
+| L8 | Step 4 checks before the token, literal names, markers | OK |
+| L9 | Section 7 intro (one subshell per credential block, `MSYS_NO_PATHCONV=1`), step 6 credential-helper and `config.json` check, ADR 0017 D1 | OK (see M6) |
+| L10 | Section 3 (`scripts` absent or empty, regex deny-list), section 11 AC50, chunk 7 | OK |
+| L11 | Steps 2 and 6 `mktemp -d`; `.dockerignore` `.release-out`; chunk 7 | OK |
+
+### New findings (round 3)
+
+| # | Severity | Location | Issue (attack scenario) | Fix |
+| --- | --- | --- | --- | --- |
+| M6 | Medium | Section 7 step 4 trap and step 6 trap; ADR 0016 E2 hand-off; ADR 0017 D1 | The blocks run under `set -euo pipefail`, and bash keeps `errexit` inside an EXIT trap: the first failing trap command ends the trap (verified on Git Bash 5.2: with `set -e`, `trap "false; echo b" EXIT` never prints `b`). Step 4's trap runs `docker exec "$C" npm logout` first. On the normal path the block has already logged out, so that command fails (`ENEEDAUTH`) and `docker rm -f` never runs, leaving a running `sleep infinity` container. On a failure path where the logout also fails (IP mismatch, network error, container not started) the container stays up **with the token in `/root/.npmrc`**, readable by anything with Docker access on the host until step 5 revokes it. Step 6 has the same shape: `rm -rf "$DOCKER_CONFIG"` is skipped if a `docker logout` fails. | Every trap command failure-tolerant, the most important first: `trap 'unset NPM_TOKEN; docker exec "$C" npm logout >/dev/null 2>&1 \|\| true; docker rm -f "$C" >/dev/null 2>&1 \|\| true' EXIT` (or a cleanup function that starts with `set +e`); likewise `docker logout ghcr.io \|\| true; docker logout docker.io \|\| true; rm -rf "$DOCKER_CONFIG"` in step 6. After step 4, `docker ps -a --filter name=sync-release-publish` lists no container. Marker test: each trap in `RELEASING.md` uses `\|\| true` (or `set +e`). QA's dry run runs the step 4 block up to the token prompt, aborts there (Ctrl-D, no token involved) and confirms no container is left. |
+| L12 | Low | Section 7 step 4 token read | Paste hygiene. A command before `read` that reads stdin (`docker exec -i`/`-it`), or text pasted after the closing `)`, is swallowed as the "token"; a `set -x` anywhere prints the `printf` line with the token expanded. | Before piping: `[ -n "${NPM_TOKEN:-}" ]` and `case "$NPM_TOKEN" in npm_*) ;; *) exit 1 ;; esac` (granular tokens start with `npm_`). No `-i`/`-it` on any `docker exec` before the `read`; `RELEASING.md` says "paste only this block". Markers: no `set -x`, no `export NPM_TOKEN`, no `echo` of `$NPM_TOKEN`. |
+| L13 | Low | Section 7 steps 3-5 | Small lifecycle gaps: (a) with Windows clipboard "sync across devices" on, the copied token is uploaded to the Microsoft account; (b) a 7-day expiry when the form offers a custom date leaves days of validity if step 5 is forgotten; (c) a re-run after a partial publish needs a new token, since the first run's `npm logout` revoked it. | (a) Step 3: clipboard sync off, clipboard history cleared after the paste. (b) The shortest custom expiry offered (1 day); 7 days only without a custom date. (c) `RELEASING.md`: a re-run starts again at step 3 with a new token, and step 5 revokes every token created. |
+
+### Final required controls
+
+C1 (as amended in section 4, including M6), C2, C3 (including M6),
+C4-C11 from section 4.
+
+### Remaining advisories
+
+L7 (not adopted at Gate 2; residual stated in `RELEASING.md`), L12, L13.
+L3 is decided (Q-L3). L1, L2, L4-L6 and L8-L11 are adopted and correctly
+reflected.
+
+### Code mode will additionally check
+
+The exact step 3-5 text in `RELEASING.md` and ADR 0016 against amended
+C1; the trap lines (M6) and the dry-run abort check; the L12 assertions and
+markers; that `release-files.test.ts` covers every marker in
+`architecture.md` section 7 plus M6 and L12; and that no doc, fixture or
+example contains a string shaped like a real `npm_` token.

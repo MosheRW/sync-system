@@ -7,7 +7,7 @@
 - Plan approved by user: pending (approved at Gate 2 with E2, subject to a security plan re-check of the E2 token handling)
 - Security-sensitive: yes
 - Review rounds: 0
-- Last updated by: architect
+- Last updated by: security
 
 ## Model log
 
@@ -17,10 +17,11 @@
 - architect revise r1: opus (rule) → DONE
 - security plan r2: opus (rule) → PASS
 - architect gate2-update: opus (rule) → DONE
+- security plan r3: opus (rule) → PASS
 
 ## Open questions
 
-- Security plan re-check (round 3) of ADR 0016 E2 and the amended C1 (`architecture.md` sections 7 steps 3-5, 9a H1 row, 9b). `security.md` C1 still carries the E1 wording (`npm login`, `--otp`) until then.
+- Security plan re-check (round 3) of ADR 0016 E2: done, PASS. `security.md` C1 amended for E2; M6 (failure-tolerant trap commands) folded into C1/C3 for the engineer; L12, L13 advisory (`security.md` section 7).
 
 ## Gate 1 decisions (2026-11-22)
 
