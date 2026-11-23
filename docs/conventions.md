@@ -19,6 +19,14 @@ result. Change a choice with a new ADR, never by editing this file alone.
 | Docker          | Multi-stage images on the pinned `node:24-alpine` digest, `USER node`, loopback compose ports |
 | Commits         | Conventional Commits, one logical chunk per commit (`.claude/rules/git-commits.md`)           |
 
+GitHub CI (`.github/workflows/ci.yml`) runs the CI row's checks on `push` and
+`pull_request`. While GitHub Actions is billing-blocked it is paused: only
+`workflow_dispatch`, the two triggers commented out, and the
+`# CI paused (#54):` marker above `on:`. The repo-hygiene test accepts
+exactly these two states; while paused, the `RELEASING.md` step 2 build
+container is the CI of record
+([0018](decisions/0018-ci-workflow-while-actions-is-blocked.md)).
+
 Commit scopes in use: `protocol`, `server`, `client`, `react`, `reader`,
 `adr`, `spec`, `design`, `architecture`, `security`, `state`, `docs`,
 `compose`, `ci` (also used without a scope: `ci: ...`), `storage` (the sync

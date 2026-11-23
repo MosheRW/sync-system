@@ -1,6 +1,6 @@
 # 0018. CI workflow triggers while GitHub Actions is blocked
 
-- Status: Proposed
+- Status: Accepted (Gate 2, 2026-11-23: user chose the recommended B)
 - Date: 2026-11-23
 - Issue: #54
 
@@ -113,7 +113,12 @@ repo settings, without a commit.
 
 ## Decision
 
-Recommended: **B**. It makes `pnpm test` and `RELEASING.md` step 2 pass
+**B** (accepted at Gate 2, 2026-11-23, by the user). The workflow keeps
+the pause and gains the `# CI paused (#54):` header comment; the test
+accepts exactly the active or the marked paused state, with the trigger
+allowlist; `RELEASING.md` step 2 notes the paused state.
+
+Recommended at plan time: **B**. It makes `pnpm test` and `RELEASING.md` step 2 pass
 without a workaround or a skip, records the pause where it actually is (in
 the workflow file, checked by the test), keeps every security assertion of
 the workflow and tightens the trigger check, and avoids weeks of red checks.
