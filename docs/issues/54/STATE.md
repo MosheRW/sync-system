@@ -1,19 +1,20 @@
 # State: #54 fix(ci): repo-hygiene CI trigger test blocks pnpm test in the release procedure
 
 - Path: fast
-- Phase: implementation (validation-ready)
+- Phase: validation
 - Branch: fix/54-repo-hygiene-ci-trigger
 - PR: #55
 - Plan approved by user: yes (Gate 2, 2026-11-23: ADR 0018 option B)
 - Security-sensitive: no (architect: comment-only workflow change; test keeps every security assertion)
-- Review rounds: 0
-- Last updated by: engineer
+- Review rounds: 1
+- Last updated by: qa
 
 ## Model log
 
 - pm groom: sonnet (default) → DONE
 - architect plan: opus (rule: orchestrator decision) → DONE
 - engineer implement: opus (rule: Implementer model) → DONE
+- qa review r1: sonnet (NEXT_MODEL) → PASS
 
 ## Open questions
 
