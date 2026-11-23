@@ -1,6 +1,6 @@
 # @mosherw/sync-system-react
 
-React and Next.js bindings for [`@mosherw/sync-system-client`](../client/README.md):
+React and Next.js bindings for [`@mosherw/sync-system-client`](https://github.com/MosheRW/sync-system/tree/main/packages/client#readme):
 one provider, typed hooks and two unstyled render-prop helpers. Components
 re-render only when the state they use changes. The package is safe during
 server-side rendering: nothing reads `window`, opens a socket or starts a
@@ -12,16 +12,13 @@ package renders no markup of its own.
 
 ## Install
 
-Workspace-only for now (`private: true`, published with the release item):
-
-```json
-{
-  "dependencies": {
-    "@mosherw/sync-system-react": "workspace:*",
-    "react": "^19.0.0"
-  }
-}
+```sh
+npm install @mosherw/sync-system-react react
 ```
+
+ESM only, with TypeScript types. It depends on
+`@mosherw/sync-system-client` at the exact same version (installed with it).
+Inside this repo, apps use `"workspace:*"` instead.
 
 The hooks return the core's types, re-exported from this package
 (`SyncClientSnapshot`, `GroupState`, `JoinCodes`, `QrTicket`,
@@ -390,7 +387,7 @@ function JoinQr() {
 ```
 
 Put the ticket in the URL fragment, never the query string (see the
-client's [QR tickets and deep links](../client/README.md#qr-tickets-and-deep-links)).
+client's [QR tickets and deep links](https://github.com/MosheRW/sync-system/tree/main/packages/client#qr-tickets-and-deep-links)).
 
 ### Leadership and preview
 
@@ -442,3 +439,11 @@ Both render only what their render prop returns:
   `dangerouslySetInnerHTML`). Validate any URL taken from `metadata` or
   `position` before using it in `href` or `src`: allow `https:` only, never
   `javascript:`.
+
+## License
+
+GPL-3.0-only (see [`LICENSE`](LICENSE)). The GPL also covers this package
+inside your app: an app that bundles it and ships that bundle (browser
+bundles included) is bound by the GPL's terms. A walk-through with the
+reading app is the
+[integration guide](https://github.com/MosheRW/sync-system/blob/main/docs/integration-guide.md).
