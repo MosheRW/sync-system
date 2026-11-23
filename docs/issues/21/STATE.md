@@ -1,14 +1,15 @@
 # State: #21 fix(reader): enforce trusted types in the csp (follow-up to #19)
 - Path: fast
-- Phase: grooming
+- Phase: architecture
 - Branch: fix/21-reader-trusted-types
 - PR: none
 - Plan approved by user: no
 - Security-sensitive: yes
 - Review rounds: 0
-- Last updated by: pm
+- Last updated by: architect
 ## Model log
 - pm grooming: sonnet (default) → DONE
+- architect plan: opus (NEXT_MODEL) → DONE
 ## Open questions
 - None.
 ## Deviations from plan
