@@ -73,6 +73,15 @@ jobs:
       - name: Build
         run: pnpm build
 
+      # The three published packages (#37 AC50, AC51): tarball contents and
+      # packed manifests, then a clean install with --ignore-scripts and the
+      # lockfile's exact react versions (import, types, SSR render).
+      - name: Pack check
+        run: pnpm pack:check
+
+      - name: Smoke test
+        run: pnpm smoke
+
   # The reader's browser checks against the real sync server (#24, ADR 0008).
   # Same pinned actions, read-only token and no secrets as `check`. Only the
   # committed dev key and a per-run random token secret are used; servers bind
@@ -99,7 +108,7 @@ jobs:
         run: pnpm build
 
       - name: Install Chromium
-        run: pnpm --filter @sync-system/reader exec playwright install --with-deps chromium
+        run: pnpm --filter @mosherw/sync-system-reader exec playwright install --with-deps chromium
 
       - name: End-to-end checks
-        run: pnpm --filter @sync-system/reader test:e2e
+        run: pnpm --filter @mosherw/sync-system-reader test:e2e

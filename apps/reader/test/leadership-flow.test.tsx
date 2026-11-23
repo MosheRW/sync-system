@@ -1,4 +1,4 @@
-import { type LeadershipReason, SyncClientError } from '@sync-system/react';
+import { type LeadershipReason, SyncClientError } from '@mosherw/sync-system-react';
 import { act, fireEvent, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { POINTER_KEY } from './helpers/app.js';

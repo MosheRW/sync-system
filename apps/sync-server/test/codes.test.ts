@@ -1,4 +1,8 @@
-import { ALPHA_CODE_ALPHABET, ALPHA_CODE_PATTERN, GROUP_CODE_PATTERN } from '@sync-system/protocol';
+import {
+  ALPHA_CODE_ALPHABET,
+  ALPHA_CODE_PATTERN,
+  GROUP_CODE_PATTERN,
+} from '@mosherw/sync-system-protocol';
 import { describe, expect, it } from 'vitest';
 import { MAX_CODE_DRAWS } from '../src/limits/constants.js';
 import { CodeIndex } from '../src/joins/code-index.js';

@@ -1,18 +1,21 @@
 # State: #36 feat: 9b health, readiness and config errors
 - Path: full
-- Phase: validation
+- Phase: merged (PR #43 merged 2026-11-18 as 0d1dba3)
 - Branch: feat/36-health-readiness-config-errors
 - PR: #43
 - Plan approved by user: yes
 - Security-sensitive: yes
 - Review rounds: 1
-- Last updated by: qa
+- Last updated by: pm
 ## Model log
 - pm grooming: sonnet (default) → DONE
 - pm gate-1 update: sonnet (default) → DONE
 - architect plan: opus (default + pm NEXT_MODEL) → DONE
+- security plan round 1: opus (rule) → PASS
 - engineer implement: opus (architect Implementer model; security-sensitive) → DONE
 - qa validation round 1: opus (engineer NEXT_MODEL) → PASS
+- security code round 1: opus (rule) → PASS
+- pm a1 follow-up issue #44: haiku (trivial chore) → DONE
 ## Gate 1 decisions (2026-11-15)
 - Q20: check and fail (overrides the warn recommendation); new AC37a; naming rule proposed by architect.
 - Q21: read version from package.json at runtime; package.json must be in the built image.
@@ -45,6 +48,9 @@
 - GitHub Actions did not start (billing block), not a code failure.
 - Advisories (no fix needed): no real pub/sub-unhealthy /ready test (covered by status() by construction); roadmap still says 9b "in grooming" (update on merge); README Upgrading has a wrapped inline code span.
 - Attribution: all 23 commits signed.
+## Gate 3 (2026-11-18)
+- The user merged PR #43 as 0d1dba3; #36 closed.
+- Security advisory A1 (control characters in echoed config values) became follow-up #44; A2 (the truncated echo, Q24) is accepted; the QA advisories needed no fix.
 ## Open questions
 - None (Gate 2 answered every question).
 - Resolved by the plan: `package.json` is already in the image (pnpm deploy output, runtime copies /out whole); fenced and pub/sub-unhealthy are already observable via `storage.status()` (Q23 met without new machinery).

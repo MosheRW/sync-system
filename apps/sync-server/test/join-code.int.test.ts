@@ -5,7 +5,7 @@ import {
   type JoinMethod,
   PARTICIPANT_ID_PATTERN,
   decodeTokenClaims,
-} from '@sync-system/protocol';
+} from '@mosherw/sync-system-protocol';
 import { afterEach, describe, expect, it } from 'vitest';
 import { InMemoryGroupStore } from '../src/groups/in-memory-group-store.js';
 import { CodesBlobService } from '../src/tokens/codes-blob.js';

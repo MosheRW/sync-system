@@ -1,4 +1,4 @@
-import type { ServerMessage } from '@sync-system/protocol';
+import type { ServerMessage } from '@mosherw/sync-system-protocol';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SyncClientError } from '../src/errors.js';
 import { type PendingRequest, RequestTracker } from '../src/requests.js';

@@ -3,7 +3,7 @@ import { URL } from 'node:url';
 import semver from 'semver';
 
 /** The package whose version `/health` reports. */
-export const SERVER_PACKAGE_NAME = '@sync-system/server';
+export const SERVER_PACKAGE_NAME = '@mosherw/sync-system-server';
 
 /** Largest package.json read; anything bigger is refused before parsing (#36 security C8). */
 export const MAX_PACKAGE_JSON_BYTES = 64 * 1024;

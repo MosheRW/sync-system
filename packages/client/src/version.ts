@@ -1,4 +1,4 @@
-import { PROTOCOL_VERSION } from '@sync-system/protocol';
+import { PROTOCOL_VERSION } from '@mosherw/sync-system-protocol';
 
 /** Protocol version this client speaks (Q5). */
 export const CLIENT_PROTOCOL_VERSION: number = PROTOCOL_VERSION;

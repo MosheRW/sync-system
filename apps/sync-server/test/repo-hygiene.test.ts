@@ -64,6 +64,40 @@ describe('secrets stay out of git and the image (M1)', () => {
   });
 });
 
+describe('image license and labels (#37 C8, ADR 0017)', () => {
+  const dockerfile = read('apps/sync-server/Dockerfile');
+  const runtime = dockerfile.slice(dockerfile.search(/^FROM\s.*\sAS runtime$/m));
+
+  it('copies the single LICENSE file into the runtime stage only', () => {
+    const licenseCopies = dockerfile
+      .split(/\r?\n/)
+      .filter((line) => /^COPY\s/.test(line) && /LICENSE/.test(line));
+    expect(licenseCopies).toEqual(['COPY LICENSE ./LICENSE']);
+    expect(runtime).toMatch(/^COPY LICENSE \.\/LICENSE$/m);
+  });
+
+  it('has the static OCI labels and no version or revision label', () => {
+    expect(runtime).toContain(
+      'org.opencontainers.image.source="https://github.com/MosheRW/sync-system"',
+    );
+    expect(runtime).toContain('org.opencontainers.image.licenses="GPL-3.0-only"');
+    expect(runtime).toContain('org.opencontainers.image.title=');
+    expect(runtime).toContain('org.opencontainers.image.description=');
+    expect(dockerfile).not.toMatch(/org\.opencontainers\.image\.(version|revision)/);
+  });
+
+  it('has no ARG or ENV that carries a credential', () => {
+    const names = dockerfile
+      .split(/\r?\n/)
+      .filter((line) => /^(ARG|ENV)\s/.test(line))
+      .map((line) => line.replace(/^(ARG|ENV)\s+/, '').split(/[=\s]/)[0] ?? '');
+    expect(names.length).toBeGreaterThan(0);
+    for (const name of names) {
+      expect(name, name).not.toMatch(/TOKEN|SECRET|PASSWORD|KEY/i);
+    }
+  });
+});
+
 describe('pinned supply chain (L8)', () => {
   it('pins every Dockerfile base image by digest', () => {
     const froms = read('apps/sync-server/Dockerfile')
@@ -85,7 +119,9 @@ describe('pinned supply chain (L8)', () => {
     const whole = copies.some((line) => /^COPY\s+--from=build\s+\/out\/?\s+\.\/?$/.test(line));
     const explicit = copies.some((line) => /package\.json/.test(line));
     expect(whole || explicit, copies.join('\n')).toBe(true);
-    expect(dockerfile).toMatch(/pnpm --filter @sync-system\/server deploy --prod --legacy \/out/);
+    expect(dockerfile).toMatch(
+      /pnpm --filter @mosherw\/sync-system-server deploy --prod --legacy \/out/,
+    );
     expect(runtime).toMatch(/^CMD \["node", "dist\/index\.js"\]$/m);
   });
 
@@ -266,6 +302,8 @@ describe('CI workflow (AC28, L1, L8)', () => {
       'pnpm typecheck',
       'pnpm test',
       'pnpm build',
+      'pnpm pack:check',
+      'pnpm smoke',
     ];
     let last = -1;
     for (const step of steps) {
@@ -273,13 +311,15 @@ describe('CI workflow (AC28, L1, L8)', () => {
       expect(index, step).toBeGreaterThan(last);
       last = index;
     }
+    // Pack and smoke run in the check job, after its Build (#37 AC56).
+    expect(last).toBeLessThan(workflow.indexOf('  e2e:'));
   });
 });
 
-describe('README documents the lifecycle (#13 AC4, AC38, RC14)', () => {
+describe('operator guide documents the lifecycle (#13 AC4, AC38, RC14)', () => {
   it('has one timers table with every timer, default and env ceiling', () => {
-    const readme = read('README.md');
-    const table = readme.slice(readme.indexOf('### Timers'), readme.indexOf('### Roles and'));
+    const readme = read('docs/operator-guide.md');
+    const table = readme.slice(readme.indexOf('## Timers'), readme.indexOf('## Roles and'));
     for (const text of [
       'disconnectGraceSeconds',
       'inactivityLimitMinutes',
@@ -294,7 +334,7 @@ describe('README documents the lifecycle (#13 AC4, AC38, RC14)', () => {
   });
 
   it('states the name rule, the restart residuals and the operating assumptions', () => {
-    const readme = read('README.md');
+    const readme = read('docs/operator-guide.md');
     for (const text of [
       'Render them as text, never as HTML',
       'One instance per token secret',
@@ -309,10 +349,10 @@ describe('README documents the lifecycle (#13 AC4, AC38, RC14)', () => {
   });
 
   it('documents every REDIS_* variable and the Redis operating rules (#35 AC32)', () => {
-    const readme = read('README.md');
+    const readme = read('docs/operator-guide.md');
     const table = readme.slice(
-      readme.indexOf('### Environment variables'),
-      readme.indexOf('### Storage (Redis)'),
+      readme.indexOf('## Environment variables'),
+      readme.indexOf('## Storage (Redis)'),
     );
     for (const name of [
       'REDIS_URL',
@@ -323,7 +363,7 @@ describe('README documents the lifecycle (#13 AC4, AC38, RC14)', () => {
       expect(table, name).toContain(`| \`${name}\``);
     }
     const storage = readme
-      .slice(readme.indexOf('### Storage (Redis)'), readme.indexOf('### Joining'))
+      .slice(readme.indexOf('## Storage (Redis)'), readme.indexOf('## Joining'))
       .replace(/\s+/g, ' ');
     for (const text of [
       'Any number of sync server instances can share one Redis and key prefix',
@@ -340,9 +380,9 @@ describe('README documents the lifecycle (#13 AC4, AC38, RC14)', () => {
   });
 
   it('documents several instances, the compose example and the join budget (#35 AC6, AC22, AC23, AC32)', () => {
-    const readme = read('README.md');
+    const readme = read('docs/operator-guide.md');
     expect(readme).not.toContain('One instance only');
-    expect(readme).toMatch(/^### Several instances$/m);
+    expect(readme).toMatch(/^## Several instances$/m);
     const flat = readme.replace(/\s+/g, ' ');
     for (const text of [
       'compose.multi.yaml',
@@ -360,7 +400,7 @@ describe('README documents the lifecycle (#13 AC4, AC38, RC14)', () => {
   });
 
   it('states the token rules after #13: no lifelong take-back, supersede kills stale codes', () => {
-    const readme = read('README.md').replace(/\s+/g, ' ');
+    const readme = read('docs/operator-guide.md').replace(/\s+/g, ' ');
     // Before #13 any leader token could take the lead back until the end.
     expect(readme).not.toContain('can take the lead back until the group ends');
     for (const text of [
@@ -374,13 +414,13 @@ describe('README documents the lifecycle (#13 AC4, AC38, RC14)', () => {
   });
 });
 
-describe('README documents health, readiness and config errors (#36 AC36, AC40, AC41)', () => {
-  const readme = read('README.md');
+describe('operator guide documents health, readiness and config errors (#36 AC36, AC40, AC41)', () => {
+  const readme = read('docs/operator-guide.md');
 
   it('lists exactly the known server variables in the env table', () => {
     const table = readme.slice(
-      readme.indexOf('### Environment variables'),
-      readme.indexOf('### Storage (Redis)'),
+      readme.indexOf('## Environment variables'),
+      readme.indexOf('## Storage (Redis)'),
     );
     const names = [...table.matchAll(/^\| `([A-Z][A-Z0-9_]*)` +\|/gm)].map((m) => m[1]);
     expect([...names].sort()).toEqual([...KNOWN_SERVER_VARIABLES].sort());
@@ -388,8 +428,8 @@ describe('README documents health, readiness and config errors (#36 AC36, AC40, 
 
   it('documents /ready for load balancers and why /health must not route', () => {
     const section = readme.slice(
-      readme.indexOf('### Health and readiness'),
-      readme.indexOf('### Config file'),
+      readme.indexOf('## Health and readiness'),
+      readme.indexOf('## Config file'),
     );
     expect(section).toContain('GET /ready');
     expect(section).toContain('{"status":"not_ready","storage":"<kind>"}');
@@ -407,14 +447,14 @@ describe('README documents health, readiness and config errors (#36 AC36, AC40, 
 
   it('states the unknown-variable rule in the upgrade notes and links the startup-error list', () => {
     const upgrading = readme.slice(
-      readme.indexOf('### Upgrading'),
-      readme.indexOf('### Token secret'),
+      readme.indexOf('## Upgrading'),
+      readme.indexOf('## Token secret'),
     );
     expect(upgrading).toContain('Unknown look-alike variables now stop startup');
     expect(upgrading).toContain('REDIS_PASSWORD');
     expect(upgrading).toContain('REDIS_HOST');
     expect(upgrading).toContain('rename them outside');
-    expect(readme).toContain('[`docs/startup-errors.md`](docs/startup-errors.md)');
-    expect(readme).toContain('docs/decisions/0015-unknown-environment-variables.md');
+    expect(readme).toContain('[`docs/startup-errors.md`](startup-errors.md)');
+    expect(readme).toContain('](decisions/0015-unknown-environment-variables.md)');
   });
 });

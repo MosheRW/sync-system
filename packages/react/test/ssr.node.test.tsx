@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { SyncClient } from '@sync-system/client';
+import { SyncClient } from '@mosherw/sync-system-client';
 import { renderToString } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SyncProvider } from '../src/provider.js';

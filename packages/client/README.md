@@ -1,28 +1,29 @@
-# @sync-system/client
+# @mosherw/sync-system-client
 
 Framework-free TypeScript client for the sync server. It works in browsers and
 Node, and is safe to import during server-side rendering. It handles the
 connection life cycle, the handshake and version checks, typed group calls and
 events, leader throttling, size checks, and reconnects with backoff. The React
-package [`@sync-system/react`](../react/README.md) builds on its
+package [`@mosherw/sync-system-react`](https://github.com/MosheRW/sync-system/tree/main/packages/react#readme) builds on its
 snapshot/subscribe API.
 
-Runtime dependency: `@sync-system/protocol` only. No UI framework, no
+Runtime dependency: `@mosherw/sync-system-protocol` only. No UI framework, no
 Node-only module.
 
 ## Install
 
-It is a workspace package (not published yet):
-
-```jsonc
-// package.json of an app in this repo
-{ "dependencies": { "@sync-system/client": "workspace:*" } }
+```sh
+npm install @mosherw/sync-system-client
 ```
+
+ESM only, with TypeScript types. It depends on
+[`@mosherw/sync-system-protocol`](https://github.com/MosheRW/sync-system/tree/main/packages/protocol#readme) at the exact same
+version. Inside this repo, apps use `"workspace:*"` instead.
 
 ## Browser usage
 
 ```ts
-import { SyncClient, indicatorOf, isSyncClientError } from '@sync-system/client';
+import { SyncClient, indicatorOf, isSyncClientError } from '@mosherw/sync-system-client';
 
 const client = new SyncClient({
   url: 'wss://sync.example.com/ws',
@@ -54,7 +55,7 @@ client's own length guard runs, so pass a smaller `maxPayload`:
 
 ```ts
 import { WebSocket } from 'ws';
-import { SyncClient } from '@sync-system/client';
+import { SyncClient } from '@mosherw/sync-system-client';
 
 class SmallWs extends WebSocket {
   constructor(url: string) {
@@ -80,7 +81,7 @@ calls `new Function` (also safe under a CSP without `unsafe-eval`). Still:
 - Do not create a client at module scope on an SSR server: it would be shared
   by every request and user.
 - Never call `connect()` during SSR. Create the client in the browser. For
-  React and Next.js, use [`@sync-system/react`](../react/README.md): its
+  React and Next.js, use [`@mosherw/sync-system-react`](https://github.com/MosheRW/sync-system/tree/main/packages/react#readme): its
   provider creates the client after mount and its `getServerSnapshot` returns
   a constant idle snapshot.
 
@@ -306,7 +307,7 @@ authoritative.
   `rotated`, `resumed`, `member_removed` or `superseded`: each of them
   revokes every outstanding ticket. A `door_failures` change does not revoke
   tickets (re-issuing anyway is harmless). `useQrTicket()` in
-  `@sync-system/react` does all of this.
+  `@mosherw/sync-system-react` does all of this.
 - `getJoinRequests()`, `approveJoin(requestId)` (`admitted` or `group_full`),
   `denyJoin(requestId)`, and the `joinRequested` / `joinWithdrawn` events
   drive the approval prompt. Requests the server re-sends after a reconnect
@@ -710,3 +711,12 @@ blob, join request IDs and display names are never passed.
   unhandled rejections.
 - **SSR:** see "Server-side rendering". In Node, inject `ws` with a small
   `maxPayload` (see "Node usage").
+
+## License
+
+GPL-3.0-only (see [`LICENSE`](LICENSE)). The GPL also covers this package
+inside your app: an app that bundles it and ships that bundle (browser
+bundles included) is bound by the GPL's terms. The wire protocol is in
+[`docs/protocol.md`](https://github.com/MosheRW/sync-system/blob/main/docs/protocol.md)
+and the version rules in
+[`docs/versioning.md`](https://github.com/MosheRW/sync-system/blob/main/docs/versioning.md).

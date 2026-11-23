@@ -7,7 +7,7 @@ import type {
   JsonValue,
   Role,
   TokenStatus,
-} from '@sync-system/protocol';
+} from '@mosherw/sync-system-protocol';
 import type { ClientErrorCode, SyncClientError } from './errors.js';
 
 /**

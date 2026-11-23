@@ -1,18 +1,37 @@
 {
-  "name": "@sync-system/protocol",
-  "version": "0.1.0",
-  "private": true,
+  "name": "@mosherw/sync-system-protocol",
+  "version": "1.0.0",
   "description": "Wire protocol for the sync system: versions, error codes, message types and schemas.",
+  "license": "GPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MosheRW/sync-system.git",
+    "directory": "packages/protocol"
+  },
+  "homepage": "https://github.com/MosheRW/sync-system/tree/main/packages/protocol#readme",
+  "bugs": {
+    "url": "https://github.com/MosheRW/sync-system/issues"
+  },
   "type": "module",
   "exports": {
     ".": {
-      "@sync-system/source": "./src/index.ts",
+      "@mosherw/sync-system-source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     }
   },
+  "publishConfig": {
+    "access": "public",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    }
+  },
   "files": [
-    "dist"
+    "dist",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",

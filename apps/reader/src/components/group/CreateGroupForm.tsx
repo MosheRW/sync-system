@@ -1,4 +1,4 @@
-import type { CreateGroupOptions, HandoffMode, JoinMethod } from '@sync-system/react';
+import type { CreateGroupOptions, HandoffMode, JoinMethod } from '@mosherw/sync-system-react';
 import { type FormEvent, useId, useRef, useState } from 'react';
 import { formatLong } from '../../group/countdown.js';
 import { checkDisplayName } from '../../group/names.js';

@@ -14,7 +14,7 @@ SyncContext.displayName = 'SyncContext';
 export function useSyncStore(hookName: string): SyncStore {
   const store = useContext(SyncContext);
   if (store === null) {
-    throw new Error(`${hookName} must be used inside <SyncProvider> (@sync-system/react)`);
+    throw new Error(`${hookName} must be used inside <SyncProvider> (@mosherw/sync-system-react)`);
   }
   return store;
 }

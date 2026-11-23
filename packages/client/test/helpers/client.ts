@@ -1,4 +1,4 @@
-import type { AppLimits } from '@sync-system/protocol';
+import type { AppLimits } from '@mosherw/sync-system-protocol';
 import { SyncClient } from '../../src/client.js';
 import type { JoinedGroup } from '../../src/state.js';
 import type { SyncClientOptions } from '../../src/options.js';

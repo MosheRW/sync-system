@@ -612,7 +612,7 @@ export const UNKNOWN_CASES: readonly ConfigCase[] = [
     env: { REDIS_PASSWORD: 'SENTINEL-redis-password' },
     sentinels: ['SENTINEL-redis-password'],
     problems: [
-      'REDIS_PASSWORD is not a sync server variable; remove it or fix the name (see "Environment variables" in README.md)',
+      'REDIS_PASSWORD is not a sync server variable; remove it or fix the name (see "Environment variables" in docs/operator-guide.md)',
     ],
   },
 ];

@@ -6,7 +6,7 @@ import {
   useJoinApproval,
   useJoinByCode,
   useSyncClient,
-} from '@sync-system/react';
+} from '@mosherw/sync-system-react';
 import { useCallback, useState } from 'react';
 import { type ErrorView, errorView } from './errors.js';
 

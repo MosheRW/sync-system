@@ -1,4 +1,4 @@
-import { useConnection, usePreview, useSyncClient } from '@sync-system/react';
+import { useConnection, usePreview, useSyncClient } from '@mosherw/sync-system-react';
 import { useCallback, useMemo } from 'react';
 import { type LeaderError, leaderActionError } from './leader-errors.js';
 import { decodePosition, encodePosition } from './position.js';

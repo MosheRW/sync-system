@@ -1,4 +1,4 @@
-import { SyncClientError } from '@sync-system/react';
+import { SyncClientError } from '@mosherw/sync-system-react';
 import { describe, expect, it } from 'vitest';
 import {
   type LeaderAction,

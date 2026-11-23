@@ -38,14 +38,14 @@ function reasonOf(url: URL): string {
 
 describe('readServerVersion (#36 AC33, Q21)', () => {
   it("reads the server's own package.json by default", () => {
-    expect(packageJson.name).toBe('@sync-system/server');
+    expect(packageJson.name).toBe('@mosherw/sync-system-server');
     expect(readServerVersion()).toBe(packageJson.version);
   });
 
   it('reads a valid file', () => {
-    expect(readServerVersion(file('{"name":"@sync-system/server","version":"2.3.4-rc.1"}'))).toBe(
-      '2.3.4-rc.1',
-    );
+    expect(
+      readServerVersion(file('{"name":"@mosherw/sync-system-server","version":"2.3.4-rc.1"}')),
+    ).toBe('2.3.4-rc.1');
   });
 
   it('gives a reason for each failure, without content or path', () => {
@@ -55,14 +55,23 @@ describe('readServerVersion (#36 AC33, Q21)', () => {
       [pathToFileURL(dir), VERSION_REASONS.unreadable('EISDIR')],
       [file('{"name": SENTINEL'), VERSION_REASONS.notJson],
       [file('["SENTINEL"]'), VERSION_REASONS.notJson],
-      [file('{"name":"@sync-system/reader","version":"1.0.0"}'), VERSION_REASONS.wrongPackage],
-      [file('{"version":"1.0.0"}'), VERSION_REASONS.wrongPackage],
-      [file('{"name":"@sync-system/server"}'), VERSION_REASONS.noVersion],
-      [file('{"name":"@sync-system/server","version":1}'), VERSION_REASONS.noVersion],
-      [file('{"name":"@sync-system/server","version":"SENTINEL"}'), VERSION_REASONS.noVersion],
-      [file('{"name":"@sync-system/server","version":"v1.0.0"}'), VERSION_REASONS.noVersion],
       [
-        file(`{"name":"@sync-system/server","version":"1.0.0-${'a'.repeat(60)}"}`),
+        file('{"name":"@mosherw/sync-system-reader","version":"1.0.0"}'),
+        VERSION_REASONS.wrongPackage,
+      ],
+      [file('{"version":"1.0.0"}'), VERSION_REASONS.wrongPackage],
+      [file('{"name":"@mosherw/sync-system-server"}'), VERSION_REASONS.noVersion],
+      [file('{"name":"@mosherw/sync-system-server","version":1}'), VERSION_REASONS.noVersion],
+      [
+        file('{"name":"@mosherw/sync-system-server","version":"SENTINEL"}'),
+        VERSION_REASONS.noVersion,
+      ],
+      [
+        file('{"name":"@mosherw/sync-system-server","version":"v1.0.0"}'),
+        VERSION_REASONS.noVersion,
+      ],
+      [
+        file(`{"name":"@mosherw/sync-system-server","version":"1.0.0-${'a'.repeat(60)}"}`),
         VERSION_REASONS.noVersion,
       ],
     ];
@@ -76,10 +85,10 @@ describe('readServerVersion (#36 AC33, Q21)', () => {
 
   it('refuses a file over 64 KiB before parsing it (#36 security C8)', () => {
     const padding = ' '.repeat(MAX_PACKAGE_JSON_BYTES);
-    expect(reasonOf(file(`{"name":"@sync-system/server","version":"1.0.0"}${padding}`))).toBe(
-      VERSION_REASONS.tooLarge,
-    );
-    const atCap = `{"name":"@sync-system/server","version":"1.0.0"}`;
+    expect(
+      reasonOf(file(`{"name":"@mosherw/sync-system-server","version":"1.0.0"}${padding}`)),
+    ).toBe(VERSION_REASONS.tooLarge);
+    const atCap = `{"name":"@mosherw/sync-system-server","version":"1.0.0"}`;
     expect(readServerVersion(file(atCap.padEnd(MAX_PACKAGE_JSON_BYTES, ' ')))).toBe('1.0.0');
   });
 });

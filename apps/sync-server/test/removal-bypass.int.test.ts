@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import type { ServerMessage } from '@sync-system/protocol';
+import type { ServerMessage } from '@mosherw/sync-system-protocol';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { TokenSecrets } from '../src/config/token-secret.js';
 import { InMemoryGroupStore } from '../src/groups/in-memory-group-store.js';

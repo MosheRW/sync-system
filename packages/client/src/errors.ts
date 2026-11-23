@@ -1,4 +1,4 @@
-import { type AppLimits, ErrorCode, type ErrorMessage } from '@sync-system/protocol';
+import { type AppLimits, ErrorCode, type ErrorMessage } from '@mosherw/sync-system-protocol';
 
 /**
  * Every code a `SyncClientError` can carry: the protocol's server codes plus

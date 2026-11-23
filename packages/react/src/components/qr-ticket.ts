@@ -1,5 +1,5 @@
 'use client';
-import type { QrTicket as CoreQrTicket } from '@sync-system/client';
+import type { QrTicket as CoreQrTicket } from '@mosherw/sync-system-client';
 import type { ReactNode } from 'react';
 import { useQrTicket } from '../hooks/leader.js';
 import type { QrTicketState } from '../types.js';

@@ -1,4 +1,4 @@
-import { JOIN_METHODS, type JoinMethod } from '@sync-system/protocol';
+import { JOIN_METHODS, type JoinMethod } from '@mosherw/sync-system-protocol';
 import { z } from 'zod';
 import { ConfigError } from './config-error.js';
 import type { ServerVariable } from './known-vars.js';
@@ -76,7 +76,7 @@ export interface ServerEnv {
 
 export type EnvSource = Readonly<Record<string, string | undefined>>;
 
-interface NumericVar {
+export interface NumericVar {
   key: keyof ServerEnv;
   /** Typed by KNOWN_SERVER_VARIABLES, so a variable cannot be parsed without being known. */
   name: ServerVariable;
@@ -86,7 +86,8 @@ interface NumericVar {
   max?: number;
 }
 
-const NUMERIC_VARS: readonly NumericVar[] = [
+/** Every numeric server variable with its default and bounds (also read by the env reference test, #37 AC45). */
+export const NUMERIC_VARS: readonly NumericVar[] = [
   { key: 'port', name: 'PORT', defaultValue: 8080, max: 65535 },
   { key: 'maxGroupSizeCeiling', name: 'MAX_GROUP_SIZE_CEILING', defaultValue: 100 },
   { key: 'maxLeaderUpdateRateCeiling', name: 'MAX_LEADER_UPDATE_RATE_CEILING', defaultValue: 10 },

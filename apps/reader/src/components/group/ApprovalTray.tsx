@@ -1,4 +1,4 @@
-import type { JoinRequest, JoinRequests } from '@sync-system/react';
+import type { JoinRequest, JoinRequests } from '@mosherw/sync-system-react';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { useI18n } from '../../i18n/index.js';
 import { PlainText } from '../PlainText.js';

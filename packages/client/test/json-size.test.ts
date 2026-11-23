@@ -1,4 +1,4 @@
-import { jsonByteLength as serverJsonByteLength } from '@sync-system/server/src/limits/json-size.js';
+import { jsonByteLength as serverJsonByteLength } from '@mosherw/sync-system-server/src/limits/json-size.js';
 import { describe, expect, it } from 'vitest';
 import { jsonByteLength } from '../src/json-size.js';
 

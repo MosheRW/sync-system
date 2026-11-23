@@ -13,6 +13,11 @@ export const DEV_REDIS_PASSWORD = 'dev-only-insecure-redis-password-change-me';
 export const DEFAULT_REDIS_KEY_PREFIX = 'sync';
 export const DEFAULT_REDIS_CONNECT_TIMEOUT_SECONDS = 10;
 export const DEFAULT_REDIS_COMMAND_TIMEOUT_MS = 2000;
+/** Bounds of the two Redis timeouts (the operator guide's env table is tested against them, #37 AC45). */
+export const REDIS_CONNECT_TIMEOUT_SECONDS_MIN = 1;
+export const REDIS_CONNECT_TIMEOUT_SECONDS_MAX = 120;
+export const REDIS_COMMAND_TIMEOUT_MS_MIN = 100;
+export const REDIS_COMMAND_TIMEOUT_MS_MAX = 30000;
 
 /** `<prefix>:v1:...`; never contains `:` (#35 AC5). */
 export const REDIS_KEY_PREFIX_PATTERN = /^[a-z0-9][a-z0-9_-]{0,31}$/;
@@ -179,18 +184,30 @@ export function collectRedisSettings(env: EnvSource, errors: string[]): RedisSet
   }
   let connectSeconds = DEFAULT_REDIS_CONNECT_TIMEOUT_SECONDS;
   if (env.REDIS_CONNECT_TIMEOUT_SECONDS !== undefined) {
-    const parsed = integerIn(env.REDIS_CONNECT_TIMEOUT_SECONDS, 1, 120);
+    const parsed = integerIn(
+      env.REDIS_CONNECT_TIMEOUT_SECONDS,
+      REDIS_CONNECT_TIMEOUT_SECONDS_MIN,
+      REDIS_CONNECT_TIMEOUT_SECONDS_MAX,
+    );
     if (parsed === undefined) {
-      errors.push('REDIS_CONNECT_TIMEOUT_SECONDS must be an integer between 1 and 120');
+      errors.push(
+        `REDIS_CONNECT_TIMEOUT_SECONDS must be an integer between ${REDIS_CONNECT_TIMEOUT_SECONDS_MIN} and ${REDIS_CONNECT_TIMEOUT_SECONDS_MAX}`,
+      );
     } else {
       connectSeconds = parsed;
     }
   }
   let commandMs = DEFAULT_REDIS_COMMAND_TIMEOUT_MS;
   if (env.REDIS_COMMAND_TIMEOUT_MS !== undefined) {
-    const parsed = integerIn(env.REDIS_COMMAND_TIMEOUT_MS, 100, 30000);
+    const parsed = integerIn(
+      env.REDIS_COMMAND_TIMEOUT_MS,
+      REDIS_COMMAND_TIMEOUT_MS_MIN,
+      REDIS_COMMAND_TIMEOUT_MS_MAX,
+    );
     if (parsed === undefined) {
-      errors.push('REDIS_COMMAND_TIMEOUT_MS must be an integer between 100 and 30000');
+      errors.push(
+        `REDIS_COMMAND_TIMEOUT_MS must be an integer between ${REDIS_COMMAND_TIMEOUT_MS_MIN} and ${REDIS_COMMAND_TIMEOUT_MS_MAX}`,
+      );
     } else {
       commandMs = parsed;
     }

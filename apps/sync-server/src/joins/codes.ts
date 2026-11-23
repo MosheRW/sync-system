@@ -4,7 +4,7 @@ import {
   ALPHA_CODE_LENGTH,
   GROUP_CODE_PATTERN,
   type JoinMethod,
-} from '@sync-system/protocol';
+} from '@mosherw/sync-system-protocol';
 import { MAX_CODE_DRAWS } from '../limits/constants.js';
 import type { CodeIndexStore } from './code-index.js';
 import { usesGroupCode } from './join-methods.js';

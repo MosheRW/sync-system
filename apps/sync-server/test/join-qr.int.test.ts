@@ -1,4 +1,4 @@
-import type { JoinMethod } from '@sync-system/protocol';
+import type { JoinMethod } from '@mosherw/sync-system-protocol';
 import { afterEach, describe, expect, it } from 'vitest';
 import { InMemoryGroupStore } from '../src/groups/in-memory-group-store.js';
 import { QrTicketService } from '../src/tokens/qr-tickets.js';

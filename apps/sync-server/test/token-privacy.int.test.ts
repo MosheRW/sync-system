@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { ServerMessage } from '@sync-system/protocol';
+import type { ServerMessage } from '@mosherw/sync-system-protocol';
 import type { TokenSecrets } from '../src/config/token-secret.js';
 import { createLogger, groupRef, participantRef } from '../src/logging/logger.js';
 import { createGroupWithMembers, resumeWith } from './helpers/groups.js';

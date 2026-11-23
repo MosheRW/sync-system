@@ -1,4 +1,4 @@
-import { SyncClientError } from '@sync-system/client';
+import { SyncClientError } from '@mosherw/sync-system-client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { IDLE_SNAPSHOT, SERVER_STATE } from '../src/server-state.js';
 import { EMPTY_STORE, SyncStore, availabilityOf } from '../src/store.js';

@@ -22,7 +22,8 @@ result. Change a choice with a new ADR, never by editing this file alone.
 Commit scopes in use: `protocol`, `server`, `client`, `react`, `reader`,
 `adr`, `spec`, `design`, `architecture`, `security`, `state`, `docs`,
 `compose`, `ci` (also used without a scope: `ci: ...`), `storage` (the sync
-server's storage layer, `apps/sync-server/src/storage`).
+server's storage layer, `apps/sync-server/src/storage`), `release` (release
+tooling in `scripts/release` and `.changeset`, #37).
 
 ## Reading app (`apps/reader`, #19)
 
@@ -125,3 +126,24 @@ Rules that follow from these choices:
 | Cap error (Gate 2 Q-3)     | `APP_GROUP_LIMIT` with `details.maxLiveGroups` (the configured cap, never the count)                                                                                                                                                                                           | [architecture.md](issues/12/architecture.md) (Gate 2 Q-3) |
 | Recreations (Gate 2 Q-4)   | Counted, never refused, never charged                                                                                                                                                                                                                                          | [architecture.md](issues/12/architecture.md) (Gate 2 Q-4) |
 | Refusal logs (Gate 2 Q-5)  | One `warn` per app per minute per instance, `namespace` only                                                                                                                                                                                                                   | [architecture.md](issues/12/architecture.md) (Gate 2 Q-5) |
+
+## Packages, license and release (#37)
+
+| Decision                 | Choice                                                                                                                                                                                                                                                                                                                          | ADR                                                  |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| Package names            | Published: `@mosherw/sync-system-protocol`, `@mosherw/sync-system-client`, `@mosherw/sync-system-react`. Private: `@mosherw/sync-system-server`, `@mosherw/sync-system-reader`. Source export condition `@mosherw/sync-system-source`. The old placeholder scope is gone                                                        | [0016](decisions/0016-versioning-and-npm-release.md) |
+| License                  | GPL-3.0, SPDX `GPL-3.0-only`, in every `package.json`; full text in the root `LICENSE` and in each published package. The GPL also covers the client and React packages and the bundles that ship them                                                                                                                          | [spec.md](issues/37/spec.md) (Q3)                    |
+| Versioning and changelog | Changesets, one fixed group of protocol, client, react and server (`privatePackages.version: true, tag: false`, reader ignored), built-in changelog generator; the version bump happens in a reviewed release PR; internal deps `workspace:*` (published as the exact version)                                                  | [0016](decisions/0016-versioning-and-npm-release.md) |
+| Git tags                 | One annotated `vX.Y.Z` per release, created on the maintainer's host on the verified merge commit; no git credential in any container                                                                                                                                                                                           | [0016](decisions/0016-versioning-and-npm-release.md) |
+| npm publish              | By hand: `npm publish <tarball> --access public --ignore-scripts` of the three `pack:check`-verified tarballs, from a fresh publish container that runs no project code; never `pnpm -r publish`, `changeset publish` or `npm login`                                                                                            | [0016](decisions/0016-versioning-and-npm-release.md) |
+| npm authentication (E2)  | A per-release granular access token (read and write, the `@mosherw` packages only, shortest expiry up to 7 days, IP allowlist, bypass 2FA), read on the host with `read -rs`, piped over `docker exec -i` stdin into the publish container's mode-600 `/root/.npmrc`, removed by a host `trap`, revoked right after the publish | [0016](decisions/0016-versioning-and-npm-release.md) |
+| Server image             | Built on the host with `docker buildx` from a fresh clone of the tag; `ghcr.io/mosherw/sync-system-server` (canonical) and `docker.io/mosherw/sync-system-server` (mirror); tags `X.Y.Z`, `X.Y`, `X`, `latest`; `linux/amd64` and `linux/arm64`; OCI labels; `LICENSE` in `/app`                                                | [0017](decisions/0017-server-image-publishing.md)    |
+| Registry credentials     | A temporary `DOCKER_CONFIG`, `read -rs` + `--password-stdin` logins, a `trap` that logs out of both registries and removes the config; least-scope, short-expiry tokens revoked after the release                                                                                                                               | [0017](decisions/0017-server-image-publishing.md)    |
+
+Rules that follow from these choices:
+
+- The non-private workspace packages are exactly the three published names;
+  root, server and reader stay `private: true` (tested).
+- Every user-visible change adds a `.changeset/*.md` file in its PR.
+- Agents never publish packages, push images, tag or create releases; the
+  maintainer follows `RELEASING.md`.

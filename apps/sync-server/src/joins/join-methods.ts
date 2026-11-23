@@ -1,4 +1,4 @@
-import { JOIN_METHODS, type JoinMethod } from '@sync-system/protocol';
+import { JOIN_METHODS, type JoinMethod } from '@mosherw/sync-system-protocol';
 
 /** Methods an app gets when it omits `joinMethods`, before the env intersection (#10 Q1.1). */
 export const DEFAULT_APP_JOIN_METHODS: readonly JoinMethod[] = ['A', 'D'];

@@ -1,4 +1,4 @@
-import { MAX_DISPLAY_NAME_LENGTH, resolveDisplayName } from '@sync-system/react';
+import { MAX_DISPLAY_NAME_LENGTH, resolveDisplayName } from '@mosherw/sync-system-react';
 import type { Messages } from '../i18n/en.js';
 
 /** The result of checking an optional display name before sending (#24 AC7). */

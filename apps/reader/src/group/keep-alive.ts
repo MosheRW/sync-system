@@ -1,4 +1,4 @@
-import type { HandoffMode, KeepAliveEvent } from '@sync-system/react';
+import type { HandoffMode, KeepAliveEvent } from '@mosherw/sync-system-react';
 import type { Messages } from '../i18n/en.js';
 
 /**

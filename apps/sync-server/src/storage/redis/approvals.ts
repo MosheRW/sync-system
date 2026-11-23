@@ -1,4 +1,4 @@
-import { JOIN_REQUEST_ID_PATTERN, MAX_DISPLAY_NAME_LENGTH } from '@sync-system/protocol';
+import { JOIN_REQUEST_ID_PATTERN, MAX_DISPLAY_NAME_LENGTH } from '@mosherw/sync-system-protocol';
 import { z } from 'zod';
 import type { Session } from '../../groups/session.js';
 import { MAX_PENDING_APPROVALS_PER_GROUP } from '../../limits/constants.js';

@@ -3,7 +3,7 @@ import {
   type KeepAliveEvent,
   useKeepAlive,
   useLeadership,
-} from '@sync-system/react';
+} from '@mosherw/sync-system-react';
 import { useEffect, useLayoutEffect, useRef } from 'react';
 import { formatLong, formatShort, useCountdown } from '../../group/countdown.js';
 import { keepAliveDeadline, keepAliveView } from '../../group/keep-alive.js';

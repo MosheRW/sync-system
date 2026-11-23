@@ -1,4 +1,4 @@
-import type { SyncClientError, SyncClientSnapshot } from '@sync-system/client';
+import type { SyncClientError, SyncClientSnapshot } from '@mosherw/sync-system-client';
 import type { UpdateRequired } from './types.js';
 
 /**

@@ -1,4 +1,4 @@
-import type { ServerMessage } from '@sync-system/protocol';
+import type { ServerMessage } from '@mosherw/sync-system-protocol';
 import { WebSocket } from 'ws';
 
 /** The subset of a ws WebSocket that sending needs (fakeable in unit tests). */

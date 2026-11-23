@@ -1,4 +1,4 @@
-import { type JsonObject, type ResumedGroup, SyncClientError } from '@sync-system/react';
+import { type JsonObject, type ResumedGroup, SyncClientError } from '@mosherw/sync-system-react';
 import { act, fireEvent, screen, within } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { POINTER_KEY, testLoader } from './helpers/app.js';

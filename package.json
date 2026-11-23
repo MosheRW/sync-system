@@ -1,21 +1,28 @@
 {
   "name": "sync-system",
   "private": true,
+  "license": "GPL-3.0-only",
   "type": "module",
-  "packageManager": "pnpm@10.28.0",
+  "packageManager": "pnpm@10.28.0+sha512.05df71d1421f21399e053fde567cea34d446fa02c76571441bfc1c7956e98e363088982d940465fd34480d4d90a0668bc12362f8aa88000a64e83d0b0e47be48",
   "engines": {
     "node": ">=24"
   },
   "scripts": {
-    "lint": "eslint . && prettier --check .",
-    "typecheck": "pnpm -r typecheck",
-    "test": "pnpm -r test",
+    "lint": "eslint . && prettier --check . && node scripts/release/check-links.ts",
+    "typecheck": "pnpm -r typecheck && tsc -p scripts",
+    "test": "pnpm -r test && node --test \"scripts/release/*.test.ts\"",
     "build": "pnpm -r build",
     "format": "prettier --write .",
-    "audit": "pnpm audit --audit-level=high"
+    "audit": "pnpm audit --audit-level=high",
+    "docs:links": "node scripts/release/check-links.ts",
+    "pack:check": "node scripts/release/pack-check.ts",
+    "smoke": "node scripts/release/smoke.ts",
+    "release:dry-run": "node scripts/release/dry-run.ts"
   },
   "devDependencies": {
+    "@changesets/cli": "3.0.3",
     "@eslint/js": "^9.39.5",
+    "@types/node": "^24.19.2",
     "eslint": "^9.39.5",
     "eslint-config-prettier": "^10.1.8",
     "prettier": "^3.9.10",

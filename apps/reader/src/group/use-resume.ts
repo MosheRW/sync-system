@@ -3,7 +3,7 @@ import {
   useConnection,
   useStoredGroups,
   useSyncClient,
-} from '@sync-system/react';
+} from '@mosherw/sync-system-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { GroupEnv } from './context.js';
 import type { GroupPointer } from './session-store.js';

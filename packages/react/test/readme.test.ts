@@ -94,7 +94,9 @@ describe('README drift guard (AC28)', () => {
 
 describe('client README follow-ups (#15)', () => {
   it('links the React package and lists every revoking code change (R1)', () => {
-    expect(clientReadme).toContain('../react/README.md');
+    expect(clientReadme).toContain(
+      'https://github.com/MosheRW/sync-system/tree/main/packages/react#readme',
+    );
     expect(clientReadme).not.toContain('item 6');
     expect(clientReadme).toContain(
       'at once after `codesChanged` with reason `rotated`, `resumed`, `member_removed` or `superseded`',

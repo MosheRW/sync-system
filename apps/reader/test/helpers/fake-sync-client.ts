@@ -16,7 +16,7 @@ import {
   type SyncClientLike,
   type SyncClientSnapshot,
   SyncClientError,
-} from '@sync-system/react';
+} from '@mosherw/sync-system-react';
 
 type Method = keyof SyncClientLike;
 

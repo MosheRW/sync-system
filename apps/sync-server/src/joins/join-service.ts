@@ -11,7 +11,7 @@ import {
   isDoorCode,
   normalizeJoinCode,
   resolveDisplayName,
-} from '@sync-system/protocol';
+} from '@mosherw/sync-system-protocol';
 import type { AppConfig } from '../apps/app-registry.js';
 import type { GroupRecord, GroupStore } from '../groups/group-store.js';
 import type { Recipient, Target } from '../groups/recipients.js';

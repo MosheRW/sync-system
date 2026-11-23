@@ -5,7 +5,7 @@ import {
   JOIN_METHODS,
   type JoinMethod,
   MAX_CODES_BLOB_LENGTH,
-} from '@sync-system/protocol';
+} from '@mosherw/sync-system-protocol';
 import { isClaimInteger, parseCompactPayload, signCompact, verifyCompact } from './signed-blob.js';
 import type { TokenKeyring } from './token-keys.js';
 

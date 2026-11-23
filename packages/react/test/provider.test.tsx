@@ -1,5 +1,5 @@
-import type { SyncClientOptions } from '@sync-system/client';
-import { SyncClient } from '@sync-system/client';
+import type { SyncClientOptions } from '@mosherw/sync-system-client';
+import { SyncClient } from '@mosherw/sync-system-client';
 import { act, render } from '@testing-library/react';
 import { type ReactNode, StrictMode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -167,7 +167,7 @@ describe('props (AC4)', () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const both = { options: OPTIONS, client: new FakeSyncClient() } as unknown as SyncProviderProps;
     expect(() => render(<SyncProvider {...both} />)).toThrow(
-      '<SyncProvider> needs exactly one of the options or client props (@sync-system/react)',
+      '<SyncProvider> needs exactly one of the options or client props (@mosherw/sync-system-react)',
     );
     expect(() => render(<SyncProvider {...({} as SyncProviderProps)} />)).toThrow(/exactly one/);
   });

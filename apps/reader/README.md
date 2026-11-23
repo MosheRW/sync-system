@@ -1,4 +1,4 @@
-# Reading app (`@sync-system/reader`)
+# Reading app (`@mosherw/sync-system-reader`)
 
 A JSON-driven reading app: it shows one text at a time as a sequence of pages,
 handles right-to-left, left-to-right and mixed-direction text, and identifies
@@ -15,16 +15,16 @@ Development (Vite dev server on `http://localhost:5173`, loopback only):
 
 ```sh
 pnpm install
-pnpm --filter @sync-system/reader dev
-READER_UI_LANG=he pnpm --filter @sync-system/reader dev      # Hebrew interface
+pnpm --filter @mosherw/sync-system-reader dev
+READER_UI_LANG=he pnpm --filter @mosherw/sync-system-reader dev      # Hebrew interface
 ```
 
 Production build and server (from the repo root):
 
 ```sh
-pnpm --filter @sync-system/reader build    # dist/ (app) and dist-server/ (server)
-PORT=8081 pnpm --filter @sync-system/reader start
-pnpm --filter @sync-system/reader preview  # vite preview with the same config and headers
+pnpm --filter @mosherw/sync-system-reader build    # dist/ (app) and dist-server/ (server)
+PORT=8081 pnpm --filter @mosherw/sync-system-reader start
+pnpm --filter @mosherw/sync-system-reader preview  # vite preview with the same config and headers
 ```
 
 Docker (the `reader` service in the root `compose.yaml`, loopback port 8081):
@@ -178,7 +178,7 @@ every name, including `default`. The app needs **no policy**, and none
 exists: it renders all text as React text children, never renders a
 `<script>` element and never uses `dangerouslySetInnerHTML` (ESLint bans
 it), and zod runs in `jitless` mode (`src/content/zod.ts`, `buildJitless` in
-`@sync-system/protocol`) so it never probes `Function`. Keep it that way.
+`@mosherw/sync-system-protocol`) so it never probes `Function`. Keep it that way.
 Browsers without Trusted Types support ignore both directives.
 
 To add a policy anyway (say a new dependency needs one): name it in the
@@ -397,7 +397,7 @@ Schema v1 has no inline markup or spans.
 1. Save the file as `apps/reader/content/<namespace>/<slug>.json`; the path
    must equal its `contentId` (`content/acme/psalms-he.json` holds
    `"contentId": "acme/psalms-he"`).
-2. Run `pnpm --filter @sync-system/reader build` (or `dev`). Every bundled
+2. Run `pnpm --filter @mosherw/sync-system-reader build` (or `dev`). Every bundled
    file is validated with the same code as at runtime; any invalid file,
    path mismatch or duplicate ID fails the build with a list of all problems,
    so a broken book is never shipped or listed.
@@ -456,7 +456,7 @@ loopback port of the sync server) and the public dev key of the `dev-app`
 entry in `config/apps.dev.json`. The reader image runs with
 `NODE_ENV=production`, so it prints the two warnings above; that is expected
 locally. `config/apps.example.json` has a reader-shaped `reading-app` entry to
-copy for a real deployment. For `pnpm --filter @sync-system/reader dev`, set
+copy for a real deployment. For `pnpm --filter @mosherw/sync-system-reader dev`, set
 the same variables in your shell and start the sync server with
 `docker compose up sync-server`.
 
@@ -570,10 +570,10 @@ be safe sets `disconnectGraceSeconds` to 45.
 
 ### End-to-end checks
 
-`pnpm --filter @sync-system/reader test:e2e` runs Playwright (Chromium only,
+`pnpm --filter @mosherw/sync-system-reader test:e2e` runs Playwright (Chromium only,
 [ADR 0008](../../docs/decisions/0008-end-to-end-browser-tests.md)) against the
 built reader and sync servers on loopback: run `pnpm build` and
-`pnpm --filter @sync-system/reader exec playwright install chromium` first. It
+`pnpm --filter @mosherw/sync-system-reader exec playwright install chromium` first. It
 measures opening a QR link and typing codes until Following (target under
 15 s) and a leader move reaching members (under 1 s), reloads, a 25-second
 leader connection drop, keyboard-only use and zero CSP and Trusted Types
@@ -591,8 +591,8 @@ the vice-leader, and the original leader takes it back. CI runs it in the
 ## Development
 
 ```sh
-pnpm --filter @sync-system/reader typecheck
-pnpm --filter @sync-system/reader test
+pnpm --filter @mosherw/sync-system-reader typecheck
+pnpm --filter @mosherw/sync-system-reader test
 pnpm lint
 ```
 
@@ -601,6 +601,6 @@ Layout: `src/content` (schema, parser, fingerprint, loader, `?src` policy),
 `src/group` (sync root, follow reducer, phases, deep links, storage),
 `src/components` (`group/` for the group UI), `src/i18n`, `e2e/` (Playwright), `plugins/library.ts` (build-time library index,
 `virtual:reader-library`), `server/` (the production server). The app imports
-the sync stack only through `@sync-system/react`; ESLint enforces it and bans
+the sync stack only through `@mosherw/sync-system-react`; ESLint enforces it and bans
 HTML sinks (`dangerouslySetInnerHTML`, `innerHTML`, ...): every external text
 is rendered as plain text.

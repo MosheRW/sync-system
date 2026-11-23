@@ -1,4 +1,4 @@
-import { type JoinRequest, SyncClientError } from '@sync-system/react';
+import { type JoinRequest, SyncClientError } from '@mosherw/sync-system-react';
 import { act, fireEvent, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { FakeSyncClient } from './helpers/fake-sync-client.js';

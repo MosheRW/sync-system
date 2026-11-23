@@ -1,4 +1,4 @@
-import type { WebSocketLike } from '@sync-system/client';
+import type { WebSocketLike } from '@mosherw/sync-system-client';
 
 type Listener = (event: unknown) => void;
 type EventType = 'open' | 'message' | 'close' | 'error';

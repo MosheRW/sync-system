@@ -7,7 +7,7 @@ import type {
   LeaderLifecycle,
   SyncClientError,
   SyncClientSnapshot,
-} from '@sync-system/client';
+} from '@mosherw/sync-system-client';
 import { useCallback, useMemo, useState } from 'react';
 import { notConnectedResult, toSyncError, useStoreAction } from '../action.js';
 import { useSyncStore } from '../context.js';

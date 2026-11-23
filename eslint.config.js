@@ -14,7 +14,7 @@ export default tseslint.config(
   },
   js.configs.recommended,
   {
-    files: ['apps/*/**/*.{ts,tsx}', 'packages/*/**/*.{ts,tsx}'],
+    files: ['apps/*/**/*.{ts,tsx}', 'packages/*/**/*.{ts,tsx}', 'scripts/**/*.ts'],
     extends: [...tseslint.configs.recommendedTypeChecked],
     languageOptions: {
       parserOptions: {
@@ -28,6 +28,13 @@ export default tseslint.config(
       '@typescript-eslint/no-misused-promises': 'error',
       '@typescript-eslint/consistent-type-imports': 'error',
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
+    },
+  },
+  {
+    // node:test's describe/it return promises that the runner itself awaits.
+    files: ['scripts/**/*.test.ts'],
+    rules: {
+      '@typescript-eslint/no-floating-promises': 'off',
     },
   },
   {
@@ -57,8 +64,8 @@ export default tseslint.config(
       'no-restricted-imports': [
         'error',
         {
-          paths: ['ws', 'next', 'react-dom', '@sync-system/server'],
-          patterns: ['node:*', 'next/*', 'react-dom/*', '@sync-system/server/*'],
+          paths: ['ws', 'next', 'react-dom', '@mosherw/sync-system-server'],
+          patterns: ['node:*', 'next/*', 'react-dom/*', '@mosherw/sync-system-server/*'],
         },
       ],
       'no-restricted-globals': [
@@ -80,7 +87,7 @@ export default tseslint.config(
   },
   {
     // The reading app's browser code (#19): integrates with the sync stack
-    // only through @sync-system/react (AC19), never through other packages'
+    // only through @mosherw/sync-system-react (AC19), never through other packages'
     // sources or Node modules; renders external text only as text (AC4, AC18,
     // security C6); no console.
     files: ['apps/reader/src/**/*.{ts,tsx}'],
@@ -91,19 +98,24 @@ export default tseslint.config(
         {
           paths: [
             {
-              name: '@sync-system/server',
+              name: '@mosherw/sync-system-server',
               message: 'The reading app never imports server internals (AC19).',
             },
             {
-              name: '@sync-system/protocol',
-              message: 'Use the types re-exported by @sync-system/react (AC19).',
+              name: '@mosherw/sync-system-protocol',
+              message: 'Use the types re-exported by @mosherw/sync-system-react (AC19).',
             },
             {
-              name: '@sync-system/client',
-              message: 'Use the exports of @sync-system/react (AC19).',
+              name: '@mosherw/sync-system-client',
+              message: 'Use the exports of @mosherw/sync-system-react (AC19).',
             },
           ],
-          patterns: ['@sync-system/*/src/*', '**/packages/**', '**/sync-server/**', 'node:*'],
+          patterns: [
+            '@mosherw/sync-system-*/src/*',
+            '**/packages/**',
+            '**/sync-server/**',
+            'node:*',
+          ],
         },
       ],
       'no-restricted-syntax': [

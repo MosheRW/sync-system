@@ -1,4 +1,4 @@
-import type { JoinMethod } from '@sync-system/protocol';
+import type { JoinMethod } from '@mosherw/sync-system-protocol';
 import { describe, expect, it } from 'vitest';
 import {
   canonicalMethods,

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { HandoffMode, JoinMethod } from '@sync-system/protocol';
+import type { HandoffMode, JoinMethod } from '@mosherw/sync-system-protocol';
 
 /** One registered client app. Immutable after load; the raw API key is not kept. */
 export interface AppConfig {

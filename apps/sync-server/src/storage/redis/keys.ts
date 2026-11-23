@@ -4,7 +4,7 @@ import {
   GROUP_ID_PATTERN,
   JOIN_REQUEST_ID_PATTERN,
   NAMESPACE_PATTERN,
-} from '@sync-system/protocol';
+} from '@mosherw/sync-system-protocol';
 import { REDIS_KEY_PREFIX_PATTERN } from '../../config/redis.js';
 import { TIMER_KINDS, type TimerKind } from '../../groups/group-timers.js';
 

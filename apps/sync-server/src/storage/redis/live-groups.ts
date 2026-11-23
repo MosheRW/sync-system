@@ -1,4 +1,4 @@
-import { GROUP_ID_PATTERN } from '@sync-system/protocol';
+import { GROUP_ID_PATTERN } from '@mosherw/sync-system-protocol';
 import {
   type CreateBudget,
   type LiveGroupsStore,

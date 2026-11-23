@@ -1,5 +1,5 @@
 'use client';
-import type { GroupState, Role } from '@sync-system/client';
+import type { GroupState, Role } from '@mosherw/sync-system-client';
 import { useCallback, useMemo } from 'react';
 import { useStoreAction } from '../action.js';
 import { useSyncStore } from '../context.js';

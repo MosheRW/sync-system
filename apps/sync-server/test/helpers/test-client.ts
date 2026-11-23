@@ -1,4 +1,4 @@
-import type { ServerMessage, ServerMessageType } from '@sync-system/protocol';
+import type { ServerMessage, ServerMessageType } from '@mosherw/sync-system-protocol';
 import WebSocket from 'ws';
 
 export const TEST_APP_VERSION = '1.0.0';

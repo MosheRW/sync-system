@@ -1,4 +1,4 @@
-import { JOIN_REQUEST_ID_PATTERN } from '@sync-system/protocol';
+import { JOIN_REQUEST_ID_PATTERN } from '@mosherw/sync-system-protocol';
 import { describe, expect, it, vi } from 'vitest';
 import type { Session } from '../src/groups/session.js';
 import { ApprovalQueue, newRequestId } from '../src/joins/approval-queue.js';

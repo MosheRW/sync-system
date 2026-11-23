@@ -1,4 +1,4 @@
-import { usePosition } from '@sync-system/react';
+import { usePosition } from '@mosherw/sync-system-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { type FollowEvent, type FollowState, INITIAL_FOLLOW, follow } from './follow.js';
 import { decodePosition } from './position.js';

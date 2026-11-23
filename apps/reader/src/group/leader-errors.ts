@@ -1,4 +1,4 @@
-import type { SyncClientError } from '@sync-system/react';
+import type { SyncClientError } from '@mosherw/sync-system-react';
 import type { Messages } from '../i18n/en.js';
 
 /**

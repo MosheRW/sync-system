@@ -7,7 +7,7 @@ import type {
   JoinOptions,
   JsonObject,
   JsonValue,
-} from '@sync-system/client';
+} from '@mosherw/sync-system-client';
 import { useCallback, useMemo } from 'react';
 import { useStoreAction } from '../action.js';
 import { useSyncStore } from '../context.js';

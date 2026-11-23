@@ -16,7 +16,7 @@ import {
   SyncClientError,
   type SyncClientEvents,
   type SyncClientSnapshot,
-} from '@sync-system/client';
+} from '@mosherw/sync-system-client';
 import type { SyncClientLike } from '../../src/types.js';
 
 export type Method = Exclude<

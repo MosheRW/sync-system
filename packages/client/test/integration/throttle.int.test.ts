@@ -1,4 +1,4 @@
-import type { JsonValue } from '@sync-system/protocol';
+import type { JsonValue } from '@mosherw/sync-system-protocol';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import type { SyncClientError } from '../../src/errors.js';
 import { closeClients, newClient } from '../helpers/int.js';

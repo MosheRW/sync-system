@@ -5,7 +5,7 @@ import {
   type HelloMessage,
   type HelloOkMessage,
   type WelcomeMessage,
-} from '@sync-system/protocol';
+} from '@mosherw/sync-system-protocol';
 import type { BusySignal } from './backoff.js';
 import {
   type ErrorDetailsMap,

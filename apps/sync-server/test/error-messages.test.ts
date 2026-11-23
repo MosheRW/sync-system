@@ -1,4 +1,4 @@
-import { ErrorCode } from '@sync-system/protocol';
+import { ErrorCode } from '@mosherw/sync-system-protocol';
 import { describe, expect, it } from 'vitest';
 import {
   ACTION_ERROR_TEXT,

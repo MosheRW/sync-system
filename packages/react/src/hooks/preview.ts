@@ -1,5 +1,5 @@
 'use client';
-import type { JsonValue, PreviewState } from '@sync-system/client';
+import type { JsonValue, PreviewState } from '@mosherw/sync-system-client';
 import { useMemo } from 'react';
 import { notConnectedResult, toSyncError } from '../action.js';
 import { useSyncStore } from '../context.js';

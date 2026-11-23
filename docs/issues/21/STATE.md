@@ -1,6 +1,6 @@
 # State: #21 fix(reader): enforce trusted types in the csp (follow-up to #19)
 - Path: fast
-- Phase: ready-to-merge
+- Phase: merged (via PR #49, 2026-11-23, 8242f68)
 - Branch: fix/21-reader-trusted-types
 - PR: #49
 - Plan approved by user: yes (Gate 2, 2026-11-23; security advisories L1 and L2 folded in)

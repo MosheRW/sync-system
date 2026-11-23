@@ -1,6 +1,6 @@
 import type { PastedLinkSignal } from '../../src/group/pasted-link.js';
 import { webcrypto } from 'node:crypto';
-import type { SyncClientLike } from '@sync-system/react';
+import type { SyncClientLike } from '@mosherw/sync-system-react';
 import { type RenderResult, act, render, screen } from '@testing-library/react';
 import { App } from '../../src/app/App.js';
 import { type LocationLike, resolveEntry } from '../../src/app/resolve-entry.js';

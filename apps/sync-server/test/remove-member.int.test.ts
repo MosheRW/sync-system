@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { JoinMethod } from '@sync-system/protocol';
+import type { JoinMethod } from '@mosherw/sync-system-protocol';
 import { afterEach, describe, expect, it } from 'vitest';
 import { InMemoryGroupStore } from '../src/groups/in-memory-group-store.js';
 import { MEMBER_REMOVALS_PER_GROUP_PER_MINUTE } from '../src/limits/constants.js';

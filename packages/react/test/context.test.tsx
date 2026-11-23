@@ -51,7 +51,7 @@ describe('hooks outside the provider (AC8)', () => {
   it('useSyncStore throws a fixed message naming the hook and SyncProvider', () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     expect(() => render(<Call use={() => useSyncStore('useSomething')} />)).toThrow(
-      'useSomething must be used inside <SyncProvider> (@sync-system/react)',
+      'useSomething must be used inside <SyncProvider> (@mosherw/sync-system-react)',
     );
   });
 
@@ -61,7 +61,7 @@ describe('hooks outside the provider (AC8)', () => {
     expect(Object.keys(PUBLIC_HOOKS).sort()).toEqual(exported.sort());
     for (const [name, use] of Object.entries(PUBLIC_HOOKS)) {
       expect(() => render(<Call use={use} />), name).toThrow(
-        `${name} must be used inside <SyncProvider> (@sync-system/react)`,
+        `${name} must be used inside <SyncProvider> (@mosherw/sync-system-react)`,
       );
     }
   });

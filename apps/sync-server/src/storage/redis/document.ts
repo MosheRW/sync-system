@@ -5,7 +5,7 @@ import {
   type JsonObject,
   type JsonValue,
   NAMESPACE_PATTERN,
-} from '@sync-system/protocol';
+} from '@mosherw/sync-system-protocol';
 import { z } from 'zod';
 import type { GroupRecord, StoredPosition } from '../../groups/group-store.js';
 import type { DoorState } from '../../joins/door-guard.js';

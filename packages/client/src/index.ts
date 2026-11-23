@@ -1,4 +1,4 @@
-// Public API of @sync-system/client.
+// Public API of @mosherw/sync-system-client.
 export { SyncClient, createSyncClient } from './client.js';
 export { indicatorOf } from './state.js';
 export { LeaderPreview, LEADER_ACTIVITY_MIN_INTERVAL_MS } from './preview.js';
@@ -66,7 +66,7 @@ export {
   isQrTicketShape,
   normalizeJoinCode,
   resolveDisplayName,
-} from '@sync-system/protocol';
+} from '@mosherw/sync-system-protocol';
 export type {
   AppLimits,
   JoinMethod,
@@ -77,4 +77,4 @@ export type {
   HandoffMode,
   JoinCodeKind,
   ResolvedDisplayName,
-} from '@sync-system/protocol';
+} from '@mosherw/sync-system-protocol';

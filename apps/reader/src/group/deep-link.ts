@@ -1,4 +1,4 @@
-import { isQrTicketShape } from '@sync-system/react';
+import { isQrTicketShape } from '@mosherw/sync-system-react';
 import { isContentId } from '../content/content-id.js';
 import { checkSrc } from '../content/src-policy.js';
 

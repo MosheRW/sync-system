@@ -1,4 +1,4 @@
-import type { ErrorMessage } from '@sync-system/protocol';
+import type { ErrorMessage } from '@mosherw/sync-system-protocol';
 import { describe, expect, it } from 'vitest';
 import {
   ACTION_MESSAGES,

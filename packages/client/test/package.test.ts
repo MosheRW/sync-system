@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import * as protocol from '@sync-system/protocol';
+import * as protocol from '@mosherw/sync-system-protocol';
 import * as api from '../src/index.js';
 
 const root = join(import.meta.dirname, '..');
@@ -14,11 +14,11 @@ function sourceFiles(dir: string): string[] {
 }
 
 describe('package (AC1)', () => {
-  it('depends at runtime only on @sync-system/protocol', () => {
+  it('depends at runtime only on @mosherw/sync-system-protocol', () => {
     const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as {
       dependencies?: Record<string, string>;
     };
-    expect(Object.keys(pkg.dependencies ?? {})).toEqual(['@sync-system/protocol']);
+    expect(Object.keys(pkg.dependencies ?? {})).toEqual(['@mosherw/sync-system-protocol']);
   });
 
   it('has no node, ws or UI framework imports in src', () => {
@@ -81,7 +81,7 @@ describe('public API (AC3)', () => {
     };
     expect(pkg.type).toBe('module');
     expect(pkg.exports['.']).toEqual({
-      '@sync-system/source': './src/index.ts',
+      '@mosherw/sync-system-source': './src/index.ts',
       types: './dist/index.d.ts',
       default: './dist/index.js',
     });

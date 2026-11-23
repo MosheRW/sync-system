@@ -11,7 +11,7 @@ import {
   type ServerMessage,
   checkJson,
   parseClientMessage,
-} from '@sync-system/protocol';
+} from '@mosherw/sync-system-protocol';
 import { type RawData, WebSocket } from 'ws';
 import type { AppRegistry } from '../apps/app-registry.js';
 import { newParticipantId } from '../groups/ids.js';

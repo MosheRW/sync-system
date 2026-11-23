@@ -6,7 +6,7 @@ import type {
   KeepAliveEvent,
   LeaderState,
   RosterEntry,
-} from '@sync-system/client';
+} from '@mosherw/sync-system-client';
 import { useCallback, useEffect, useMemo } from 'react';
 import { useStoreAction } from '../action.js';
 import { useSyncStore } from '../context.js';

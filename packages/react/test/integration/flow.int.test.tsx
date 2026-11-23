@@ -1,4 +1,4 @@
-import { memoryStorage } from '@sync-system/client';
+import { memoryStorage } from '@mosherw/sync-system-client';
 import { act, render } from '@testing-library/react';
 import { type ReactNode, StrictMode } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';

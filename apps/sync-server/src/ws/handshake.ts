@@ -5,7 +5,7 @@ import {
   type JsonValue,
   MAX_APP_VERSION_LENGTH,
   MIN_CLIENT_PROTOCOL_VERSION,
-} from '@sync-system/protocol';
+} from '@mosherw/sync-system-protocol';
 import semver from 'semver';
 import type { AppConfig, AppRegistry } from '../apps/app-registry.js';
 import type { ConnectionCounter } from './connection-counter.js';

@@ -1,4 +1,4 @@
-import type { JsonObject, JsonValue } from '@sync-system/protocol';
+import type { JsonObject, JsonValue } from '@mosherw/sync-system-protocol';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { closeClients, newClient, nextEvent } from '../helpers/int.js';
 import { type RealServer, startRealServer } from '../helpers/real-server.js';

@@ -6,7 +6,7 @@ import {
   useJoinByQr,
   useStoredGroups,
   useSyncClient,
-} from '@sync-system/react';
+} from '@mosherw/sync-system-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { GroupEnv } from './context.js';
 import { forgetStoredGroup } from './use-resume.js';

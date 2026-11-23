@@ -1,4 +1,4 @@
-import type { HandoffMode, JoinMethod, JsonObject, JsonValue } from '@sync-system/protocol';
+import type { HandoffMode, JoinMethod, JsonObject, JsonValue } from '@mosherw/sync-system-protocol';
 import type { GroupCodes } from '../joins/codes.js';
 import type { RosterEntry } from '../lifecycle/roster.js';
 

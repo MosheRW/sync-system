@@ -8,7 +8,7 @@ import {
   MAX_API_KEY_LENGTH,
   MAX_APP_VERSION_LENGTH,
   NAMESPACE_PATTERN,
-} from '@sync-system/protocol';
+} from '@mosherw/sync-system-protocol';
 import { type AppConfig, hashApiKey } from '../apps/app-registry.js';
 import { defaultAppMethods } from '../joins/join-methods.js';
 import { ConfigError } from './config-error.js';

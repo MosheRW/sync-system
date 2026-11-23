@@ -1,4 +1,4 @@
-import type { JsonValue } from '@sync-system/protocol';
+import type { JsonValue } from '@mosherw/sync-system-protocol';
 import type {
   AddParticipantResult,
   GroupPatch,

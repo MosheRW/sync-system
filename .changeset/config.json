@@ -1,0 +1,18 @@
+{
+  "changelog": "@changesets/cli/changelog",
+  "commit": false,
+  "fixed": [
+    [
+      "@mosherw/sync-system-protocol",
+      "@mosherw/sync-system-client",
+      "@mosherw/sync-system-react",
+      "@mosherw/sync-system-server"
+    ]
+  ],
+  "linked": [],
+  "access": "public",
+  "baseBranch": "main",
+  "updateInternalDependencies": "patch",
+  "ignore": ["@mosherw/sync-system-reader"],
+  "privatePackages": { "version": true, "tag": false }
+}

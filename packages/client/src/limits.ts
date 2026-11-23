@@ -1,4 +1,4 @@
-import { type AppLimits, MAX_TOKEN_LENGTH } from '@sync-system/protocol';
+import { type AppLimits, MAX_TOKEN_LENGTH } from '@mosherw/sync-system-protocol';
 
 /**
  * Largest `hello.ok` limits the client accepts (M1). Far above the server

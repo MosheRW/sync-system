@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import type { JoinMethod, ServerMessage } from '@sync-system/protocol';
+import type { JoinMethod, ServerMessage } from '@mosherw/sync-system-protocol';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createLogger, isSensitiveLogKey } from '../src/logging/logger.js';
 import { codesOf, resumeWith } from './helpers/groups.js';

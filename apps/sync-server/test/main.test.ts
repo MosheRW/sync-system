@@ -259,7 +259,7 @@ describe('process entry (AC6)', () => {
       cwd: serverDir,
       env: childEnv({
         SYNC_CONFIG_PATH: path,
-        NODE_OPTIONS: '--conditions=@sync-system/source',
+        NODE_OPTIONS: '--conditions=@mosherw/sync-system-source',
       }),
       encoding: 'utf8',
       timeout: 30_000,

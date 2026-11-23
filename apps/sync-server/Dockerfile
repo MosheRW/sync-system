@@ -20,8 +20,8 @@ RUN pnpm install --frozen-lockfile
 # Sources only: never the repo root (M1).
 COPY packages/ packages/
 COPY apps/ apps/
-RUN pnpm --filter @sync-system/server... build \
-  && pnpm --filter @sync-system/server deploy --prod --legacy /out
+RUN pnpm --filter @mosherw/sync-system-server... build \
+  && pnpm --filter @mosherw/sync-system-server deploy --prod --legacy /out
 
 FROM base AS runtime
 ENV NODE_ENV=production
@@ -30,6 +30,14 @@ WORKDIR /app
 # /out holds package.json next to dist/: the server reads its version from
 # /app/package.json at startup (/health) and refuses to start without it.
 COPY --from=build /out ./
+# The license text, one file only (never a directory or the context root, C8).
+COPY LICENSE ./LICENSE
+# Static OCI labels (ADR 0017). A release adds only .version and .revision
+# with --label at build time; no credential is ever a build ARG or ENV.
+LABEL org.opencontainers.image.source="https://github.com/MosheRW/sync-system" \
+  org.opencontainers.image.licenses="GPL-3.0-only" \
+  org.opencontainers.image.title="sync-system-server" \
+  org.opencontainers.image.description="Sync server: stores and relays an opaque position for ephemeral groups."
 USER node
 EXPOSE 8080
 CMD ["node", "dist/index.js"]

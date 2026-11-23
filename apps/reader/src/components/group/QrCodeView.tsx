@@ -1,4 +1,4 @@
-import type { QrTicketState } from '@sync-system/react';
+import type { QrTicketState } from '@mosherw/sync-system-react';
 // The only lean-qr import, from its main entry (ADR 0007, security R10): no
 // extras, whose helpers build data URLs and HTML strings.
 import { correction, generate } from 'lean-qr';

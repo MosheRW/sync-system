@@ -12,7 +12,7 @@ import {
   decodeTokenClaims,
   isCodesBlobShape,
   normalizeDisplayName,
-} from '@sync-system/protocol';
+} from '@mosherw/sync-system-protocol';
 import { type TimerHandle, clearTimer, now, setClampedTimeout } from './host.js';
 import { type StorageLog, type TokenStorage, storageErrorName } from './storage.js';
 

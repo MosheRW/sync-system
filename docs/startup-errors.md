@@ -64,7 +64,7 @@ replaced by `***`, so a user name or password is never shown.
 | Message                                                                                                      | Fix                                                                                   |
 | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------- |
 | `Config error: <name> must be a positive integer`                                                            | Set digits only, no sign, decimal point or leading zero, or unset it for the default. |
-| `Config error: <name> must be between <n> and <n>`                                                           | Set a value in the range (see "Environment variables" in `README.md`).                |
+| `Config error: <name> must be between <n> and <n>`                                                           | Set a value in the range (see "Environment variables" in `docs/operator-guide.md`).   |
 | `Config error: LOG_LEVEL must be one of fatal, error, warn, info, debug, trace, silent`                      | Use one of the listed levels.                                                         |
 | `Config error: HOST must not be empty`                                                                       | Unset `HOST` (default `0.0.0.0`) or set an address to bind.                           |
 | `Config error: SYNC_CONFIG_PATH must not be empty`                                                           | Unset it (default `./config/apps.json`) or set the apps file path.                    |
@@ -125,10 +125,10 @@ ends with `_CEILING`, must be one of the server's variables
 ([ADR 0015](decisions/0015-unknown-environment-variables.md)). Only the name is
 printed, never the value.
 
-| Message                                                                                                                    | Fix                                                                                                                                                                                                 |
-| -------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Config error: <name> is not a sync server variable; did you mean <known>?`                                                | Rename it to the suggested variable.                                                                                                                                                                |
-| `Config error: <name> is not a sync server variable; remove it or fix the name (see "Environment variables" in README.md)` | Remove it, fix the name, or, for a helper variable of your own (for example `REDIS_PASSWORD` or `REDIS_HOST` used to build `REDIS_URL`), rename it outside these prefixes (for example `PW_REDIS`). |
+| Message                                                                                                                                 | Fix                                                                                                                                                                                                 |
+| --------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Config error: <name> is not a sync server variable; did you mean <known>?`                                                             | Rename it to the suggested variable.                                                                                                                                                                |
+| `Config error: <name> is not a sync server variable; remove it or fix the name (see "Environment variables" in docs/operator-guide.md)` | Remove it, fix the name, or, for a helper variable of your own (for example `REDIS_PASSWORD` or `REDIS_HOST` used to build `REDIS_URL`), rename it outside these prefixes (for example `PW_REDIS`). |
 
 ### Config error: apps file
 
@@ -166,7 +166,7 @@ printed, never the value.
 | `Startup error: cannot read the server version: package.json cannot be read (<code>)`           | Make `package.json` readable by the server's user.                                                                          |
 | `Startup error: cannot read the server version: package.json is larger than 64 KiB`             | The wrong file is in place: restore the server's own `package.json`.                                                        |
 | `Startup error: cannot read the server version: package.json is not valid JSON`                 | Restore the server's own `package.json`.                                                                                    |
-| `Startup error: cannot read the server version: package.json is not the sync server's`          | Restore the server's own `package.json` (its `name` is `@sync-system/server`).                                              |
+| `Startup error: cannot read the server version: package.json is not the sync server's`          | Restore the server's own `package.json` (its `name` is `@mosherw/sync-system-server`).                                      |
 | `Startup error: cannot read the server version: package.json has no valid semver version`       | Restore the server's own `package.json`.                                                                                    |
 | `Startup error: Redis is unreachable (REDIS_URL)`                                               | Check that Redis runs and that the host and port in `REDIS_URL` are reachable from the server.                              |
 | `Startup error: Redis authentication failed (REDIS_URL)`                                        | Check the user and password in `REDIS_URL`, and that the user may run the server's commands.                                |
@@ -223,7 +223,7 @@ cannot be bound gives `Startup error: cannot listen on port <n> (<code>)`.
 
 | Message                                                                              | Fix                                                                                                            |
 | ------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------- |
-| `Startup error: dist/library-index.json is missing or invalid (run the build first)` | Build the reader (`pnpm --filter @sync-system/reader build`) or use the image.                                 |
+| `Startup error: dist/library-index.json is missing or invalid (run the build first)` | Build the reader (`pnpm --filter @mosherw/sync-system-reader build`) or use the image.                         |
 | `Startup error: dist/index.html is missing or has no config placeholder`             | Rebuild the reader; do not edit `dist/index.html` by hand.                                                     |
 | `Startup error: cannot listen on port <n> (<code>)`                                  | `EADDRINUSE`: another process uses the port; `EACCES`: the port needs privileges; `EADDRNOTAVAIL`: fix `HOST`. |
 

@@ -1,4 +1,4 @@
-import type { SyncClientError } from '@sync-system/react';
+import type { SyncClientError } from '@mosherw/sync-system-react';
 import type { I18n } from '../i18n/index.js';
 import type { Messages } from '../i18n/en.js';
 import { formatLong } from './countdown.js';

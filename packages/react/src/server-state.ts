@@ -1,4 +1,4 @@
-import type { PreviewState, SyncClientSnapshot } from '@sync-system/client';
+import type { PreviewState, SyncClientSnapshot } from '@mosherw/sync-system-client';
 import type { JoinFlowState, QrTicketState, SyncState } from './types.js';
 
 /*

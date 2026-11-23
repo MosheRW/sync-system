@@ -1,5 +1,5 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { splitToken } from '@sync-system/protocol';
+import { splitToken } from '@mosherw/sync-system-protocol';
 
 /**
  * The only header this server emits or accepts: `{"alg":"HS256","typ":"JWT"}`.

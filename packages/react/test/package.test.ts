@@ -4,7 +4,7 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import * as core from '@sync-system/client';
+import * as core from '@mosherw/sync-system-client';
 import { afterAll, beforeAll, describe, expect, expectTypeOf, it } from 'vitest';
 import type * as api from '../src/index.js';
 import * as runtime from '../src/index.js';
@@ -27,16 +27,16 @@ interface PackageJson {
 const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as PackageJson;
 
 describe('package (AC1, Q1, Q2, Q10)', () => {
-  it('is the private workspace package @sync-system/react', () => {
-    expect(pkg.name).toBe('@sync-system/react');
-    expect(pkg.private).toBe(true);
+  it('is the published package @mosherw/sync-system-react (#37 AC50)', () => {
+    expect(pkg.name).toBe('@mosherw/sync-system-react');
+    expect(pkg.private).toBeUndefined();
     expect(pkg.type).toBe('module');
     expect(pkg.sideEffects).toBe(false);
   });
 
-  it('depends at runtime only on @sync-system/client (R13)', () => {
-    expect(Object.keys(pkg.dependencies ?? {})).toEqual(['@sync-system/client']);
-    expect(pkg.dependencies?.['@sync-system/client']).toBe('workspace:*');
+  it('depends at runtime only on @mosherw/sync-system-client (R13)', () => {
+    expect(Object.keys(pkg.dependencies ?? {})).toEqual(['@mosherw/sync-system-client']);
+    expect(pkg.dependencies?.['@mosherw/sync-system-client']).toBe('workspace:*');
   });
 
   it('lists react as a peer dependency, ^18.3 || ^19', () => {
@@ -52,7 +52,7 @@ describe('package (AC1, Q1, Q2, Q10)', () => {
 
   it('points package exports at the built ESM output and types (AC3)', () => {
     expect(pkg.exports['.']).toEqual({
-      '@sync-system/source': './src/index.ts',
+      '@mosherw/sync-system-source': './src/index.ts',
       types: './dist/index.d.ts',
       default: './dist/index.js',
     });
@@ -92,18 +92,18 @@ function filesMatching(pattern: RegExp): string[] {
 describe('imports (AC2)', () => {
   it('has no node, ws, next, react-dom or server imports in src', () => {
     const forbidden =
-      /from\s+['"](node:[^'"]*|ws|next(\/[^'"]*)?|react-dom(\/[^'"]*)?|@sync-system\/server[^'"]*)['"]|import\(\s*['"](node:|ws['"]|next|react-dom)/;
+      /from\s+['"](node:[^'"]*|ws|next(\/[^'"]*)?|react-dom(\/[^'"]*)?|@mosherw\/sync-system-server[^'"]*)['"]|import\(\s*['"](node:|ws['"]|next|react-dom)/;
     for (const file of sources) expect(file.text, file.name).not.toMatch(forbidden);
   });
 
-  it('imports only react and @sync-system/client from outside the package', () => {
+  it('imports only react and @mosherw/sync-system-client from outside the package', () => {
     const external = new Set<string>();
     for (const file of sources) {
       for (const match of file.text.matchAll(/from\s+['"]([^'".][^'"]*)['"]/g)) {
         external.add(match[1]!);
       }
     }
-    expect([...external].sort()).toEqual(['@sync-system/client', 'react']);
+    expect([...external].sort()).toEqual(['@mosherw/sync-system-client', 'react']);
   });
 
   it('re-exports the core types the hooks return (AC2)', () => {
@@ -174,7 +174,8 @@ describe('no logging, no HTML, no URLs (AC27, R10, L3)', () => {
         expect(
           /^'[^'$`]*'$/.test(message!) ||
             /^[A-Z_]+$/.test(message!) ||
-            message === '`${hookName} must be used inside <SyncProvider> (@sync-system/react)`',
+            message ===
+              '`${hookName} must be used inside <SyncProvider> (@mosherw/sync-system-react)`',
           `${file.name}: ${match[0]}`,
         ).toBe(true);
       }
