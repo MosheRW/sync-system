@@ -697,9 +697,8 @@ Known limits and trade-offs:
 
 ## Upgrading
 
-Pin the new `X.Y.Z` image, read its changelog
-([`apps/sync-server/CHANGELOG.md`](../apps/sync-server/CHANGELOG.md)) and the
-notes below, then roll the instances. The version rules are in
+Pin the new `X.Y.Z` image, read its changelog (`apps/sync-server/CHANGELOG.md`,
+also in the release notes) and the notes below, then roll the instances. The version rules are in
 [`docs/versioning.md`](versioning.md): a patch or minor release needs no
 config change; a major release lists what to change.
 
