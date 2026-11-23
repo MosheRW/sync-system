@@ -174,3 +174,154 @@ describe('changesets (ADR 0016, AC49, C9)', () => {
     expect(manifest('.').packageManager).toMatch(/^pnpm@\d+\.\d+\.\d+\+sha512\.[0-9a-f]{128}$/);
   });
 });
+
+describe('RELEASING.md load-bearing lines (C1-C5, M6, L1, L5, L8, L9, L11-L13)', () => {
+  const doc = read('RELEASING.md');
+  /** The shell code blocks only (what the maintainer pastes). */
+  const shell = [...doc.matchAll(/```sh\r?\n([\s\S]*?)```/g)].map((m) => m[1] ?? '').join('\n');
+  const step = (heading: string): string => {
+    const start = doc.indexOf(`### ${heading}`);
+    expect(start, heading).toBeGreaterThanOrEqual(0);
+    const next = doc.slice(start + 4).search(/\n##+ /);
+    return next === -1 ? doc.slice(start) : doc.slice(start, start + 4 + next);
+  };
+  const publishBlock = step('4. Publish container');
+
+  it('never logs in to npm interactively, never uses an OTP and never publishes from the workspace', () => {
+    for (const banned of ['--otp', 'npm login', 'pnpm -r publish', 'changeset publish']) {
+      expect(doc, banned).not.toContain(banned);
+    }
+  });
+
+  it('publishes tarballs by path with --access public and --ignore-scripts', () => {
+    const publishes = shell.split(/\r?\n/).filter((line) => /\bnpm publish\b/.test(line));
+    expect(publishes.length).toBeGreaterThan(0);
+    for (const line of publishes) {
+      expect(line).toContain('--access public');
+      expect(line).toContain('--ignore-scripts');
+    }
+    for (const pkg of ['protocol', 'client', 'react']) {
+      expect(publishBlock).toContain(`mosherw-sync-system-${pkg}-$V.tgz`);
+    }
+  });
+
+  it('checks the tarballs before the token exists (L8) and the registry after', () => {
+    expect(publishBlock).toContain('find /release -mindepth 1 ! -type f');
+    expect(publishBlock).toContain('tar -xOzf');
+    expect(publishBlock).toContain('sha512-');
+    expect(publishBlock).toContain('dist.integrity');
+    const tokenRead = publishBlock.indexOf('read -rs');
+    for (const check of ['find /release', 'tar -xOzf', 'diff "$H/recomputed.txt"']) {
+      expect(publishBlock.indexOf(check), check).toBeLessThan(tokenRead);
+    }
+  });
+
+  it('pins both containers by digest (L1)', () => {
+    expect(shell).toMatch(/node:24@sha256:[0-9a-f]{64}/);
+    for (const match of shell.matchAll(/node:24(\S*)/g)) {
+      expect(match[1], match[0]).toMatch(/^@sha256:[0-9a-f]{64}/);
+    }
+  });
+
+  it('hands the npm token over stdin into a mode-600 file only (C1 as amended for E2)', () => {
+    expect(publishBlock).toMatch(/read -rs -p '[^']*' NPM_TOKEN/);
+    expect(publishBlock).toContain(
+      `printf '//registry.npmjs.org/:_authToken=%s\\n' "$NPM_TOKEN" | docker exec -i "$C" sh -c 'umask 077 && cat > /root/.npmrc'`,
+    );
+    expect(publishBlock).toContain('unset NPM_TOKEN');
+    expect(publishBlock).toContain('npm whoami');
+    for (const token of doc.matchAll(/_authToken=(\S*)/g)) {
+      expect(token[1], token[0]).toMatch(/^%s/);
+    }
+    for (const banned of ['-e NPM_TOKEN', '--env-file', 'export NPM_TOKEN', 'set -x']) {
+      expect(doc, banned).not.toContain(banned);
+    }
+    expect(doc).not.toMatch(/\bNPM_TOKEN=/);
+    expect(doc).not.toMatch(/echo[^\n]*\$\{?NPM_TOKEN/);
+  });
+
+  it('checks the pasted token and attaches no stdin before reading it (L12)', () => {
+    expect(publishBlock).toContain('[ -n "${NPM_TOKEN:-}" ]');
+    expect(publishBlock).toContain('case "$NPM_TOKEN" in npm_*)');
+    const code = publishBlock.slice(publishBlock.indexOf('```sh'));
+    const beforeRead = code.slice(0, code.indexOf('read -rs'));
+    expect(beforeRead).not.toMatch(/docker (exec|run)[^\n]* -(i|it)\b/);
+    expect(publishBlock).toMatch(/[Pp]aste only this block/);
+  });
+
+  it('removes the publish container on every exit path, failure-tolerant (M6)', () => {
+    const trap = /trap '([^']*)' EXIT/.exec(publishBlock)?.[1] ?? '';
+    expect(trap).toContain('unset NPM_TOKEN');
+    expect(trap).toMatch(/docker exec "\$C" npm logout[^;]*\|\| true/);
+    expect(trap).toMatch(/docker rm -f "\$C"[^;]*\|\| true/);
+    expect(publishBlock.indexOf('trap ')).toBeLessThan(publishBlock.indexOf('docker run'));
+    expect(publishBlock).toContain('docker ps -a --filter name=sync-release-publish');
+  });
+
+  it('makes every cleanup trap failure-tolerant (M6)', () => {
+    const traps = [...shell.matchAll(/trap '([^']*)' EXIT/g)].map((m) => m[1] ?? '');
+    expect(traps.length).toBeGreaterThanOrEqual(4);
+    for (const trap of traps) {
+      for (const command of trap.split(';').map((c) => c.trim())) {
+        if (command.startsWith('docker ')) expect(command, trap).toMatch(/\|\| true$/);
+      }
+    }
+  });
+
+  it('logs out of both registries and removes the config on every exit (C3, L9)', () => {
+    const push = step('6. The server image');
+    const trap = /trap '([^']*docker logout[^']*)' EXIT/.exec(push)?.[1] ?? '';
+    expect(trap).toMatch(/docker logout ghcr\.io[^;]*\|\| true/);
+    expect(trap).toMatch(/docker logout docker\.io[^;]*\|\| true/);
+    expect(trap).toContain('rm -rf "$DOCKER_CONFIG"');
+    expect(push.indexOf(trap)).toBeLessThan(push.indexOf('docker login'));
+    expect(push).toContain('--password-stdin');
+    expect(push).toContain('docker-credential-');
+    expect(push).toMatch(/revoke both registry tokens/i);
+  });
+
+  it('tags only on the host, from the verified merge commit (C2)', () => {
+    const tagStep = step('1. Tag on the host');
+    expect(tagStep).toContain('git tag -a');
+    expect(doc.split('git tag -a').length - 1).toBe(1);
+    expect(tagStep).toContain('git merge-base --is-ancestor');
+    expect(tagStep).toContain('mergeCommit');
+    const build = step('2. Build container');
+    expect(build).toContain('git bundle create');
+    expect(build).toContain('test "$(git rev-parse HEAD)" = "$SHA"');
+    expect(build).toContain('test -z "$(git status --porcelain)"');
+  });
+
+  it('keeps bundles and outputs outside the repo (L11)', () => {
+    expect(doc).toContain('export REL="$(mktemp -d)"');
+    expect(doc).toContain('export IMG="$(mktemp -d)"');
+  });
+
+  it('has the first-release ownership checklist and the npm settings (C5, E2)', () => {
+    expect(doc).toMatch(/^### 0\. First release only: ownership checklist/m);
+    expect(doc.replace(/\s+/g, ' ')).toContain('Bypass two-factor authentication');
+    expect(doc.replace(/\s+/g, ' ')).toContain(
+      'Require two-factor authentication or a granular access token',
+    );
+    expect(doc).toContain('npm access list packages @mosherw');
+  });
+
+  it('revokes the npm token right after the publish, with the lifecycle rules (L13)', () => {
+    expect(doc).toMatch(/### 5\. Revoke the npm token/);
+    expect(doc).toContain('1 day');
+    expect(doc).toMatch(/clipboard/i);
+    expect(doc).toContain('step 3 with a new token');
+  });
+
+  it('puts the integrity values and the image digest in the release notes (L5)', () => {
+    const notes = step('7. GitHub release notes');
+    expect(notes).toContain('sha512-');
+    expect(notes).toContain('sha256:');
+  });
+
+  it('states the residual risk and the known limits', () => {
+    expect(doc).toMatch(/^## Residual risk$/m);
+    expect(doc).toMatch(/^## Known limits$/m);
+    expect(doc).toContain('provenance');
+  });
+});

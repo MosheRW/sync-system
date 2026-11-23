@@ -51,7 +51,7 @@ and follow the [integration guide](docs/integration-guide.md).
 | The wire protocol         | [`docs/protocol.md`](docs/protocol.md) and [`packages/protocol/README.md`](packages/protocol/README.md)                           |
 | The reading app           | [`apps/reader/README.md`](apps/reader/README.md): content schema, fingerprint, direction rules, configuration, groups             |
 | Versions and upgrades     | [`docs/versioning.md`](docs/versioning.md), and each package's `CHANGELOG.md`                                                     |
-| Releasing                 | `RELEASING.md` (maintainer, added with the release procedure)                                                                     |
+| Releasing                 | [`RELEASING.md`](RELEASING.md) (maintainer)                                                                                       |
 | Reporting a vulnerability | [`SECURITY.md`](SECURITY.md)                                                                                                      |
 | Project decisions         | [`docs/conventions.md`](docs/conventions.md) and the ADRs in [`docs/decisions/`](docs/decisions/)                                 |
 
