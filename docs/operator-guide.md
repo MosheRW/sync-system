@@ -926,7 +926,10 @@ secrets:
   A host account with uid 1000 can read it too.
 - A Swarm secret (`openssl rand -base64 32 | docker secret create sync_token_secret -`,
   then `external: true` in place of `file:`) is mounted root-owned with mode
-  0444 on a tmpfs, which the `node` user can read as is.
+  0444 on a tmpfs, which the `node` user can read as is. It needs Swarm mode:
+  deploy with `docker stack deploy -c compose.yaml sync`, not
+  `docker compose up`. If the external secret is not found, fix the
+  deployment; never fall back to `environment:`.
 - For a rotation, add a second secret and one more pair to the chain, before
   `exec`: `TOKEN_SECRET_PREVIOUS="$$(cat /run/secrets/sync_token_secret_previous)" && export TOKEN_SECRET_PREVIOUS &&`.
   Remove both when the rotation window ends (see Routine rotation above).
