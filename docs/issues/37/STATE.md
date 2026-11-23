@@ -18,6 +18,7 @@
 - security plan r2: opus (rule) → PASS
 - architect gate2-update: opus (rule) → DONE
 - security plan r3: opus (rule) → PASS
+- engineer implement: opus (rule) → DONE
 
 ## Open questions
 
@@ -39,4 +40,15 @@
 
 ## Deviations from plan
 
-- None yet.
+- Smoke install uses `--prefer-offline` instead of `--offline` (the plan's stated fallback): in a fresh CI container the pnpm store has the packages but not the registry metadata `--offline` needs (`ERR_PNPM_NO_OFFLINE_META`). Exact lockfile versions and `--ignore-scripts` are unchanged (commit 8348492).
+- Root `devDependencies` gains `@types/node` (same `^24.19.2` range and resolved version already in the lockfile, no new package in the tree) so `scripts/tsconfig.json` can type-check the release scripts with Node types.
+- `pack:check` looks for the `@mosherw/sync-system-source` condition in every packed manifest field except `scripts`: pnpm packs the packages' `typecheck` script, which names the condition as a `tsc` flag (never run by consumers). Packed scripts are checked against the full lifecycle deny-list (L10); `build`, `test`, `typecheck` remain.
+- The SSR smoke check does not require `navigator` to be absent (Node 24 defines it); `window`, `document`, `localStorage`, `sessionStorage` must be absent and `WebSocket` is replaced by a counter that must stay at 0.
+- The GitHub slugger lives in `scripts/release/check-links.ts`, not `lib.ts`.
+- Changesets accepted the private server in the fixed group: no fallback needed.
+- Reader env table: checked by name only (comment in `apps/reader/test/readme.node.test.ts`), as the plan allowed.
+- Operator guide also holds the moved "Joining", "Roles and group lifecycle" and "Recovery and tokens" sections (verbatim, the drift tests read them there); `docs/protocol.md` is a new self-contained wire reference.
+
+## Known pre-existing failure
+
+- `repo-hygiene.test.ts` "CI workflow ... runs on push and pull_request" fails on `main` too (push/pull_request triggers are commented out while Actions is billing-blocked). It also stops the `RELEASING.md` step 2 block at `pnpm test` in a dry run; everything before and after it was verified separately.
