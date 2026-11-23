@@ -6,8 +6,8 @@
 - PR: #50
 - Plan approved by user: yes (Gate 2, 2026-11-23; security round 3 PASS; L12 and L13 also adopted)
 - Security-sensitive: yes
-- Review rounds: 1
-- Last updated by: engineer
+- Review rounds: 2
+- Last updated by: qa
 
 ## Model log
 
@@ -22,6 +22,7 @@
 - qa review r1: opus (NEXT_MODEL) → FAIL
 - security code r1: opus (rule) → PASS
 - engineer fix r1: opus (rule) → DONE
+- qa review r2: opus (rule) → PASS
 
 ## Open questions
 
@@ -31,6 +32,7 @@
 
 - Round 1 (commit 32ccee5): **FAIL**, 1 finding. `RELEASING.md` dry run step 3 (`SRC_URL="file://$(pwd)"`, line 435) fails on Git Bash because the step 6 block sets `MSYS_NO_PATHCONV=1`; it needs `cygpath -m`. All checks are otherwise green in local Docker CI (only the known repo-hygiene failure), e2e 9/9, dry-run steps 2, 4 and 6 pass with that fix, and AC55 is confirmed (nothing published). Advisories A1-A4 (stale PR body, step 4 trailing `docker ps` line, react tarball not reproducible across node images, roadmap blank line) are non-blocking. Review comment on PR #50.
 - Fix round 1: QA finding 1 fixed in 63c8190 (dry-run `SRC_URL` uses `cygpath -m` on Git Bash, marker test added; step 6 check block re-run on Git Bash passes, `/health` 1.0.0). Security low 1 fixed in bfe6e84 (ADR 0017 trap logouts `|| true`). QA A4 fixed in 25cf5f5 (roadmap blank line), QA A1 done (PR body refreshed). Left for the user at Gate 3: security low 2 (operator guide `-e TOKEN_SECRET`), QA A2 (step 4 trailing `docker ps` line), QA A3 (react tarball reproducibility).
+- Round 2 (commit 20bc603): **PASS**. Finding 1 re-verified: the `RELEASING.md` dry run step 3 line plus the step 6 check block, run as written on Git Bash, clone `file://C:/...`, build and report `/health` version 1.0.0 (revision label 20bc603). AC54 now met; all other ACs unchanged and met. Fresh-clone local Docker CI green (server 2055/2056, only the known repo-hygiene failure; 24 Redis suites, none skipped), e2e 9/9, AC55 re-confirmed. Fix commits 63c8190, bfe6e84, 25cf5f5 match their intent. Open for Gate 3: QA A2, A3, security low 2. Review comment on PR #50.
 
 ## Gate 1 decisions (2026-11-22)
 
