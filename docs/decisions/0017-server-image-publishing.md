@@ -60,7 +60,7 @@ architectures, and how registry credentials are handled.
 
 1. **A temporary `DOCKER_CONFIG` directory per release**
    (`export DOCKER_CONFIG="$(mktemp -d)"`) and, **before the first login**,
-   `trap 'docker logout ghcr.io; docker logout docker.io; rm -rf "$DOCKER_CONFIG"' EXIT`,
+   `trap 'docker logout ghcr.io || true; docker logout docker.io || true; rm -rf "$DOCKER_CONFIG"' EXIT`,
    all inside one subshell block so the trap
    fires when the block ends (security advisory L9). Then `docker login ghcr.io` with a GitHub classic
    token scoped `write:packages` only and `docker login docker.io` with a
