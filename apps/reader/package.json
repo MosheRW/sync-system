@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "Reading app: renders JSON content with RTL, LTR and mixed-direction text, and fingerprints it for group sync.",
+  "license": "GPL-3.0-only",
   "type": "module",
   "scripts": {
     "dev": "vite",

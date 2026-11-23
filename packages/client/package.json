@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "Framework-free sync client: connection, handshake, groups, throttling and reconnect.",
+  "license": "GPL-3.0-only",
   "type": "module",
   "exports": {
     ".": {

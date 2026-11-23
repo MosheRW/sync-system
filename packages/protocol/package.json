@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "Wire protocol for the sync system: versions, error codes, message types and schemas.",
+  "license": "GPL-3.0-only",
   "type": "module",
   "exports": {
     ".": {

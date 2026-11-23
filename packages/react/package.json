@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "React and Next.js bindings for @mosherw/sync-system-client: provider, hooks and render-prop helpers, safe during server rendering.",
+  "license": "GPL-3.0-only",
   "type": "module",
   "sideEffects": false,
   "exports": {

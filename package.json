@@ -1,6 +1,7 @@
 {
   "name": "sync-system",
   "private": true,
+  "license": "GPL-3.0-only",
   "type": "module",
   "packageManager": "pnpm@10.28.0",
   "engines": {
