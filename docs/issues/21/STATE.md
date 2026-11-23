@@ -2,7 +2,7 @@
 - Path: fast
 - Phase: architecture
 - Branch: fix/21-reader-trusted-types
-- PR: none
+- PR: #49
 - Plan approved by user: no
 - Security-sensitive: yes
 - Review rounds: 0
