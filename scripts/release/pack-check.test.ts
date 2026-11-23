@@ -16,7 +16,7 @@ import {
   type TarEntry,
   type WorkspacePackage,
 } from './lib.ts';
-import { exactVersions, exportedNames } from './smoke.ts';
+import { SMOKE_INSTALL_ARGS, exactVersions, exportedNames } from './smoke.ts';
 
 const NAME = '@mosherw/sync-system-client';
 
@@ -224,6 +224,11 @@ describe('tarballs and integrity', () => {
 });
 
 describe('smoke helpers (C6)', () => {
+  it('installs with --ignore-scripts and prefers the local store', () => {
+    assert.ok(SMOKE_INSTALL_ARGS.includes('--ignore-scripts'));
+    assert.ok(SMOKE_INSTALL_ARGS.includes('--prefer-offline'));
+  });
+
   const listed = (react: unknown) =>
     JSON.stringify([
       {

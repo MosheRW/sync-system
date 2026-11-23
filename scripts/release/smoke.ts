@@ -5,13 +5,24 @@
 //      moduleResolution NodeNext and with Bundler;
 //   3. renderToString(<SyncProvider options>) under Node with no browser
 //      globals: no throw and no socket (SSR safety, #15).
-// The install runs with --ignore-scripts and --offline, and pins react,
+// The install runs with --ignore-scripts and --prefer-offline (the store the
+// workspace's frozen install filled; a fresh CI container has the packages
+// but not the registry metadata --offline needs to resolve), and pins react,
 // react-dom and their types to the exact versions the workspace lockfile
 // resolved (never ranges). The temp project is removed in `finally`.
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PUBLISHED, packAll, pnpmCommand, readTarball, repoRoot, run } from './lib.ts';
+
+/** The smoke install (C6): never run any dependency's lifecycle scripts. */
+export const SMOKE_INSTALL_ARGS = [
+  'install',
+  '--ignore-scripts',
+  '--prefer-offline',
+  '--reporter',
+  'append-only',
+] as const;
 
 /** The packages pinned to the workspace's resolved versions. */
 export const PINNED = ['react', 'react-dom', '@types/react', '@types/react-dom'] as const;
@@ -197,7 +208,7 @@ function main(): void {
       )}\n`,
     );
     console.log(`smoke: installing into ${dir}`);
-    run(pnpm, ['install', '--ignore-scripts', '--offline', '--reporter', 'append-only'], dir);
+    run(pnpm, [...SMOKE_INSTALL_ARGS], dir);
 
     write(dir, 'imports.mjs', IMPORT_CHECK);
     process.stdout.write(run({ file: process.execPath, prefix: [] }, ['imports.mjs'], dir));
