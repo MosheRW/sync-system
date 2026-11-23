@@ -8,12 +8,13 @@
     "node": ">=24"
   },
   "scripts": {
-    "lint": "eslint . && prettier --check .",
+    "lint": "eslint . && prettier --check . && node scripts/release/check-links.ts",
     "typecheck": "pnpm -r typecheck && tsc -p scripts",
     "test": "pnpm -r test && node --test \"scripts/release/*.test.ts\"",
     "build": "pnpm -r build",
     "format": "prettier --write .",
     "audit": "pnpm audit --audit-level=high",
+    "docs:links": "node scripts/release/check-links.ts",
     "pack:check": "node scripts/release/pack-check.ts",
     "smoke": "node scripts/release/smoke.ts",
     "release:dry-run": "node scripts/release/dry-run.ts"

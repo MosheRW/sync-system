@@ -15,4 +15,4 @@ Pick the packages and the bump (the versioning rules are in
 server form one fixed group, so they always share one version. The reader is
 ignored. A release PR runs `pnpm changeset version`, which consumes these
 files and writes the `CHANGELOG.md` files. Releasing is described in
-[`RELEASING.md`](../RELEASING.md).
+`RELEASING.md` at the repo root.
