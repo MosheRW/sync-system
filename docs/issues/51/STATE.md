@@ -1,13 +1,13 @@
 # State: #51 fix(docs): operator guide passes TOKEN_SECRET with docker run -e (follow-up to #37)
 
 - Path: fast
-- Phase: validation
+- Phase: ready-to-merge
 - Branch: fix/51-operator-guide-token-secret
 - PR: #57
 - Plan approved by user: yes (Gate 2, 2026-11-23, with security controls C1–C8; follow-up #58)
 - Security-sensitive: yes (secret-handling guidance; security plan review runs)
 - Review rounds: 1
-- Last updated by: qa
+- Last updated by: orchestrator
 
 ## Model log
 
@@ -15,6 +15,9 @@
 - architect plan: opus (rule: secret-handling guidance, when in doubt go up) → DONE
 - engineer implement: opus (rule: Implementer model) → DONE
 - qa review r1: sonnet (NEXT_MODEL) → PASS
+- security plan r1: opus (rule) → PASS
+- security code r1: opus (rule) → PASS (low advisories: A1 test guard misses export / ${:-default} / flow-map / line-continuation forms; A2 Swarm bullet should say docker stack deploy)
+- Gate 3: 2026-11-23, PR #57 ready to merge; advisories A1, A2 awaiting user decision
 
 ## Open questions
 
