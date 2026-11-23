@@ -1,6 +1,6 @@
 # State: #21 fix(reader): enforce trusted types in the csp (follow-up to #19)
 - Path: fast
-- Phase: validation
+- Phase: ready-to-merge
 - Branch: fix/21-reader-trusted-types
 - PR: #49
 - Plan approved by user: yes (Gate 2, 2026-11-23; security advisories L1 and L2 folded in)
@@ -13,6 +13,7 @@
 - security plan: opus (rule) → PASS
 - engineer implement: opus (rule) → DONE
 - qa review r1: sonnet (NEXT_MODEL) → PASS
+- security code r1: opus (rule) → PASS
 ## QA verdict
 - Round 1: PASS (checks green except the known repo-hygiene CI-workflow test; e2e 9/9; AC1-AC6 met; all commits signed)
 ## Open questions
