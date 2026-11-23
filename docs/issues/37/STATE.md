@@ -3,7 +3,7 @@
 - Path: full
 - Phase: architecture (plan written 2026-11-23, awaiting Gate 2)
 - Branch: feat/37-docs-changelog-release
-- PR: none
+- PR: #50
 - Plan approved by user: no
 - Security-sensitive: yes
 - Review rounds: 0
