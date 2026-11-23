@@ -277,6 +277,11 @@ mosherw-sync-system-react-$V.tgz"
   verify @mosherw/sync-system-client "mosherw-sync-system-client-$V.tgz"
   verify @mosherw/sync-system-react "mosherw-sync-system-react-$V.tgz"
 )
+```
+
+Run this check separately, after the block above has finished (do not paste it together with that block):
+
+```sh
 docker ps -a --filter name=sync-release-publish   # must list no container
 ```
 
