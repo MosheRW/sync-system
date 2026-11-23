@@ -1,13 +1,13 @@
 # State: #37 feat: public docs, changelog and first semver release (PRD item 9c)
 
 - Path: full
-- Phase: architecture (Gate 2 decisions recorded 2026-11-23; security plan re-check of E2 pending)
+- Phase: implementation
 - Branch: feat/37-docs-changelog-release
 - PR: #50
-- Plan approved by user: pending (approved at Gate 2 with E2, subject to a security plan re-check of the E2 token handling)
+- Plan approved by user: yes (Gate 2, 2026-11-23; security round 3 PASS; L12 and L13 also adopted)
 - Security-sensitive: yes
 - Review rounds: 0
-- Last updated by: security
+- Last updated by: engineer
 
 ## Model log
 
@@ -34,7 +34,7 @@
 - ADR 0017: A1, B1, C1, D1 as recommended. ADR set to Accepted.
 - Q-E: URLs as proposed. Q-H: no new maxima, reference shows `none`. Q-I/L4: add `SECURITY.md`.
 - Q-L3: keep the personal email in existing history (no rewrite); new commits use the GitHub noreply address (repo-local git config). Untrack `.claude.zip` (chunk 15a; stays in history).
-- Advisories adopted: L1, L2, L4, L5, L6, L8, L9, L10, L11. Not adopted: L7.
+- Advisories adopted: L1, L2, L4, L5, L6, L8, L9, L10, L11, and (after security round 3) L12, L13. Not adopted: L7.
 - Doc nits from security round 2 fixed (Phase A stated once in section 7; ADR list continuation lines: inline code spans no longer broken across lines).
 
 ## Deviations from plan
