@@ -3,7 +3,7 @@
 - Path: fast
 - Phase: architecture
 - Branch: fix/51-operator-guide-token-secret
-- PR: none
+- PR: #57
 - Plan approved by user: no
 - Security-sensitive: yes (secret-handling guidance; security plan review runs)
 - Review rounds: 0
