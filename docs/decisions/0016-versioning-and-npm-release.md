@@ -17,8 +17,9 @@
   and `@mosherw/sync-system-reader` (Q-C). The reader is outside the version
   group (AC48).
 - Everything is released by hand from a `node:24` Docker container, tokens
-  passed at run time only, `pnpm publish --access public` without provenance
-  (Q-D). Agents never publish (AC55).
+  passed at run time only, published with `--access public` without
+  provenance (Q-D; Gate 1 named `pnpm publish`, refined by option E1 below
+  to `npm publish` of the `pnpm pack` output). Agents never publish (AC55).
 
 Still open, and decided by this ADR: how Changesets is configured, when the
 version bump happens, how internal dependencies are pinned in the published
@@ -73,7 +74,12 @@ For 1.0.0 the release PR is this issue's PR (#37).
 ### D. Git tags
 
 1. **One annotated tag `vX.Y.Z` per release** (all packages share the
-   version). Pros: one tag for the image, the GitHub release and every
+   version), created **on the maintainer's host** with their normal git
+   credentials, on the release PR's merge commit after checking it is on
+   `origin/main` and carries version `X.Y.Z`. Containers receive a `git
+bundle` of the tag and assert `HEAD` equals that commit and a clean
+   tree; no git credential ever enters a container (security plan review
+   M1). Pros: one tag for the image, the GitHub release and every
    package. Cons: none for a fixed group.
 2. Changesets' per-package tags (`@mosherw/sync-system-client@1.0.0`, ...)
    via `changeset publish`. Cons: four tags for one release; `changeset
@@ -82,19 +88,40 @@ publish` uses `npm publish` and would not rewrite `workspace:` ranges the
 
 ### E. npm authentication and 2FA (Q-E)
 
-1. **Interactive `npm login` inside the release container, account 2FA
-   "authorization and writes", OTP per publish; after the first publish
-   each package is set to "require two-factor authentication and disallow
+1. **Two containers. A build container that never receives a credential
+   runs install, checks, build, smoke and `pnpm pack:check --out`, which
+   keeps the three checked tarballs and their `sha512` integrity. A fresh
+   publish container (`node:24` pinned by digest; no clone, no `pnpm
+install`, no project code) receives only those three `.tgz` files,
+   recomputes and compares their integrity, then runs an interactive `npm
+login` (account 2FA "authorization and writes") and `npm publish
+<tarball> --access public --ignore-scripts --otp <code>` for protocol,
+   client, react in that order, compares `npm view <pkg>@X.Y.Z
+dist.integrity` with the printed value, and runs `npm logout` from a
+   `trap ... EXIT` set before the login. After the first publish each
+   package is set to "require two-factor authentication and disallow
    tokens".** Pros: no long-lived token exists at all; the session token
-   lives in the container's `~/.npmrc` and dies with `docker run --rm`.
-   Cons: the maintainer types an OTP (`pnpm -r publish --otp <code>`; an
-   OTP that expires mid-run is retried with a new one, packages already
-   published are skipped by `pnpm -r publish`).
+   and the OTP never share a container with the dev-dependency tree, so a
+   compromised dependency cannot steal them or trojan the publishing tool
+   (security plan review H1); the published bytes are exactly the checked
+   tarballs. Cons: the maintainer types an OTP per package (an expired OTP
+   is retried with a new one; a package already published is skipped after
+   `npm view` confirms it) and copies three files between containers.
+   pnpm rewrites `workspace:*` ranges and applies `publishConfig` at pack
+   time, so `npm publish` of the tarball is correct.
+   Residual: a compromised dev dependency in the build container could
+   still alter `dist/` before packing; this rests on the frozen, audited
+   lockfile, as in CI.
 2. A granular access token (publish, `@mosherw/*` only, 7-day expiry)
    passed as `NPM_TOKEN` at `docker run -e`. Pros: no typing. Cons: a token
    with publish rights exists outside the container (shell history, password
    manager); it must be allowed to bypass 2FA, which weakens option 1's
    "disallow tokens" setting.
+3. One container for checks and publish (`npm login` after the checks,
+   `pnpm -r publish --otp`). Rejected (security plan review H1): the dev
+   dependency tree runs as root in the same container before the login and
+   can capture the session and OTP or alter `dist/`; `pnpm -r` also
+   publishes any package that loses `private: true` by mistake.
 
 ### F. Package metadata (Q-E)
 
@@ -114,9 +141,18 @@ A1, B1, C1, D1, E1 and F1.
 { "version": true, "tag": false }`, `access: "public"`, `baseBranch:
 "main"`, `commit: false`, `changelog: "@changesets/cli/changelog"`,
   `updateInternalDependencies: "patch"`.
-- `@changesets/cli` is a root dev dependency, pinned to one exact version.
-- Publishing is `pnpm -r publish --access public --otp <code>` from a clean
-  clone of the tag inside `node:24`, never `changeset publish`.
+- `@changesets/cli` is a root dev dependency, pinned to one exact version,
+  never allowed to run build scripts; `@changesets/changelog-github` is not
+  used.
+- Publishing is `npm publish <tarball> --access public --ignore-scripts
+--otp <code>` for each of the three tarballs that `pnpm pack:check --out`
+  verified in the credential-free build container (built from a bundle of
+  the host-created tag), run in a separate fresh publish container
+  (`node:24@sha256:<digest>`) with a `sha512` comparison before and a
+  `dist.integrity` comparison after, and `npm logout` on every exit path.
+  Never `pnpm -r publish`, never `changeset publish`.
+- The set of non-private workspace packages is exactly the three published
+  names; a test and `pack:check` enforce it.
 - Published manifests carry a `publishConfig.exports` without the repo's
   `@mosherw/sync-system-source` condition (it points at `src/`, which is not
   shipped).

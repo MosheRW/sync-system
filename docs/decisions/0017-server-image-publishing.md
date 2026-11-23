@@ -57,23 +57,34 @@ tonistiigi/binfmt --install arm64`, pinned by digest in `RELEASING.md`).
 ### D. Credentials
 
 1. **A temporary `DOCKER_CONFIG` directory per release**
-   (`export DOCKER_CONFIG="$(mktemp -d)"`), `docker login ghcr.io` with a
-   GitHub token scoped `write:packages` only and `docker login docker.io`
-   with a Docker Hub personal access token scoped "Read & Write", both via
-   `--password-stdin` from a prompt (never a command-line argument), then
-   `docker logout` both and `rm -rf "$DOCKER_CONFIG"`.
-   Pros: nothing remains in `~/.docker/config.json` or shell history.
-   Cons: two tokens to create (short expiry recommended).
+   (`export DOCKER_CONFIG="$(mktemp -d)"`) and, **before the first login**,
+   `trap 'docker logout ghcr.io; docker logout docker.io; rm -rf
+"$DOCKER_CONFIG"' EXIT`. Then `docker login ghcr.io` with a GitHub classic
+   token scoped `write:packages` only and `docker login docker.io` with a
+   Docker Hub personal access token limited to the one repository if
+   available (else "Read & Write"), each read with `read -rs T`, passed as
+   `printf '%s' "$T" | docker login -u mosherw --password-stdin <registry>`
+   and `unset` (never echoed, never a command-line argument). Both tokens
+   get the shortest expiry and are **revoked after the release**.
+   The `trap` matters on Docker Desktop: with an empty `DOCKER_CONFIG` the
+   CLI still picks the platform credential helper, so the tokens land in the
+   OS keychain and only `docker logout` removes them, also when the push
+   fails (security plan review M2).
+   Pros: nothing remains in `~/.docker/config.json`, the keychain or shell
+   history. Cons: two tokens to create and revoke per release.
 2. Logging in to the default Docker config. Cons: credentials stay on disk
    (or in a credential helper) after the release.
 
 ## Decision
 
-A1, B1, C1 and D1. The Dockerfile gains static OCI labels
+A1, B1, C1 and D1. The clone is made from the host-created tag (ADR 0016
+D1) and the release asserts `HEAD` equals the verified merge commit and a
+clean tree before building. The Dockerfile gains static OCI labels
 (`org.opencontainers.image.source=https://github.com/MosheRW/sync-system`,
-`.licenses=GPL-3.0-only`, `.title`, `.description`) and copies `LICENSE`
-into `/app`; the release command adds `.version` and `.revision` with
-`--label`. Before the push, the dry run builds `linux/amd64` with `--load`
+`.licenses=GPL-3.0-only`, `.title`, `.description`) and copies the single
+file `LICENSE` into `/app` in the runtime stage only (never a directory or
+the context root; no credential `ARG`/`ENV`); the release command adds only
+`.version` and `.revision` with `--label`. Before the push, the dry run builds `linux/amd64` with `--load`
 and checks that `/health` returns the tag's version.
 
 ## Consequences
