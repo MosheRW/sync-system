@@ -3,6 +3,12 @@
 - Status: Accepted (Gate 2, 2026-11-23: user chose the recommended A)
 - Date: 2026-11-23
 - Issue: #53
+- Note (2026-11-23, QA round 1 of #53): the premise below is wrong. The
+  react tarball is **not** reproducible across pack runs in the pinned
+  image: pnpm 10 writes its two `workspace:` devDependencies in a racy
+  order. [ADR 0020](0020-deterministic-packed-manifests.md) (Proposed)
+  supersedes this ADR. The status becomes `Superseded by 0020` when 0020
+  is accepted. The text below is left as it was decided.
 
 ## Context
 
