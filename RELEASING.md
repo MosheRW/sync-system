@@ -204,7 +204,7 @@ tarballs and `INTEGRITY.txt`. Every check runs **before** the token exists
 anywhere. The token goes in once, over `docker exec -i` standard input,
 into a mode-600 `/root/.npmrc` of this container, and nowhere else: not in
 a command line, an environment variable of a container, a host file or the
-shell history. Paste only this block:
+shell history. Paste only the first block below:
 
 ```sh
 ( set -euo pipefail

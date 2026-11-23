@@ -246,7 +246,7 @@ describe('RELEASING.md load-bearing lines (C1-C5, M6, L1, L5, L8, L9, L11-L13)',
     const code = publishBlock.slice(publishBlock.indexOf('```sh'));
     const beforeRead = code.slice(0, code.indexOf('read -rs'));
     expect(beforeRead).not.toMatch(/docker (exec|run)[^\n]* -(i|it)\b/);
-    expect(publishBlock).toMatch(/[Pp]aste only this block/);
+    expect(publishBlock).toMatch(/[Pp]aste only the first block below/);
   });
 
   it('removes the publish container on every exit path, failure-tolerant (M6)', () => {
