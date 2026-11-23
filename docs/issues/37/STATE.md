@@ -1,13 +1,13 @@
 # State: #37 feat: public docs, changelog and first semver release (PRD item 9c)
 
 - Path: full
-- Phase: implementation
+- Phase: validation
 - Branch: feat/37-docs-changelog-release
 - PR: #50
 - Plan approved by user: yes (Gate 2, 2026-11-23; security round 3 PASS; L12 and L13 also adopted)
 - Security-sensitive: yes
-- Review rounds: 0
-- Last updated by: engineer
+- Review rounds: 1
+- Last updated by: qa
 
 ## Model log
 
@@ -19,10 +19,15 @@
 - architect gate2-update: opus (rule) → DONE
 - security plan r3: opus (rule) → PASS
 - engineer implement: opus (rule) → DONE
+- qa review r1: opus (NEXT_MODEL) → FAIL
 
 ## Open questions
 
 - Security plan re-check (round 3) of ADR 0016 E2: done, PASS. `security.md` C1 amended for E2; M6 (failure-tolerant trap commands) folded into C1/C3 for the engineer; L12, L13 advisory (`security.md` section 7).
+
+## QA verdict
+
+- Round 1 (commit 32ccee5): **FAIL**, 1 finding. `RELEASING.md` dry run step 3 (`SRC_URL="file://$(pwd)"`, line 435) fails on Git Bash because the step 6 block sets `MSYS_NO_PATHCONV=1`; it needs `cygpath -m`. All checks are otherwise green in local Docker CI (only the known repo-hygiene failure), e2e 9/9, dry-run steps 2, 4 and 6 pass with that fix, and AC55 is confirmed (nothing published). Advisories A1-A4 (stale PR body, step 4 trailing `docker ps` line, react tarball not reproducible across node images, roadmap blank line) are non-blocking. Review comment on PR #50.
 
 ## Gate 1 decisions (2026-11-22)
 
