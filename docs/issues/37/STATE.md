@@ -1,13 +1,13 @@
 # State: #37 feat: public docs, changelog and first semver release (PRD item 9c)
 
 - Path: full
-- Phase: architecture (plan revised after security plan review round 1, 2026-11-23; security plan review round 2 next, then Gate 2)
+- Phase: architecture (security plan review round 2 PASS, 2026-11-23; awaiting Gate 2)
 - Branch: feat/37-docs-changelog-release
 - PR: #50
 - Plan approved by user: no
 - Security-sensitive: yes
 - Review rounds: 0
-- Last updated by: architect
+- Last updated by: security
 
 ## Model log
 
@@ -15,6 +15,7 @@
 - architect plan: opus (NEXT_MODEL) → DONE
 - security plan: opus (rule) → FAIL (H1: shared check/publish container; architect revises ADR 0016 E and RELEASING procedure)
 - architect revise r1: opus (rule) → DONE
+- security plan r2: opus (rule) → PASS
 
 ## Open questions
 

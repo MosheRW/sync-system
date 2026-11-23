@@ -7,7 +7,7 @@ Mode: plan. Reviewed: [`architecture.md`](architecture.md), [`spec.md`](spec.md)
 `.dockerignore`, `.gitignore`, `package.json` files, `ci.yml`, and the full git
 history (626 commits, all refs).
 
-**Result: FAIL**: one high finding (H1). The architect revises the release
+**Round 1 result: FAIL** (H1). **Round 2 result: PASS** (section 6). Round 1 asked the architect to revise the release
 procedure (ADR 0016 E/D wording, `RELEASING.md` section 7) before Gate 2.
 Everything else is medium/low, and the required controls below go into the plan.
 
@@ -145,3 +145,67 @@ author-email decision).
 - gitleaks (if installed), semgrep on changed scripts, `npm audit` (the lockfile
   changes).
 - `SECURITY.md` content (if Q-I accepted); docs free of real secrets.
+
+## 6. Round 2 (plan revision `a8fbdb8`)
+
+Reviewed: `architecture.md` sections 2, 3, 4, 7, 8, 9, 9a, 12 and ADR 0016
+(D1, E1, E3, Decision) and ADR 0017 (D1, Decision) as revised.
+
+**Result: PASS.** H1 and M1-M5 are resolved; C1-C11 are in the plan with a
+chunk and a test or marker each. The revision adds no critical, high or
+medium finding. Five new low advisories (L7-L11) below.
+
+### Round-1 findings
+
+| # | Status | Evidence |
+| --- | --- | --- |
+| H1 | Resolved | Section 7 steps 2-3 and ADR 0016 E1: build container never gets a credential; publish container is a fresh `node:24@sha256:<digest>`, no clone, no install, no project code; receives only the three tarballs; integrity recomputed with an inline `node -e` before login; `npm publish <tgz> --access public --ignore-scripts --otp` by path in order; `dist.integrity` compared after; `npm logout` in a `trap ... EXIT` set before login, plus `--rm`. E3 (one container) recorded as rejected. `pnpm -r publish`/`changeset publish` banned and guarded by `release-files.test.ts` markers. `release:dry-run` mirrors it on the packed files. |
+| M1 | Resolved | Step 1: tag on the host from `mergeCommit.oid`, `merge-base --is-ancestor`, version check in all four manifests, the only git write. Containers get a `git bundle` (no remote, no credential) and assert `HEAD == $M` and a clean tree. `git tag -a` only in the host step (marker test). |
+| M2 | Resolved | Step 4 and ADR 0017 D1: `trap` with both `docker logout` and `rm -rf "$DOCKER_CONFIG"` before the first login; `read -rs` + `printf '%s' \| --password-stdin` + `unset`; least-scope, shortest-expiry tokens; revoke after the release as a checklist step. |
+| M3 | Resolved | Publishable-set assertion in `pack:check` before packing and in `release-files.test.ts`; negative tests in `pack-check.test.ts`; publish by explicit path only. |
+| M4 | Resolved | Step 0 ownership checklist (npm `whoami`/scope + 2FA + recovery codes, Docker Hub repo, GHCR namespace) runs before going public. |
+| M5 | Resolved | Smoke: `--ignore-scripts`, `--offline` against the store the frozen install filled, exact versions from `pnpm list --json` via `execFile`, unit test that versions are exact; `--prefer-offline` fallback is a reported deviation and keeps exact versions and `--ignore-scripts`. |
+
+New-in-revision items checked and fine:
+- **git bundle:** carries objects and refs only (no config, no remote URL,
+  no credential); git verifies object hashes on clone; the `HEAD == $M`
+  assertion ties the build to the verified merge commit. Fine.
+- **Publish container pinning:** digest-pinned always (C1); build container
+  pinned too if L1 is adopted (recommended). Fine.
+- **`--ignore-scripts` on `npm publish <tgz>`:** defence in depth (npm runs
+  no package lifecycle scripts for a tarball spec anyway). Fine.
+- **Registry credentials during the image push build:** BuildKit passes
+  registry auth through the client session for push/pull only; `RUN` steps
+  (the Dockerfile's `pnpm install`) never see it. Fine.
+- **Residual dist tampering** is stated honestly in `RELEASING.md` and ADR
+  0016: the `INTEGRITY.txt` comparison proves the bytes did not change in
+  transit, not that the build container was clean. Accepted residual, the
+  same trust CI has; L7 narrows it cheaply.
+
+### New advisories (round 2)
+
+| # | Severity | Location | Issue | Fix |
+| --- | --- | --- | --- | --- |
+| L7 | Low | Section 7 "Residual risk" | `INTEGRITY.txt` and the printed lines both come from the build container, so a compromised dependency there can trojan `dist/` and print matching hashes. | Optional: compare the three integrity values with those from an independent build of the same commit (the local-CI container run of the tag, or a second build container). If `pnpm pack` output is byte-reproducible, a mismatch flags tampering; if it is not, say so in `RELEASING.md` and drop the check. |
+| L8 | Low | Section 7 step 3 | The publish container trusts file names and manifests produced by the build container. A crafted name could inject into a pasted shell line, a symlink could stand in for a file, and a tarball could carry a different `name`/`version` than intended (pack:check ran in the untrusted container). | Before `npm login`: assert `/release` holds exactly `INTEGRITY.txt` and the three **literal** expected file names (`mosherw-sync-system-{protocol,client,react}-X.Y.Z.tgz`) as regular files (`find /release -type f`, no symlinks); read `package/package.json` from each tarball (`tar -xOzf`) and check `name` and `version` equal the expected values. `RELEASING.md` uses the literal names, never names read from `INTEGRITY.txt`. Use an up-to-date Docker Engine for the `docker cp` steps. |
+| L9 | Low | Section 7 step 4, ADR 0017 D1 | `trap ... EXIT` fires only when the shell exits. Pasted into the maintainer's long-lived Git Bash, logout and `rm -rf` wait until that window closes. On Git Bash/Windows, `DOCKER_CONFIG` from `mktemp -d` may not be honoured by `docker.exe`, so the login lands in the default config and `wincred`. | Ship step 4 as one block run in a child shell (`bash -c '...'` or `( ... )`) so the trap fires at the end. After it, check that `docker-credential-wincred list` (or the platform helper) and `~/.docker/config.json` have no `ghcr.io`/`index.docker.io` entries. |
+| L10 | Low | Section 3 `pack:check` lifecycle deny-list | The list misses `publish`, `postpublish`, `preprepare`, `postprepare`, `preversion`/`version`/`postversion` style hooks. Only install-time hooks matter to consumers, but the list should be complete. | Deny every script name except an explicit allow-list (the existing `build`, `test`, `typecheck`, `lint`-style names), or deny `/^(pre\|post)?(install\|prepare\|publish\|pack)$/` and `prepublishOnly`. |
+| L11 | Low | Section 7 steps 2 and 6, `.dockerignore` | `release.bundle` and `./release-out` are created in the maintainer's working copy (not git-ignored at the root), and `.release-out/` is git-ignored but not docker-ignored. | Create the bundle and `release-out` in `mktemp -d` outside the repo; add `.release-out` to `.dockerignore`. |
+
+Doc nit (not security): section 7 states Phase A twice (once before and
+once after the revision note); ADR 0016 has continuation lines starting at
+column 0 inside list items (Prettier will reflow them).
+
+### Final required controls (unchanged): C1-C11 in section 4
+
+### Advisories for Gate 2
+
+L1, L2, L4, L5, L6 (architect recommends adopting all), L3 (user decision,
+Q-L3), and L7-L11 above (all cheap; L8 and L9 recommended).
+
+### Code mode will additionally check
+
+L8 and L9 if adopted, the exact `RELEASING.md` commands for steps 1-4, the
+`node -e` integrity line (Node built-ins only), and that `smoke.ts`/
+`pack-check.ts` never use `shell: true` (a Windows `pnpm.cmd` workaround
+must still pass arguments as an array).
