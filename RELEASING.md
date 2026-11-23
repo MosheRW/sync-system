@@ -163,6 +163,13 @@ then keeps the three checked tarballs and prints their integrity lines.
 `package.json`. The tests run with `CI=true`, so the Redis suites cannot be
 skipped. Keep the three printed `sha512-...` lines.
 
+`pnpm test` includes the CI workflow check, which accepts the paused state
+of [ADR 0018](docs/decisions/0018-ci-workflow-while-actions-is-blocked.md)
+(the `# CI paused (#54):` marker in `.github/workflows/ci.yml`). While the
+workflow is paused, this build container is the only full CI run of the
+release commit: it must finish green, and there is no GitHub check to fall
+back on.
+
 ### 3. Create the npm token (right before step 4, never earlier)
 
 On npmjs.com: Access Tokens, Generate New Token, **Granular Access Token**:
