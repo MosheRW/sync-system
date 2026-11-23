@@ -39,6 +39,10 @@ Scope of items 7-9 is taken from the PRD ("Product 1: the reading app", "Deliver
 - #42 `fix(server): treat a just-started instance as live when picking a successor (follow-up to #35)` (C12): open. A peer sees a new instance as live only after its next heartbeat, and the S4 `oldAttached` and successor pick read the live cache. Needs architect and security.
 - #47 `fix(storage): bound create-budget key TTL and batch expired live-group cleanup (follow-up to #12)` (security A1, A2; QA A3): open.
 - #48 `test(server): cover forgetGroup slot retention and fix limits README wording (follow-up to #12)` (QA A1, A2): open.
+- #51 `fix(docs): operator guide passes TOKEN_SECRET with docker run -e (follow-up to #37)` (security low 2): open.
+- #52 `fix(release): move the docker ps check in RELEASING.md step 4 to its own block (follow-up to #37)` (QA A2): open.
+- #53 `chore(release): investigate react tarball hash differences across node:24 images (follow-up to #37)` (QA A3, security L7): open.
+- #54 `fix(ci): repo-hygiene CI trigger test blocks pnpm test in the release procedure (follow-up to #37)`: open. Blocker for the actual 1.0.0 release, not for merging PR #50.
 
 ## Key accepted decisions
 
