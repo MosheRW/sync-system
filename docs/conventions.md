@@ -46,6 +46,11 @@ Rules that follow from these choices:
   banned by ESLint in the app.
 - Components use `var(--token)` values, never raw colours or spacing.
 - The reader server never fetches a URL on behalf of a client (no proxy).
+- The reader's CSP enforces Trusted Types with no policy
+  (`require-trusted-types-for 'script'; trusted-types 'none'`, #21): no
+  policy exists and `trusted-types 'none'` forbids creating one. Adding a
+  policy needs a named policy in the CSP (never `*`, `default` or
+  `'allow-duplicates'`), a README note and a security plan review.
 
 ## Reading app groups (`apps/reader`, #24)
 
