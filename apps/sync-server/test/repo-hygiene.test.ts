@@ -496,3 +496,131 @@ describe('operator guide documents health, readiness and config errors (#36 AC36
     expect(readme).toContain('](decisions/0015-unknown-environment-variables.md)');
   });
 });
+
+/** The bodies of every fenced code block in a Markdown file (#51). */
+function codeBlocks(markdown: string): string[] {
+  const text = markdown.replace(/\r\n/g, '\n');
+  return [...text.matchAll(/^ *```[^\n]*\n([\s\S]*?)^ *```/gm)].map((m) => m[1] ?? '');
+}
+
+/** A secret on the docker command line: `-e`, `--env`, `--env=`, quoted or glued (#51 M4). */
+const SECRET_ON_COMMAND_LINE =
+  /(?:^|\s)(?:-e|--env)(?:\s+|=)?["']?(TOKEN_SECRET(_PREVIOUS)?|REDIS_URL)\b/m;
+
+/** The `-e`/`--env` secret in `text`, if any, also across `\` line continuations. */
+function secretOnCommandLine(text: string): string | null {
+  const joined = text.replace(/\r\n/g, '\n').replace(/\\\n[ \t]*/g, ' ');
+  return SECRET_ON_COMMAND_LINE.exec(joined)?.[0] ?? null;
+}
+
+/**
+ * A secret assignment (`NAME: value`, `NAME=value`, `- NAME=value`, `export NAME=value`,
+ * or a key in a YAML/JSON flow map `{ NAME: value }`); group 2 is the value. The value
+ * sits in a lookahead, so a second secret key on the same line is matched too.
+ */
+const SECRET_ASSIGNMENT =
+  /(?:^[ \t]*(?:export[ \t]+)?(?:-[ \t]*)?|(?:(?<!\$)\{|,)[ \t]*)["']?(TOKEN_SECRET(?:_PREVIOUS)?|REDIS_URL)["']?[ \t]*[:=][ \t]*(?=(.*)$)/gm;
+
+/** `${NAME}` or a required `${NAME:?message}` / `${NAME?message}`: no default value. */
+const SAFE_INTERPOLATION = /^"?\$\{\w+(?::?\?[^}]*)?\}/;
+
+/** Values that never hold a secret: interpolation without a default, a generated one, or a secret file. */
+function isSafeSecretValue(value: string): boolean {
+  return (
+    SAFE_INTERPOLATION.test(value) ||
+    ['"$(openssl rand ', '"$$(cat /run/secrets/'].some((prefix) => value.startsWith(prefix))
+  );
+}
+
+/** The assignments in `block` that set a secret to a literal value. */
+function literalSecrets(block: string): string[] {
+  return [...block.replace(/\r\n/g, '\n').matchAll(SECRET_ASSIGNMENT)]
+    .filter((m) => !isSafeSecretValue(m[2] ?? ''))
+    .map((m) => `${m[0]}${m[2] ?? ''}`.trim());
+}
+
+describe('operator guide passes secrets safely (#51)', () => {
+  const guide = read('docs/operator-guide.md');
+  const blocks = codeBlocks(guide);
+
+  it('has guards that catch what they are meant to catch (self-check)', () => {
+    for (const bad of [
+      'docker run -e TOKEN_SECRET=x img',
+      'docker run -e "TOKEN_SECRET=x" img',
+      "docker run -e'TOKEN_SECRET_PREVIOUS=x' img",
+      'docker run -eREDIS_URL=x img',
+      'docker run --env "REDIS_URL=x" img',
+      'docker run --env=TOKEN_SECRET=x img',
+      '  -e TOKEN_SECRET="$(cat /run/secrets/x)" img',
+      'docker run -e \\\n  TOKEN_SECRET=x img',
+      'docker run --env \\\r\n  "REDIS_URL=x" img',
+    ]) {
+      expect(secretOnCommandLine(bad), bad).not.toBeNull();
+    }
+    for (const ok of [
+      'docker run --env-file "$HOME/sync-server.env" img',
+      '-e SYNC_CONFIG_PATH=/x',
+      'docker run -e SYNC_CONFIG_PATH=/x \\\n  --env-file "$HOME/sync-server.env" img',
+    ]) {
+      expect(secretOnCommandLine(ok), ok).toBeNull();
+    }
+    expect(literalSecrets('    TOKEN_SECRET: abc')).toHaveLength(1);
+    expect(literalSecrets("      - 'REDIS_URL=redis://:pw@redis:6379'")).toHaveLength(1);
+    expect(literalSecrets('      - TOKEN_SECRET_PREVIOUS=abc')).toHaveLength(1);
+    expect(literalSecrets('    TOKEN_SECRET: ${TOKEN_SECRET:?set it}')).toHaveLength(0);
+    expect(literalSecrets('        TOKEN_SECRET="$$(cat /run/secrets/s)" &&')).toHaveLength(0);
+    for (const bad of [
+      'export TOKEN_SECRET=abc',
+      '  export REDIS_URL="redis://:pw@redis:6379"',
+      '    TOKEN_SECRET: ${TOKEN_SECRET:-abc}',
+      '    TOKEN_SECRET: ${TOKEN_SECRET-abc}',
+      '    TOKEN_SECRET: ${TOKEN_SECRET:=abc}',
+      '    TOKEN_SECRET: ${TOKEN_SECRET=abc}',
+      '    TOKEN_SECRET: "${TOKEN_SECRET:-abc}"',
+      '    environment: { TOKEN_SECRET: abc }',
+      '    environment: { SYNC_CONFIG_PATH: /x, REDIS_URL: redis://:pw@redis }',
+      '    environment: { TOKEN_SECRET: ${TOKEN_SECRET}, TOKEN_SECRET_PREVIOUS: abc }',
+    ]) {
+      expect(literalSecrets(bad), bad).toHaveLength(1);
+    }
+    for (const ok of [
+      '    TOKEN_SECRET: ${TOKEN_SECRET}',
+      '    TOKEN_SECRET: "${TOKEN_SECRET}"',
+      '    TOKEN_SECRET: ${TOKEN_SECRET?set it}',
+      '    environment: { TOKEN_SECRET: ${TOKEN_SECRET:?set it} }',
+      '        export TOKEN_SECRET &&',
+      'TOKEN_SECRET="$(openssl rand -base64 32)" \\',
+      `printf 'TOKEN_SECRET=%s\\n' "$(openssl rand -base64 32)" > "$HOME/sync-server.env"`,
+    ]) {
+      expect(literalSecrets(ok), ok).toEqual([]);
+    }
+  });
+
+  it('passes no secret with -e or --env in any example', () => {
+    expect(blocks.length).toBeGreaterThan(5);
+    for (const block of blocks) {
+      expect(secretOnCommandLine(block), block).toBeNull();
+    }
+  });
+
+  it('sets no secret to a literal value in any example', () => {
+    expect(blocks.some((block) => block.includes('/run/secrets/sync_token_secret'))).toBe(true);
+    for (const block of blocks) {
+      expect(literalSecrets(block), block).toEqual([]);
+    }
+  });
+
+  it('documents the env file, its exposure, the secret file and the missing _FILE variant', () => {
+    const section = guide.slice(guide.indexOf('## Token secret'), guide.indexOf('## Timers'));
+    expect(section).toMatch(/^### Passing secrets to the container$/m);
+    for (const text of [
+      '--env-file',
+      'docker inspect',
+      '600',
+      'TOKEN_SECRET_FILE',
+      '/run/secrets/',
+    ]) {
+      expect(section, text).toContain(text);
+    }
+  });
+});
