@@ -1,13 +1,13 @@
 # State: #52 fix(release): move the docker ps check in RELEASING.md step 4 to its own block (follow-up to #37)
 
 - Path: fast
-- Phase: validation
+- Phase: ready-to-merge
 - Branch: fix/52-releasing-docker-ps-block
 - PR: #61
 - Plan approved by user: yes (Gate 2, 2026-11-23)
 - Security-sensitive: no
 - Review rounds: 2
-- Last updated by: qa
+- Last updated by: orchestrator
 
 ## Model log
 
@@ -19,6 +19,8 @@
 - Gate 3: 2026-11-23, PR #61 ready to merge; low advisory A1 awaiting user decision
 - engineer fix r1: opus (rule: fix round) → DONE (A1: step 4 intro now says "Paste only the first block below:"; release-files test regex updated to match)
 - qa review r2: opus (rule: round 2) → PASS (A1 fixed and wording accurate; local Docker CI green; 3/3 criteria met)
+- security code r2: opus (rule) → PASS (A1 resolved; no advisories)
+- Gate 3 (round 2): 2026-11-23, PR #61 ready to merge; no open advisories
 
 ## Open questions
 
