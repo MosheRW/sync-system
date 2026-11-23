@@ -29,8 +29,8 @@ Scope of items 7-9 is taken from the PRD ("Product 1: the reading app", "Deliver
 ## Parked follow-ups
 
 - #9 `fix(client): harden forgetAllGroups cut-off against clock skew (follow-up to #7)`: open.
-- #12 `fix(server): limit group creation and live groups per app (follow-up to #10)`: open.
-- #21 `fix(reader): enforce trusted types in the csp (follow-up to #19)`: open. Priority rose with #24 (the reader now holds participant tokens); the #24 e2e CSP-violation check is its test harness (security L7).
+- #12 `fix(server): limit group creation and live groups per app (follow-up to #10)`: done (PR #46 merged 2026-11-22 as 145ca98).
+- #21 `fix(reader): enforce trusted types in the csp (follow-up to #19)`: in progress on `fix/21-reader-trusted-types` (grooming done, fast path). Priority rose with #24 (the reader now holds participant tokens); the #24 e2e CSP-violation check is its test harness (security L7).
 - #27 Hebrew header bidi bugs (follow-up to #19): open. QA saw it again in 8b (#25).
 - #28 native-speaker review of the Hebrew strings (follow-up to #24): open. The 102 Hebrew strings added in 8b (#25) are in its scope, including the vice-leader term "סגן המוביל".
 - #32 `fix(server): offer take-back only after a handoff loss (follow-up to #25)` (security M1): done (PR #45 merged 2026-11-22 as 085700a; blocker for 9c).

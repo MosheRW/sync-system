@@ -15,7 +15,16 @@ function allFiles(dir: string): string[] {
 }
 
 beforeAll(async () => {
-  await build({ root, logLevel: 'silent', build: { outDir, emptyOutDir: true } });
+  // Vitest sets NODE_ENV=test, which makes Vite bundle React's development
+  // build; the checks below must see the bundle `pnpm build` ships (#21).
+  const nodeEnv = process.env['NODE_ENV'];
+  process.env['NODE_ENV'] = 'production';
+  try {
+    await build({ root, logLevel: 'silent', build: { outDir, emptyOutDir: true } });
+  } finally {
+    if (nodeEnv === undefined) delete process.env['NODE_ENV'];
+    else process.env['NODE_ENV'] = nodeEnv;
+  }
 }, 120_000);
 
 afterAll(() => {
@@ -69,5 +78,64 @@ describe('production build is CSP-clean (security C7, C10)', () => {
       contentId: string;
     }[];
     expect(entries.map((e) => e.contentId)).toContain('samples/psalms-he');
+  });
+});
+
+/**
+ * The CSP enforces Trusted Types with no policy (#21), so a new DOM XSS sink
+ * in the bundle would break the app (or need a policy). This tripwire fails
+ * on any sink site beyond React DOM's known, unreached ones (architecture
+ * section 3, security C6 and L2); a new one must be reviewed, not allowed.
+ */
+describe('production build has no new Trusted Types sink (#21, security C6)', () => {
+  function bundle(): string {
+    return allFiles(outDir)
+      .filter((file) => file.endsWith('.js'))
+      .map((file) => readFileSync(file, 'utf8'))
+      .join('\n');
+  }
+
+  function sites(source: string, pattern: RegExp): string[] {
+    return [...source.matchAll(new RegExp(pattern.source, 'g' + pattern.flags))].map((match) =>
+      source.slice(Math.max(0, match.index - 40), match.index + match[0].length + 40),
+    );
+  }
+
+  it.each([
+    ['a Trusted Types policy', /createPolicy|trustedTypes/],
+    ['outerHTML', /outerHTML/],
+    ['insertAdjacentHTML', /insertAdjacentHTML/],
+    ['createContextualFragment', /createContextualFragment/],
+    ['DOMParser', /DOMParser/],
+    ['document.write', /document\s*\.\s*write/],
+    ['srcdoc', /srcdoc/i],
+    ['setHTMLUnsafe', /setHTMLUnsafe/],
+    ['importScripts', /importScripts/],
+    ['new Worker', /new\s+(?:Shared)?Worker\b/],
+    ['serviceWorker.register', /serviceWorker\s*\.\s*register/],
+  ])('has no %s', (_name, pattern) => {
+    expect(sites(bundle(), pattern)).toEqual([]);
+  });
+
+  // React DOM 19: `<script>` creation via innerHTML and two
+  // dangerouslySetInnerHTML paths; the app renders neither (ESLint bans
+  // dangerouslySetInnerHTML).
+  it('assigns innerHTML only at the 3 known React DOM sites', () => {
+    expect(sites(bundle(), /\.innerHTML\s*=(?!=)/)).toHaveLength(3);
+  });
+
+  // React DOM 19 resource code (preinit/hoisted `<script src>`), not reached:
+  // the app renders no `<script>` and calls no preinit.
+  it('creates script elements only at the 3 known React DOM sites (security L2)', () => {
+    expect(sites(bundle(), /createElement\(\s*[`'"]script[`'"]\s*\)/)).toHaveLength(3);
+  });
+
+  // React DOM 19's own guard: it replaces unsafe URLs and form actions with a
+  // throwing `javascript:` string (2 sites, 3 occurrences).
+  it('has javascript: URLs only in the known React DOM guard (security L2)', () => {
+    const found = sites(bundle(), /javascript:/i);
+    expect(found).toHaveLength(3);
+    for (const site of found)
+      expect(site).toMatch(/javascript:throw new Error\(|blocked a javascript: URL/);
   });
 });

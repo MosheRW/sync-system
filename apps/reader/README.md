@@ -162,11 +162,30 @@ Response headers on every response: a strict `Content-Security-Policy`
 (`default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self';
 font-src 'self'; connect-src 'self' <READER_SRC_ORIGINS> <sync origin>; manifest-src 'self';
 base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src
-'none'`), `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`,
+'none'; require-trusted-types-for 'script'; trusted-types 'none'`), `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`,
 `Cross-Origin-Opener-Policy: same-origin`,
 `Cross-Origin-Resource-Policy: same-origin` and
 `Permissions-Policy: camera=(), microphone=(), geolocation=()`. The server
 logs nothing per request (query strings carry URLs).
+
+### Trusted Types
+
+The CSP enforces [Trusted Types](https://developer.mozilla.org/docs/Web/API/Trusted_Types_API)
+(#21): `require-trusted-types-for 'script'` makes the browser refuse plain
+strings at DOM XSS sinks (`innerHTML`, `script.src`, `eval` and the like),
+and `trusted-types 'none'` makes `trustedTypes.createPolicy()` throw for
+every name, including `default`. The app needs **no policy**, and none
+exists: it renders all text as React text children, never renders a
+`<script>` element and never uses `dangerouslySetInnerHTML` (ESLint bans
+it), and zod runs in `jitless` mode (`src/content/zod.ts`, `buildJitless` in
+`@sync-system/protocol`) so it never probes `Function`. Keep it that way.
+Browsers without Trusted Types support ignore both directives.
+
+To add a policy anyway (say a new dependency needs one): name it in the
+CSP (`trusted-types <name>`; never `*`, `default` or `'allow-duplicates'`),
+describe it here, and get a security plan review first. The bundle
+tripwire in `test/build-output.node.test.ts` and the e2e guard fail until
+then.
 
 ## Content schema (version 1)
 
@@ -557,7 +576,12 @@ built reader and sync servers on loopback: run `pnpm build` and
 `pnpm --filter @sync-system/reader exec playwright install chromium` first. It
 measures opening a QR link and typing codes until Following (target under
 15 s) and a leader move reaching members (under 1 s), reloads, a 25-second
-leader connection drop, keyboard-only use and zero CSP violations. A second
+leader connection drop, keyboard-only use and zero CSP and Trusted Types
+violations (every `securitypolicyviolation` event, CSP or Trusted Types
+console error and Trusted Types page error fails the test, reported as it
+happens). `trusted-types.spec.ts` checks the header on a page, an asset and
+a 404, proves Chromium enforces it, and tours the library, every bundled
+book, paging, the error screens and the QR view. A second
 stack (its own sync server on `e2e/fixtures/apps.lifecycle.json`: the dev key,
 a 5 s grace and `auto` handoff) checks the leader lifecycle: preview doesn't
 move a member and Bring group here does, a 12-second drop hands the lead to
