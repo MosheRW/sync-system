@@ -33,7 +33,10 @@ that holds a credential runs no project code. Three places:
   Never turn on shell tracing (`-x`) in a block: it would print the token.
 - The container images are pinned by digest. To bump deliberately:
   `docker buildx imagetools inspect node:24` and replace the digest in every
-  block (and in this file's dry run).
+  block (and in this file's dry run). After a bump, run the
+  [dry run](#dry-run-qa) and expect new integrity values: a new image can
+  ship a different zlib, so do not compare them with the values from the old
+  digest (see [Known limits](#known-limits)).
 
 ```sh
 # the Node 24 image, pinned by digest (bump deliberately, see above)
@@ -471,3 +474,11 @@ export REF="$(git rev-parse --abbrev-ref HEAD)" M="$(git rev-parse HEAD)" MODE=d
   publishing (OIDC) with `--provenance` from a workflow replaces the step 3
   token; `docker/build-push-action` with provenance and SBOM attestations
   replaces step 6's push. The checks (`pack:check`, `smoke`) stay the same.
+- The tarball integrity values are reproducible for the same commit in the
+  pinned image on a linux/amd64 Docker engine (tag names that resolve to the
+  same linux/amd64 manifest give the same bytes). A build on another host OS
+  (the gzip header's OS byte) or in a new image digest (Node's bundled zlib)
+  gives different values for all three tarballs, while their content stays
+  the same. So integrity values are compared only within one build and one
+  digest, as step 4 does
+  ([ADR 0019](docs/decisions/0019-release-tarball-reproducibility.md), #53).

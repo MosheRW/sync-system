@@ -334,6 +334,23 @@ describe('RELEASING.md load-bearing lines (C1-C5, M6, L1, L5, L8, L9, L11-L13)',
     expect(doc).toMatch(/^## Known limits$/m);
     expect(doc).toContain('provenance');
   });
+
+  it('states the tarball reproducibility scope and the after-bump check (#53, ADR 0019)', () => {
+    const flat = (text: string): string => text.replace(/\s+/g, ' ');
+    const limits = flat(doc.slice(doc.indexOf('## Known limits')));
+    for (const text of [
+      'linux/amd64',
+      'gzip',
+      'host OS',
+      'zlib',
+      '(docs/decisions/0019-release-tarball-reproducibility.md)',
+    ]) {
+      expect(limits, text).toContain(text);
+    }
+    const before = flat(doc.slice(doc.indexOf('## Before you start'), doc.indexOf('## Phase A')));
+    expect(before).toContain('[dry run](#dry-run-qa)');
+    expect(before).toContain('expect new integrity values');
+  });
 });
 
 describe('release candidate 1.0.0 (AC48, AC49)', () => {
