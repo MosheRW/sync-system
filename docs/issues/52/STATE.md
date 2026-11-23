@@ -3,7 +3,7 @@
 - Path: fast
 - Phase: architecture
 - Branch: fix/52-releasing-docker-ps-block
-- PR: #PRNUM
+- PR: #61
 - Plan approved by user: no
 - Security-sensitive: no
 - Review rounds: 0
