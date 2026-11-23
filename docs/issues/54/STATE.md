@@ -16,7 +16,7 @@
 - engineer implement: opus (rule: Implementer model) → DONE
 - qa review r1: sonnet (NEXT_MODEL) → PASS
 - security code r1: opus (rule) → PASS (low advisories: L1 trigger allowlist bypass by quoted key / space before colon / column-0 comment; L2 pre-existing permissions check misses extra scopes and job-level permissions)
-- Gate 3: 2026-11-23, PR #55 ready to merge; advisories L1, L2 awaiting user decision
+- Gate 3: 2026-11-23, PR #55 ready to merge; advisories L1, L2 → follow-up #56 (user decision)
 
 ## Open questions
 
