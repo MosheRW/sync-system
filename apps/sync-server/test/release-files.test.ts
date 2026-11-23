@@ -135,3 +135,42 @@ describe('no credentials or old names in tracked files', () => {
     expect(hits).toEqual([]);
   });
 });
+
+describe('changesets (ADR 0016, AC49, C9)', () => {
+  interface ChangesetConfig {
+    fixed: string[][];
+    ignore: string[];
+    privatePackages: { version: boolean; tag: boolean };
+    changelog: string;
+    access: string;
+    commit: boolean;
+  }
+  const config = JSON.parse(read('.changeset/config.json')) as ChangesetConfig;
+
+  it('keeps protocol, client, react and server in one fixed group, reader ignored', () => {
+    expect(config.fixed).toEqual([[...PUBLISHED_NAMES, '@mosherw/sync-system-server']]);
+    expect(config.ignore).toEqual(['@mosherw/sync-system-reader']);
+    expect(config.privatePackages).toEqual({ version: true, tag: false });
+  });
+
+  it('uses the built-in changelog generator, public access and no auto-commit', () => {
+    expect(config.changelog).toBe('@changesets/cli/changelog');
+    expect(config.access).toBe('public');
+    expect(config.commit).toBe(false);
+    expect(read('package.json')).not.toContain('@changesets/changelog-github');
+  });
+
+  it('pins @changesets/cli exactly and never lets it run build scripts (C9, L2)', () => {
+    const root = manifest('.') as Manifest & {
+      devDependencies: Record<string, string>;
+      pnpm?: { onlyBuiltDependencies?: string[] };
+    };
+    expect(root.devDependencies['@changesets/cli']).toMatch(/^\d+\.\d+\.\d+$/);
+    const built = root.pnpm?.onlyBuiltDependencies ?? [];
+    expect(built.filter((name) => name.startsWith('@changesets/'))).toEqual([]);
+  });
+
+  it('pins pnpm with a sha512 so corepack verifies it (L1)', () => {
+    expect(manifest('.').packageManager).toMatch(/^pnpm@\d+\.\d+\.\d+\+sha512\.[0-9a-f]{128}$/);
+  });
+});
