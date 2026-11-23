@@ -6,10 +6,11 @@
 - Plan approved by user: no
 - Security-sensitive: yes
 - Review rounds: 0
-- Last updated by: architect
+- Last updated by: security
 ## Model log
 - pm grooming: sonnet (default) → DONE
 - architect plan: opus (NEXT_MODEL) → DONE
+- security plan: opus (rule) → PASS
 ## Open questions
 - None.
 ## Deviations from plan
