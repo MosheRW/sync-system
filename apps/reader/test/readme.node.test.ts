@@ -127,6 +127,10 @@ describe('README documents config errors (#36 AC39, AC40)', () => {
     expect(section).toContain('READER_SYNC_ULR');
   });
 
+  // #37 AC45: the reader's variables are checked by name only. Their defaults
+  // live in several schemas with derived values, so a default-by-default
+  // comparison is not cheap; the server's table is checked cell by cell
+  // (apps/sync-server/test/env-reference.test.ts).
   it('documents exactly the known READER_ variables', () => {
     const names = new Set([...readme.matchAll(/^\| `(READER_[A-Z0-9_]+)` +\|/gm)].map((m) => m[1]));
     expect([...names].sort()).toEqual([...KNOWN_READER_VARIABLES].sort());
