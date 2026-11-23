@@ -162,7 +162,7 @@ Response headers on every response: a strict `Content-Security-Policy`
 (`default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self';
 font-src 'self'; connect-src 'self' <READER_SRC_ORIGINS> <sync origin>; manifest-src 'self';
 base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src
-'none'`), `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`,
+'none'; require-trusted-types-for 'script'; trusted-types 'none'`), `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`,
 `Cross-Origin-Opener-Policy: same-origin`,
 `Cross-Origin-Resource-Policy: same-origin` and
 `Permissions-Policy: camera=(), microphone=(), geolocation=()`. The server

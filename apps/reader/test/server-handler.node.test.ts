@@ -107,7 +107,7 @@ describe('reader server responses (architecture 5.5, security C1)', () => {
   it('sends the CSP with the configured origins (ADR 0006)', async () => {
     const response = await fetch(`${base}/`);
     expect(response.headers.get('content-security-policy')).toBe(
-      "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'self' https://content.example.org; manifest-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'",
+      "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'self' https://content.example.org; manifest-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'; require-trusted-types-for 'script'; trusted-types 'none'",
     );
   });
 });
