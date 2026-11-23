@@ -23,6 +23,27 @@ function isIgnored(path: string): boolean {
   }
 }
 
+/**
+ * The trigger keys of a workflow's `on:` block (#54, ADR 0018): `keys` are
+ * the active ones, `commented` the `# key:` lines. The block ends at the
+ * first non-empty line that is not indented, so keys elsewhere don't count.
+ */
+function workflowTriggers(workflow: string): { keys: string[]; commented: string[] } {
+  const lines = workflow.split(/\r?\n/);
+  const keys: string[] = [];
+  const commented: string[] = [];
+  const start = lines.indexOf('on:');
+  if (start === -1) return { keys, commented };
+  for (const line of lines.slice(start + 1)) {
+    if (line !== '' && !line.startsWith('  ')) break;
+    const key = /^ {2}([a-z_]+):/.exec(line)?.[1];
+    if (key) keys.push(key);
+    const off = /^ {2}# ([a-z_]+):/.exec(line)?.[1];
+    if (off) commented.push(off);
+  }
+  return { keys, commented };
+}
+
 describe('secrets stay out of git and the image (M1)', () => {
   it('ignores real registries and env files but not the committed examples', () => {
     for (const path of ['config/apps.json', 'config/prod.json', '.env', '.env.local']) {
@@ -256,8 +277,25 @@ describe('CI workflow (AC28, L1, L8)', () => {
     }
   });
 
-  it('runs on push and pull_request with a read-only token and no secrets', () => {
-    expect(workflow).toMatch(/^on:\n {2}push:\n {2}pull_request:/m);
+  it('runs on push and pull_request, or is explicitly paused (#54), with a read-only token and no secrets', () => {
+    const { keys, commented } = workflowTriggers(workflow);
+    expect(keys.length, 'trigger keys under on:').toBeGreaterThan(0);
+    for (const key of keys) {
+      expect(['push', 'pull_request', 'workflow_dispatch'], `trigger ${key}`).toContain(key);
+    }
+    // ADR 0018: exactly one of two states; the marker says which one is expected.
+    if (workflow.includes('# CI paused (#54):')) {
+      expect(keys, 'paused (marker present): only workflow_dispatch').toEqual([
+        'workflow_dispatch',
+      ]);
+      expect(commented, 'paused (marker present): # push: and # pull_request:').toEqual(
+        expect.arrayContaining(['push', 'pull_request']),
+      );
+    } else {
+      expect(keys, 'active (no marker): push and pull_request').toEqual(
+        expect.arrayContaining(['push', 'pull_request']),
+      );
+    }
     expect(workflow).not.toContain('pull_request_target');
     expect(workflow).toMatch(/^permissions:\n {2}contents: read$/m);
     expect(workflow).not.toContain('secrets.');
