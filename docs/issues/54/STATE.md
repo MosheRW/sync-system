@@ -1,7 +1,7 @@
 # State: #54 fix(ci): repo-hygiene CI trigger test blocks pnpm test in the release procedure
 
 - Path: fast
-- Phase: ready-to-merge
+- Phase: merged (PR #55, b42b396, 2026-11-23)
 - Branch: fix/54-repo-hygiene-ci-trigger
 - PR: #55
 - Plan approved by user: yes (Gate 2, 2026-11-23: ADR 0018 option B)
