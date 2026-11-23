@@ -7,7 +7,7 @@
 - Plan approved by user: yes (Gate 2, 2026-11-23)
 - Security-sensitive: no
 - Review rounds: 2
-- Last updated by: engineer
+- Last updated by: qa
 
 ## Model log
 
@@ -18,6 +18,7 @@
 - security code r1: opus (rule) → PASS (low A1: step 4 intro still says "Paste only this block:" with two blocks)
 - Gate 3: 2026-11-23, PR #61 ready to merge; low advisory A1 awaiting user decision
 - engineer fix r1: opus (rule: fix round) → DONE (A1: step 4 intro now says "Paste only the first block below:"; release-files test regex updated to match)
+- qa review r2: opus (rule: round 2) → PASS (A1 fixed and wording accurate; local Docker CI green; 3/3 criteria met)
 
 ## Open questions
 
