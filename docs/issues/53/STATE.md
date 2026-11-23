@@ -1,16 +1,18 @@
 # State: #53 chore(release): investigate react tarball hash differences across node:24 images
 - Path: fast
-- Phase: architecture
+- Phase: validation-ready
 - Branch: chore/53-react-tarball-hash
 - PR: #62
-- Plan approved by user: no
-- Security-sensitive: no (docs and a marker test only; re-judge if ADR 0019 option B is chosen)
+- Plan approved by user: yes (Gate 2, 2026-11-23: ADR 0019 option A)
+- Security-sensitive: no (docs and a marker test only; option A chosen)
 - Review rounds: 0
-- Last updated by: architect
+- Last updated by: engineer
 ## Model log
 - pm groom: sonnet (default) → DONE
 - architect plan: opus (NEXT_MODEL) → DONE
+- engineer implement: opus (rule: Implementer model) → DONE
 ## Open questions
-- ADR 0019 (Proposed): A document the reproducibility scope (recommended), B add a compression-independent content digest, C normalize gzip. User decides at Gate 2.
+- none (ADR 0019 accepted at Gate 2: option A)
 ## Deviations from plan
 - docs/roadmap.md not updated on this branch: the #52 branch already changes it and parallel edits would conflict. Roadmap update for #53 deferred to the next branch after #52 merges.
+- docs/conventions.md: the new 0019 row widened the ADR column, so prettier reflowed the whole "Packages, license and release (#37)" table (whitespace only).
