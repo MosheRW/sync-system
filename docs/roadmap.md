@@ -43,7 +43,8 @@ Scope of items 7-9 is taken from the PRD ("Product 1: the reading app", "Deliver
 - #52 `fix(release): move the docker ps check in RELEASING.md step 4 to its own block (follow-up to #37)` (QA A2): open.
 - #53 `chore(release): investigate react tarball hash differences across node:24 images (follow-up to #37)` (QA A3, security L7): open.
 - #54 `fix(ci): repo-hygiene CI trigger test blocks pnpm test in the release procedure (follow-up to #37)`: done (PR #55 merged 2026-11-23 as b42b396; unblocks the real 1.0.0 release, done by hand per `RELEASING.md`).
-- #56 `fix(ci): harden the repo-hygiene ci.yml trigger and permissions checks (follow-up to #54)` (security L1, L2): open.
+- #56 `test(server): harden repo-hygiene ci.yml trigger and permissions checks (follow-up to #54)` (security L1, L2): open.
+- #58 `feat(server): read secrets from files via _FILE variables (follow-up to #51)` (asked for at #51 Gate 2; needs an ADR 0015 amendment): open.
 
 ## Key accepted decisions
 
