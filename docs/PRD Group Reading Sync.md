@@ -222,5 +222,13 @@ v1 deliberately leaves out everything below; each item is a candidate for later 
 
 ### Open questions
 
-- [ ] How long can a leader's phone stay locked and still count as "returning" for the success criterion?
-- [ ] Exact default values and env ceilings for group size, update rate and all timers.
+- [x] How long can a leader's phone stay locked and still count as "returning" for the success criterion?
+      Answered (#24 Gate 2, recorded in #37): a lock as long as the app's `disconnectGraceSeconds`
+      minus a few seconds of reconnecting. The default grace (30 s) covers about 25 s; a 30-second
+      lock works when `disconnectGraceSeconds` is 45 or more.
+- [x] Exact default values and env ceilings for group size, update rate and all timers.
+      Answered by the documented v1 defaults and ceilings (#37): the env reference in
+      `docs/operator-guide.md` (Default, Min, Max per variable, tested against the code) and its
+      config-file and timers tables. Group size 30 (ceiling 100), leader updates 5 per second
+      (ceiling 10), grace 30 s (ceiling 120 s), inactivity 20 min (ceiling 60 min), keep-alive
+      countdown 60 s (ceiling 120 s), max session 180 min (ceiling 480 min).
