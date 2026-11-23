@@ -432,9 +432,11 @@ export REF="$(git rev-parse --abbrev-ref HEAD)" M="$(git rev-parse HEAD)" MODE=d
    involved). `docker ps -a --filter name=sync-release-publish` must then
    list no container.
 3. Run step 6's **check** block from your local clone instead of GitHub:
-   `export IMG="$(mktemp -d)" SRC_URL="file://$(pwd)"` first (it then
-   clones `$REF`, checks `M`, builds `linux/amd64` with `--load` and checks
-   that `/health` reports `V`). Do not run the push block.
+   `export IMG="$(mktemp -d)" SRC_URL="file://$(if command -v cygpath >/dev/null; then cygpath -m "$(pwd)"; else pwd; fi)"`
+   first. Git Bash needs the `cygpath -m` form because the block sets
+   `MSYS_NO_PATHCONV=1`. The block then clones `$REF`, checks `M`, builds
+   `linux/amd64` with `--load` and checks that `/health` reports `V`. Do not
+   run the push block.
 
 ## Residual risk
 

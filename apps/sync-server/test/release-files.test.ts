@@ -292,6 +292,16 @@ describe('RELEASING.md load-bearing lines (C1-C5, M6, L1, L5, L8, L9, L11-L13)',
     expect(build).toContain('test -z "$(git status --porcelain)"');
   });
 
+  it('converts the local clone path with cygpath -m in the dry run (AC54, Git Bash)', () => {
+    const start = doc.indexOf('## Dry run (QA)');
+    expect(start).toBeGreaterThanOrEqual(0);
+    const dryRun = doc.slice(start, doc.indexOf('\n## ', start + 3));
+    const srcUrl = /SRC_URL="file:\/\/([^`]*)"/.exec(dryRun)?.[1] ?? '';
+    expect(srcUrl).toContain('cygpath -m "$(pwd)"');
+    expect(srcUrl).toContain('command -v cygpath');
+    expect(doc).not.toMatch(/file:\/\/\$\(pwd\)/);
+  });
+
   it('keeps bundles and outputs outside the repo (L11)', () => {
     expect(doc).toContain('export REL="$(mktemp -d)"');
     expect(doc).toContain('export IMG="$(mktemp -d)"');
