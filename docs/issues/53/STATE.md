@@ -2,7 +2,7 @@
 - Path: fast
 - Phase: architecture
 - Branch: chore/53-react-tarball-hash
-- PR: none
+- PR: #62
 - Plan approved by user: no
 - Security-sensitive: no (docs and a marker test only; re-judge if ADR 0019 option B is chosen)
 - Review rounds: 0
