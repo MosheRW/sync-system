@@ -7,12 +7,13 @@
 - Plan approved by user: no
 - Security-sensitive: yes
 - Review rounds: 0
-- Last updated by: architect
+- Last updated by: security
 
 ## Model log
 
 - pm grooming: sonnet (default) → DONE
 - architect plan: opus (NEXT_MODEL) → DONE
+- security plan: opus (rule) → FAIL (H1: shared check/publish container; architect revises ADR 0016 E and RELEASING procedure)
 
 ## Open questions
 
