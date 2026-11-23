@@ -930,6 +930,14 @@ secrets:
   deploy with `docker stack deploy -c compose.yaml sync`, not
   `docker compose up`. If the external secret is not found, fix the
   deployment; never fall back to `environment:`.
+- In Swarm mode, drop the `ports:` entry. `docker stack deploy` ignores the
+  `127.0.0.1:` part and publishes the port on every interface, so clients
+  could reach the server over plain HTTP, bypassing TLS. Long syntax with
+  `mode: host` also listens on every interface, and `host_ip` is rejected
+  (checked with Docker 29.10). Instead, run the reverse proxy as a service on
+  the same overlay network (the stack's default network is enough), publish
+  only the proxy's port, and point it at `http://sync-server:8080` instead of
+  `127.0.0.1:8080`.
 - For a rotation, add a second secret and one more pair to the chain, before
   `exec`: `TOKEN_SECRET_PREVIOUS="$$(cat /run/secrets/sync_token_secret_previous)" && export TOKEN_SECRET_PREVIOUS &&`.
   Remove both when the rotation window ends (see Routine rotation above).
