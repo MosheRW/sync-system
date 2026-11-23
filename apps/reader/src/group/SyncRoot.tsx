@@ -3,7 +3,7 @@ import {
   type SyncClientLike,
   type SyncClientOptions,
   useUpdateRequired,
-} from '@sync-system/react';
+} from '@mosherw/sync-system-react';
 import { type ReactNode, useCallback, useMemo, useState } from 'react';
 import { UpdateScreen } from '../components/group/UpdateScreens.js';
 import type { SyncConfig } from '../config/schema.js';

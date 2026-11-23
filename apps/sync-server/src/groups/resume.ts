@@ -1,4 +1,4 @@
-import type { TokenClaims, TokenStatus } from '@sync-system/protocol';
+import type { TokenClaims, TokenStatus } from '@mosherw/sync-system-protocol';
 import type { AppConfig } from '../apps/app-registry.js';
 import type { GroupRecord } from './group-store.js';
 

@@ -26,14 +26,16 @@ describe('package boundaries (AC19)', () => {
     expect(files.length).toBeGreaterThan(20);
   });
 
-  it('imports the sync stack only through @sync-system/react', () => {
+  it('imports the sync stack only through @mosherw/sync-system-react', () => {
     for (const file of files) {
       const text = readFileSync(file, 'utf8');
       for (const match of text.matchAll(IMPORT)) {
         const specifier = match[1] ?? match[2] ?? '';
         const where = relative(appRoot, file);
-        expect(specifier, where).not.toMatch(/^@sync-system\/(server|protocol|client)(\/|$)/);
-        expect(specifier, where).not.toMatch(/^@sync-system\/[^/]+\/src\//);
+        expect(specifier, where).not.toMatch(
+          /^@mosherw\/sync-system-(server|protocol|client)(\/|$)/,
+        );
+        expect(specifier, where).not.toMatch(/^@mosherw\/sync-system-[^/]+\/src\//);
         expect(specifier, where).not.toMatch(/(^|\/)(packages|sync-server)\//);
         expect(specifier, where).not.toMatch(/^node:/);
         if (specifier.startsWith('.')) {
@@ -103,8 +105,8 @@ describe('ESLint bans HTML sinks and boundary imports in the app (AC18, AC19, se
       'no-restricted-properties',
     ],
     [
-      '@sync-system/client',
-      "export { SyncClient } from '@sync-system/client';\n",
+      '@mosherw/sync-system-client',
+      "export { SyncClient } from '@mosherw/sync-system-client';\n",
       'no-restricted-imports',
     ],
     ['node:fs', "export { readFileSync } from 'node:fs';\n", 'no-restricted-imports'],

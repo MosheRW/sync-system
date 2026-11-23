@@ -1,4 +1,4 @@
-import type { SyncClientOptions } from '@sync-system/client';
+import type { SyncClientOptions } from '@mosherw/sync-system-client';
 import { type RenderResult, render } from '@testing-library/react';
 import { type ReactNode, StrictMode } from 'react';
 import { SyncProvider } from '../../src/provider.js';

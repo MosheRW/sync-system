@@ -1,5 +1,5 @@
 'use client';
-import type { ConnectionState, SyncIndicator } from '@sync-system/client';
+import type { ConnectionState, SyncIndicator } from '@mosherw/sync-system-client';
 import type { ReactNode } from 'react';
 import { useConnection } from '../hooks/connection.js';
 

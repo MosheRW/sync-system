@@ -1,4 +1,4 @@
-import type { ServerMessage } from '@sync-system/protocol';
+import type { ServerMessage } from '@mosherw/sync-system-protocol';
 import type { Session } from './session.js';
 
 /**

@@ -1,5 +1,5 @@
 'use client';
-// Public API of @sync-system/react (#15).
+// Public API of @mosherw/sync-system-react (#15).
 
 export { SyncProvider } from './provider.js';
 export type { SyncProviderProps } from './provider.js';
@@ -78,7 +78,7 @@ export {
   SyncClientError,
   indicatorOf,
   isSyncClientError,
-} from '@sync-system/client';
+} from '@mosherw/sync-system-client';
 
 // The join input rules, so apps check codes, tickets and names exactly as
 // the client and server do before sending (#24 P2). Same function objects.
@@ -92,7 +92,7 @@ export {
   isQrTicketShape,
   normalizeJoinCode,
   resolveDisplayName,
-} from '@sync-system/client';
+} from '@mosherw/sync-system-client';
 
 // Core types the hooks return, so apps need not import the core (AC2).
 export type {
@@ -147,4 +147,4 @@ export type {
   SyncIndicator,
   TokenStatus,
   ViceChangedEvent,
-} from '@sync-system/client';
+} from '@mosherw/sync-system-client';

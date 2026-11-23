@@ -1,4 +1,4 @@
-import type { JsonObject } from '@sync-system/react';
+import type { JsonObject } from '@mosherw/sync-system-react';
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import {
   type ContentMetadata,
@@ -26,7 +26,7 @@ describe('group metadata (AC8)', () => {
     expect(JSON.parse(JSON.stringify(value))).toEqual(value);
   });
 
-  it('is typed as JsonObject from @sync-system/react', () => {
+  it('is typed as JsonObject from @mosherw/sync-system-react', () => {
     expectTypeOf(toGroupMetadata).returns.toEqualTypeOf<JsonObject>();
     expectTypeOf<ContentMetadata>().toExtend<JsonObject>();
   });

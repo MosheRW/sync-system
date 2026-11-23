@@ -1,4 +1,4 @@
-import type { Role, RosterEntryWire } from '@sync-system/protocol';
+import type { Role, RosterEntryWire } from '@mosherw/sync-system-protocol';
 
 /**
  * One admitted participant of a group (#13 D10, AC31). In memory only, for

@@ -1,4 +1,4 @@
-import { type JoinCodes, useGroupLock } from '@sync-system/react';
+import { type JoinCodes, useGroupLock } from '@mosherw/sync-system-react';
 import { type ReactNode, useId } from 'react';
 import { formatClock, useCountdown } from '../../group/countdown.js';
 import { leaderActionError } from '../../group/leader-errors.js';

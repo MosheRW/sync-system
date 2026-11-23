@@ -3,7 +3,7 @@ import {
   JOIN_REQUEST_ID_PATTERN,
   NAMESPACE_PATTERN,
   PARTICIPANT_ID_PATTERN,
-} from '@sync-system/protocol';
+} from '@mosherw/sync-system-protocol';
 import { z } from 'zod';
 import type { RemoteEffect } from '../../groups/remote-effects.js';
 import {

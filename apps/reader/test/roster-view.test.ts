@@ -1,4 +1,4 @@
-import type { RosterEntry } from '@sync-system/react';
+import type { RosterEntry } from '@mosherw/sync-system-react';
 import { describe, expect, it } from 'vitest';
 import { en } from '../src/i18n/en.js';
 import { he } from '../src/i18n/he.js';

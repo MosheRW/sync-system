@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { TokenClaims } from '@sync-system/protocol';
+import type { TokenClaims } from '@mosherw/sync-system-protocol';
 
 const HEADER = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9';
 const TTL_SECONDS = 365 * 86_400;

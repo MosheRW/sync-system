@@ -1,12 +1,12 @@
 {
-  "name": "@sync-system/client",
+  "name": "@mosherw/sync-system-client",
   "version": "0.1.0",
   "private": true,
   "description": "Framework-free sync client: connection, handshake, groups, throttling and reconnect.",
   "type": "module",
   "exports": {
     ".": {
-      "@sync-system/source": "./src/index.ts",
+      "@mosherw/sync-system-source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     }
@@ -16,14 +16,14 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.build.json --noEmit --customConditions @sync-system/source",
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.build.json --noEmit --customConditions @mosherw/sync-system-source",
     "test": "vitest run"
   },
   "dependencies": {
-    "@sync-system/protocol": "workspace:*"
+    "@mosherw/sync-system-protocol": "workspace:*"
   },
   "devDependencies": {
-    "@sync-system/server": "workspace:*",
+    "@mosherw/sync-system-server": "workspace:*",
     "@types/node": "^24.19.2",
     "@types/ws": "^8.18.1",
     "typescript": "~6.0.3",

@@ -8,7 +8,7 @@ import { readerLibrary } from './plugins/library.js';
 export default defineConfig({
   plugins: [readerLibrary({ contentDir: join(import.meta.dirname, 'content') })],
   resolve: {
-    conditions: ['@sync-system/source', 'module', 'browser', 'development|production'],
+    conditions: ['@mosherw/sync-system-source', 'module', 'browser', 'development|production'],
   },
   oxc: {
     jsx: { runtime: 'automatic', importSource: 'react' },

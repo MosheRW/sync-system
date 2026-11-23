@@ -1,5 +1,5 @@
 import { createHmac, randomUUID } from 'node:crypto';
-import { type TokenClaims, decodeTokenClaims } from '@sync-system/protocol';
+import { type TokenClaims, decodeTokenClaims } from '@mosherw/sync-system-protocol';
 import { TOKEN_TTL_SECONDS } from '../../src/limits/constants.js';
 import { TOKEN_HEADER_SEGMENT } from '../../src/tokens/jwt.js';
 

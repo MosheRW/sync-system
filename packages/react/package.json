@@ -1,13 +1,13 @@
 {
-  "name": "@sync-system/react",
+  "name": "@mosherw/sync-system-react",
   "version": "0.1.0",
   "private": true,
-  "description": "React and Next.js bindings for @sync-system/client: provider, hooks and render-prop helpers, safe during server rendering.",
+  "description": "React and Next.js bindings for @mosherw/sync-system-client: provider, hooks and render-prop helpers, safe during server rendering.",
   "type": "module",
   "sideEffects": false,
   "exports": {
     ".": {
-      "@sync-system/source": "./src/index.ts",
+      "@mosherw/sync-system-source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     }
@@ -17,18 +17,18 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.build.json --noEmit --customConditions @sync-system/source",
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.build.json --noEmit --customConditions @mosherw/sync-system-source",
     "test": "vitest run"
   },
   "dependencies": {
-    "@sync-system/client": "workspace:*"
+    "@mosherw/sync-system-client": "workspace:*"
   },
   "peerDependencies": {
     "react": "^18.3 || ^19"
   },
   "devDependencies": {
-    "@sync-system/protocol": "workspace:*",
-    "@sync-system/server": "workspace:*",
+    "@mosherw/sync-system-protocol": "workspace:*",
+    "@mosherw/sync-system-server": "workspace:*",
     "@testing-library/dom": "^10.4.2",
     "@testing-library/react": "^16.3.3",
     "@types/node": "^24.19.2",

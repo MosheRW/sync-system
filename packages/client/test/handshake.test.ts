@@ -1,4 +1,4 @@
-import type { ErrorMessage, WelcomeMessage } from '@sync-system/protocol';
+import type { ErrorMessage, WelcomeMessage } from '@mosherw/sync-system-protocol';
 import { describe, expect, it } from 'vitest';
 import {
   buildHello,

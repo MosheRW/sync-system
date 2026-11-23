@@ -1,4 +1,4 @@
-import { MAX_API_KEY_LENGTH, MAX_APP_VERSION_INPUT_LENGTH } from '@sync-system/protocol';
+import { MAX_API_KEY_LENGTH, MAX_APP_VERSION_INPUT_LENGTH } from '@mosherw/sync-system-protocol';
 import { SyncClientError } from './errors.js';
 import { MAX_TIMER_MS, type WebSocketConstructorLike } from './host.js';
 import type { SyncClientLogger } from './logger.js';

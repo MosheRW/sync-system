@@ -1,4 +1,4 @@
-import type { ErrorCode, ErrorMessage, JsonValue } from '@sync-system/protocol';
+import type { ErrorCode, ErrorMessage, JsonValue } from '@mosherw/sync-system-protocol';
 
 /**
  * Codes that more than one action can return. Each action has its own text

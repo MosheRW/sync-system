@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { JoinMethod } from '@sync-system/protocol';
+import type { JoinMethod } from '@mosherw/sync-system-protocol';
 import { parseEnv } from '../src/config/env.js';
 import type { CodeIndex } from '../src/joins/code-index.js';
 import { SlidingWindowRateLimiter } from '../src/limits/rate-limiter.js';

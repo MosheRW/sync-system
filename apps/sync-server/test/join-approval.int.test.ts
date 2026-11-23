@@ -1,4 +1,4 @@
-import { JOIN_REQUEST_ID_PATTERN, type JoinMethod } from '@sync-system/protocol';
+import { JOIN_REQUEST_ID_PATTERN, type JoinMethod } from '@mosherw/sync-system-protocol';
 import { afterEach, describe, expect, it } from 'vitest';
 import { InMemoryGroupStore } from '../src/groups/in-memory-group-store.js';
 import { codesOf } from './helpers/groups.js';

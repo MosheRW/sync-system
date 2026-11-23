@@ -1,4 +1,8 @@
-import { type ClientErrorCode, SyncClientError, isSyncClientError } from '@sync-system/client';
+import {
+  type ClientErrorCode,
+  SyncClientError,
+  isSyncClientError,
+} from '@mosherw/sync-system-client';
 
 /**
  * Keeps a `SyncClientError` as is; anything else (not expected from the core)

@@ -23,7 +23,7 @@ import {
   type LeaderState,
   resolveDisplayName,
   CloseCode,
-} from '@sync-system/protocol';
+} from '@mosherw/sync-system-protocol';
 import { type BusySignal, nextDelay, streakAfterDrop, streakAfterFailure } from './backoff.js';
 import { Emitter, ListenerSet } from './emitter.js';
 import {

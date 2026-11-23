@@ -1,4 +1,4 @@
-import type { ConnectionState, GroupState, SyncIndicator } from '@sync-system/react';
+import type { ConnectionState, GroupState, SyncIndicator } from '@mosherw/sync-system-react';
 import type { CompareResult } from '../content/compare.js';
 import type { FollowMode } from './session-store.js';
 

@@ -1,5 +1,5 @@
 'use client';
-import type { SyncClientSnapshot } from '@sync-system/client';
+import type { SyncClientSnapshot } from '@mosherw/sync-system-client';
 import {
   useCallback,
   useDebugValue,

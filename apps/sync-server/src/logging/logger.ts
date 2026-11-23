@@ -6,7 +6,7 @@ import {
   CODES_BLOB_PATTERN,
   GROUP_CODE_PATTERN,
   QR_TICKET_PATTERN,
-} from '@sync-system/protocol';
+} from '@mosherw/sync-system-protocol';
 import type { LogLevel } from '../config/env.js';
 
 export type { Logger };

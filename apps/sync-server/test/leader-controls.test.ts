@@ -1,4 +1,4 @@
-import type { ServerMessage } from '@sync-system/protocol';
+import type { ServerMessage } from '@mosherw/sync-system-protocol';
 import { describe, expect, it } from 'vitest';
 import type { AppConfig } from '../src/apps/app-registry.js';
 import type { GroupRecord } from '../src/groups/group-store.js';

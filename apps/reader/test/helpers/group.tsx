@@ -1,4 +1,4 @@
-import type { JoinCodes, JoinMethod, RosterEntry } from '@sync-system/react';
+import type { JoinCodes, JoinMethod, RosterEntry } from '@mosherw/sync-system-react';
 import { act, fireEvent, screen, within } from '@testing-library/react';
 import { vi } from 'vitest';
 import type { PastedLinkSignal } from '../../src/group/pasted-link.js';

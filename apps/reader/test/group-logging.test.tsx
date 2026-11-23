@@ -1,4 +1,4 @@
-import { SyncClientError } from '@sync-system/react';
+import { SyncClientError } from '@mosherw/sync-system-react';
 import { act, fireEvent, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { stripLaterTickets } from '../src/group/deep-link.js';

@@ -1,4 +1,4 @@
-import type { JoinCodeKind } from '@sync-system/protocol';
+import type { JoinCodeKind } from '@mosherw/sync-system-protocol';
 
 /** The indexed codes of one group: the 6-digit group code and the 8-character code. */
 export interface IndexedCodes {

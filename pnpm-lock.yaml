@@ -36,12 +36,12 @@ importers:
         specifier: ^4.6.7
         version: 4.6.7
     devDependencies:
+      '@mosherw/sync-system-react':
+        specifier: workspace:*
+        version: link:../../packages/react
       '@playwright/test':
         specifier: 1.65.0
         version: 1.65.0
-      '@sync-system/react':
-        specifier: workspace:*
-        version: link:../../packages/react
       '@testing-library/dom':
         specifier: ^10.4.2
         version: 10.4.2
@@ -81,12 +81,12 @@ importers:
 
   apps/sync-server:
     dependencies:
+      '@mosherw/sync-system-protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
       '@redis/client':
         specifier: 6.3.1
         version: 6.3.1
-      '@sync-system/protocol':
-        specifier: workspace:*
-        version: link:../../packages/protocol
       pino:
         specifier: ^10.4.0
         version: 10.4.0
@@ -121,11 +121,11 @@ importers:
 
   packages/client:
     dependencies:
-      '@sync-system/protocol':
+      '@mosherw/sync-system-protocol':
         specifier: workspace:*
         version: link:../protocol
     devDependencies:
-      '@sync-system/server':
+      '@mosherw/sync-system-server':
         specifier: workspace:*
         version: link:../../apps/sync-server
       '@types/node':
@@ -159,14 +159,14 @@ importers:
 
   packages/react:
     dependencies:
-      '@sync-system/client':
+      '@mosherw/sync-system-client':
         specifier: workspace:*
         version: link:../client
     devDependencies:
-      '@sync-system/protocol':
+      '@mosherw/sync-system-protocol':
         specifier: workspace:*
         version: link:../protocol
-      '@sync-system/server':
+      '@mosherw/sync-system-server':
         specifier: workspace:*
         version: link:../../apps/sync-server
       '@testing-library/dom':

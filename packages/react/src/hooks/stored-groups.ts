@@ -1,5 +1,5 @@
 'use client';
-import type { ConnectionState, ResumedGroup, ResumeOptions } from '@sync-system/client';
+import type { ConnectionState, ResumedGroup, ResumeOptions } from '@mosherw/sync-system-client';
 import { useEffect, useMemo } from 'react';
 import { useStoreAction } from '../action.js';
 import { useSyncStore } from '../context.js';

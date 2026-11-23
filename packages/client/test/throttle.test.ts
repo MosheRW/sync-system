@@ -1,4 +1,4 @@
-import type { JsonValue } from '@sync-system/protocol';
+import type { JsonValue } from '@mosherw/sync-system-protocol';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MAX_RATE_LIMIT_RETRY_MS, PositionThrottle } from '../src/throttle.js';
 

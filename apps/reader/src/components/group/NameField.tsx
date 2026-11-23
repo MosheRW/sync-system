@@ -1,4 +1,4 @@
-import { MAX_DISPLAY_NAME_INPUT_LENGTH } from '@sync-system/react';
+import { MAX_DISPLAY_NAME_INPUT_LENGTH } from '@mosherw/sync-system-react';
 import { type Ref, forwardRef, useId } from 'react';
 import { useI18n } from '../../i18n/index.js';
 import styles from './group.module.css';

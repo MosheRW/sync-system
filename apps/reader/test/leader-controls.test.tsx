@@ -1,4 +1,4 @@
-import { type RosterEntry, SyncClientError } from '@sync-system/react';
+import { type RosterEntry, SyncClientError } from '@mosherw/sync-system-react';
 import { act, fireEvent, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FakeSyncClient, GROUP_ID } from './helpers/fake-sync-client.js';

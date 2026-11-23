@@ -6,7 +6,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 /**
  * AC7: importing the package without window, document or a global WebSocket
  * has no side effects. Nothing is pre-loaded: the import covers the whole
- * graph, including @sync-system/protocol and zod (whose eval probe reads
+ * graph, including @mosherw/sync-system-protocol and zod (whose eval probe reads
  * `navigator` and calls `new Function` unless the schemas are built jitless).
  */
 const BROWSER_GLOBALS = [

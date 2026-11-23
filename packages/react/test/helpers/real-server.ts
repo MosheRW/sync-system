@@ -1,10 +1,10 @@
 import { randomBytes } from 'node:crypto';
-import type { WebSocketConstructorLike } from '@sync-system/client';
-import { AppRegistry } from '@sync-system/server/src/apps/app-registry.js';
-import { parseAppsConfig } from '@sync-system/server/src/config/apps-config.js';
-import { parseEnv } from '@sync-system/server/src/config/env.js';
-import { createLogger } from '@sync-system/server/src/logging/logger.js';
-import { type SyncServer, createSyncServer } from '@sync-system/server/src/server.js';
+import type { WebSocketConstructorLike } from '@mosherw/sync-system-client';
+import { AppRegistry } from '@mosherw/sync-system-server/src/apps/app-registry.js';
+import { parseAppsConfig } from '@mosherw/sync-system-server/src/config/apps-config.js';
+import { parseEnv } from '@mosherw/sync-system-server/src/config/env.js';
+import { createLogger } from '@mosherw/sync-system-server/src/logging/logger.js';
+import { type SyncServer, createSyncServer } from '@mosherw/sync-system-server/src/server.js';
 import { WebSocket as WsWebSocket } from 'ws';
 
 /** An obvious test key (32+ characters, as the server requires). Never a real key (R14). */

@@ -1,4 +1,4 @@
-import { PARTICIPANT_ID_PATTERN } from '@sync-system/protocol';
+import { PARTICIPANT_ID_PATTERN } from '@mosherw/sync-system-protocol';
 import { z } from 'zod';
 import { INSTANCE_ID_PATTERN } from './keys.js';
 

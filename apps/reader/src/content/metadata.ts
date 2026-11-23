@@ -1,4 +1,4 @@
-import type { JsonObject } from '@sync-system/react';
+import type { JsonObject } from '@mosherw/sync-system-react';
 import { isContentId } from './content-id.js';
 import { FINGERPRINT_PATTERN } from './fingerprint.js';
 import { isPlainObject } from './parse.js';

@@ -1,4 +1,4 @@
-import type { LeaderState, RosterEntryWire } from '@sync-system/protocol';
+import type { LeaderState, RosterEntryWire } from '@mosherw/sync-system-protocol';
 import { now } from './host.js';
 import type { RosterEntry } from './state.js';
 

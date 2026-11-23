@@ -1,4 +1,4 @@
-import { GROUP_ID_PATTERN, type JoinCodeKind } from '@sync-system/protocol';
+import { GROUP_ID_PATTERN, type JoinCodeKind } from '@mosherw/sync-system-protocol';
 import type { CodeIndexStore, IndexedCodes } from '../../joins/code-index.js';
 import { type CommitPlan, type RedisContext, type RedisWorkSource } from './unit-of-work.js';
 import { CLAIM } from './scripts.js';

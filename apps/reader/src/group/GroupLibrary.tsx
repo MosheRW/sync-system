@@ -1,4 +1,9 @@
-import { type JoinedGroup, useConnection, useGroupExit, useSyncSnapshot } from '@sync-system/react';
+import {
+  type JoinedGroup,
+  useConnection,
+  useGroupExit,
+  useSyncSnapshot,
+} from '@mosherw/sync-system-react';
 import { useCallback, useRef, useState } from 'react';
 import { Button, NoticeBar } from '../components/group/controls.js';
 import { GroupSheet, type SheetContent } from '../components/group/GroupSheet.js';

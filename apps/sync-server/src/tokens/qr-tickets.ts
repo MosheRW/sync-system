@@ -1,4 +1,4 @@
-import { GROUP_ID_PATTERN, MAX_QR_TICKET_LENGTH } from '@sync-system/protocol';
+import { GROUP_ID_PATTERN, MAX_QR_TICKET_LENGTH } from '@mosherw/sync-system-protocol';
 import { MAX_CLOCK_SKEW_MS } from '../limits/constants.js';
 import {
   hasExactKeys,

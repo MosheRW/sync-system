@@ -111,7 +111,7 @@ describe('README drift guard (AC22)', () => {
 
 describe('root README', () => {
   it('lists the reader package and links its README', () => {
-    expect(rootReadme).toContain('`@sync-system/reader`');
+    expect(rootReadme).toContain('`@mosherw/sync-system-reader`');
     expect(rootReadme).toContain('apps/reader/README.md');
   });
 });

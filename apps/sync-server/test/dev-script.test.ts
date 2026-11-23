@@ -14,11 +14,11 @@ function devScript(): string {
 }
 
 describe('dev script', () => {
-  it('enables the @sync-system/source export condition', () => {
-    expect(devScript().split(/\s+/)).toContain('--conditions=@sync-system/source');
+  it('enables the @mosherw/sync-system-source export condition', () => {
+    expect(devScript().split(/\s+/)).toContain('--conditions=@mosherw/sync-system-source');
   });
 
-  it('resolves @sync-system/protocol to its TypeScript source, not dist', () => {
+  it('resolves @mosherw/sync-system-protocol to its TypeScript source, not dist', () => {
     // The node flags of the dev script: everything between `tsx watch` and the entry file.
     const args = devScript().split(/\s+/);
     const flags = args.slice(2, -1).filter((arg) => arg.startsWith('--'));
@@ -28,7 +28,7 @@ describe('dev script', () => {
         ...flags,
         '--input-type=module',
         '-e',
-        "console.log(import.meta.resolve('@sync-system/protocol'))",
+        "console.log(import.meta.resolve('@mosherw/sync-system-protocol'))",
       ],
       { cwd: serverDir, env: childEnv({ NODE_OPTIONS: '' }), encoding: 'utf8' },
     );

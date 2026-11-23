@@ -99,7 +99,7 @@ jobs:
         run: pnpm build
 
       - name: Install Chromium
-        run: pnpm --filter @sync-system/reader exec playwright install --with-deps chromium
+        run: pnpm --filter @mosherw/sync-system-reader exec playwright install --with-deps chromium
 
       - name: End-to-end checks
-        run: pnpm --filter @sync-system/reader test:e2e
+        run: pnpm --filter @mosherw/sync-system-reader test:e2e

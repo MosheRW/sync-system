@@ -1,5 +1,5 @@
 {
-  "name": "@sync-system/server",
+  "name": "@mosherw/sync-system-server",
   "version": "0.1.0",
   "private": true,
   "description": "Sync server: stores and relays an opaque position for ephemeral groups.",
@@ -8,7 +8,7 @@
     "dist"
   ],
   "scripts": {
-    "dev": "tsx watch --conditions=@sync-system/source src/index.ts",
+    "dev": "tsx watch --conditions=@mosherw/sync-system-source src/index.ts",
     "start": "node dist/index.js",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json",
@@ -16,7 +16,7 @@
   },
   "dependencies": {
     "@redis/client": "6.3.1",
-    "@sync-system/protocol": "workspace:*",
+    "@mosherw/sync-system-protocol": "workspace:*",
     "pino": "^10.4.0",
     "semver": "^7.7.0",
     "ws": "^8.18.0",

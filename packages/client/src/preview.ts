@@ -1,4 +1,4 @@
-import type { JsonValue } from '@sync-system/protocol';
+import type { JsonValue } from '@mosherw/sync-system-protocol';
 import { now } from './host.js';
 
 /** At most one `leader.activity` per this interval from the preview helper (#13 8.2). */

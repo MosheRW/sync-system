@@ -188,7 +188,7 @@ describeRedis('run() with REDIS_URL (#35 AC2, AC4, AC27)', () => {
           REDIS_URL: user.url,
           REDIS_KEY_PREFIX: prefix,
           NODE_ENV: 'test',
-          NODE_OPTIONS: '--conditions=@sync-system/source',
+          NODE_OPTIONS: '--conditions=@mosherw/sync-system-source',
         }),
         encoding: 'utf8',
         timeout: 30_000,

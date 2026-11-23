@@ -4,7 +4,7 @@ import { defineConfig, devices } from '@playwright/test';
  * End-to-end checks against the built reader server and the real sync
  * server (#24 ADR 0008, AC25, AC34, AC35, AC56). Chromium only. No traces,
  * screenshots or videos: they would record codes and tickets (security L5,
- * R11). Run `pnpm build` first, then `pnpm --filter @sync-system/reader test:e2e`.
+ * R11). Run `pnpm build` first, then `pnpm --filter @mosherw/sync-system-reader test:e2e`.
  */
 export default defineConfig({
   testDir: './e2e',

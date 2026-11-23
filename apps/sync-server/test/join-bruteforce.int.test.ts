@@ -1,4 +1,4 @@
-import type { JoinMethod } from '@sync-system/protocol';
+import type { JoinMethod } from '@mosherw/sync-system-protocol';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { GroupRecord } from '../src/groups/group-store.js';
 import { InMemoryGroupStore } from '../src/groups/in-memory-group-store.js';

@@ -1,4 +1,4 @@
-import { type RosterEntry, useMemberRemoval, useViceLeader } from '@sync-system/react';
+import { type RosterEntry, useMemberRemoval, useViceLeader } from '@mosherw/sync-system-react';
 import { type Ref, forwardRef, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { leaderActionError } from '../../group/leader-errors.js';
 import { isolateName, rosterNameText } from '../../group/names.js';

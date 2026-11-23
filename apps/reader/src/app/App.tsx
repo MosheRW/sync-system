@@ -1,4 +1,4 @@
-import type { SyncClientLike } from '@sync-system/react';
+import type { SyncClientLike } from '@mosherw/sync-system-react';
 import { useMemo } from 'react';
 import type { PublicConfig } from '../config/schema.js';
 import type { ContentLoader, ContentSource } from '../content/loader.js';

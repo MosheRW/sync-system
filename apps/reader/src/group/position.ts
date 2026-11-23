@@ -1,4 +1,4 @@
-import type { JsonObject } from '@sync-system/react';
+import type { JsonObject } from '@mosherw/sync-system-react';
 import { isPlainObject } from '../content/parse.js';
 
 /**

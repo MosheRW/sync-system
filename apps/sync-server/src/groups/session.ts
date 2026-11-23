@@ -22,7 +22,7 @@ import type {
   LeaderActivityMessage,
   KeepAliveAckMessage,
   LeaderTakeBackMessage,
-} from '@sync-system/protocol';
+} from '@mosherw/sync-system-protocol';
 import type { AppConfig } from '../apps/app-registry.js';
 
 /**

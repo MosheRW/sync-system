@@ -1,4 +1,4 @@
-import type { SyncClientSnapshot } from '@sync-system/client';
+import type { SyncClientSnapshot } from '@mosherw/sync-system-client';
 import { act } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { describe, expect, it } from 'vitest';

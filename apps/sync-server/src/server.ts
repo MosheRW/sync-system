@@ -1,6 +1,6 @@
 import { type Server, createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { CloseCode } from '@sync-system/protocol';
+import { CloseCode } from '@mosherw/sync-system-protocol';
 import { type ServerOptions, WebSocketServer } from 'ws';
 import type { AppRegistry } from './apps/app-registry.js';
 import { GroupService } from './groups/group-service.js';

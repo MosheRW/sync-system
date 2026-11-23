@@ -1,4 +1,4 @@
-import { JOIN_METHODS, type JoinMethod } from '@sync-system/protocol';
+import { JOIN_METHODS, type JoinMethod } from '@mosherw/sync-system-protocol';
 import { z } from 'zod';
 import { ConfigError } from './config-error.js';
 import type { ServerVariable } from './known-vars.js';

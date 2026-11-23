@@ -17,8 +17,8 @@ import {
   useSyncIndicator,
   useSyncSnapshot,
   useViceLeader,
-} from '@sync-system/react';
-import { type JoinedGroup, type ResumedGroup } from '@sync-system/react';
+} from '@mosherw/sync-system-react';
+import { type JoinedGroup, type ResumedGroup } from '@mosherw/sync-system-react';
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ApprovalTray } from '../components/group/ApprovalTray.js';
 import { BannerSlot } from '../components/group/BannerSlot.js';

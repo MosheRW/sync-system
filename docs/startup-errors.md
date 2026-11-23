@@ -166,7 +166,7 @@ printed, never the value.
 | `Startup error: cannot read the server version: package.json cannot be read (<code>)`           | Make `package.json` readable by the server's user.                                                                          |
 | `Startup error: cannot read the server version: package.json is larger than 64 KiB`             | The wrong file is in place: restore the server's own `package.json`.                                                        |
 | `Startup error: cannot read the server version: package.json is not valid JSON`                 | Restore the server's own `package.json`.                                                                                    |
-| `Startup error: cannot read the server version: package.json is not the sync server's`          | Restore the server's own `package.json` (its `name` is `@sync-system/server`).                                              |
+| `Startup error: cannot read the server version: package.json is not the sync server's`          | Restore the server's own `package.json` (its `name` is `@mosherw/sync-system-server`).                                      |
 | `Startup error: cannot read the server version: package.json has no valid semver version`       | Restore the server's own `package.json`.                                                                                    |
 | `Startup error: Redis is unreachable (REDIS_URL)`                                               | Check that Redis runs and that the host and port in `REDIS_URL` are reachable from the server.                              |
 | `Startup error: Redis authentication failed (REDIS_URL)`                                        | Check the user and password in `REDIS_URL`, and that the user may run the server's commands.                                |
@@ -223,7 +223,7 @@ cannot be bound gives `Startup error: cannot listen on port <n> (<code>)`.
 
 | Message                                                                              | Fix                                                                                                            |
 | ------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------- |
-| `Startup error: dist/library-index.json is missing or invalid (run the build first)` | Build the reader (`pnpm --filter @sync-system/reader build`) or use the image.                                 |
+| `Startup error: dist/library-index.json is missing or invalid (run the build first)` | Build the reader (`pnpm --filter @mosherw/sync-system-reader build`) or use the image.                         |
 | `Startup error: dist/index.html is missing or has no config placeholder`             | Rebuild the reader; do not edit `dist/index.html` by hand.                                                     |
 | `Startup error: cannot listen on port <n> (<code>)`                                  | `EADDRINUSE`: another process uses the port; `EACCES`: the port needs privileges; `EADDRNOTAVAIL`: fix `HOST`. |
 

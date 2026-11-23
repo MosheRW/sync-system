@@ -1,4 +1,4 @@
-import type { RosterEntryWire, ServerMessage } from '@sync-system/protocol';
+import type { RosterEntryWire, ServerMessage } from '@mosherw/sync-system-protocol';
 import { afterEach, describe, expect, it } from 'vitest';
 import { InMemoryGroupStore } from '../src/groups/in-memory-group-store.js';
 import { createGroupWithMembers, joinByCode, resumeWith } from './helpers/groups.js';

@@ -1,4 +1,4 @@
-import type { JsonValue, ServerMessage } from '@sync-system/protocol';
+import type { JsonValue, ServerMessage } from '@mosherw/sync-system-protocol';
 import { type RequestKind, SyncClientError } from './errors.js';
 import { type TimerHandle, clearTimer, setClampedTimeout } from './host.js';
 

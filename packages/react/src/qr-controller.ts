@@ -3,7 +3,7 @@ import {
   type QrTicket,
   SyncClientError,
   type SyncClientEvents,
-} from '@sync-system/client';
+} from '@mosherw/sync-system-client';
 import { type TimerHandle, clearTimer, microtask, now, setTimer } from './host.js';
 import { IDLE_QR } from './server-state.js';
 import { toSyncError } from './to-sync-error.js';

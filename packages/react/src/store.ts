@@ -11,7 +11,7 @@ import type {
   SyncClientError,
   SyncClientEvents,
   SyncClientSnapshot,
-} from '@sync-system/client';
+} from '@mosherw/sync-system-client';
 import { now } from './host.js';
 import { QrTicketController } from './qr-controller.js';
 import {

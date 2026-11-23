@@ -85,7 +85,9 @@ describe('pinned supply chain (L8)', () => {
     const whole = copies.some((line) => /^COPY\s+--from=build\s+\/out\/?\s+\.\/?$/.test(line));
     const explicit = copies.some((line) => /package\.json/.test(line));
     expect(whole || explicit, copies.join('\n')).toBe(true);
-    expect(dockerfile).toMatch(/pnpm --filter @sync-system\/server deploy --prod --legacy \/out/);
+    expect(dockerfile).toMatch(
+      /pnpm --filter @mosherw\/sync-system-server deploy --prod --legacy \/out/,
+    );
     expect(runtime).toMatch(/^CMD \["node", "dist\/index\.js"\]$/m);
   });
 

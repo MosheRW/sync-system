@@ -1,13 +1,13 @@
-# @sync-system/client
+# @mosherw/sync-system-client
 
 Framework-free TypeScript client for the sync server. It works in browsers and
 Node, and is safe to import during server-side rendering. It handles the
 connection life cycle, the handshake and version checks, typed group calls and
 events, leader throttling, size checks, and reconnects with backoff. The React
-package [`@sync-system/react`](../react/README.md) builds on its
+package [`@mosherw/sync-system-react`](../react/README.md) builds on its
 snapshot/subscribe API.
 
-Runtime dependency: `@sync-system/protocol` only. No UI framework, no
+Runtime dependency: `@mosherw/sync-system-protocol` only. No UI framework, no
 Node-only module.
 
 ## Install
@@ -16,13 +16,13 @@ It is a workspace package (not published yet):
 
 ```jsonc
 // package.json of an app in this repo
-{ "dependencies": { "@sync-system/client": "workspace:*" } }
+{ "dependencies": { "@mosherw/sync-system-client": "workspace:*" } }
 ```
 
 ## Browser usage
 
 ```ts
-import { SyncClient, indicatorOf, isSyncClientError } from '@sync-system/client';
+import { SyncClient, indicatorOf, isSyncClientError } from '@mosherw/sync-system-client';
 
 const client = new SyncClient({
   url: 'wss://sync.example.com/ws',
@@ -54,7 +54,7 @@ client's own length guard runs, so pass a smaller `maxPayload`:
 
 ```ts
 import { WebSocket } from 'ws';
-import { SyncClient } from '@sync-system/client';
+import { SyncClient } from '@mosherw/sync-system-client';
 
 class SmallWs extends WebSocket {
   constructor(url: string) {
@@ -80,7 +80,7 @@ calls `new Function` (also safe under a CSP without `unsafe-eval`). Still:
 - Do not create a client at module scope on an SSR server: it would be shared
   by every request and user.
 - Never call `connect()` during SSR. Create the client in the browser. For
-  React and Next.js, use [`@sync-system/react`](../react/README.md): its
+  React and Next.js, use [`@mosherw/sync-system-react`](../react/README.md): its
   provider creates the client after mount and its `getServerSnapshot` returns
   a constant idle snapshot.
 
@@ -306,7 +306,7 @@ authoritative.
   `rotated`, `resumed`, `member_removed` or `superseded`: each of them
   revokes every outstanding ticket. A `door_failures` change does not revoke
   tickets (re-issuing anyway is harmless). `useQrTicket()` in
-  `@sync-system/react` does all of this.
+  `@mosherw/sync-system-react` does all of this.
 - `getJoinRequests()`, `approveJoin(requestId)` (`admitted` or `group_full`),
   `denyJoin(requestId)`, and the `joinRequested` / `joinWithdrawn` events
   drive the approval prompt. Requests the server re-sends after a reconnect

@@ -1,4 +1,4 @@
-import type { LeadershipReason } from '@sync-system/react';
+import type { LeadershipReason } from '@mosherw/sync-system-react';
 import type { Messages } from '../i18n/en.js';
 
 /**

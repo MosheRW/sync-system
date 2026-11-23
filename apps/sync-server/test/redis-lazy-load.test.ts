@@ -40,7 +40,14 @@ describe('@redis/client is loaded only when Redis is configured (#35 AC1, AC28, 
   it('is never resolved by a memory server', () => {
     const run = spawnSync(
       process.execPath,
-      ['--conditions=@sync-system/source', '--import', 'tsx', '--input-type=module', '-e', SCRIPT],
+      [
+        '--conditions=@mosherw/sync-system-source',
+        '--import',
+        'tsx',
+        '--input-type=module',
+        '-e',
+        SCRIPT,
+      ],
       {
         cwd: serverDir,
         encoding: 'utf8',

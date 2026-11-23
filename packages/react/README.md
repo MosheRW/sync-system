@@ -1,12 +1,12 @@
-# @sync-system/react
+# @mosherw/sync-system-react
 
-React and Next.js bindings for [`@sync-system/client`](../client/README.md):
+React and Next.js bindings for [`@mosherw/sync-system-client`](../client/README.md):
 one provider, typed hooks and two unstyled render-prop helpers. Components
 re-render only when the state they use changes. The package is safe during
 server-side rendering: nothing reads `window`, opens a socket or starts a
 timer on the server.
 
-Runtime dependency: `@sync-system/client` only. Peer dependency: `react`
+Runtime dependency: `@mosherw/sync-system-client` only. Peer dependency: `react`
 `^18.3 || ^19` (tested on React 19). No `next` dependency. Headless: the
 package renders no markup of its own.
 
@@ -17,7 +17,7 @@ Workspace-only for now (`private: true`, published with the release item):
 ```json
 {
   "dependencies": {
-    "@sync-system/react": "workspace:*",
+    "@mosherw/sync-system-react": "workspace:*",
     "react": "^19.0.0"
   }
 }
@@ -25,7 +25,7 @@ Workspace-only for now (`private: true`, published with the release item):
 
 The hooks return the core's types, re-exported from this package
 (`SyncClientSnapshot`, `GroupState`, `JoinCodes`, `QrTicket`,
-`SyncClientError`, ...), so apps need not import `@sync-system/client` for
+`SyncClientError`, ...), so apps need not import `@mosherw/sync-system-client` for
 typing.
 
 ## Provider setup
@@ -64,7 +64,7 @@ render the provider from a client component.
 ```tsx
 // app/providers.tsx
 'use client';
-import { SyncProvider } from '@sync-system/react';
+import { SyncProvider } from '@mosherw/sync-system-react';
 import type { ReactNode } from 'react';
 
 const options = {
@@ -99,7 +99,7 @@ Plain client code in `_app.tsx`; nothing Next-specific:
 
 ```tsx
 // pages/_app.tsx
-import { SyncProvider } from '@sync-system/react';
+import { SyncProvider } from '@mosherw/sync-system-react';
 import type { AppProps } from 'next/app';
 
 const options = { url: 'wss://sync.example.com/ws', apiKey: 'public-key', appVersion: '1.4.0' };
@@ -173,7 +173,7 @@ Call them only from user actions.
 ## Hooks
 
 Every hook throws `"<hookName> must be used inside <SyncProvider>
-(@sync-system/react)"` outside a provider. Returned objects and arrays keep
+(@mosherw/sync-system-react)"` outside a provider. Returned objects and arrays keep
 their identity while their content is unchanged.
 
 ### Actions

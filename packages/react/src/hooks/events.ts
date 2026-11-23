@@ -1,5 +1,5 @@
 'use client';
-import type { SyncClientEvents } from '@sync-system/client';
+import type { SyncClientEvents } from '@mosherw/sync-system-client';
 import { useEffect, useRef } from 'react';
 import { useSyncStore } from '../context.js';
 

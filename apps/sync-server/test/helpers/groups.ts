@@ -1,4 +1,4 @@
-import type { JoinCodesPayload, ServerMessage } from '@sync-system/protocol';
+import type { JoinCodesPayload, ServerMessage } from '@mosherw/sync-system-protocol';
 import type { TestClient } from './test-client.js';
 import type { TestServer } from './test-server.js';
 import { KEY_A } from './test-server.js';

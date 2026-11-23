@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { MIN_CLIENT_PROTOCOL_VERSION, PROTOCOL_VERSION } from '@sync-system/protocol';
+import { MIN_CLIENT_PROTOCOL_VERSION, PROTOCOL_VERSION } from '@mosherw/sync-system-protocol';
 
 export type StorageKind = 'memory' | 'redis';
 

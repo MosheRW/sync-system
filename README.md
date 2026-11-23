@@ -9,13 +9,13 @@ opaque payload and never reads it.
 
 A pnpm workspace (Node 24, pnpm 10, TypeScript, ESM).
 
-| Package                 | Path                | What                                                    |
-| ----------------------- | ------------------- | ------------------------------------------------------- |
-| `@sync-system/protocol` | `packages/protocol` | Wire protocol: versions, error codes, schemas.          |
-| `@sync-system/server`   | `apps/sync-server`  | The sync server (HTTP `/health`, `/ready` + WebSocket). |
-| `@sync-system/client`   | `packages/client`   | Framework-free client for browsers and Node.            |
-| `@sync-system/react`    | `packages/react`    | React/Next provider and hooks over the client.          |
-| `@sync-system/reader`   | `apps/reader`       | The reading app (React + Vite, Node server).            |
+| Package                         | Path                | What                                                    |
+| ------------------------------- | ------------------- | ------------------------------------------------------- |
+| `@mosherw/sync-system-protocol` | `packages/protocol` | Wire protocol: versions, error codes, schemas.          |
+| `@mosherw/sync-system-server`   | `apps/sync-server`  | The sync server (HTTP `/health`, `/ready` + WebSocket). |
+| `@mosherw/sync-system-client`   | `packages/client`   | Framework-free client for browsers and Node.            |
+| `@mosherw/sync-system-react`    | `packages/react`    | React/Next provider and hooks over the client.          |
+| `@mosherw/sync-system-reader`   | `apps/reader`       | The reading app (React + Vite, Node server).            |
 
 `packages/*` holds libraries and `apps/*` holds deployables.
 
@@ -45,13 +45,13 @@ pnpm audit               # high and critical advisories
 pnpm install
 cp config/apps.example.json config/apps.json   # then put real keys in it
 TOKEN_SECRET="$(openssl rand -base64 32)" \
-  SYNC_CONFIG_PATH="$PWD/config/apps.json" pnpm --filter @sync-system/server dev
+  SYNC_CONFIG_PATH="$PWD/config/apps.json" pnpm --filter @mosherw/sync-system-server dev
 ```
 
 The `dev` script (tsx watch) runs in `apps/sync-server`, and
 `SYNC_CONFIG_PATH` is resolved relative to the working directory, so pass an
 absolute path as above. For a quick start with the public dev key, run
-`NODE_ENV=development SYNC_CONFIG_PATH="$PWD/config/apps.dev.json" pnpm --filter @sync-system/server dev`
+`NODE_ENV=development SYNC_CONFIG_PATH="$PWD/config/apps.dev.json" pnpm --filter @mosherw/sync-system-server dev`
 instead: the dev key is refused unless `NODE_ENV` is exactly `development`
 or `test`. In those two environments `TOKEN_SECRET` may be left unset: the
 server then uses a random secret per process and warns that tokens will not
@@ -885,7 +885,7 @@ restart, and the recovery below is only needed when Redis lost its data.
 
 Plain WebSocket, one JSON object per text frame. The full protocol is in
 [`docs/issues/1/architecture.md`](docs/issues/1/architecture.md) (section 5)
-and the types are exported by `@sync-system/protocol`.
+and the types are exported by `@mosherw/sync-system-protocol`.
 
 1. Server sends `welcome` with `protocolVersion` and `minProtocolVersion`.
 2. Client sends `hello` with `protocolVersion`, `appVersion` (semver) and
@@ -1047,7 +1047,7 @@ the leader's page (#24). Full documentation:
 [Groups](apps/reader/README.md#groups) section.
 
 ```sh
-pnpm --filter @sync-system/reader dev           # http://localhost:5173
+pnpm --filter @mosherw/sync-system-reader dev           # http://localhost:5173
 docker compose up --build                       # reader and sync server, http://127.0.0.1:8081
 ```
 

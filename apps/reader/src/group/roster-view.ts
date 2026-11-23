@@ -1,4 +1,4 @@
-import type { RosterEntry } from '@sync-system/react';
+import type { RosterEntry } from '@mosherw/sync-system-react';
 import type { Messages } from '../i18n/en.js';
 
 /**

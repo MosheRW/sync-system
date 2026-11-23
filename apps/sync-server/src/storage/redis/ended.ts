@@ -2,7 +2,7 @@ import {
   ALPHA_CODE_PATTERN,
   GROUP_CODE_PATTERN,
   JOIN_REQUEST_ID_PATTERN,
-} from '@sync-system/protocol';
+} from '@mosherw/sync-system-protocol';
 import type { EndedGroupsStore, EvictionLogger } from '../../groups/ended-groups.js';
 import { endedRef } from '../../groups/ended-groups.js';
 import type { HeldLease } from '../../groups/group-lock.js';

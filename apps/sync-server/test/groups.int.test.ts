@@ -1,5 +1,5 @@
 import { codesOf } from './helpers/groups.js';
-import { GROUP_ID_PATTERN, PARTICIPANT_ID_PATTERN } from '@sync-system/protocol';
+import { GROUP_ID_PATTERN, PARTICIPANT_ID_PATTERN } from '@mosherw/sync-system-protocol';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { InMemoryGroupStore } from '../src/groups/in-memory-group-store.js';
 import { KEY_A, type TestServer, startTestServer } from './helpers/test-server.js';

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { decodeTokenClaims } from '@sync-system/protocol';
+import { decodeTokenClaims } from '@mosherw/sync-system-protocol';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { SyncClient } from '../src/client.js';
 import { type TokenStorage, memoryStorage } from '../src/storage.js';

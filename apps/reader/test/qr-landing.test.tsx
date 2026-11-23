@@ -1,4 +1,4 @@
-import { type JoinedGroup, SyncClientError } from '@sync-system/react';
+import { type JoinedGroup, SyncClientError } from '@mosherw/sync-system-react';
 import { act, fireEvent, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { browserNavigation } from '../src/group/browser.js';

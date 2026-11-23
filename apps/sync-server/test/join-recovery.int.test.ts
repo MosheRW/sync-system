@@ -1,11 +1,11 @@
-import type { JoinMethod, ServerMessage } from '@sync-system/protocol';
+import type { JoinMethod, ServerMessage } from '@mosherw/sync-system-protocol';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { TokenSecrets } from '../src/config/token-secret.js';
 import {
   MAX_BLOCK_LIST_SIZE,
   MAX_CODES_BLOB_LENGTH,
   MAX_TOKEN_LENGTH,
-} from '@sync-system/protocol';
+} from '@mosherw/sync-system-protocol';
 import { transportMaxPayload } from '../src/limits/constants.js';
 import { CodesBlobService } from '../src/tokens/codes-blob.js';
 import { CODES_BLOB_INFO_PREFIX, TokenKeyring } from '../src/tokens/token-keys.js';

@@ -26,8 +26,8 @@ RUN pnpm install --frozen-lockfile
 COPY packages/ packages/
 COPY apps/reader/ apps/reader/
 # vite build validates every bundled book (AC38); tsc builds the server.
-RUN pnpm --filter @sync-system/reader build \
-  && pnpm --filter @sync-system/reader deploy --prod --legacy /out
+RUN pnpm --filter @mosherw/sync-system-reader build \
+  && pnpm --filter @mosherw/sync-system-reader deploy --prod --legacy /out
 
 FROM node:24-alpine@sha256:8a32c8cf649a49915a66e81e7a609223c708d0adabf288ee3f4077d765542f85 AS runtime
 ENV NODE_ENV=production

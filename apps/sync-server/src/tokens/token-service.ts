@@ -3,7 +3,7 @@ import {
   type TokenClaims,
   type TokenRole,
   parseClaimsSegment,
-} from '@sync-system/protocol';
+} from '@mosherw/sync-system-protocol';
 import { MAX_CLOCK_SKEW_MS, TOKEN_TTL_SECONDS } from '../limits/constants.js';
 import { signHs256, verifyHs256 } from './jwt.js';
 import type { TokenKeyring } from './token-keys.js';

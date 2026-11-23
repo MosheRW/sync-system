@@ -4,7 +4,7 @@ import {
   type ServerMessage,
   checkJson,
   parseServerMessage,
-} from '@sync-system/protocol';
+} from '@mosherw/sync-system-protocol';
 import type { WebSocketConstructorLike, WebSocketLike } from './host.js';
 
 /** Result of decoding one inbound frame. */

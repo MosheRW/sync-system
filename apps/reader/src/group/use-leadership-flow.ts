@@ -3,7 +3,7 @@ import {
   type NowLeadingEvent,
   useLeadership,
   useSyncEvent,
-} from '@sync-system/react';
+} from '@mosherw/sync-system-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Banner } from './banners.js';
 

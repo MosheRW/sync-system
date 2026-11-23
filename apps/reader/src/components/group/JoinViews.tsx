@@ -3,7 +3,7 @@ import {
   classifyJoinCode,
   isDoorCode,
   normalizeJoinCode,
-} from '@sync-system/react';
+} from '@mosherw/sync-system-react';
 import { type FormEvent, type Ref, forwardRef, useEffect, useId, useRef, useState } from 'react';
 import { formatShort, useCountdown } from '../../group/countdown.js';
 import { errorText } from '../../group/errors.js';

@@ -1,12 +1,12 @@
 {
-  "name": "@sync-system/protocol",
+  "name": "@mosherw/sync-system-protocol",
   "version": "0.1.0",
   "private": true,
   "description": "Wire protocol for the sync system: versions, error codes, message types and schemas.",
   "type": "module",
   "exports": {
     ".": {
-      "@sync-system/source": "./src/index.ts",
+      "@mosherw/sync-system-source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     }

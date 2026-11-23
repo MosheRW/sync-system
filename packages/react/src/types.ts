@@ -13,7 +13,7 @@ import type {
   SyncClient,
   SyncClientError,
   SyncClientSnapshot,
-} from '@sync-system/client';
+} from '@mosherw/sync-system-client';
 
 /**
  * The client surface the package uses (D9). A `SyncClient` satisfies it;

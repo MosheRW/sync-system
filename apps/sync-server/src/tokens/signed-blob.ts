@@ -1,5 +1,5 @@
 import { timingSafeEqual } from 'node:crypto';
-import { base64UrlToAscii } from '@sync-system/protocol';
+import { base64UrlToAscii } from '@mosherw/sync-system-protocol';
 import { SIGNATURE_SEGMENT_LENGTH, hmacSha256 } from './jwt.js';
 
 /**

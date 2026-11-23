@@ -1,5 +1,5 @@
 'use client';
-import { SyncClientError } from '@sync-system/client';
+import { SyncClientError } from '@mosherw/sync-system-client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSyncStore } from './context.js';
 import type { SyncStore } from './store.js';

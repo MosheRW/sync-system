@@ -1,5 +1,5 @@
 'use client';
-import { SyncClient, type SyncClientOptions } from '@sync-system/client';
+import { SyncClient, type SyncClientOptions } from '@mosherw/sync-system-client';
 import {
   type ReactElement,
   type ReactNode,
@@ -34,9 +34,9 @@ export type SyncProviderProps =
     };
 
 const BOTH_OR_NEITHER =
-  '<SyncProvider> needs exactly one of the options or client props (@sync-system/react)';
+  '<SyncProvider> needs exactly one of the options or client props (@mosherw/sync-system-react)';
 const MODE_SWITCH =
-  '<SyncProvider> cannot switch between the options and client props on one mount (@sync-system/react)';
+  '<SyncProvider> cannot switch between the options and client props on one mount (@mosherw/sync-system-react)';
 
 interface OwnedEntry {
   readonly store: SyncStore;

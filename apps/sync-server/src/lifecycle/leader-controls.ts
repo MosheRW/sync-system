@@ -12,7 +12,7 @@ import {
   type ServerMessage,
   type ViceClearMessage,
   type ViceSetMessage,
-} from '@sync-system/protocol';
+} from '@mosherw/sync-system-protocol';
 import type { GroupPatch, GroupRecord } from '../groups/group-store.js';
 import type { Recipient, Target } from '../groups/recipients.js';
 import type { Membership, Session } from '../groups/session.js';

@@ -1,6 +1,6 @@
 /**
  * Lazy, typed access to the host timer and clock (pattern of
- * `@sync-system/client`'s host module). Nothing here runs at import time
+ * `@mosherw/sync-system-client`'s host module). Nothing here runs at import time
  * (AC12): every global is looked up on each call, so the package can be
  * imported during SSR and fake timers in tests work. This is the only module
  * of the package that reads `globalThis`.

@@ -1,4 +1,4 @@
-import type { StoredGroupStatus } from '@sync-system/client';
+import type { StoredGroupStatus } from '@mosherw/sync-system-client';
 import { act, render } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { describe, expect, it } from 'vitest';

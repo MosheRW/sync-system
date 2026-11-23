@@ -1,4 +1,4 @@
-import { GROUP_ID_PATTERN } from '@sync-system/protocol';
+import { GROUP_ID_PATTERN } from '@mosherw/sync-system-protocol';
 import { describe, expect, it } from 'vitest';
 import { newGroupId, newParticipantId } from '../src/groups/ids.js';
 

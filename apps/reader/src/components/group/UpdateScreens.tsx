@@ -1,4 +1,4 @@
-import type { UpdateRequired } from '@sync-system/react';
+import type { UpdateRequired } from '@mosherw/sync-system-react';
 import { browserNavigation } from '../../group/browser.js';
 import { useI18n } from '../../i18n/index.js';
 import { PlainText } from '../PlainText.js';

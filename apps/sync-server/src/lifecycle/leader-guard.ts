@@ -1,4 +1,4 @@
-import { ErrorCode, type ErrorMessage } from '@sync-system/protocol';
+import { ErrorCode, type ErrorMessage } from '@mosherw/sync-system-protocol';
 import type { GroupRecord } from '../groups/group-store.js';
 import type { Recipient } from '../groups/recipients.js';
 import type { Membership, Session } from '../groups/session.js';

@@ -5,7 +5,7 @@ import {
   type SyncClientSnapshot,
   type SyncIndicator,
   indicatorOf,
-} from '@sync-system/client';
+} from '@mosherw/sync-system-client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSyncStore } from '../context.js';
 import { useStoreSelector } from '../selector.js';

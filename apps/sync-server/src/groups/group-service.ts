@@ -34,7 +34,7 @@ import {
   type LeaderState,
   PARTICIPANT_ID_PATTERN,
   resolveDisplayName,
-} from '@sync-system/protocol';
+} from '@mosherw/sync-system-protocol';
 import type { AppConfig } from '../apps/app-registry.js';
 import { jsonByteLength } from '../limits/json-size.js';
 import {

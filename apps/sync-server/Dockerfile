@@ -20,8 +20,8 @@ RUN pnpm install --frozen-lockfile
 # Sources only: never the repo root (M1).
 COPY packages/ packages/
 COPY apps/ apps/
-RUN pnpm --filter @sync-system/server... build \
-  && pnpm --filter @sync-system/server deploy --prod --legacy /out
+RUN pnpm --filter @mosherw/sync-system-server... build \
+  && pnpm --filter @mosherw/sync-system-server deploy --prod --legacy /out
 
 FROM base AS runtime
 ENV NODE_ENV=production

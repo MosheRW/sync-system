@@ -44,7 +44,7 @@ function startProcess(env: Record<string, string>): Promise<ChildProcess> {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, ['--import', 'tsx', 'src/index.ts'], {
       cwd: serverDir,
-      env: childEnv({ ...env, NODE_OPTIONS: '--conditions=@sync-system/source' }),
+      env: childEnv({ ...env, NODE_OPTIONS: '--conditions=@mosherw/sync-system-source' }),
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     children.push(child);
