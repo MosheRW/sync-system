@@ -1,6 +1,7 @@
 # 0017. Server image build, tags and push
 
-- Status: Proposed
+- Status: Accepted (Gate 2, 2026-11-23: user chose the recommended A1, B1,
+  C1, D1)
 - Date: 2026-11-23
 - Issue: #37
 
@@ -45,21 +46,23 @@ architectures, and how registry credentials are handled.
 ### C. Architectures
 
 1. **`linux/amd64` and `linux/arm64` in one multi-platform push**
-   (`docker buildx build --platform linux/amd64,linux/arm64 -t <ghcr tags>
--t <docker.io tags> --push`). Pros: runs on ARM servers and Apple
+   (`docker buildx build --platform linux/amd64,linux/arm64` with
+   `-t <ghcr tags>`, `-t <docker.io tags>` and `--push`). Pros: runs on ARM servers and Apple
    Silicon; one build pushes identical manifests (same digest) to both
    registries. The server has no native modules, so QEMU emulation only
    slows the build. Cons: needs a buildx builder with the
-   `docker-container` driver and QEMU (`docker run --privileged --rm
-tonistiigi/binfmt --install arm64`, pinned by digest in `RELEASING.md`).
+   `docker-container` driver and QEMU
+   (`docker run --privileged --rm tonistiigi/binfmt --install arm64`,
+   pinned by digest in `RELEASING.md`).
 2. `linux/amd64` only. Cons: ARM users must build from source.
 
 ### D. Credentials
 
 1. **A temporary `DOCKER_CONFIG` directory per release**
    (`export DOCKER_CONFIG="$(mktemp -d)"`) and, **before the first login**,
-   `trap 'docker logout ghcr.io; docker logout docker.io; rm -rf
-"$DOCKER_CONFIG"' EXIT`. Then `docker login ghcr.io` with a GitHub classic
+   `trap 'docker logout ghcr.io; docker logout docker.io; rm -rf "$DOCKER_CONFIG"' EXIT`,
+   all inside one subshell block so the trap
+   fires when the block ends (security advisory L9). Then `docker login ghcr.io` with a GitHub classic
    token scoped `write:packages` only and `docker login docker.io` with a
    Docker Hub personal access token limited to the one repository if
    available (else "Read & Write"), each read with `read -rs T`, passed as
@@ -70,6 +73,10 @@ tonistiigi/binfmt --install arm64`, pinned by digest in `RELEASING.md`).
    CLI still picks the platform credential helper, so the tokens land in the
    OS keychain and only `docker logout` removes them, also when the push
    fails (security plan review M2).
+   After the block, the platform credential helper
+   (`docker-credential-wincred list`, or `-desktop`/`-osxkeychain`) and
+   `~/.docker/config.json`
+   are checked for leftover `ghcr.io`/`index.docker.io` entries (L9).
    Pros: nothing remains in `~/.docker/config.json`, the keychain or shell
    history. Cons: two tokens to create and revoke per release.
 2. Logging in to the default Docker config. Cons: credentials stay on disk
@@ -77,7 +84,9 @@ tonistiigi/binfmt --install arm64`, pinned by digest in `RELEASING.md`).
 
 ## Decision
 
-A1, B1, C1 and D1. The clone is made from the host-created tag (ADR 0016
+A1, B1, C1 and D1 (accepted at Gate 2, 2026-11-23). The clone is made
+into a `mktemp -d` directory outside the working copy (L11), from the
+host-created tag (ADR 0016
 D1) and the release asserts `HEAD` equals the verified merge commit and a
 clean tree before building. The Dockerfile gains static OCI labels
 (`org.opencontainers.image.source=https://github.com/MosheRW/sync-system`,
