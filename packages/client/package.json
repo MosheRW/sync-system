@@ -1,9 +1,17 @@
 {
   "name": "@mosherw/sync-system-client",
   "version": "0.1.0",
-  "private": true,
   "description": "Framework-free sync client: connection, handshake, groups, throttling and reconnect.",
   "license": "GPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MosheRW/sync-system.git",
+    "directory": "packages/client"
+  },
+  "homepage": "https://github.com/MosheRW/sync-system/tree/main/packages/client#readme",
+  "bugs": {
+    "url": "https://github.com/MosheRW/sync-system/issues"
+  },
   "type": "module",
   "exports": {
     ".": {
@@ -12,8 +20,18 @@
       "default": "./dist/index.js"
     }
   },
+  "publishConfig": {
+    "access": "public",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    }
+  },
   "files": [
-    "dist"
+    "dist",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",

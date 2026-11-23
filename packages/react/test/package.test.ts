@@ -27,9 +27,9 @@ interface PackageJson {
 const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as PackageJson;
 
 describe('package (AC1, Q1, Q2, Q10)', () => {
-  it('is the private workspace package @mosherw/sync-system-react', () => {
+  it('is the published package @mosherw/sync-system-react (#37 AC50)', () => {
     expect(pkg.name).toBe('@mosherw/sync-system-react');
-    expect(pkg.private).toBe(true);
+    expect(pkg.private).toBeUndefined();
     expect(pkg.type).toBe('module');
     expect(pkg.sideEffects).toBe(false);
   });
