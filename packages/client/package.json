@@ -1,6 +1,6 @@
 {
   "name": "@mosherw/sync-system-client",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Framework-free sync client: connection, handshake, groups, throttling and reconnect.",
   "license": "GPL-3.0-only",
   "repository": {

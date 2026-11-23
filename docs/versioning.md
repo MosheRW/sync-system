@@ -16,9 +16,11 @@ to one package that is breaking makes the next version a major for all four.
 The reading app (`@mosherw/sync-system-reader`) is private and has no public
 version.
 
-Each package's changes are in the `CHANGELOG.md` next to its
-`package.json` (`packages/protocol`, `packages/client`, `packages/react`,
-`apps/sync-server`).
+Each package's changes are in its `CHANGELOG.md`:
+[protocol](../packages/protocol/CHANGELOG.md),
+[client](../packages/client/CHANGELOG.md),
+[react](../packages/react/CHANGELOG.md),
+[server](../apps/sync-server/CHANGELOG.md).
 
 ## What is breaking (major)
 

@@ -325,3 +325,46 @@ describe('RELEASING.md load-bearing lines (C1-C5, M6, L1, L5, L8, L9, L11-L13)',
     expect(doc).toContain('provenance');
   });
 });
+
+describe('release candidate 1.0.0 (AC48, AC49)', () => {
+  const GROUP_DIRS = [...PUBLISHED_DIRS, 'apps/sync-server'] as const;
+
+  it.each(GROUP_DIRS)('%s is at 1.0.0 with a 1.0.0 changelog entry', (dir) => {
+    expect(manifest(dir).version).toBe('1.0.0');
+    const changelog = read(join(dir, 'CHANGELOG.md'));
+    expect(changelog).toMatch(new RegExp(`^# ${manifest(dir).name}$`, 'm'));
+    expect(changelog).toMatch(/^## 1\.0\.0$/m);
+  });
+
+  it('keeps the reader private at 0.1.0, outside the group', () => {
+    expect(manifest('apps/reader').version).toBe('0.1.0');
+    expect(manifest('apps/reader').private).toBe(true);
+    expect(existsSync(join(repoRoot, 'apps/reader/CHANGELOG.md'))).toBe(false);
+  });
+
+  it('states protocol 1 with minimum 1 and the notes for pre-release builds', () => {
+    const entry = read('apps/sync-server/CHANGELOG.md').replace(/\s+/g, ' ');
+    for (const text of [
+      '`PROTOCOL_VERSION = 1`',
+      '`MIN_CLIENT_PROTOCOL_VERSION = 1`',
+      'Join by group ID removed (#10)',
+      'Token format 2 (#13)',
+      '`MAX_BUFFERED_BYTES` minimum',
+      'Storage can now be Redis',
+      'stopping every instance',
+      'Unknown look-alike env variables stop startup (#36)',
+      'GPL-3.0-only',
+    ]) {
+      expect(entry, text).toContain(text);
+    }
+    for (const dir of PUBLISHED_DIRS) {
+      expect(read(join(dir, 'CHANGELOG.md')).replace(/\s+/g, ' ')).toContain(
+        'Join by group ID removed (#10)',
+      );
+    }
+  });
+
+  it('has consumed the first changeset', () => {
+    expect(existsSync(join(repoRoot, '.changeset/v1-first-release.md'))).toBe(false);
+  });
+});

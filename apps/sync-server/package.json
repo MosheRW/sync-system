@@ -1,6 +1,6 @@
 {
   "name": "@mosherw/sync-system-server",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "description": "Sync server: stores and relays an opaque position for ephemeral groups.",
   "license": "GPL-3.0-only",

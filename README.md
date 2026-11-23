@@ -41,19 +41,19 @@ and follow the [integration guide](docs/integration-guide.md).
 
 ## Documentation
 
-| For                       | Read                                                                                                                              |
-| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| Running the server        | [Operator guide](docs/operator-guide.md): install, config file, every env variable, Redis, several instances, upgrading, security |
-| Startup errors            | [`docs/startup-errors.md`](docs/startup-errors.md): every message and its fix                                                     |
-| Building an app           | [Integration guide](docs/integration-guide.md), with the reading app as the worked example                                        |
-| The client API            | [`packages/client/README.md`](packages/client/README.md)                                                                          |
-| The React API             | [`packages/react/README.md`](packages/react/README.md)                                                                            |
-| The wire protocol         | [`docs/protocol.md`](docs/protocol.md) and [`packages/protocol/README.md`](packages/protocol/README.md)                           |
-| The reading app           | [`apps/reader/README.md`](apps/reader/README.md): content schema, fingerprint, direction rules, configuration, groups             |
-| Versions and upgrades     | [`docs/versioning.md`](docs/versioning.md), and each package's `CHANGELOG.md`                                                     |
-| Releasing                 | [`RELEASING.md`](RELEASING.md) (maintainer)                                                                                       |
-| Reporting a vulnerability | [`SECURITY.md`](SECURITY.md)                                                                                                      |
-| Project decisions         | [`docs/conventions.md`](docs/conventions.md) and the ADRs in [`docs/decisions/`](docs/decisions/)                                 |
+| For                       | Read                                                                                                                                                                                                                        |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Running the server        | [Operator guide](docs/operator-guide.md): install, config file, every env variable, Redis, several instances, upgrading, security                                                                                           |
+| Startup errors            | [`docs/startup-errors.md`](docs/startup-errors.md): every message and its fix                                                                                                                                               |
+| Building an app           | [Integration guide](docs/integration-guide.md), with the reading app as the worked example                                                                                                                                  |
+| The client API            | [`packages/client/README.md`](packages/client/README.md)                                                                                                                                                                    |
+| The React API             | [`packages/react/README.md`](packages/react/README.md)                                                                                                                                                                      |
+| The wire protocol         | [`docs/protocol.md`](docs/protocol.md) and [`packages/protocol/README.md`](packages/protocol/README.md)                                                                                                                     |
+| The reading app           | [`apps/reader/README.md`](apps/reader/README.md): content schema, fingerprint, direction rules, configuration, groups                                                                                                       |
+| Versions and upgrades     | [`docs/versioning.md`](docs/versioning.md); changelogs of [protocol](packages/protocol/CHANGELOG.md), [client](packages/client/CHANGELOG.md), [react](packages/react/CHANGELOG.md), [server](apps/sync-server/CHANGELOG.md) |
+| Releasing                 | [`RELEASING.md`](RELEASING.md) (maintainer)                                                                                                                                                                                 |
+| Reporting a vulnerability | [`SECURITY.md`](SECURITY.md)                                                                                                                                                                                                |
+| Project decisions         | [`docs/conventions.md`](docs/conventions.md) and the ADRs in [`docs/decisions/`](docs/decisions/)                                                                                                                           |
 
 ## Development
 
