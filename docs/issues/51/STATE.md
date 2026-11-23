@@ -1,13 +1,13 @@
 # State: #51 fix(docs): operator guide passes TOKEN_SECRET with docker run -e (follow-up to #37)
 
 - Path: fast
-- Phase: validation-ready
+- Phase: validation
 - Branch: fix/51-operator-guide-token-secret
 - PR: #57
 - Plan approved by user: yes (Gate 2, 2026-11-23, with security controls C1–C8; follow-up #58)
 - Security-sensitive: yes (secret-handling guidance; security plan review runs)
 - Review rounds: 2
-- Last updated by: engineer
+- Last updated by: qa
 
 ## Model log
 
@@ -19,6 +19,7 @@
 - security code r1: opus (rule) → PASS (low advisories: A1 test guard misses export / ${:-default} / flow-map / line-continuation forms; A2 Swarm bullet should say docker stack deploy)
 - Gate 3: 2026-11-23, PR #57 ready to merge; the user chose to fix advisories A1, A2 now
 - engineer fix r1: opus (rule: fix round) → DONE (A1: guide check also catches `export`, `${…:-…}`/`${…-…}`/`${…:=…}`/`${…=…}` defaults, flow maps and `-e \` continuations; A2: Swarm bullet says `docker stack deploy`)
+- qa review r2: opus (rule: round 2) → PASS (local Docker CI green; A1 mutation check fails on export, ${:-default}, flow map, -e continuation; safe forms pass; A2 verified)
 
 ## Open questions
 
