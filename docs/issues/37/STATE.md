@@ -1,7 +1,7 @@
 # State: #37 feat: public docs, changelog and first semver release (PRD item 9c)
 
 - Path: full
-- Phase: ready-to-merge
+- Phase: merged (PR #50, merge commit 671b51a, 2026-11-23)
 - Branch: feat/37-docs-changelog-release
 - PR: #50
 - Plan approved by user: yes (Gate 2, 2026-11-23; security round 3 PASS; L12 and L13 also adopted)
