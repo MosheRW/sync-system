@@ -1,5 +1,8 @@
 name: CI
 
+# CI paused (#54): GitHub Actions is billing-blocked, so push and
+# pull_request are commented out and the checks run locally in Docker
+# (RELEASING.md step 2). To resume: uncomment both and delete this comment.
 on:
   workflow_dispatch:
   # push:
