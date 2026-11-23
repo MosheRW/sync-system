@@ -1,19 +1,20 @@
 # State: #51 fix(docs): operator guide passes TOKEN_SECRET with docker run -e (follow-up to #37)
 
 - Path: fast
-- Phase: validation-ready
+- Phase: validation
 - Branch: fix/51-operator-guide-token-secret
 - PR: #57
 - Plan approved by user: yes (Gate 2, 2026-11-23, with security controls C1–C8; follow-up #58)
 - Security-sensitive: yes (secret-handling guidance; security plan review runs)
-- Review rounds: 0
-- Last updated by: engineer
+- Review rounds: 1
+- Last updated by: qa
 
 ## Model log
 
 - pm groom: sonnet (default) → DONE
 - architect plan: opus (rule: secret-handling guidance, when in doubt go up) → DONE
 - engineer implement: opus (rule: Implementer model) → DONE
+- qa review r1: sonnet (NEXT_MODEL) → PASS
 
 ## Open questions
 
