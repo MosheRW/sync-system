@@ -32,8 +32,9 @@ Tags: `X.Y.Z` (one release), `X.Y`, `X` and `latest` (moving), for
    dev key (`config/apps.dev.json`) in production: the server refuses it
    unless `NODE_ENV` is `development` or `test`.
 2. Generate `TOKEN_SECRET` with `openssl rand -base64 32` and keep it in your
-   secret store or an env file that is never committed (see
-   [Token secret](#token-secret)).
+   secret store, an env file or a secret file that is never committed. How to
+   hand it to the container without leaking it:
+   [Passing secrets to the container](#passing-secrets-to-the-container).
 3. A minimal `compose.yaml`:
 
 ```yaml
@@ -58,6 +59,14 @@ services:
       timeout: 3s
       retries: 3
 ```
+
+Compose takes `${TOKEN_SECRET}` from your shell or from a `.env` file next to
+`compose.yaml` (mode 600, never committed: add it to `.gitignore` if the
+directory is a git repo). Don't type the value: `export TOKEN_SECRET=<value>`
+lands in your shell history, so use the `.env` file or
+`export TOKEN_SECRET="$(cat FILE)"`. Like every environment value it shows in
+`docker inspect` and `docker compose config`; a secret file keeps it out of
+both (see [Passing secrets to the container](#passing-secrets-to-the-container)).
 
 4. `docker compose up -d`, then `curl http://127.0.0.1:8080/health` shows
    `"status":"ok"` and the version. A bad config exits 1 with one
@@ -154,15 +163,23 @@ reading app) now reaches the load balancer, and clients of one group land on
 both instances. Development only, like the other compose files.
 
 To run the image yourself, mount your own registry and point
-`SYNC_CONFIG_PATH` at it. The image never contains a config file:
+`SYNC_CONFIG_PATH` at it. The image never contains a config file. Pass the
+token secret in an env file outside the clone (mode 600, never committed):
 
 ```sh
 docker build -f apps/sync-server/Dockerfile -t sync-server .
+# Once: create the env file with mode 600 first, then write a new secret into it.
+install -m 600 /dev/null "$HOME/sync-server.env"
+printf 'TOKEN_SECRET=%s\n' "$(openssl rand -base64 32)" > "$HOME/sync-server.env"
 docker run -p 127.0.0.1:8080:8080 \
   -v "$PWD/config/apps.json:/config/apps.json:ro" \
   -e SYNC_CONFIG_PATH=/config/apps.json \
-  -e TOKEN_SECRET="$(cat /run/secrets/sync_token_secret)" sync-server
+  --env-file "$HOME/sync-server.env" sync-server
 ```
+
+Running the two `Once` lines again replaces the secret. Never pass a secret
+with `-e TOKEN_SECRET=...` or `-e TOKEN_SECRET="$(cat FILE)"`: see
+[Passing secrets to the container](#passing-secrets-to-the-container).
 
 ## Health and readiness
 
@@ -809,6 +826,8 @@ printed):
 1. Set the new secret as `TOKEN_SECRET` and the old one as
    `TOKEN_SECRET_PREVIOUS`, and restart. Old tokens still verify, and every
    check, resume or refresh hands back a token signed with the new secret.
+   With secret files, mount the old secret as a second file (see
+   [Passing secrets to the container](#passing-secrets-to-the-container)).
 2. After `MAX_SESSION_MINUTES_CEILING` + `TOKEN_REFRESH_MAX_SECONDS` (8 h 5 min
    by default) remove `TOKEN_SECRET_PREVIOUS` and restart. Every old token is
    expired by then anyway.
@@ -817,10 +836,108 @@ printed):
 do **not** set the leaked one as `TOKEN_SECRET_PREVIOUS`. Otherwise tokens
 forged with the leaked secret would be re-signed with the new one. All tokens
 become invalid; clients delete them and groups must be created again. That is
-the price of a leak.
+the price of a leak. With secret files, delete the leaked file and never mount
+it as the previous secret.
 
 Changing the HKDF label or salt in the code has the same effect as a new
 secret.
+
+### Passing secrets to the container
+
+This applies to `TOKEN_SECRET`, `TOKEN_SECRET_PREVIOUS`, and `REDIS_URL` when
+it holds a password. Generate secrets (`openssl rand -base64 32`): they have no
+spaces, quotes or `$`, which keeps every method below simple.
+
+- **Don't** use `-e NAME=value` or `-e NAME="$(cat FILE)"`. The first lands in
+  your shell history. Both put the value on the `docker` command line, which
+  every local user can see in the host's process list (`ps`) while it runs,
+  and in `docker inspect`.
+- **Env file** (`docker run --env-file FILE`, compose `env_file:`, or compose
+  `${NAME}` taken from a `.env` file): keeps the value out of shell history and
+  the process list. It is **still visible** in `docker inspect` (`Config.Env`),
+  in `docker compose config`, and inside the container. One `NAME=value` per
+  line, LF line endings. `docker run --env-file` takes the value literally, so
+  use no quotes; compose `.env` and `env_file:` files strip quotes and expand
+  `$`, so single-quote a value that contains `$`. Create the file with mode 600
+  before writing the secret into it (`install -m 600 /dev/null FILE`), keep it
+  owned by you, outside the clone and any other git working tree, and never
+  commit it. The docker CLI reads it on the host; the container needs no
+  access to it.
+- **Secret file** (compose `secrets:` or a Swarm secret, mounted at
+  `/run/secrets/<name>`): keeps the value out of `docker inspect`,
+  `docker compose config` and the container's configuration; only the mount
+  path shows. The server reads environment variables only: `TOKEN_SECRET_FILE`,
+  `REDIS_URL_FILE` and any other unknown `TOKEN_*` or `REDIS_*` name is a
+  `Config error` and stops startup (see
+  [Environment variables](#environment-variables); reading secrets from files
+  natively is planned in issue #58). Until then a short wrapper reads the file
+  and starts the server.
+
+With Docker Compose, create the secret file outside any git working tree,
+owned by uid 1000 (the image's `node` user) with mode 400, before writing the
+secret into it:
+
+```sh
+sudo install -d -m 700 /etc/sync-server
+sudo install -m 400 -o 1000 -g 1000 /dev/null /etc/sync-server/token_secret
+sudo sh -c 'openssl rand -base64 32 > /etc/sync-server/token_secret'
+```
+
+Then replace the `TOKEN_SECRET` line of the minimal `compose.yaml` in
+[Install with Docker Compose](#install-with-docker-compose) with the wrapper
+(keep the `healthcheck`):
+
+```yaml
+services:
+  sync-server:
+    image: ghcr.io/mosherw/sync-system-server:1.0.0 # pin X.Y.Z or a digest
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:8080:8080'
+    volumes:
+      - ./apps.json:/config/apps.json:ro
+    environment:
+      SYNC_CONFIG_PATH: /config/apps.json
+    command:
+      - sh
+      - -c
+      - >-
+        TOKEN_SECRET="$$(cat /run/secrets/sync_token_secret)" &&
+        export TOKEN_SECRET &&
+        exec node dist/index.js
+    secrets:
+      - sync_token_secret
+secrets:
+  sync_token_secret:
+    file: /etc/sync-server/token_secret # outside any git working tree
+```
+
+- `$$` stops compose from expanding `$(...)` itself, and `>-` joins the lines
+  into one command. `exec` keeps node as process 1, so signals and shutdown
+  work as before. Never add `set -x`, `echo` or `printenv` to it: they print
+  the secret.
+- It fails closed and never starts with an empty secret: a missing secret file
+  stops the container from being created; a file the `node` user cannot read,
+  or a secret not listed under the service, makes `cat` fail and the container
+  exits 1; an empty file or one with CRLF line endings is a `Config error`.
+- A compose `file:` secret is bind-mounted with the host file's owner and
+  mode, so it must be readable by uid 1000, as above. **Never** make it
+  world-readable (`chmod 644` or `o+r`): every host user could then read it.
+  A host account with uid 1000 can read it too.
+- A Swarm secret (`openssl rand -base64 32 | docker secret create sync_token_secret -`,
+  then `external: true` in place of `file:`) is mounted root-owned with mode
+  0444 on a tmpfs, which the `node` user can read as is.
+- For a rotation, add a second secret and one more pair to the chain, before
+  `exec`: `TOKEN_SECRET_PREVIOUS="$$(cat /run/secrets/sync_token_secret_previous)" && export TOKEN_SECRET_PREVIOUS &&`.
+  Remove both when the rotation window ends (see Routine rotation above).
+  `REDIS_URL` works the same way, with a file holding the whole URL.
+- The wrapper replaces the image's `CMD` (`node dist/index.js`): check it when
+  upgrading (the [upgrade notes](#upgrading) say if the `CMD` changes).
+- The secret is still readable inside the container, in the file and in the
+  server's process environment, by anyone who can `docker exec`.
+
+Whichever way you pass a secret, anyone with access to the Docker daemon (the
+`docker` group or root) can read it: restrict that access.
 
 ## Timers
 
