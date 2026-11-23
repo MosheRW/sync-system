@@ -1,7 +1,7 @@
 # State: #37 feat: public docs, changelog and first semver release (PRD item 9c)
 
 - Path: full
-- Phase: validation
+- Phase: ready-to-merge
 - Branch: feat/37-docs-changelog-release
 - PR: #50
 - Plan approved by user: yes (Gate 2, 2026-11-23; security round 3 PASS; L12 and L13 also adopted)
@@ -23,6 +23,7 @@
 - security code r1: opus (rule) → PASS
 - engineer fix r1: opus (rule) → DONE
 - qa review r2: opus (rule) → PASS
+- security code r2: opus (rule) → PASS
 
 ## Open questions
 
