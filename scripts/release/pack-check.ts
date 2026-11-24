@@ -1,9 +1,10 @@
-// pnpm pack:check [--out <dir>] (#37 AC50, C4, C10, L10; #53 R1, R2, L4).
+// pnpm pack:check [--out <dir>] (#37 AC50, C4, C10, L10; #53 R1, R2, L4; #63).
 // Packs the three published packages and checks each tarball: contents on the
 // allow-list, a public-ready package.json, one shared version. Before packing
 // it checks the publishable set, at most one workspace: range per dependency
 // map of each published package, and that no pnpmfile is in play (#53,
-// ADR 0020); any problem stops it before packing. With --out <dir> (created
+// ADR 0020); any problem stops it before packing. The pack itself ignores
+// every pnpmfile (#63, ADR 0021). With --out <dir> (created
 // empty, must not hold anything) it keeps the checked tarballs there and writes
 // <dir>/INTEGRITY.txt, one `<file> sha512-<base64>` line per tarball in
 // publish order. These kept tarballs are the only bytes a release publishes.

@@ -1,5 +1,5 @@
 // Unit tests of the pure release checks (#37 AC50, AC51, C4, C6, C10, L10;
-// #53 ADR 0020 R2, L4).
+// #53 ADR 0020 R2, L4; #63 ADR 0021 R1, R2).
 // Run with Node's built-in runner: node --test "scripts/release/*.test.ts".
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
@@ -16,6 +16,7 @@ import {
   checkSameVersion,
   checkWorkspaceRanges,
   integrityLine,
+  PACK_ARGS,
   readTarball,
   repoRoot,
   tarballName,
@@ -342,8 +343,42 @@ describe('checkNoPnpmfile (#53, ADR 0020, L4)', () => {
     }
   }
 
+  // #63, ADR 0021 (R2): pnpm reads the dashed form of the env name too.
+  for (const name of [
+    'npm_config_global-pnpmfile',
+    'NPM_CONFIG_GLOBAL-PNPMFILE',
+    'Npm_Config_Global-Pnpmfile',
+  ]) {
+    it(`rejects the dashed ${name}`, () => {
+      withRoot((root) => {
+        const problems = checkNoPnpmfile(root, { [name]: '/tmp/hook.cjs' });
+        assert.equal(problems.length, 1);
+        assert.match(problems[0] ?? '', /is set; no pnpmfile is allowed \(#53, ADR 0020\)/);
+        assert.ok((problems[0] ?? '').startsWith(`${name} is set`));
+      });
+    });
+  }
+
+  for (const name of ['npm_config_ignore_pnpmfile', 'npm_config_ignore-pnpmfile']) {
+    it(`does not reject ${name}`, () => {
+      withRoot((root) => assert.deepEqual(checkNoPnpmfile(root, { [name]: 'true' }), []));
+    });
+  }
+
   it('accepts the real repo root', () => {
     assert.deepEqual(checkNoPnpmfile(repoRoot, {}), []);
+  });
+});
+
+describe('PACK_ARGS (#63, ADR 0021, R1)', () => {
+  it('packs with pnpmfiles ignored, as a command-line setting', () => {
+    assert.equal(PACK_ARGS[0], 'pack');
+    assert.ok(PACK_ARGS.includes('--config.ignore-pnpmfile=true'));
+  });
+
+  it('uses no form pnpm 10.28.0 rejects and nothing that turns the setting off', () => {
+    assert.ok(!PACK_ARGS.includes('--ignore-pnpmfile'));
+    assert.equal(PACK_ARGS.filter((arg) => arg.includes('ignore-pnpmfile')).length, 1);
   });
 });
 
