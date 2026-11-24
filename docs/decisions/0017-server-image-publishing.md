@@ -4,12 +4,13 @@
   C1, D1)
 - Date: 2026-11-23
 - Issue: #37
+- Amended by: #65 (Docker Hub namespace and login user, 2026-11-24)
 
 ## Context
 
 AC52 and Q17: the sync server ships as a Docker image tagged with its semver
 in two registries, `ghcr.io/mosherw/sync-system-server` (canonical) and
-`docker.io/mosherw/sync-system-server` (mirror), with the same tags in both.
+`docker.io/moshewin/sync-system-server` (mirror), with the same tags in both.
 The image's `/health` `version` must equal the tag. Q-D: everything is pushed
 by hand, credentials passed at run time only and never stored. AC54: the npm
 part runs in a `node:24` container; building an image needs a Docker daemon.
@@ -64,9 +65,10 @@ architectures, and how registry credentials are handled.
    all inside one subshell block so the trap
    fires when the block ends (security advisory L9). Then `docker login ghcr.io` with a GitHub classic
    token scoped `write:packages` only and `docker login docker.io` with a
-   Docker Hub personal access token limited to the one repository if
-   available (else "Read & Write"), each read with `read -rs T`, passed as
-   `printf '%s' "$T" | docker login -u mosherw --password-stdin <registry>`
+   Docker Hub personal access token with "Read & Write" (not Delete), each
+   read with `read -rs T`, passed as
+   `printf '%s' "$T" | docker login -u <user> --password-stdin <registry>`
+   (`<user>` is `mosherw` for GHCR and `moshewin` for Docker Hub)
    and `unset` (never echoed, never a command-line argument). Both tokens
    get the shortest expiry and are **revoked after the release**.
    The `trap` matters on Docker Desktop: with an empty `DOCKER_CONFIG` the
@@ -100,9 +102,23 @@ and checks that `/health` returns the tag's version.
 
 - The GHCR package is private on first push: the maintainer sets it public
   once and the `source` label links it to the repo.
-- The Docker Hub repository `mosherw/sync-system-server` must exist (created
+- The Docker Hub repository `moshewin/sync-system-server` must exist (created
   by hand, public) before the first push.
 - Floating tags (`X.Y`, `X`, `latest`) are documented as moving; the
   operator guide recommends pinning `X.Y.Z` (or a digest) in production.
 - No image signing or SBOM attestation in 1.0.0 (no CI identity); noted as a
   known limit next to npm provenance.
+
+## Amendment (#65, 2026-11-24)
+
+The Docker Hub mirror was written with the namespace `mosherw`, which is the
+GitHub user and npm org, not the maintainer's Docker Hub account. The
+mirror is `docker.io/moshewin/sync-system-server`, and the Docker Hub login
+user is `moshewin` (a Docker Hub personal access token authenticates as its
+owner's username). GHCR stays `ghcr.io/mosherw/sync-system-server` with
+`-u mosherw`. The old Docker Hub namespace `mosherw` is held by the
+maintainer as an empty placeholder against look-alike images and is never
+pushed to. The Docker Hub token text no longer suggests limiting the token
+to one repository (personal access tokens don't offer that); it is "Read &
+Write", not Delete, with the shortest expiry (security plan review L4 of
+#65). The decision (A1, B1, C1, D1) is unchanged.

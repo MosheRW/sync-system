@@ -59,7 +59,14 @@ that holds a credential runs no project code. Three places:
 ```sh
 # the Node 24 image, pinned by digest (bump deliberately, see above)
 NODE_IMAGE='node:24@sha256:9d266751ca3d7fdbe651c878ffd5ad0a42fed49a18c283509267c97f025b7496'
+# the secret scanner for step 0, pinned by tag and digest
+GITLEAKS_IMAGE='zricethezav/gitleaks:v8.24.0@sha256:2bcceac45179b3a91bff11a824d0fb952585b429e54fc928728b1d4d5c3e5176'
 ```
+
+Bump the gitleaks image the same way, in its own reviewed PR:
+`docker buildx imagetools inspect zricethezav/gitleaks:<tag>` shows the new
+index digest, and the step 0 scan with the new reference still prints
+`no leaks found`.
 
 ## Phase A: the release PR
 
@@ -85,18 +92,45 @@ export REL="$(mktemp -d)"      # outside the repo: bundle and checked tarballs
 
 Do all of this **before** the repository is made public:
 
-- [ ] npm: `npm whoami` prints `mosherw`, and the account owns the scope
-      (`npm access list packages @mosherw`). Account 2FA is on for
-      **"Authorization and writes"** (a security key if available, else
-      TOTP), recovery codes are stored offline, and the account's Access
-      Tokens page lists **no** token (no classic and no older granular
-      tokens).
-- [ ] Docker Hub: the public repository `mosherw/sync-system-server` exists
-      under your account.
+- [ ] npm: signed in on the host for these checks only, `npm whoami`
+      prints **your** npm user `moshe-winberg` (`mosherw` is the npm
+      organization that owns the scope, not a user),
+      `npm org ls mosherw` lists `moshe-winberg` as `owner`, and
+      `npm access list packages @mosherw` shows the scope's packages.
+      Account 2FA is on for **"Authorization and writes"** (a security key
+      if available, else TOTP) and recovery codes are stored offline.
+      End the checks with `npm logout`, then check that the account's
+      Access Tokens page lists **no** token (no classic, no older granular
+      tokens and no session left by these checks).
+- [ ] Docker Hub: `moshewin` is your Docker Hub **username** (Account
+      settings), not an organization; step 6 logs in with `-u moshewin`.
+      The public repository `moshewin/sync-system-server` exists under that
+      account. The old Docker Hub namespace `mosherw` is held only as an
+      empty placeholder against look-alikes: never push to it.
 - [ ] GHCR: the `ghcr.io/mosherw` namespace is your GitHub account.
-- [ ] Run `gitleaks git --redact` over the full history (it must find
-      nothing), and check the repo settings (Actions secrets, environments,
-      deploy keys) and the issue and PR comments for secrets.
+- [ ] Scan the full history for secrets with the pinned gitleaks image
+      (`GITLEAKS_IMAGE` from [Before you start](#before-you-start)). Run
+      the block from the repo root on an up-to-date `main`. The repo is
+      mounted read-only, the container has no network and gets no
+      credentials, and `--redact` keeps any value out of the output. It
+      must print `no leaks found`. Gitleaks reads the reviewed false
+      positives from the root `.gitleaksignore` with no flag. A new
+      finding is either a real secret (stop: rotate it; history is not
+      rewritten without a decision) or a test value (add its fingerprint
+      in a reviewed PR, per
+      [ADR 0022](docs/decisions/0022-secret-scan-suppressions.md)).
+
+      ```sh
+      ( set -euo pipefail
+        export MSYS_NO_PATHCONV=1
+        [[ "${GITLEAKS_IMAGE:-}" =~ ^zricethezav/gitleaks:v[0-9.]+@sha256:[0-9a-f]{64}$ ]] || { echo 'set GITLEAKS_IMAGE (Before you start)'; exit 1; }
+        D="$(pwd)"; if command -v cygpath >/dev/null; then D="$(cygpath -m "$D")"; fi
+        docker run --rm --network none -v "$D:/repo:ro" "$GITLEAKS_IMAGE" git /repo --redact
+      )
+      ```
+
+- [ ] Check the repo settings (Actions secrets, environments, deploy keys)
+      and the issue and PR comments for secrets.
 - [ ] History is **not** rewritten (decided at #37 Gate 2: the personal
       author email stays in old commits). `git config user.email` is the
       GitHub noreply address. `.claude.zip` is untracked.
@@ -273,7 +307,7 @@ mosherw-sync-system-react-$V.tgz"
   case "$NPM_TOKEN" in npm_*) ;; *) echo 'not an npm granular token'; exit 1 ;; esac
   printf '//registry.npmjs.org/:_authToken=%s\n' "$NPM_TOKEN" | docker exec -i "$C" sh -c 'umask 077 && cat > /root/.npmrc'
   unset NPM_TOKEN
-  [ "$(docker exec "$C" npm whoami)" = mosherw ] || { echo 'npm whoami is not mosherw'; exit 1; }
+  [ "$(docker exec "$C" npm whoami)" = moshe-winberg ] || { echo 'npm whoami is not moshe-winberg'; exit 1; }
 
   publish () { # $1 package name, $2 tarball file name; a re-run skips what is already there
     if docker exec "$C" npm view "$1@$V" version >/dev/null 2>&1; then echo "$1@$V already published, skipped"; return 0; fi
@@ -359,8 +393,8 @@ export IMG="$(mktemp -d)"
 
 Create two tokens, each with the shortest expiry offered: a GitHub
 **classic** personal access token with only `write:packages`, and a Docker
-Hub personal access token limited to the `mosherw/sync-system-server`
-repository if offered (else "Read & Write"). Then push. The registry logins
+Hub personal access token with "Read & Write" (not "Read, Write &
+Delete"). Then push. The registry logins
 use a temporary `DOCKER_CONFIG`, and the `trap` is set before the first
 login so both logouts and the removal of the config run on every exit:
 
@@ -378,18 +412,18 @@ login so both logouts and the removal of the config run on every exit:
   printf '%s' "$T" | docker login ghcr.io -u mosherw --password-stdin
   unset T
   read -rs -p 'Docker Hub token: ' T; echo
-  printf '%s' "$T" | docker login docker.io -u mosherw --password-stdin
+  printf '%s' "$T" | docker login docker.io -u moshewin --password-stdin
   unset T
   docker buildx build --platform linux/amd64,linux/arm64 --push \
     -f "$D/src/apps/sync-server/Dockerfile" \
     --label "org.opencontainers.image.version=$V" --label "org.opencontainers.image.revision=$M" \
     -t "ghcr.io/mosherw/sync-system-server:$V" -t "ghcr.io/mosherw/sync-system-server:$MAJOR.$MINOR" \
     -t "ghcr.io/mosherw/sync-system-server:$MAJOR" -t ghcr.io/mosherw/sync-system-server:latest \
-    -t "docker.io/mosherw/sync-system-server:$V" -t "docker.io/mosherw/sync-system-server:$MAJOR.$MINOR" \
-    -t "docker.io/mosherw/sync-system-server:$MAJOR" -t docker.io/mosherw/sync-system-server:latest \
+    -t "docker.io/moshewin/sync-system-server:$V" -t "docker.io/moshewin/sync-system-server:$MAJOR.$MINOR" \
+    -t "docker.io/moshewin/sync-system-server:$MAJOR" -t docker.io/moshewin/sync-system-server:latest \
     "$D/src"
   docker buildx imagetools inspect "ghcr.io/mosherw/sync-system-server:$V"
-  docker buildx imagetools inspect "docker.io/mosherw/sync-system-server:$V"
+  docker buildx imagetools inspect "docker.io/moshewin/sync-system-server:$V"
 )
 ```
 

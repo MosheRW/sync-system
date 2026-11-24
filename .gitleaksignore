@@ -1,0 +1,25 @@
+# Reviewed gitleaks false positives, one fingerprint per finding
+# (<commit>:<file>:<rule>:<line>). Policy: docs/decisions/0022-secret-scan-suppressions.md.
+# Only rule generic-api-key, only files under a test/ directory or the jwt.ts
+# header line; apps/sync-server/test/release-files.test.ts enforces this.
+# Never put a secret value in this file.
+
+# Public JWT header constant: base64url of {"alg":"HS256","typ":"JWT"}
+09c7cacfc5432e2293a101649d0e40e009aa52f6:apps/sync-server/src/tokens/jwt.ts:generic-api-key:10
+
+# Test fixtures (test-only values, checked by hand at #65)
+1119d8e1f6919094852ddcfa75c3141afb0913f2:apps/sync-server/test/main-redis.redis.test.ts:generic-api-key:11
+1119d8e1f6919094852ddcfa75c3141afb0913f2:apps/sync-server/test/main-redis.redis.test.ts:generic-api-key:39
+2b568db042d5c68f3ead74fafc319211acd5c3f6:apps/sync-server/test/main.test.ts:generic-api-key:13
+424ea82b134cbe27ad7dd13a992aa69ae72f044f:packages/client/test/ssr-import.test.ts:generic-api-key:70
+445aab3742a8d3c0cd0535341e0d3eca39fa3224:apps/sync-server/test/restart-process.int.test.ts:generic-api-key:12
+a84b9fd333203531d042387366a59ce042e76285:apps/sync-server/test/config-cases.ts:generic-api-key:21
+ab49e772807b7b83b96ad36745c9b054ce09d6bd:packages/client/test/integration/ws-safety.int.test.ts:generic-api-key:50
+ab49e772807b7b83b96ad36745c9b054ce09d6bd:packages/client/test/integration/ws-safety.int.test.ts:generic-api-key:71
+ac7f8f98f8b22081e606616e14442b4f2ac90fd1:apps/sync-server/test/privacy.int.test.ts:generic-api-key:17
+b21afe95ce9274d36a8f813b79ba1a009ac7ea58:apps/sync-server/test/apps-config.test.ts:generic-api-key:11
+b21afe95ce9274d36a8f813b79ba1a009ac7ea58:apps/sync-server/test/apps-config.test.ts:generic-api-key:12
+b9fd00a13d628451d6b20fd1e756743d131a3e4e:apps/sync-server/test/multi-process.redis.test.ts:generic-api-key:14
+e2522ada1c463ded5aca4db76600dcbf1b498ea6:apps/sync-server/test/load.test.ts:generic-api-key:17
+e2522ada1c463ded5aca4db76600dcbf1b498ea6:apps/sync-server/test/load.test.ts:generic-api-key:18
+ee1859dab9fd304bcb0bf16b4f10e8164d3882c9:apps/sync-server/test/main.test.ts:generic-api-key:16

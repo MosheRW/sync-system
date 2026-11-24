@@ -1,6 +1,6 @@
 # State: #63 chore(release): close remaining pnpmfile routes in pack:check guard
 - Path: fast
-- Phase: ready-to-merge
+- Phase: merged
 - Branch: chore/63-pnpmfile-routes
 - PR: #64
 - Plan approved by user: yes (Gate 2, 2026-11-24: ADR 0021 option C)

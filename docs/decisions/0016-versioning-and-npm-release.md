@@ -4,6 +4,7 @@
   recommended and E2 instead of the recommended E1)
 - Date: 2026-11-23
 - Issue: #37
+- Amended by: #65 (the npm user in the `npm whoami` check, 2026-11-24)
 
 ## Context
 
@@ -146,7 +147,8 @@ as in CI. The options differ in how npm authenticates.
      environment variable of a container (so
      never in `docker inspect`), never a file on the host, never in shell
      history and never in the build container. `npm whoami` must print
-     `mosherw` before the first publish.
+     the maintainer's npm user `moshe-winberg` (an owner of the npm org
+     `mosherw`) before the first publish.
 
    - After the publish: `npm logout` and `rm -f /root/.npmrc` in the
      container, the container is removed, and the maintainer **revokes
@@ -239,3 +241,14 @@ user's choice over the recommended E1).
   replaces the E2 token, documented in `RELEASING.md`.
 - A new root dev dependency (`@changesets/cli` and its tree) must pass
   `pnpm audit --audit-level=high`.
+
+## Amendment (#65, 2026-11-24)
+
+E2 said `npm whoami` must print `mosherw`. `mosherw` is the npm
+organization that owns the `@mosherw` scope; a granular token belongs to a
+user, so `npm whoami` prints the maintainer's user `moshe-winberg`, an
+owner of that org. The check in `RELEASING.md` step 4 now compares against
+`moshe-winberg`, which still refuses a token from any other account.
+Step 4 does not call `npm org ls` (the token keeps "Organizations: no
+access"); org ownership is checked once in step 0 with
+`npm org ls mosherw`. The decision (A1, B1, C1, D1, E2, F1) is unchanged.
