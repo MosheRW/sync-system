@@ -2,7 +2,7 @@
 - Path: fast
 - Phase: architecture
 - Branch: fix/42-successor-liveness
-- PR: none
+- PR: #74
 - Plan approved by user: no
 - Security-sensitive: yes (touches control C12: liveness feeding leadership hints)
 - Review rounds: 0
