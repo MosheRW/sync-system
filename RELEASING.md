@@ -31,9 +31,30 @@ that holds a credential runs no project code. Three places:
   block is one `( set -euo pipefail; ... )` subshell, so its `trap ... EXIT`
   cleanup runs when the block ends (or fails), not when the terminal closes.
   Never turn on shell tracing (`-x`) in a block: it would print the token.
-- The container images are pinned by digest. To bump deliberately:
-  `docker buildx imagetools inspect node:24` and replace the digest in every
-  block (and in this file's dry run).
+- The container images are pinned by digest. Bump the Node image only on
+  purpose, like this ([ADR 0020](docs/decisions/0020-deterministic-packed-manifests.md)):
+  - Make the bump its own PR, reviewed by a second person (or a second
+    session) who re-runs the checks below.
+  - Run `docker buildx imagetools inspect docker.io/library/node:24` (or the
+    exact `24.x.y` tag). It must show the new index digest from the
+    official `library/node` repository, the index must have
+    `attestation-manifest` entries, and `--format '{{json .Provenance}}'`
+    must show the Docker Official Images build.
+  - `node --version` in a container of the new digest must be listed in
+    `https://nodejs.org/dist/index.json` and must not be older than the
+    current pin.
+  - Replace the digest in every block (and in this file's dry run). Record
+    the old and new index digests and the `linux/amd64` manifest digest in
+    the PR.
+  - Run the [dry run](#dry-run-qa)'s step 2 block (`MODE=dry-run`) **twice**
+    on the new digest, each run on its own (nothing else heavy on the machine). Step 2 deletes
+    `$REL/out`, so save the first file before the second run with
+    `cp "$REL/out/INTEGRITY.txt" "$REL/integrity-run1.txt"`, then
+    `diff "$REL/integrity-run1.txt" "$REL/out/INTEGRITY.txt"` must print
+    nothing. The two runs must be identical. Their values are the new
+    baseline; record them in the PR. Never compare them with the old
+    digest's values: a new image can ship a different zlib (see
+    [Known limits](#known-limits)).
 
 ```sh
 # the Node 24 image, pinned by digest (bump deliberately, see above)
@@ -476,3 +497,16 @@ export REF="$(git rev-parse --abbrev-ref HEAD)" M="$(git rev-parse HEAD)" MODE=d
   publishing (OIDC) with `--provenance` from a workflow replaces the step 3
   token; `docker/build-push-action` with provenance and SBOM attestations
   replaces step 6's push. The checks (`pack:check`, `smoke`) stay the same.
+- The tarball integrity values are identical across pack runs of the same
+  commit in the pinned image on a linux/amd64 Docker engine (tag names that
+  resolve to the same linux/amd64 manifest give the same bytes). This holds
+  because `pack:check` refuses a published package with two `workspace:`
+  ranges in one dependency map (pnpm 10 writes those keys in the order its
+  disk reads finish, which made react's value flip between runs) and
+  refuses any pnpmfile. A build on another host OS (the gzip header's OS
+  byte) or in a new image digest (Node's bundled zlib) still gives
+  different values for all three tarballs, while their content stays the
+  same. The integrity check itself stays within one build: step 4
+  recomputes the values from the same files that step 2 hashed. Identity
+  across runs is a property, used for the post-bump baseline, not the check
+  ([ADR 0020](docs/decisions/0020-deterministic-packed-manifests.md), #53).

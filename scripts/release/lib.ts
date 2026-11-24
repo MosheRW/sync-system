@@ -82,6 +82,67 @@ export function checkPublishableSet(packages: readonly WorkspacePackage[]): stri
   return problems;
 }
 
+/**
+ * #53, ADR 0020 (R2): at most one `workspace:` range per dependency map in each
+ * published package's source manifest. pnpm 10 converts those ranges with a
+ * disk read each and inserts the keys in completion order, so two or more in
+ * one map give a racy key order in the packed package.json. Counts every value
+ * that contains `workspace:` (pnpm's peer converter uses `includes`, so
+ * `"^1 || workspace:^"` counts). Fails closed: a missing published package or
+ * a dependency field that is not a plain object is a problem too.
+ */
+export function checkWorkspaceRanges(packages: readonly WorkspacePackage[]): string[] {
+  const problems: string[] = [];
+  for (const pkg of PUBLISHED) {
+    const found = packages.find((p) => p.dir === pkg.dir);
+    if (found === undefined) {
+      problems.push(`${pkg.dir}: published package not found`);
+      continue;
+    }
+    if (found.manifest.name !== pkg.name) {
+      problems.push(`${pkg.dir}: name is ${String(found.manifest.name)}, expected ${pkg.name}`);
+    }
+    for (const key of DEPENDENCY_FIELDS) {
+      const deps = found.manifest[key];
+      if (deps === undefined) continue;
+      if (typeof deps !== 'object' || deps === null || Array.isArray(deps)) {
+        problems.push(`${pkg.dir}: ${key} is not an object`);
+        continue;
+      }
+      const names = Object.entries(deps as Record<string, unknown>)
+        .filter(([, range]) => String(range).includes('workspace:'))
+        .map(([name]) => name);
+      if (names.length >= 2) {
+        problems.push(
+          `${pkg.dir}: ${key} has ${names.length} workspace: ranges (${names.join(', ')}); ` +
+            'pnpm 10 packs them in a racy order (#53, ADR 0020)',
+        );
+      }
+    }
+  }
+  return problems;
+}
+
+/** Settings that make pnpm load a pnpmfile (compared case-insensitively). */
+const PNPMFILE_ENV = ['npm_config_pnpmfile', 'npm_config_global_pnpmfile'];
+
+/**
+ * #53, ADR 0020 (L4, R7): no pnpmfile. Its `beforePacking` hook could rewrite
+ * the packed package.json after every source-level check.
+ */
+export function checkNoPnpmfile(root: string, env: NodeJS.ProcessEnv): string[] {
+  const problems: string[] = [];
+  if (existsSync(join(root, '.pnpmfile.cjs'))) {
+    problems.push('.pnpmfile.cjs exists at the repo root; no pnpmfile is allowed (#53, ADR 0020)');
+  }
+  for (const name of Object.keys(env)) {
+    if (PNPMFILE_ENV.includes(name.toLowerCase()) && env[name] !== undefined) {
+      problems.push(`${name} is set; no pnpmfile is allowed (#53, ADR 0020)`);
+    }
+  }
+  return problems;
+}
+
 /** The file name `pnpm pack` gives a package: `@scope/name` 1.2.3 -> `scope-name-1.2.3.tgz`. */
 export function tarballName(name: string, version: string): string {
   return `${name.replace(/^@/, '').replace('/', '-')}-${version}.tgz`;

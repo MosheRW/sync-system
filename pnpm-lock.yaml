@@ -169,9 +169,6 @@ importers:
         specifier: workspace:*
         version: link:../client
     devDependencies:
-      '@mosherw/sync-system-protocol':
-        specifier: workspace:*
-        version: link:../protocol
       '@mosherw/sync-system-server':
         specifier: workspace:*
         version: link:../../apps/sync-server

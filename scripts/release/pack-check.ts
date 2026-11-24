@@ -1,8 +1,10 @@
-// pnpm pack:check [--out <dir>] (#37 AC50, C4, C10, L10).
+// pnpm pack:check [--out <dir>] (#37 AC50, C4, C10, L10; #53 R1, R2, L4).
 // Packs the three published packages and checks each tarball: contents on the
 // allow-list, a public-ready package.json, one shared version. Before packing
-// it checks the publishable set. With --out <dir> (created empty, must not
-// hold anything) it keeps the checked tarballs there and writes
+// it checks the publishable set, at most one workspace: range per dependency
+// map of each published package, and that no pnpmfile is in play (#53,
+// ADR 0020); any problem stops it before packing. With --out <dir> (created
+// empty, must not hold anything) it keeps the checked tarballs there and writes
 // <dir>/INTEGRITY.txt, one `<file> sha512-<base64>` line per tarball in
 // publish order. These kept tarballs are the only bytes a release publishes.
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
@@ -12,11 +14,14 @@ import {
   PUBLISHED,
   checkEntries,
   checkManifest,
+  checkNoPnpmfile,
   checkPublishableSet,
   checkSameVersion,
+  checkWorkspaceRanges,
   integrityLine,
   packAll,
   readTarball,
+  repoRoot,
   workspacePackages,
   type Manifest,
 } from './lib.ts';
@@ -28,7 +33,12 @@ export interface PackCheckResult {
 
 /** Packs into `dir` and checks every tarball. */
 export function packAndCheck(dir: string): PackCheckResult {
-  const problems = checkPublishableSet(workspacePackages());
+  const packages = workspacePackages();
+  const problems = [
+    ...checkPublishableSet(packages),
+    ...checkWorkspaceRanges(packages),
+    ...checkNoPnpmfile(repoRoot, process.env),
+  ];
   if (problems.length > 0) return { problems, integrity: [] };
   const files = packAll(dir);
   const manifests: Manifest[] = [];
