@@ -85,12 +85,16 @@ export REL="$(mktemp -d)"      # outside the repo: bundle and checked tarballs
 
 Do all of this **before** the repository is made public:
 
-- [ ] npm: `npm whoami` prints `mosherw`, and the account owns the scope
-      (`npm access list packages @mosherw`). Account 2FA is on for
-      **"Authorization and writes"** (a security key if available, else
-      TOTP), recovery codes are stored offline, and the account's Access
-      Tokens page lists **no** token (no classic and no older granular
-      tokens).
+- [ ] npm: signed in on the host for these checks only, `npm whoami`
+      prints **your** npm user `moshe-winberg` (`mosherw` is the npm
+      organization that owns the scope, not a user),
+      `npm org ls mosherw` lists `moshe-winberg` as `owner`, and
+      `npm access list packages @mosherw` shows the scope's packages.
+      Account 2FA is on for **"Authorization and writes"** (a security key
+      if available, else TOTP) and recovery codes are stored offline.
+      End the checks with `npm logout`, then check that the account's
+      Access Tokens page lists **no** token (no classic, no older granular
+      tokens and no session left by these checks).
 - [ ] Docker Hub: `moshewin` is your Docker Hub **username** (Account
       settings), not an organization; step 6 logs in with `-u moshewin`.
       The public repository `moshewin/sync-system-server` exists under that
@@ -276,7 +280,7 @@ mosherw-sync-system-react-$V.tgz"
   case "$NPM_TOKEN" in npm_*) ;; *) echo 'not an npm granular token'; exit 1 ;; esac
   printf '//registry.npmjs.org/:_authToken=%s\n' "$NPM_TOKEN" | docker exec -i "$C" sh -c 'umask 077 && cat > /root/.npmrc'
   unset NPM_TOKEN
-  [ "$(docker exec "$C" npm whoami)" = mosherw ] || { echo 'npm whoami is not mosherw'; exit 1; }
+  [ "$(docker exec "$C" npm whoami)" = moshe-winberg ] || { echo 'npm whoami is not moshe-winberg'; exit 1; }
 
   publish () { # $1 package name, $2 tarball file name; a re-run skips what is already there
     if docker exec "$C" npm view "$1@$V" version >/dev/null 2>&1; then echo "$1@$V already published, skipped"; return 0; fi
