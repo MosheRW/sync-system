@@ -746,6 +746,31 @@ describe('packing ignores every pnpmfile route (#63, ADR 0021, R3)', { skip: ski
     assert.ok(PNPM, 'pnpm not found; the route test must run in CI');
   });
 
+  // #67: both halves of every case resolve pnpm exactly like this (fixture
+  // cwd, scrubbed env). A different pnpm fails here with one clear message
+  // instead of a dozen confusing positive-control failures below.
+  it('runs the pinned pnpm in the fixtures (#67)', () => {
+    assert.ok(PNPM, 'pnpm not found');
+    const pinned = pinnedPackageManager().slice('pnpm@'.length).split('+')[0];
+    const base = mkdtempSync(join(tmpdir(), 'sync-pnpmfile-version-'));
+    try {
+      const { pkgDir, env } = buildFixture(base, {
+        name: 'pnpm version',
+        label: 'version',
+        setup: () => ({}),
+      });
+      const actual = run(PNPM, ['--version'], pkgDir, env).trim();
+      assert.equal(
+        actual,
+        pinned,
+        `pnpm ${actual} runs the route fixtures, but the repo pins ${pinned} (packageManager); ` +
+          'run through `pnpm test`, or `corepack enable` so the shim honours the fixture packageManager',
+      );
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
   for (const route of ROUTES) {
     it(route.name, () => {
       assert.ok(PNPM, 'pnpm not found');
