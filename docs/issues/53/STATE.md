@@ -1,12 +1,12 @@
 # State: #53 chore(release): investigate react tarball hash differences across node:24 images
 - Path: fast
-- Phase: validation-ready
+- Phase: validation
 - Branch: chore/53-react-tarball-hash
 - PR: #62
 - Plan approved by user: yes (revised Gate 2, 2026-11-24: ADR 0020 option D1 with controls R1–R7, L1–L4)
 - Security-sensitive: yes (revised plan: release tooling pack:check, lockfile, published react manifest, pin-bump procedure)
 - Review rounds: 2
-- Last updated by: engineer
+- Last updated by: qa
 ## Model log
 - pm groom: sonnet (default) → DONE
 - architect plan: opus (NEXT_MODEL) → DONE
@@ -15,6 +15,7 @@
 - architect revise: opus (rule: failed once) → DONE
 - security plan r1 (revised plan): opus (rule) → PASS
 - engineer fix r1: opus (rule: fix round) → DONE
+- qa review r2: opus (rule: round 2) → PASS (40/40 identical pack:check values per package in the pinned image; negative checks fail closed; lockfile diff is the 3-line removal; 3/3 AC met; https://github.com/MosheRW/sync-system/pull/62#issuecomment-7125610848)
 ## Open questions
 - none
 ## Deviations from plan
