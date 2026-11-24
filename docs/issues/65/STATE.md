@@ -2,7 +2,7 @@
 - Path: fast
 - Phase: architecture
 - Branch: fix/65-release-namespace-gitleaks
-- PR: none
+- PR: #66
 - Plan approved by user: no
 - Security-sensitive: yes
 - Review rounds: 0
