@@ -10,8 +10,8 @@ During QA of #65 (PR #66), `node --test scripts/release/*.test.ts` passed 91 of 
 ## Acceptance criteria
 - [ ] The cause of the 12 failures is identified and recorded in the PR (environment difference vs real bug in the tests or in `pack-check.ts`), with the failing test names and the first error message.
 - [ ] The fix is made in the test or code (or the test's assumptions about its environment are made explicit and hold in the container); no test is deleted or skipped to get green.
-- [ ] `node --test scripts/release/*.test.ts` passes 103 of 103 in the CI container (pinned `node:24`, repo copied in including `.git`, no bind mounts, `CI=true`).
-- [ ] The same command still passes 103 of 103 on the developer host.
+- [ ] `node --test scripts/release/*.test.ts` passes 104 of 104 in the CI container (pinned `node:24`, repo copied in including `.git`, no bind mounts, `CI=true`).
+- [ ] On the developer host (Windows), a full pass through `pnpm test` counts as passing 104 of 104; bare `node --test` on Windows keeps skipping the two pnpm suites, as #63 designed.
 - [ ] If the cause is an environment difference, the difference is documented where the release procedure or tests rely on it, and the test fails with a clear message when it is missing.
 - [ ] `pnpm lint`, `pnpm typecheck` and `pnpm test` still pass.
 - [ ] The guard behaviour that #63 and ADR 0021 intend (pnpmfile routes cannot alter the packed tarballs) is not weakened; a mutation check shows the pnpmfile tests still fail when the guard is removed.
