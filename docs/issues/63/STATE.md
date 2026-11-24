@@ -1,15 +1,16 @@
 # State: #63 chore(release): close remaining pnpmfile routes in pack:check guard
 - Path: fast
-- Phase: grooming
+- Phase: architecture
 - Branch: chore/63-pnpmfile-routes
 - PR: none
 - Plan approved by user: no
 - Security-sensitive: yes (release integrity)
 - Review rounds: 0
-- Last updated by: pm
+- Last updated by: architect
 ## Model log
 - pm spec: sonnet (default) → DONE
+- architect plan: opus (default + NEXT_MODEL) → DONE
 ## Open questions
-- `--ignore-pnpmfile` vs extending the guard (architect to decide; verify pnpm 10.28.0 support).
+- Gate 2: ADR 0021 option A / B / C (recommended C: pack with `--config.ignore-pnpmfile=true` + dash-normalised env guard). `pnpm pack --ignore-pnpmfile` is rejected by pnpm 10.28.0; the `--config.` form works (evidence in architecture.md).
 ## Deviations from plan
 - none
