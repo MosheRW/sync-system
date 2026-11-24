@@ -1,9 +1,11 @@
 // Unit tests of the pure release checks (#37 AC50, AC51, C4, C6, C10, L10;
-// #53 ADR 0020 R2, L4; #63 ADR 0021 R1, R2).
+// #53 ADR 0020 R2, L4; #63 ADR 0021 R1, R2), and the pnpmfile route
+// integration test (#63 R3, R4).
 // Run with Node's built-in runner: node --test "scripts/release/*.test.ts".
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
@@ -17,8 +19,11 @@ import {
   checkWorkspaceRanges,
   integrityLine,
   PACK_ARGS,
+  packOne,
+  pnpmCommand,
   readTarball,
   repoRoot,
+  run,
   tarballName,
   workspacePackages,
   type Manifest,
@@ -471,4 +476,268 @@ describe('smoke helpers (C6)', () => {
       'a',
     ]);
   });
+});
+
+// ---------------------------------------------------------------------------
+// #63, ADR 0021 (R3, R4): every route by which pnpm 10 loads a pnpmfile. Each
+// case packs one throwaway workspace twice: plain `pnpm pack` first (the hook
+// must apply, which proves the route is live), then the production `packOne`
+// (the hook must not apply). A pnpm upgrade that drops or renames
+// `ignore-pnpmfile` fails the second half. No network: no packageManager
+// field, no dependencies, and config dependencies are pre-placed so pnpm
+// skips the fetch.
+
+const FIXTURE_NAME = '@x/a';
+const FIXTURE_TARBALL = tarballName(FIXTURE_NAME, '1.0.0');
+
+/** pnpm through the same lookup the release scripts use; undefined if absent. */
+function findPnpm(): ReturnType<typeof pnpmCommand> | undefined {
+  try {
+    const pnpm = pnpmCommand();
+    execFileSync(pnpm.file, [...pnpm.prefix, '--version'], { stdio: 'ignore' });
+    return pnpm;
+  } catch {
+    return undefined;
+  }
+}
+
+const PNPM = findPnpm();
+
+/** R3: the inherited env without anything that names or disables a pnpmfile. */
+function scrubbedEnv(extra: Record<string, string>): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (/pnpmfile|userconfig|globalconfig/i.test(key) || key === 'XDG_CONFIG_HOME') continue;
+    env[key] = value;
+  }
+  return { ...env, ...extra };
+}
+
+/** A hook that appends `label` to `hookedBy` in the packed package.json. */
+function hookSource(label: string): string {
+  return [
+    'module.exports = {',
+    '  hooks: {',
+    '    beforePacking(pkg) {',
+    `      pkg.hookedBy = (pkg.hookedBy || []).concat(${JSON.stringify(label)});`,
+    '      return pkg;',
+    '    },',
+    '  },',
+    '};',
+    '',
+  ].join('\n');
+}
+
+/** Forward slashes, so a Windows path reads the same in .npmrc and YAML. */
+function slashed(path: string): string {
+  return path.replaceAll('\\', '/');
+}
+
+interface Fixture {
+  /** The workspace root. */
+  root: string;
+  /** A scratch directory outside the workspace root. */
+  outside: string;
+  /** Writes a hook file outside the workspace root and returns its path. */
+  hook(label: string): string;
+  /** Writes a file relative to the workspace root. */
+  write(path: string, text: string): void;
+  rootManifest: Record<string, unknown>;
+  workspaceYaml: string[];
+}
+
+interface RouteCase {
+  name: string;
+  label: string;
+  /** Sets the route up; returns the case's own env keys. */
+  setup(fixture: Fixture): Record<string, string>;
+}
+
+/** Places a config-dependency plugin so pnpm loads its pnpmfile.cjs offline. */
+function plugin(fixture: Fixture, name: string, label: string): string {
+  const dir = join(fixture.root, 'node_modules', '.pnpm-config', ...name.split('/'));
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'package.json'), JSON.stringify({ name, version: '1.0.0' }));
+  writeFileSync(join(dir, 'pnpmfile.cjs'), hookSource(label));
+  // With the directory in place pnpm checks only name and version (no fetch).
+  return `1.0.0+sha512-${Buffer.alloc(64).toString('base64')}`;
+}
+
+/** An rc file outside the workspace that sets `pnpmfile`. */
+function rcFile(fixture: Fixture, path: string, label: string): string {
+  const file = join(fixture.outside, path);
+  mkdirSync(join(file, '..'), { recursive: true });
+  writeFileSync(file, `pnpmfile=${slashed(fixture.hook(label))}\n`);
+  return file;
+}
+
+const ROUTES: RouteCase[] = [
+  {
+    name: 'root .pnpmfile.cjs',
+    label: 'root',
+    setup: (f) => {
+      f.write('.pnpmfile.cjs', hookSource('root'));
+      return {};
+    },
+  },
+  {
+    name: '.npmrc pnpmfile',
+    label: 'npmrc',
+    setup: (f) => {
+      f.write('.npmrc', `pnpmfile=${slashed(f.hook('npmrc'))}\n`);
+      return {};
+    },
+  },
+  {
+    name: '.npmrc global-pnpmfile',
+    label: 'npmrc-global',
+    setup: (f) => {
+      f.write('.npmrc', `global-pnpmfile=${slashed(f.hook('npmrc-global'))}\n`);
+      return {};
+    },
+  },
+  {
+    name: 'pnpm-workspace.yaml pnpmfile',
+    label: 'yaml',
+    setup: (f) => {
+      f.workspaceYaml.push(`pnpmfile: ${JSON.stringify(slashed(f.hook('yaml')))}`);
+      return {};
+    },
+  },
+  {
+    name: 'pnpm-workspace.yaml globalPnpmfile',
+    label: 'yaml-global',
+    setup: (f) => {
+      f.workspaceYaml.push(`globalPnpmfile: ${JSON.stringify(slashed(f.hook('yaml-global')))}`);
+      return {};
+    },
+  },
+  {
+    name: 'pnpm-workspace.yaml configDependencies pnpm-plugin-*',
+    label: 'plugin',
+    setup: (f) => {
+      const spec = plugin(f, 'pnpm-plugin-evil', 'plugin');
+      f.workspaceYaml.push('configDependencies:', `  pnpm-plugin-evil: ${JSON.stringify(spec)}`);
+      return {};
+    },
+  },
+  {
+    name: 'pnpm-workspace.yaml configDependencies @pnpm/plugin-*',
+    label: 'scoped-plugin',
+    setup: (f) => {
+      const spec = plugin(f, '@pnpm/plugin-evil', 'scoped-plugin');
+      f.workspaceYaml.push('configDependencies:', `  '@pnpm/plugin-evil': ${JSON.stringify(spec)}`);
+      return {};
+    },
+  },
+  {
+    name: 'package.json pnpm.configDependencies pnpm-plugin-*',
+    label: 'manifest-plugin',
+    setup: (f) => {
+      const spec = plugin(f, 'pnpm-plugin-evil', 'manifest-plugin');
+      f.rootManifest['pnpm'] = { configDependencies: { 'pnpm-plugin-evil': spec } };
+      return {};
+    },
+  },
+  {
+    name: 'env npm_config_global-pnpmfile (dashed)',
+    label: 'env-dashed',
+    setup: (f) => ({ 'npm_config_global-pnpmfile': f.hook('env-dashed') }),
+  },
+  {
+    name: 'env npm_config_userconfig',
+    label: 'userconfig',
+    setup: (f) => ({ npm_config_userconfig: rcFile(f, 'user.rc', 'userconfig') }),
+  },
+  {
+    name: 'env npm_config_globalconfig',
+    label: 'globalconfig',
+    setup: (f) => ({ npm_config_globalconfig: rcFile(f, 'global.rc', 'globalconfig') }),
+  },
+  {
+    name: 'env XDG_CONFIG_HOME pnpm/rc',
+    label: 'xdg',
+    setup: (f) => {
+      rcFile(f, join('xdg', 'pnpm', 'rc'), 'xdg');
+      return { XDG_CONFIG_HOME: join(f.outside, 'xdg') };
+    },
+  },
+];
+
+/** Builds the fixture for one case under `base`; returns the package dir and env. */
+function buildFixture(base: string, route: RouteCase): { pkgDir: string; env: NodeJS.ProcessEnv } {
+  const root = join(base, 'ws');
+  const outside = join(base, 'outside');
+  const pkgDir = join(root, 'packages', 'a');
+  mkdirSync(pkgDir, { recursive: true });
+  mkdirSync(join(outside, 'hooks'), { recursive: true });
+  const fixture: Fixture = {
+    root,
+    outside,
+    hook(label) {
+      const path = join(outside, 'hooks', `${label}.cjs`);
+      writeFileSync(path, hookSource(label));
+      return path;
+    },
+    write(path, text) {
+      writeFileSync(join(root, path), text);
+    },
+    rootManifest: { name: 'fixture-root', version: '0.0.0', private: true },
+    workspaceYaml: ['packages:', "  - 'packages/*'"],
+  };
+  const extra = route.setup(fixture);
+  writeFileSync(join(root, 'package.json'), JSON.stringify(fixture.rootManifest, null, 2));
+  writeFileSync(join(root, 'pnpm-workspace.yaml'), `${fixture.workspaceYaml.join('\n')}\n`);
+  writeFileSync(
+    join(pkgDir, 'package.json'),
+    JSON.stringify({ name: FIXTURE_NAME, version: '1.0.0', files: ['index.js'] }, null, 2),
+  );
+  writeFileSync(join(pkgDir, 'index.js'), 'export {};\n');
+  return { pkgDir, env: scrubbedEnv(extra) };
+}
+
+/** `hookedBy` of the packed package.json in `dir`. */
+function hookedBy(dir: string): unknown {
+  const entries = readTarball(readFileSync(join(dir, FIXTURE_TARBALL)));
+  const packed = entries.find((e) => e.path === 'package/package.json');
+  assert.ok(packed, 'packed package.json');
+  return (JSON.parse(packed.content.toString('utf8')) as Manifest)['hookedBy'];
+}
+
+// R4: skip only outside CI (for example a bare `node --test` on Windows).
+const skipRoutes =
+  PNPM === undefined && process.env['CI'] !== 'true'
+    ? 'pnpm not found; run through `pnpm test`'
+    : false;
+
+describe('packing ignores every pnpmfile route (#63, ADR 0021, R3)', { skip: skipRoutes }, () => {
+  it('finds pnpm (R4: fails instead of skipping with CI=true)', () => {
+    assert.ok(PNPM, 'pnpm not found; the route test must run in CI');
+  });
+
+  for (const route of ROUTES) {
+    it(route.name, () => {
+      assert.ok(PNPM, 'pnpm not found');
+      const base = mkdtempSync(join(tmpdir(), 'sync-pnpmfile-route-'));
+      try {
+        const { pkgDir, env } = buildFixture(base, route);
+        const plain = join(base, 'plain');
+        const guarded = join(base, 'guarded');
+        mkdirSync(plain);
+        mkdirSync(guarded);
+        // Positive control: the route is live, so plain `pnpm pack` applies the hook.
+        run(PNPM, ['pack', '--pack-destination', plain], pkgDir, env);
+        const control = hookedBy(plain);
+        assert.ok(
+          Array.isArray(control) && control.includes(route.label),
+          `positive control: expected ${route.label} in ${JSON.stringify(control)}`,
+        );
+        // Production: the same fixture packed through packOne gets no hook.
+        packOne(pkgDir, guarded, env);
+        assert.equal(hookedBy(guarded), undefined);
+      } finally {
+        rmSync(base, { recursive: true, force: true });
+      }
+    });
+  }
 });
