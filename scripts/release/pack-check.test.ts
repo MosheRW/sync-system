@@ -640,6 +640,11 @@ const ROUTES: RouteCase[] = [
     },
   },
   {
+    name: 'env npm_config_pnpmfile',
+    label: 'env-plain',
+    setup: (f) => ({ npm_config_pnpmfile: f.hook('env-plain') }),
+  },
+  {
     name: 'env npm_config_global-pnpmfile (dashed)',
     label: 'env-dashed',
     setup: (f) => ({ 'npm_config_global-pnpmfile': f.hook('env-dashed') }),
