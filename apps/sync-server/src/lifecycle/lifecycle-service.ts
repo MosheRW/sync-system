@@ -16,7 +16,7 @@ import type { GroupTimers } from '../groups/group-timers.js';
 import type { Recipient, Target } from '../groups/recipients.js';
 import type { Session } from '../groups/session.js';
 import { type Logger, groupRef } from '../logging/logger.js';
-import { nextTerm, pickSuccessor } from './succession.js';
+import { nextTerm, pickSuccessor, successorCandidates } from './succession.js';
 
 const MINUTE_MS = 60_000;
 
@@ -37,6 +37,11 @@ export interface LifecycleHost {
   scheduleFrozenEnd(app: AppConfig, record: GroupRecord): Promise<void>;
   /** The participant attached as `pid`, if any. */
   sessionOf(record: GroupRecord, pid: string): Recipient | undefined;
+  /**
+   * `isOpen()` hints for `pids`; a remote cache miss is confirmed in Redis
+   * once (#42, security C12). A hint only: never grants anything by itself.
+   */
+  openOf(record: GroupRecord, pids: readonly string[]): Promise<ReadonlySet<string>>;
   /** A token for `pid` with the record's current claims (term, gct, lat). */
   issueToken(record: GroupRecord, pid: string, role: 'leader' | 'member'): string;
   /** The leader recovery state (#13 D13). */
@@ -317,17 +322,17 @@ export class LifecycleService {
    * group stays paused until the frozen bound, like frozen mode (AC21).
    */
   private async graceEnded(app: AppConfig, record: GroupRecord): Promise<void> {
-    const successor = pickSuccessor(record, (pid) => {
-      const session = this.host.sessionOf(record, pid);
-      return session !== undefined && session.isOpen();
-    });
-    if (record.handoff !== 'auto' || successor === undefined || record.pause === undefined) {
+    const noHandoff = (): void =>
       this.host.logger.info(
         { event: 'grace_ended', namespace: app.namespace, groupRef: groupRef(record.id) },
         'grace period ended without a handoff',
       );
-      return;
-    }
+    if (record.handoff !== 'auto' || record.pause === undefined) return noHandoff();
+    // A member on a peer that started after this instance's last heartbeat
+    // is confirmed in Redis, once for the whole pick (#42, security R2, R4).
+    const open = await this.host.openOf(record, successorCandidates(record));
+    const successor = pickSuccessor(record, (pid) => open.has(pid));
+    if (successor === undefined) return noHandoff();
     const reason = record.pause.cause === 'inactive' ? 'handoff_inactivity' : 'handoff_disconnect';
     await this.handoff(app, record, successor, reason);
   }
