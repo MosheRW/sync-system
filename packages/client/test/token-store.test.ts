@@ -638,6 +638,57 @@ describe('TokenStore: failed forgetAllGroups (#7 AC17, R5)', () => {
   });
 });
 
+describe('TokenStore: forget cut-off under clock changes (#9)', () => {
+  const C = groupIdOf('C');
+  const X = groupIdOf('X');
+  const Y = groupIdOf('Y');
+  const T = 10_000_000_000;
+  const T_S = Math.floor(T / 1000);
+  const TEN_MIN = 10 * 60_000;
+
+  /** Tab A's delete and fallback read both fail, then storage recovers. */
+  async function doublyFailedForget(tab: {
+    tokens: TokenStore;
+    fail: { get: boolean; remove: boolean };
+  }) {
+    tab.fail.get = true;
+    tab.fail.remove = true;
+    await tab.tokens.removeAll();
+    tab.fail.get = false;
+    tab.fail.remove = false;
+  }
+
+  it('never lowers the cut-off when the clock steps back between two failed forgets (AC1)', async () => {
+    vi.useFakeTimers({ now: T });
+    const area = sharedArea();
+    const tabA = area.tab();
+    const tabB = area.tab();
+    await tabB.tokens.saveToken(fakeToken({ gid: X, iat: T_S - 30, role: 'member' }));
+    await doublyFailedForget(tabA);
+    vi.setSystemTime(T - TEN_MIN);
+    await doublyFailedForget(tabA);
+    expect(await tabA.tokens.load()).toEqual([]);
+    await tabA.tokens.saveToken(fakeToken({ gid: C, role: 'member' }));
+    expect([...area.stored().keys()]).toEqual([C]);
+  });
+
+  it('raises the cut-off when the clock moves forward between two failed forgets (AC1)', async () => {
+    vi.useFakeTimers({ now: T });
+    const area = sharedArea();
+    const tabA = area.tab();
+    const tabB = area.tab();
+    await doublyFailedForget(tabA);
+    vi.setSystemTime(T + TEN_MIN);
+    await tabB.tokens.saveToken(fakeToken({ gid: X, iat: T_S + 300, role: 'member' }));
+    await doublyFailedForget(tabA);
+    const later = fakeToken({ gid: Y, iat: T_S + 3600, role: 'member' });
+    await tabB.tokens.saveToken(later);
+    expect((await tabA.tokens.load()).map((entry) => entry.token)).toEqual([later]);
+    await tabA.tokens.saveToken(fakeToken({ gid: C, role: 'member' }));
+    expect([...area.stored().keys()].sort()).toEqual([C, Y].sort());
+  });
+});
+
 describe('codes blob in recovery data (#10 AC32, R2, N1)', () => {
   const GID = groupIdOf('A');
   const blob = (n: number) => `eyJuIjo${n}fQ.${'B'.repeat(43)}`;

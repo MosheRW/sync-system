@@ -257,7 +257,8 @@ function serialize(entries: readonly StoredEntry[]): string {
  *   tabs stored that this store never saw get no mark. A cut-off (the `iat`
  *   second of the failed call) is kept instead: until a successful write,
  *   every successful read drops stored entries issued at or before it, so
- *   only tokens issued strictly later survive (#7 L-c).
+ *   only tokens issued strictly later survive (#7 L-c). A later failed call
+ *   only ever raises it, never lowers it (#9).
  */
 export class TokenStore {
   readonly #storage: TokenStorage;
@@ -278,7 +279,8 @@ export class TokenStore {
   /**
    * Set when `removeAll()` failed to delete and to read (#7 L-c): stored
    * entries with `iat` at or before it are dropped on read until a write
-   * succeeds.
+   * succeeds. The highest `iat` second of the failed calls; never lowered
+   * (#9).
    */
   #removeAllCutoff: number | undefined;
   #positionTimer: TimerHandle | undefined;
@@ -496,7 +498,10 @@ export class TokenStore {
         } else {
           // Groups other tabs stored that this store never saw cannot be
           // marked: drop what was issued up to now on the next read (#7 L-c).
-          this.#removeAllCutoff = Math.floor(now() / 1000);
+          // Never lowered, so a clock stepped back cannot undo an earlier
+          // failed call (#9).
+          const cutoff = Math.floor(now() / 1000);
+          this.#removeAllCutoff = Math.max(this.#removeAllCutoff ?? cutoff, cutoff);
         }
         const groups = new Set([
           ...this.#known.keys(),
