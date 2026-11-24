@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type TokenStorage, memoryStorage } from '../src/storage.js';
 import {
+  FORGET_CUTOFF_MARGIN_SECONDS,
   MAX_STORED_TOKENS,
   POSITION_SAVE_INTERVAL_MS,
   type Recovery,
@@ -627,7 +628,11 @@ describe('TokenStore: failed forgetAllGroups (#7 AC17, R5)', () => {
     tabA.fail.get = true;
     tabA.fail.remove = true;
     await tabA.tokens.removeAll();
-    const newer = fakeToken({ gid: X, iat: NOW_S + 5, role: 'member' });
+    const newer = fakeToken({
+      gid: X,
+      iat: NOW_S + FORGET_CUTOFF_MARGIN_SECONDS + 1,
+      role: 'member',
+    });
     await tabB.tokens.saveToken(newer);
     tabA.fail.get = false;
     tabA.fail.remove = false;
@@ -686,6 +691,65 @@ describe('TokenStore: forget cut-off under clock changes (#9)', () => {
     expect((await tabA.tokens.load()).map((entry) => entry.token)).toEqual([later]);
     await tabA.tokens.saveToken(fakeToken({ gid: C, role: 'member' }));
     expect([...area.stored().keys()].sort()).toEqual([C, Y].sort());
+  });
+
+  it('is a fixed 60 second integer margin', () => {
+    expect(FORGET_CUTOFF_MARGIN_SECONDS).toBe(60);
+  });
+
+  it('drops tokens issued up to the margin after the call, keeps later ones (AC2)', async () => {
+    vi.useFakeTimers({ now: T });
+    const area = sharedArea();
+    const tabA = area.tab();
+    const tabB = area.tab();
+    await doublyFailedForget(tabA);
+    // The server clock is ahead of this device: tab B gets later `iat`s.
+    const atCutoff = fakeToken({ gid: X, iat: T_S + FORGET_CUTOFF_MARGIN_SECONDS, role: 'member' });
+    const pastCutoff = fakeToken({
+      gid: Y,
+      iat: T_S + FORGET_CUTOFF_MARGIN_SECONDS + 1,
+      role: 'member',
+    });
+    await tabB.tokens.saveToken(atCutoff);
+    await tabB.tokens.saveToken(pastCutoff);
+    expect((await tabA.tokens.load()).map((entry) => entry.token)).toEqual([pastCutoff]);
+    await tabA.tokens.saveToken(fakeToken({ gid: C, role: 'member' }));
+    expect([...area.stored().keys()].sort()).toEqual([C, Y].sort());
+    expect(area.stored().get(Y)).toBe(pastCutoff);
+  });
+
+  it('never filters the tokens this tab stores itself after the call (AC2, C5)', async () => {
+    vi.useFakeTimers({ now: T });
+    const area = sharedArea();
+    const tabA = area.tab();
+    await doublyFailedForget(tabA);
+    const own = fakeToken({ gid: C, iat: T_S + 1, role: 'member' });
+    // The write fails, so the cut-off stays; the token is kept in memory.
+    tabA.fail.set = true;
+    await tabA.tokens.saveToken(own);
+    expect(tabA.tokens.find(C)?.token).toBe(own);
+    tabA.fail.set = false;
+    expect((await tabA.tokens.load()).map((entry) => entry.token)).toEqual([own]);
+    // Written once a write succeeds, which also clears the cut-off.
+    await tabA.tokens.saveToken(fakeToken({ gid: X, role: 'member' }));
+    expect(area.stored().get(C)).toBe(own);
+  });
+
+  it('a failed read with the clock moved forward does not move the cut-off (AC3, R5)', async () => {
+    vi.useFakeTimers({ now: T });
+    const area = sharedArea();
+    const tabA = area.tab();
+    const tabB = area.tab();
+    await doublyFailedForget(tabA);
+    vi.setSystemTime(T + TEN_MIN);
+    tabA.fail.get = true;
+    expect(await tabA.tokens.load()).toEqual([]);
+    tabA.fail.get = false;
+    const kept = fakeToken({ gid: Y, iat: T_S + FORGET_CUTOFF_MARGIN_SECONDS + 1, role: 'member' });
+    await tabB.tokens.saveToken(kept);
+    expect((await tabA.tokens.load()).map((entry) => entry.token)).toEqual([kept]);
+    await tabA.tokens.saveToken(fakeToken({ gid: C, role: 'member' }));
+    expect(area.stored().get(Y)).toBe(kept);
   });
 });
 
