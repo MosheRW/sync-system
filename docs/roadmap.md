@@ -35,6 +35,7 @@ Scope of items 7-9 is taken from the PRD ("Product 1: the reading app", "Deliver
 - #28 native-speaker review of the Hebrew strings (follow-up to #24): open. The 102 Hebrew strings added in 8b (#25) are in its scope, including the vice-leader term "סגן המוביל".
 - #32 `fix(server): offer take-back only after a handoff loss (follow-up to #25)` (security M1): done (PR #45 merged 2026-11-22 as 085700a; blocker for 9c).
 - #44 `fix(reader): escape control characters in echoed config values (follow-up to #36)` (security A1, low): open. The A2 finding (the truncated echo of non-secret values, Q24) is accepted, not a follow-up.
+- #69 `fix(release): check the pnpm version before packing (follow-up to #67)` (security L1, low): open.
 - #41 `fix(server): share join-attempt limits across instances through redis (follow-up to #35)` (security F22, Q-B6): open.
 - #42 `fix(server): treat a just-started instance as live when picking a successor (follow-up to #35)` (C12): open. A peer sees a new instance as live only after its next heartbeat, and the S4 `oldAttached` and successor pick read the live cache. Needs architect and security.
 - #47 `fix(storage): bound create-budget key TTL and batch expired live-group cleanup (follow-up to #12)` (security A1, A2; QA A3): open.
