@@ -12,7 +12,10 @@ import { parseMember } from './keys.js';
 import { CLAIM_DUE } from './scripts.js';
 import type { CommitPlan, PlanGroups, RedisContext, RedisWorkSource } from './unit-of-work.js';
 
-/** Due timers claimed by one poll at most. */
+/**
+ * Due timers claimed, and expired live-group members freed (#47), by one
+ * CLAIM_DUE call at most. A full batch of either runs the poll again.
+ */
 const CLAIM_BATCH = 64;
 
 type Fire = TimerFire;
@@ -186,9 +189,9 @@ export class RedisTimerBackend implements TimerBackend {
       this.again = false;
       if (this.stopped && this.interval === undefined && this.fire === undefined) return;
       if (this.ctx.link.state !== 'connected') return;
-      let claimed: number;
+      let result: { claimed: number; freed: number };
       try {
-        claimed = await this.claimDue();
+        result = await this.claimDue();
       } catch (err) {
         this.ctx.logger.warn(
           { event: 'timer_poll_failed', err: safeErr(err) },
@@ -196,12 +199,15 @@ export class RedisTimerBackend implements TimerBackend {
         );
         return;
       }
-      if (claimed >= CLAIM_BATCH) this.again = true;
+      if (result.claimed >= CLAIM_BATCH || result.freed >= CLAIM_BATCH) this.again = true;
     } while (this.again);
   }
 
-  /** Claims due timers with a lease and fires each. Returns how many were claimed. */
-  private async claimDue(): Promise<number> {
+  /**
+   * Claims due timers with a lease and fires each. Returns how many were
+   * claimed, and how many expired live-group members the call freed.
+   */
+  private async claimDue(): Promise<{ claimed: number; freed: number }> {
     const { keys } = this.ctx;
     const now = this.ctx.now();
     const leaseEnd = now + this.leaseMs;
@@ -211,7 +217,14 @@ export class RedisTimerBackend implements TimerBackend {
       [`${keys.base}:t:`, String(now), String(leaseEnd), String(CLAIM_BATCH), `${keys.base}:lg:`],
     );
     const items = Array.isArray(reply) ? (reply as unknown[]) : [];
-    for (let i = 0; i + 1 < items.length; i += 2) {
+    // `{freed, member, timerJson, ...}`: anything else (a script text
+    // mismatch) would shift every pair, so nothing of it is used (#47 L2).
+    const freed = Number(items[0]);
+    if (!Number.isSafeInteger(freed) || freed < 0 || items.length % 2 !== 1) {
+      this.ctx.logger.error({ event: 'timer_claim_invalid' }, 'timer claim reply is invalid');
+      return { claimed: 0, freed: 0 };
+    }
+    for (let i = 1; i + 1 < items.length; i += 2) {
       const member = String(items[i]);
       const parsed = parseMember(member);
       const timer = parseTimer(items[i + 1]);
@@ -225,7 +238,7 @@ export class RedisTimerBackend implements TimerBackend {
       this.ctx.logger.debug({ event: 'timer_claimed', kind }, 'timer claimed');
       this.fire?.(namespace, groupId, kind, timer.data, () => this.consume(parsed, leaseEnd));
     }
-    return items.length / 2;
+    return { claimed: (items.length - 1) / 2, freed };
   }
 
   /** In the handler's task: the timer is done unless the handler arms it again. */
