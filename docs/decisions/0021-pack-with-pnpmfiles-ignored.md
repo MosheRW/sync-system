@@ -1,6 +1,8 @@
 # 0021. Pack with pnpmfiles ignored
 
-- Status: Proposed
+- Status: Accepted (Gate 2, 2026-11-24: user chose the recommended C, with
+  security controls R1–R7 and advisories L1–L4 of
+  [`docs/issues/63/security.md`](../issues/63/security.md))
 - Date: 2026-11-24
 - Issue: #63
 - Amends: [0020](0020-deterministic-packed-manifests.md) (its "No pnpmfile"

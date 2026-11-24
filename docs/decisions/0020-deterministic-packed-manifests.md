@@ -6,6 +6,8 @@
 - Date: 2026-11-23
 - Issue: #53
 - Supersedes: [0019](0019-release-tarball-reproducibility.md)
+- Amended by: [0021](0021-pack-with-pnpmfiles-ignored.md) (the "No pnpmfile"
+  control: packing now ignores every pnpmfile)
 
 ## Context
 
