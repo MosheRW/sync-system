@@ -2,7 +2,7 @@
 - Path: fast
 - Phase: architecture
 - Branch: fix/44-reader-config-echo-escape
-- PR: none
+- PR: #70
 - Plan approved by user: no
 - Security-sensitive: no
 - Review rounds: 0
