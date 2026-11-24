@@ -73,9 +73,10 @@ describeRedis('RedisLiveGroups (#12 R5, R13, R14, AC2, AC3)', () => {
     expect(await inspect.client.pExpireTime(setKey())).toBe(setExpiry);
     const bucketTtl = await inspect.client.pTTL(bucketKey());
     expect(Number.isSafeInteger(bucketTtl)).toBe(true);
-    // max(time to full = 2 tokens at 1/s, u - now = 2 h).
+    // u - now + 1 ms (#47; u = the later group's end, 2 h), not
+    // max(time to full, u - now).
     expect(bucketTtl).toBeGreaterThan(2 * HOUR - 1_000);
-    expect(bucketTtl).toBeLessThanOrEqual(2 * HOUR);
+    expect(bucketTtl).toBeLessThanOrEqual(2 * HOUR + 1);
     expect(await inspect.client.hGetAll(bucketKey())).toMatchObject({ b: '10', r: '60' });
   });
 

@@ -123,10 +123,11 @@ export function bucketStep(
   const t = tokens - 1;
   const next: BucketState = { t, a: Math.max(at, now), r, b, u };
   // When the bucket expires it is full again and its strict values lapse.
-  const ttlMs = Math.max(
-    1,
-    Math.min(Math.ceil(Math.max(((b - t) * MINUTE_MS) / r, u - now)), MAX_RETRY_AFTER_MS),
-  );
+  // It ends 1 ms after u (#47), the same instant as RESERVE_LIVE's
+  // PEXPIREAT ceil(u) + 1: kept through now == u, where the group ending at
+  // u still counts, and gone before every group it charged has ended plus
+  // 1 ms. When burst > rate x L this is sooner than the time to full.
+  const ttlMs = Math.max(1, Math.min(Math.ceil(u - now) + 1, MAX_RETRY_AFTER_MS));
   return { ok: true, next, ttlMs };
 }
 
@@ -176,7 +177,10 @@ export class MemoryLiveGroups implements LiveGroupsStore {
   }
 
   private tidy(namespace: string, app: AppLive, now: number): void {
-    if (app.live.size === 0 && bucketIdle(app.bucket, now)) this.apps.delete(namespace);
+    // A bucket past bucketUntil is a missing one (as reserveNow reads it):
+    // the entry goes once the key would be gone in Redis (#47).
+    const bucket = now < app.bucketUntil ? app.bucket : undefined;
+    if (app.live.size === 0 && bucketIdle(bucket, now)) this.apps.delete(namespace);
   }
 
   reserve(namespace: string, groupId: string, budget: CreateBudget): Promise<ReserveResult> {

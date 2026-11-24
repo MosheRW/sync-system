@@ -62,10 +62,11 @@ describe('bucketStep (#12 3.1)', () => {
     });
   });
 
-  it('gives a TTL of max(time to full, u - now), as an integer (R14)', () => {
+  it('gives a TTL of u - now + 1 ms, as an integer (R14, #47)', () => {
     const step = bucketStep(undefined, T0, { expiresAt: T0 + 5_000, burst: 3, refillPerMinute: 7 });
-    // One token at 7/min: 8571.4 ms, rounded up.
-    expect(step).toMatchObject({ ok: true, ttlMs: 8_572 });
+    // Not the time to full (one token at 7/min: 8 572 ms): the bucket ends
+    // 1 ms after the app's latest group.
+    expect(step).toMatchObject({ ok: true, ttlMs: 5_001 });
     const long = bucketStep(undefined, T0, { expiresAt: T0 + 6e16, burst: 1, refillPerMinute: 1 });
     expect(long).toMatchObject({ ok: true, ttlMs: MAX_RETRY_AFTER_MS });
   });

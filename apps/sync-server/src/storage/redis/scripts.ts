@@ -453,7 +453,12 @@ return out
  * prune -> held member (no charge) -> `register` -> effective r/b/u and
  * refill -> rate refusal (no write) -> cap refusal (no charge) -> charge +
  * ZADD. Every number written to a command is an integer string (`%.0f`,
- * L8) or a `%.17g` score; float fields are stored with `%.17g`. Returns
+ * L8) or a `%.17g` score; float fields are stored with `%.17g`. The bucket
+ * expires at `ceil(u) + 1` (PEXPIREAT, clamped to [now + 1, now + 1e13];
+ * #47): never longer than the app's latest charged group plus 1 ms, and
+ * never before it, so a fresh full bucket never shares the live set with a
+ * group it charged (#12 H1). When `burst > rate x L`, the budget is full
+ * again sooner than the refill alone would make it. Returns
  * `{'ok', fresh}` (1 when the member was added, 0 when it was held),
  * `{'rate', ms}` or `{'cap'}`; `ms` is an integer (ceil, clamped to 1e13).
  */
@@ -532,8 +537,9 @@ if redis.call('ZCARD', set) >= cap then return {'cap'} end
 tokens = tokens - 1
 at = math.max(at, now)
 redis.call('HSET', bucket, 't', num(tokens), 'a', num(at), 'r', num(r), 'b', num(b), 'u', num(u))
-local ttl = math.min(math.ceil(math.max((b - tokens) * 60000 / r, u - now)), MAXT)
-redis.call('PEXPIRE', bucket, int(math.max(ttl, 1)))
+-- The bucket ends 1 ms after u (#47): absolute, from the same TIME as u,
+-- so it is present at every now <= ceil(u) whatever the expiry check.
+redis.call('PEXPIREAT', bucket, int(math.max(math.min(math.ceil(u) + 1, now + MAXT), now + 1)))
 redis.call('ZADD', set, num(score), member)
 extend_set()
 return {'ok', 1}
