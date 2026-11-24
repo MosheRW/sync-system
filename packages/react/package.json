@@ -46,7 +46,6 @@
     "react": "^18.3 || ^19"
   },
   "devDependencies": {
-    "@mosherw/sync-system-protocol": "workspace:*",
     "@mosherw/sync-system-server": "workspace:*",
     "@testing-library/dom": "^10.4.2",
     "@testing-library/react": "^16.3.3",
