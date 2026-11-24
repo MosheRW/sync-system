@@ -59,7 +59,14 @@ that holds a credential runs no project code. Three places:
 ```sh
 # the Node 24 image, pinned by digest (bump deliberately, see above)
 NODE_IMAGE='node:24@sha256:9d266751ca3d7fdbe651c878ffd5ad0a42fed49a18c283509267c97f025b7496'
+# the secret scanner for step 0, pinned by tag and digest
+GITLEAKS_IMAGE='zricethezav/gitleaks:v8.24.0@sha256:2bcceac45179b3a91bff11a824d0fb952585b429e54fc928728b1d4d5c3e5176'
 ```
+
+Bump the gitleaks image the same way, in its own reviewed PR:
+`docker buildx imagetools inspect zricethezav/gitleaks:<tag>` shows the new
+index digest, and the step 0 scan with the new reference still prints
+`no leaks found`.
 
 ## Phase A: the release PR
 
@@ -101,9 +108,29 @@ Do all of this **before** the repository is made public:
       account. The old Docker Hub namespace `mosherw` is held only as an
       empty placeholder against look-alikes: never push to it.
 - [ ] GHCR: the `ghcr.io/mosherw` namespace is your GitHub account.
-- [ ] Run `gitleaks git --redact` over the full history (it must find
-      nothing), and check the repo settings (Actions secrets, environments,
-      deploy keys) and the issue and PR comments for secrets.
+- [ ] Scan the full history for secrets with the pinned gitleaks image
+      (`GITLEAKS_IMAGE` from [Before you start](#before-you-start)). Run
+      the block from the repo root on an up-to-date `main`. The repo is
+      mounted read-only, the container has no network and gets no
+      credentials, and `--redact` keeps any value out of the output. It
+      must print `no leaks found`. Gitleaks reads the reviewed false
+      positives from the root `.gitleaksignore` with no flag. A new
+      finding is either a real secret (stop: rotate it; history is not
+      rewritten without a decision) or a test value (add its fingerprint
+      in a reviewed PR, per
+      [ADR 0022](docs/decisions/0022-secret-scan-suppressions.md)).
+
+      ```sh
+      ( set -euo pipefail
+        export MSYS_NO_PATHCONV=1
+        [[ "${GITLEAKS_IMAGE:-}" =~ ^zricethezav/gitleaks:v[0-9.]+@sha256:[0-9a-f]{64}$ ]] || { echo 'set GITLEAKS_IMAGE (Before you start)'; exit 1; }
+        D="$(pwd)"; if command -v cygpath >/dev/null; then D="$(cygpath -m "$D")"; fi
+        docker run --rm --network none -v "$D:/repo:ro" "$GITLEAKS_IMAGE" git /repo --redact
+      )
+      ```
+
+- [ ] Check the repo settings (Actions secrets, environments, deploy keys)
+      and the issue and PR comments for secrets.
 - [ ] History is **not** rewritten (decided at #37 Gate 2: the personal
       author email stays in old commits). `git config user.email` is the
       GitHub noreply address. `.claude.zip` is untracked.
