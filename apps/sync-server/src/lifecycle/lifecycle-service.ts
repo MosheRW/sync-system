@@ -328,13 +328,14 @@ export class LifecycleService {
         'grace period ended without a handoff',
       );
     if (record.handoff !== 'auto' || record.pause === undefined) return noHandoff();
-    // A member on a peer that started after this instance's last heartbeat
-    // is confirmed in Redis, once for the whole pick (#42, security R2, R4).
-    const open = await this.host.openOf(record, successorCandidates(record));
+    // A member or the old leader on a peer that started after this
+    // instance's last heartbeat is confirmed in Redis, once for the pick and
+    // the handoff together (#42, security R2, R4).
+    const open = await this.host.openOf(record, [...successorCandidates(record), record.leaderId]);
     const successor = pickSuccessor(record, (pid) => open.has(pid));
     if (successor === undefined) return noHandoff();
     const reason = record.pause.cause === 'inactive' ? 'handoff_inactivity' : 'handoff_disconnect';
-    await this.handoff(app, record, successor, reason);
+    await this.handoff(app, record, successor, reason, open);
   }
 
   /**
@@ -349,18 +350,26 @@ export class LifecycleService {
    * the new leader gets `leader.granted`, the roster, pending requests; an
    * attached old leader gets `leader.lost` with a member token; everyone
    * else `leader.changed`.
+   *
+   * Whether the old leader is attached comes from `open` (the grace end's
+   * hints) or, for a take-back, one `openOf([old])`: an old leader on a
+   * peer missing from the live cache is confirmed in Redis, so it is told
+   * and keeps its membership (#42, security S4, C12). A hint only.
    */
   async handoff(
     app: AppConfig,
     record: GroupRecord,
     successor: string,
     reason: 'handoff_disconnect' | 'handoff_inactivity' | 'take_back',
+    open?: ReadonlySet<string>,
   ): Promise<{ record: GroupRecord; granted: ServerMessage }> {
     const namespace = app.namespace;
-    const now = this.host.now();
     const old = record.leaderId;
     const oldSession = this.host.sessionOf(record, old);
-    const oldAttached = oldSession !== undefined && oldSession.isOpen();
+    const hints =
+      oldSession === undefined ? undefined : (open ?? (await this.host.openOf(record, [old])));
+    const oldAttached = hints?.has(old) === true;
+    const now = this.host.now();
     const participantIds = oldAttached
       ? record.participantIds
       : record.participantIds.filter((pid) => pid !== old);
