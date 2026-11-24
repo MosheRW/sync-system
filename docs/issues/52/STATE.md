@@ -1,7 +1,7 @@
 # State: #52 fix(release): move the docker ps check in RELEASING.md step 4 to its own block (follow-up to #37)
 
 - Path: fast
-- Phase: ready-to-merge
+- Phase: merged
 - Branch: fix/52-releasing-docker-ps-block
 - PR: #61
 - Plan approved by user: yes (Gate 2, 2026-11-23)
