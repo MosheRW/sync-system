@@ -2,7 +2,7 @@
 - Path: fast
 - Phase: architecture
 - Branch: fix/9-forget-cutoff-clock-skew
-- PR: none
+- PR: #72
 - Plan approved by user: no
 - Security-sensitive: yes
 - Review rounds: 0
