@@ -1161,12 +1161,6 @@ server {
   app gets N times the join-attempt and code-guessing budget. Door codes stay
   bounded by the global rotation and pause. See
   [Several instances](#several-instances).
-- **A just-started instance is not yet a successor** (issue #42): for up to
-  5 seconds after an instance starts, its peers do not count its members when
-  a grace ends. If they hold the only eligible members, the group stays
-  paused until the leader returns or the frozen bound ends it (about 25
-  minutes by default). This is most likely during a rolling deploy: start new
-  instances a few seconds apart.
 - No global connection or request limits across instances; use per-IP limits
   at the reverse proxy.
 - Redis Cluster and Sentinel are not supported: one Redis endpoint.
