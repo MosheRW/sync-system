@@ -25,3 +25,21 @@ describe('page counter is an LTR isolate (#27 AC1)', () => {
     },
   );
 });
+
+describe('title is isolated in its own direction (#27 AC2)', () => {
+  it.each<[UiLanguage, string, 'ltr' | 'rtl']>([
+    ['en', 'pride-and-prejudice-en', 'ltr'],
+    ['en', 'psalms-he', 'rtl'],
+    ['he', 'pride-and-prejudice-en', 'ltr'],
+    ['he', 'psalms-he', 'rtl'],
+  ])('UI %s, content %s: title bdi is a direct child with dir %s', (ui, sample, docDir) => {
+    applyInterfaceLanguage(document, ui);
+    renderReading(loaded(sampleText(sample)), ui);
+
+    const title = screen.getByRole('banner').querySelector('[class*="title"]')!;
+    const bdi = title.querySelector(':scope > bdi')!;
+    expect(bdi.getAttribute('dir')).toBe(docDir);
+    expect(bdi.getAttribute('lang')).toBe(docDir === 'rtl' ? 'he' : 'en');
+    expect(title.hasAttribute('dir')).toBe(false);
+  });
+});
