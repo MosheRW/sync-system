@@ -2,7 +2,7 @@
 - Path: fast
 - Phase: architecture
 - Branch: fix/67-pnpmfile-tests-container
-- PR: none
+- PR: #68
 - Plan approved by user: no
 - Security-sensitive: yes
 - Review rounds: 0
