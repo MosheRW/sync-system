@@ -2,7 +2,7 @@
 - Path: fast
 - Phase: architecture
 - Branch: fix/69-pnpm-version-check
-- PR: none
+- PR: #71
 - Plan approved by user: no
 - Security-sensitive: no
 - Review rounds: 0
