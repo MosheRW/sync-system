@@ -754,8 +754,22 @@ describe('packing ignores every pnpmfile route (#63, ADR 0021, R3)', { skip: ski
 // that env. If a pnpm upgrade stops exporting it, this test fails, so the
 // early warning documented in RELEASING.md cannot vanish unnoticed. The
 // control case (no setting) proves the child env is clean otherwise.
+//
+// The fixture script dumps only the `npm_config_*` keys (name compared in
+// lower case with `-` read as `_`, as checkNoPnpmfile does), never the whole
+// env: a CI runner's env can hold tokens, and a crash before the `finally`
+// cleanup would leave them on disk (#63, security A3). Every name the guard
+// inspects (PNPMFILE_ENV in lib.ts) has that prefix, so the filter cannot
+// hide a key from it.
 
-const DUMP_ENV = "require('node:fs').writeFileSync('env.json', JSON.stringify(process.env));\n";
+const DUMP_ENV = [
+  'const env = {};',
+  'for (const [k, v] of Object.entries(process.env)) {',
+  "  if (k.toLowerCase().replaceAll('-', '_').startsWith('npm_config_')) env[k] = v;",
+  '}',
+  "require('node:fs').writeFileSync('env.json', JSON.stringify(env));",
+  '',
+].join('\n');
 
 const RUN_ENV_CASES: { name: string; set: boolean; setup(fixture: Fixture): void }[] = [
   { name: 'no pnpmfile setting (control)', set: false, setup: () => undefined },
@@ -797,6 +811,13 @@ describe(
           const childEnv = JSON.parse(
             readFileSync(join(root, 'env.json'), 'utf8'),
           ) as NodeJS.ProcessEnv;
+          const keys = Object.keys(childEnv);
+          assert.ok(keys.length > 0, 'pnpm run exports npm_config_* keys to the script');
+          assert.deepEqual(
+            keys.filter((k) => !k.toLowerCase().replaceAll('-', '_').startsWith('npm_config_')),
+            [],
+            'the dump holds only npm_config_* keys',
+          );
           const problems = checkNoPnpmfile(root, childEnv);
           if (runCase.set) {
             assert.ok(childEnv['npm_config_pnpmfile'], 'pnpm run exports npm_config_pnpmfile');
