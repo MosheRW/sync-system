@@ -345,6 +345,9 @@ describe('RELEASING.md load-bearing lines (C1-C5, M6, L1, L5, L8, L9, L11-L13)',
       'outer',
       'release-relevant',
       '(docs/decisions/0021-pack-with-pnpmfiles-ignored.md)',
+      // security A1: the early fail through `pnpm run`'s exported setting
+      'exports it to the script as `npm_config_pnpmfile`',
+      'fails closed',
     ]) {
       expect(limits, text).toContain(text);
     }

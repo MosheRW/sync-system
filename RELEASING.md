@@ -516,7 +516,11 @@ export REF="$(git rev-parse --abbrev-ref HEAD)" M="$(git rev-parse HEAD)" MODE=d
   it: a root `.pnpmfile.cjs`, `pnpmfile` or `global-pnpmfile` in `.npmrc`
   or `pnpm-workspace.yaml`, a `configDependencies` pnpm plugin, an env var,
   or a user or global rc file. `pack:check` also still fails early on a root
-  `.pnpmfile.cjs` or a pnpmfile env var (either spelling, `-` or `_`). What
+  `.pnpmfile.cjs` or a pnpmfile env var (either spelling, `-` or `_`). That
+  includes a `pnpmfile` set in `.npmrc` or `pnpm-workspace.yaml`: `pnpm run`
+  exports it to the script as `npm_config_pnpmfile`, so `pnpm pack:check`
+  fails closed on it too (a test pins this, so a pnpm change that drops the
+  export shows up). What
   this does not cover: the outer `pnpm pack:check`, `pnpm smoke` and
   `pnpm install` processes themselves still load a configured pnpmfile or
   config-dependency plugin and run its code (it cannot change the packed
