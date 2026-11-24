@@ -6,7 +6,7 @@
 - Plan approved by user: yes (Gate 2, 2026-11-24: ADR 0021 option C)
 - Security-sensitive: yes (release integrity)
 - Review rounds: 2
-- Last updated by: engineer
+- Last updated by: qa
 ## Model log
 - pm spec: sonnet (default) → DONE
 - architect plan: opus (default + NEXT_MODEL) → DONE
@@ -16,6 +16,7 @@
 - security code r1: opus (rule) → PASS (low A1, A2)
 - Gate 3: PR #64 ready to merge (2026-11-24); user chose to fix A1, A2 now
 - engineer fix r1: opus (rule) → DONE
+- qa review r2: opus (rule) → PASS (local Docker CI green, 3/3 pack:check = baseline, new tests mutation-checked)
 ## Open questions
 - none (Gate 2 decided: ADR 0021 option C, Accepted)
 ## Deviations from plan
