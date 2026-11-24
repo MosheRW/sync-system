@@ -35,6 +35,7 @@ Scope of items 7-9 is taken from the PRD ("Product 1: the reading app", "Deliver
 - #28 native-speaker review of the Hebrew strings (follow-up to #24): open. The 102 Hebrew strings added in 8b (#25) are in its scope, including the vice-leader term "סגן המוביל".
 - #32 `fix(server): offer take-back only after a handoff loss (follow-up to #25)` (security M1): done (PR #45 merged 2026-11-22 as 085700a; blocker for 9c).
 - #44 `fix(reader): escape control characters in echoed config values (follow-up to #36)` (security A1, low): open. The A2 finding (the truncated echo of non-secret values, Q24) is accepted, not a follow-up.
+- #69 `fix(release): check the pnpm version before packing (follow-up to #67)` (security L1, low): open.
 - #41 `fix(server): share join-attempt limits across instances through redis (follow-up to #35)` (security F22, Q-B6): open.
 - #42 `fix(server): treat a just-started instance as live when picking a successor (follow-up to #35)` (C12): open. A peer sees a new instance as live only after its next heartbeat, and the S4 `oldAttached` and successor pick read the live cache. Needs architect and security.
 - #47 `fix(storage): bound create-budget key TTL and batch expired live-group cleanup (follow-up to #12)` (security A1, A2; QA A3): open.
@@ -43,6 +44,8 @@ Scope of items 7-9 is taken from the PRD ("Product 1: the reading app", "Deliver
 - #52 `fix(release): move the docker ps check in RELEASING.md step 4 to its own block (follow-up to #37)` (QA A2): done (PR #61 merged 2026-11-23 as 15bc31e).
 - #53 `chore(release): investigate react tarball hash differences across node:24 images (follow-up to #37)` (QA A3, security L7): done (PR #62 merged 2026-11-24 as 0ea7dc8). Follow-up #63 is open.
 - #63 `chore(release): close remaining pnpmfile routes in pack:check guard (follow-up to #53)` (security A1, low): done (PR #64 merged 2026-11-24 as 97687de): `docs/issues/63/`.
+- #65 `fix(release): correct Docker Hub namespace, npm identity wording, gitleaks false positives (follow-up to #37)`: done (PR #66 merged 2026-11-24 as d101d14): `docs/issues/65/`. Security advisory A1 (step 0 scan covers only HEAD, not all remote branches) accepted at Gate 3, no follow-up. Sub-issue #67 is open.
+- #67 `fix(release): 12 pnpmfile tests fail in the node:24 CI container (follow-up to #65, sub-issue of #65)` (QA of #65): open. Pre-existing on `main`; blocks a clean release check run.
 - #54 `fix(ci): repo-hygiene CI trigger test blocks pnpm test in the release procedure (follow-up to #37)`: done (PR #55 merged 2026-11-23 as b42b396; unblocks the real 1.0.0 release, done by hand per `RELEASING.md`).
 - #56 `test(server): harden repo-hygiene ci.yml trigger and permissions checks (follow-up to #54)` (security L1, L2): open.
 - #58 `feat(server): read secrets from files via _FILE variables (follow-up to #51)` (asked for at #51 Gate 2; needs an ADR 0015 amendment): open.

@@ -21,6 +21,7 @@ import {
   PACK_ARGS,
   packOne,
   pnpmCommand,
+  readManifest,
   readTarball,
   repoRoot,
   run,
@@ -483,12 +484,32 @@ describe('smoke helpers (C6)', () => {
 // case packs one throwaway workspace twice: plain `pnpm pack` first (the hook
 // must apply, which proves the route is live), then the production `packOne`
 // (the hook must not apply). A pnpm upgrade that drops or renames
-// `ignore-pnpmfile` fails the second half. No network: no packageManager
-// field, no dependencies, and config dependencies are pre-placed so pnpm
-// skips the fetch.
+// `ignore-pnpmfile` fails the second half. No dependencies, and config
+// dependencies are pre-placed so pnpm skips the fetch.
+//
+// The fixture lives under os.tmpdir(), outside the repo, so it carries the
+// repo's own `packageManager` value, copied verbatim (sha512 included, so
+// corepack verifies any download). Without it, a bare `node --test` on Linux
+// resolves `pnpm` from PATH; after `corepack enable` that is the corepack
+// shim, which falls back to its own default pnpm (pnpm 12 in the node:24
+// image) and tests routes against a pnpm the repo does not use (#67). Through
+// `pnpm test`, `npm_execpath` already is the pinned pnpm and the field is a
+// no-op. The pinned pnpm must be in the corepack cache for an offline run (it
+// is after `corepack enable` and `pnpm install`, RELEASING.md step 2).
 
 const FIXTURE_NAME = '@x/a';
 const FIXTURE_TARBALL = tarballName(FIXTURE_NAME, '1.0.0');
+
+/** The root `packageManager`, verbatim; throws (never skips) if it is not a pnpm pin. */
+function pinnedPackageManager(): string {
+  const value = readManifest('.')['packageManager'];
+  if (typeof value !== 'string' || !value.startsWith('pnpm@')) {
+    throw new Error(
+      `root package.json packageManager must pin pnpm (pnpm@<version>+sha512.<hash>), got ${JSON.stringify(value)}`,
+    );
+  }
+  return value;
+}
 
 /** pnpm through the same lookup the release scripts use; undefined if absent. */
 function findPnpm(): ReturnType<typeof pnpmCommand> | undefined {
@@ -687,7 +708,12 @@ function buildFixture(base: string, route: RouteCase): { pkgDir: string; env: No
     write(path, text) {
       writeFileSync(join(root, path), text);
     },
-    rootManifest: { name: 'fixture-root', version: '0.0.0', private: true },
+    rootManifest: {
+      name: 'fixture-root',
+      version: '0.0.0',
+      private: true,
+      packageManager: pinnedPackageManager(),
+    },
     workspaceYaml: ['packages:', "  - 'packages/*'"],
   };
   const extra = route.setup(fixture);
@@ -718,6 +744,31 @@ const skipRoutes =
 describe('packing ignores every pnpmfile route (#63, ADR 0021, R3)', { skip: skipRoutes }, () => {
   it('finds pnpm (R4: fails instead of skipping with CI=true)', () => {
     assert.ok(PNPM, 'pnpm not found; the route test must run in CI');
+  });
+
+  // #67: both halves of every case resolve pnpm exactly like this (fixture
+  // cwd, scrubbed env). A different pnpm fails here with one clear message
+  // instead of a dozen confusing positive-control failures below.
+  it('runs the pinned pnpm in the fixtures (#67)', () => {
+    assert.ok(PNPM, 'pnpm not found');
+    const pinned = pinnedPackageManager().slice('pnpm@'.length).split('+')[0];
+    const base = mkdtempSync(join(tmpdir(), 'sync-pnpmfile-version-'));
+    try {
+      const { pkgDir, env } = buildFixture(base, {
+        name: 'pnpm version',
+        label: 'version',
+        setup: () => ({}),
+      });
+      const actual = run(PNPM, ['--version'], pkgDir, env).trim();
+      assert.equal(
+        actual,
+        pinned,
+        `pnpm ${actual} runs the route fixtures, but the repo pins ${pinned} (packageManager); ` +
+          'run through `pnpm test`, or `corepack enable` so the shim honours the fixture packageManager',
+      );
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
   });
 
   for (const route of ROUTES) {
