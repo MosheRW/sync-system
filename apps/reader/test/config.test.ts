@@ -191,6 +191,46 @@ describe('parseReaderConfig errors (AC30, AC41)', () => {
   });
 });
 
+describe('control characters in echoed values (#44)', () => {
+  // eslint-disable-next-line no-control-regex
+  const CONTROLS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
+
+  it.each([
+    ['LF', '\n'],
+    ['CR', '\r'],
+    ['CRLF', '\r\n'],
+    ['U+2028', '\u2028'],
+    ['U+2029', '\u2029'],
+    ['NUL', '\u0000'],
+    ['U+001F', '\u001f'],
+    ['DEL', '\u007f'],
+    ['NEL', '\u0085'],
+    ['U+009F', '\u009f'],
+  ])('shows %s as ? and keeps one problem on one line', (_name, char) => {
+    for (const env of [
+      { READER_FETCH_TIMEOUT_SECONDS: `a${char}b` },
+      { READER_SRC_ORIGINS: `ftp://x${char}y.example` },
+    ]) {
+      const list = problems(env);
+      expect(list).toHaveLength(1);
+      expect(list[0]).not.toMatch(CONTROLS);
+      expect(list[0]).toContain('"');
+      expect(list[0]).toContain('?');
+    }
+  });
+
+  it('keeps an injected fake line inside the quoted value', () => {
+    const list = problems({ READER_FETCH_TIMEOUT_SECONDS: '1\nConfig error: fake' });
+    expect(list).toHaveLength(1);
+    expect(list[0]).toContain('"1?Config error: fake"');
+  });
+
+  it('escapes before truncating', () => {
+    const [problem] = problems({ READER_ENTRY: `${'x'.repeat(10)}\n${'y'.repeat(100)}` });
+    expect(problem).toContain(`"${'x'.repeat(10)}?${'y'.repeat(29)}…"`);
+  });
+});
+
 describe('loopback origins in production (security F9)', () => {
   it('warns but starts', () => {
     const config = parseReaderConfig(
