@@ -335,21 +335,44 @@ describe('RELEASING.md load-bearing lines (C1-C5, M6, L1, L5, L8, L9, L11-L13)',
     expect(doc).toContain('provenance');
   });
 
-  it('states the tarball reproducibility scope and the after-bump check (#53, ADR 0019)', () => {
+  it('states the tarball reproducibility scope and the after-bump checks (#53, ADR 0020)', () => {
     const flat = (text: string): string => text.replace(/\s+/g, ' ');
     const limits = flat(doc.slice(doc.indexOf('## Known limits')));
     for (const text of [
       'linux/amd64',
+      'workspace:',
+      'pnpmfile',
       'gzip',
       'host OS',
       'zlib',
-      '(docs/decisions/0019-release-tarball-reproducibility.md)',
+      'step 4',
+      '(docs/decisions/0020-deterministic-packed-manifests.md)',
     ]) {
       expect(limits, text).toContain(text);
     }
+    expect(limits).not.toContain('0019');
     const before = flat(doc.slice(doc.indexOf('## Before you start'), doc.indexOf('## Phase A')));
-    expect(before).toContain('[dry run](#dry-run-qa)');
-    expect(before).toContain('expect new integrity values');
+    for (const text of [
+      // R4 (provenance of a new digest)
+      'own PR',
+      'second person',
+      'docker buildx imagetools inspect docker.io/library/node:24',
+      'attestation-manifest',
+      'Provenance',
+      'node --version',
+      'https://nodejs.org/dist/index.json',
+      'linux/amd64',
+      // R5 (two dry runs, compared by machine)
+      '[dry run](#dry-run-qa)',
+      'twice',
+      'cp "$REL/out/INTEGRITY.txt" "$REL/integrity-run1.txt"',
+      'diff "$REL/integrity-run1.txt" "$REL/out/INTEGRITY.txt"',
+      'identical',
+      'baseline',
+    ]) {
+      expect(before, text).toContain(text);
+    }
+    expect(before).not.toContain('expect new integrity values');
   });
 });
 
