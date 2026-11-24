@@ -6,7 +6,7 @@
 - Plan approved by user: yes (Gate 2, 2026-11-24: ADR 0021 option C)
 - Security-sensitive: yes (release integrity)
 - Review rounds: 3
-- Last updated by: engineer
+- Last updated by: qa
 ## Model log
 - pm spec: sonnet (default) → DONE
 - architect plan: opus (default + NEXT_MODEL) → DONE
@@ -20,6 +20,7 @@
 - security code r2: opus (rule) → PASS (low A3)
 - Gate 3 (round 2): PR #64 ready to merge (2026-11-24)
 - engineer fix r2: opus (rule) → DONE
+- qa review r3: opus (rule) → PASS (local Docker CI green: vitest 4158, node --test 103/103; 3/3 pack:check = 40/40 baseline; A3 filter covers every PNPMFILE_ENV name, mutation-checked)
 ## Open questions
 - none (Gate 2 decided: ADR 0021 option C, Accepted)
 ## Deviations from plan
