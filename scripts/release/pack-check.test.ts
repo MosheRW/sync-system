@@ -1,17 +1,25 @@
-// Unit tests of the pure release checks (#37 AC50, AC51, C4, C6, C10, L10).
+// Unit tests of the pure release checks (#37 AC50, AC51, C4, C6, C10, L10;
+// #53 ADR 0020 R2, L4).
 // Run with Node's built-in runner: node --test "scripts/release/*.test.ts".
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { gzipSync } from 'node:zlib';
 import {
   checkEntries,
   checkManifest,
+  checkNoPnpmfile,
   checkPublishableSet,
   checkSameVersion,
+  checkWorkspaceRanges,
   integrityLine,
   readTarball,
+  repoRoot,
   tarballName,
+  workspacePackages,
   type Manifest,
   type TarEntry,
   type WorkspacePackage,
@@ -179,6 +187,163 @@ describe('checkPublishableSet (C4)', () => {
       { dir: 'packages/extra', manifest: { name: '@mosherw/sync-system-extra' } },
     ];
     assert.match(checkPublishableSet(packages).join(), /publishable packages/);
+  });
+});
+
+describe('checkWorkspaceRanges (#53, ADR 0020, R2)', () => {
+  function workspace(): WorkspacePackage[] {
+    return [
+      { dir: '.', manifest: { name: 'sync-system', private: true } },
+      { dir: 'packages/protocol', manifest: { name: '@mosherw/sync-system-protocol' } },
+      {
+        dir: 'packages/client',
+        manifest: {
+          name: '@mosherw/sync-system-client',
+          dependencies: { '@mosherw/sync-system-protocol': 'workspace:*' },
+          devDependencies: { '@mosherw/sync-system-server': 'workspace:*', vitest: '^4' },
+        },
+      },
+      {
+        dir: 'packages/react',
+        manifest: {
+          name: '@mosherw/sync-system-react',
+          dependencies: { '@mosherw/sync-system-client': 'workspace:*' },
+          peerDependencies: { react: '^18.3 || ^19' },
+          devDependencies: { '@mosherw/sync-system-server': 'workspace:*', react: '^19' },
+        },
+      },
+      {
+        dir: 'apps/sync-server',
+        manifest: {
+          name: '@mosherw/sync-system-server',
+          private: true,
+          dependencies: { a: 'workspace:*', b: 'workspace:^' },
+        },
+      },
+    ];
+  }
+
+  function withReact(extra: Manifest): WorkspacePackage[] {
+    return workspace().map((p) =>
+      p.dir === 'packages/react' ? { dir: p.dir, manifest: { ...p.manifest, ...extra } } : p,
+    );
+  }
+
+  it('accepts one workspace: range per map and ignores private packages', () => {
+    assert.deepEqual(checkWorkspaceRanges(workspace()), []);
+  });
+
+  it('rejects two workspace: ranges in devDependencies, naming #53 and ADR 0020', () => {
+    const problems = checkWorkspaceRanges(
+      withReact({
+        devDependencies: {
+          '@mosherw/sync-system-protocol': 'workspace:*',
+          '@mosherw/sync-system-server': 'workspace:*',
+        },
+      }),
+    );
+    assert.equal(problems.length, 1);
+    const [problem = ''] = problems;
+    assert.match(problem, /^packages\/react: devDependencies has 2 workspace: ranges/);
+    assert.match(problem, /@mosherw\/sync-system-protocol, @mosherw\/sync-system-server/);
+    assert.match(problem, /#53/);
+    assert.match(problem, /ADR 0020/);
+  });
+
+  it('rejects two in peerDependencies, a compound peer range included', () => {
+    const problems = checkWorkspaceRanges(
+      withReact({
+        peerDependencies: {
+          react: '^18.3 || ^19',
+          '@mosherw/sync-system-client': '^1 || workspace:^',
+          '@mosherw/sync-system-protocol': 'workspace:~',
+        },
+      }),
+    );
+    assert.equal(problems.length, 1);
+    assert.match(problems[0] ?? '', /peerDependencies has 2 workspace: ranges/);
+  });
+
+  it('checks optionalDependencies and dependencies too', () => {
+    for (const field of ['optionalDependencies', 'dependencies']) {
+      const problems = checkWorkspaceRanges(
+        withReact({ [field]: { a: 'workspace:*', b: 'workspace:../b' } }),
+      );
+      assert.equal(problems.length, 1, field);
+      assert.match(problems[0] ?? '', new RegExp(`${field} has 2`));
+    }
+  });
+
+  it('reports a missing published package', () => {
+    const packages = workspace().filter((p) => p.dir !== 'packages/protocol');
+    assert.match(checkWorkspaceRanges(packages).join(), /packages\/protocol: .*not found/);
+  });
+
+  it('reports a published dir with another name', () => {
+    const packages = workspace().map((p) =>
+      p.dir === 'packages/protocol' ? { dir: p.dir, manifest: { name: '@mosherw/other' } } : p,
+    );
+    assert.match(
+      checkWorkspaceRanges(packages).join(),
+      /packages\/protocol: name is @mosherw\/other/,
+    );
+  });
+
+  for (const value of [null, ['workspace:*', 'workspace:*'], 'workspace:*', 1]) {
+    it(`reports a dependency field that is not a plain object: ${JSON.stringify(value)}`, () => {
+      const problems = checkWorkspaceRanges(withReact({ devDependencies: value }));
+      assert.equal(problems.length, 1);
+      assert.match(problems[0] ?? '', /packages\/react: devDependencies is not an object/);
+    });
+  }
+
+  it('accepts the real workspace', () => {
+    assert.deepEqual(checkWorkspaceRanges(workspacePackages()), []);
+  });
+});
+
+describe('checkNoPnpmfile (#53, ADR 0020, L4)', () => {
+  function withRoot(test: (root: string) => void): void {
+    const root = mkdtempSync(join(tmpdir(), 'sync-pnpmfile-'));
+    try {
+      test(root);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+
+  it('accepts a root without a pnpmfile and no pnpmfile setting', () => {
+    withRoot((root) => assert.deepEqual(checkNoPnpmfile(root, {}), []));
+  });
+
+  it('rejects a root .pnpmfile.cjs', () => {
+    withRoot((root) => {
+      writeFileSync(join(root, '.pnpmfile.cjs'), 'module.exports = {};\n');
+      const problems = checkNoPnpmfile(root, {});
+      assert.equal(problems.length, 1);
+      assert.match(problems[0] ?? '', /\.pnpmfile\.cjs exists/);
+    });
+  });
+
+  for (const name of [
+    'npm_config_pnpmfile',
+    'npm_config_global_pnpmfile',
+    'NPM_CONFIG_PNPMFILE',
+    'NPM_CONFIG_GLOBAL_PNPMFILE',
+  ]) {
+    for (const value of ['hook.cjs', '']) {
+      it(`rejects ${name}=${JSON.stringify(value)}`, () => {
+        withRoot((root) => {
+          const problems = checkNoPnpmfile(root, { [name]: value });
+          assert.equal(problems.length, 1);
+          assert.match(problems[0] ?? '', new RegExp(`${name} is set`));
+        });
+      });
+    }
+  }
+
+  it('accepts the real repo root', () => {
+    assert.deepEqual(checkNoPnpmfile(repoRoot, {}), []);
   });
 });
 
