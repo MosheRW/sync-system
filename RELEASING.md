@@ -563,3 +563,8 @@ export REF="$(git rev-parse --abbrev-ref HEAD)" M="$(git rev-parse HEAD)" MODE=d
   `.pnpmfile.cjs`, or a `configDependencies` entry as release-relevant and
   checks it before the merge
   ([ADR 0021](docs/decisions/0021-pack-with-pnpmfiles-ignored.md), #63).
+  Before packing anything, `pack:check`, `release:dry-run` and `smoke`
+  check that `pnpm --version` equals the version the root `package.json`
+  `packageManager` pins (the one ADR 0021 verified the flag with), and stop
+  without packing otherwise, for example when a global pnpm of another
+  version is on `PATH` (#69).
