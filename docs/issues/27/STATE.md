@@ -2,7 +2,7 @@
 - Path: fast
 - Phase: architecture
 - Branch: fix/27-reader-header-bidi
-- PR: none
+- PR: #73
 - Plan approved by user: no
 - Security-sensitive: no
 - Review rounds: 0
