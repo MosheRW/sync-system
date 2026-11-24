@@ -20,7 +20,7 @@
 - Gate 3: 2026-11-24, PR #62 ready to merge; A1 awaiting user decision
 
 ## Open questions
-- none
+- none (security advisory A1 → follow-up #63, fixed in its own run)
 ## Deviations from plan
 - Plan premise disproved in QA r1: the round 1 plan (ADR 0019, option A, implemented in c4c5fbc and 0f4a1e5) assumed react packs byte-identically in the pinned image. It does not: pnpm 10 inserts the two workspace: devDependencies of react in I/O completion order (p-map-values), so repeated pack:check runs give two values. Plan revised to ADR 0020 (supersedes 0019); fix lands as new commits on top, no rewrite.
 - docs/roadmap.md not updated on this branch: the #52 branch already changes it and parallel edits would conflict. Roadmap update for #53 deferred to the next branch after #52 merges.
