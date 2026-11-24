@@ -1,6 +1,7 @@
 import {
   type Browser,
   type BrowserContext,
+  type BrowserContextOptions,
   type Page,
   expect,
   test as base,
@@ -72,7 +73,7 @@ async function guard(context: BrowserContext, problems: string[]): Promise<void>
 
 export interface Pages {
   /** A new page in its own browser context (its own sessionStorage). */
-  open(): Promise<Page>;
+  open(options?: BrowserContextOptions): Promise<Page>;
 }
 
 /** Every page fails the test on a CSP or Trusted Types violation. */
@@ -81,8 +82,8 @@ export const test = base.extend<{ pages: Pages }>({
     const contexts: BrowserContext[] = [];
     const problems: string[] = [];
     await use({
-      open: async () => {
-        const context = await browser.newContext();
+      open: async (options) => {
+        const context = await browser.newContext(options);
         await guard(context, problems);
         contexts.push(context);
         return context.newPage();
