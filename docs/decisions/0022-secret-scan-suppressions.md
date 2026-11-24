@@ -1,6 +1,6 @@
 # 0022. Secret-scan suppressions
 
-- Status: Proposed
+- Status: Accepted (Gate 2, 2026-11-24: user chose the recommended option 1)
 - Date: 2026-11-24
 - Issue: #65
 
@@ -54,11 +54,14 @@ scans every PR range with gitleaks, so the choice is also a standing policy.
 
 ## Decision
 
-Recommended: **1**. The scan is a release gate; it should fail closed on
-anything new, and the cost (one reviewed line per new fixture hit) is small
-because the scan runs by hand at release time and per PR by the security
-reviewer. A test keeps the file's scope narrow: every entry must name a
-file under a `test/` directory or the one `jwt.ts` header line.
+**1** (accepted at Gate 2, 2026-11-24). The scan is a release gate; it
+should fail closed on anything new, and the cost (one reviewed line per new
+fixture hit) is small because the scan runs by hand at release time and per
+PR by the security reviewer. A test keeps the file's scope narrow: every
+entry must name a file under a `test/` directory or the one `jwt.ts` header
+line, and its rule must be `generic-api-key` (security plan review M1).
+Suppressing any other rule (for example `private-key`, `npm-access-token`,
+`github-pat`) needs an amendment of this ADR first.
 
 ## Consequences
 
