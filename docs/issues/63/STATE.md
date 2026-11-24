@@ -2,7 +2,7 @@
 - Path: fast
 - Phase: architecture
 - Branch: chore/63-pnpmfile-routes
-- PR: none
+- PR: #64
 - Plan approved by user: no
 - Security-sensitive: yes (release integrity)
 - Review rounds: 0

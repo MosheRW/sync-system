@@ -1,6 +1,6 @@
 # Architecture: #63 chore(release): close remaining pnpmfile routes in pack:check guard
 
-Path: fast. Branch: `chore/63-pnpmfile-routes`. PR: see `STATE.md`.
+Path: fast. Branch: `chore/63-pnpmfile-routes`. PR: #64.
 
 ## Repo layout
 
