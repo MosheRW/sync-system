@@ -510,3 +510,22 @@ export REF="$(git rev-parse --abbrev-ref HEAD)" M="$(git rev-parse HEAD)" MODE=d
   recomputes the values from the same files that step 2 hashed. Identity
   across runs is a property, used for the post-bump baseline, not the check
   ([ADR 0020](docs/decisions/0020-deterministic-packed-manifests.md), #53).
+- Every `pnpm pack` the release scripts run (`pack:check`,
+  `release:dry-run`, `smoke`) passes `--config.ignore-pnpmfile=true`, so no
+  pnpmfile hook can rewrite a packed `package.json`, whichever route names
+  it: a root `.pnpmfile.cjs`, `pnpmfile` or `global-pnpmfile` in `.npmrc`
+  or `pnpm-workspace.yaml`, a `configDependencies` pnpm plugin, an env var,
+  or a user or global rc file. `pack:check` also still fails early on a root
+  `.pnpmfile.cjs` or a pnpmfile env var (either spelling, `-` or `_`). That
+  includes a `pnpmfile` set in `.npmrc` or `pnpm-workspace.yaml`: `pnpm run`
+  exports it to the script as `npm_config_pnpmfile`, so `pnpm pack:check`
+  fails closed on it too (a test pins this, so a pnpm change that drops the
+  export shows up). What
+  this does not cover: the outer `pnpm pack:check`, `pnpm smoke` and
+  `pnpm install` processes themselves still load a configured pnpmfile or
+  config-dependency plugin and run its code (it cannot change the packed
+  bytes, but it can change files). So a release-PR reviewer treats any diff
+  that adds a `pnpmfile`, `globalPnpmfile` or `global-pnpmfile` setting, a
+  `.pnpmfile.cjs`, or a `configDependencies` entry as release-relevant and
+  checks it before the merge
+  ([ADR 0021](docs/decisions/0021-pack-with-pnpmfiles-ignored.md), #63).

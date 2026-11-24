@@ -335,6 +335,24 @@ describe('RELEASING.md load-bearing lines (C1-C5, M6, L1, L5, L8, L9, L11-L13)',
     expect(doc).toContain('provenance');
   });
 
+  it('states that packing ignores every pnpmfile and the residual (#63, ADR 0021, R6)', () => {
+    const flat = (text: string): string => text.replace(/\s+/g, ' ');
+    const limits = flat(doc.slice(doc.indexOf('## Known limits')));
+    for (const text of [
+      '--config.ignore-pnpmfile=true',
+      'pnpm-workspace.yaml',
+      'configDependencies',
+      'outer',
+      'release-relevant',
+      '(docs/decisions/0021-pack-with-pnpmfiles-ignored.md)',
+      // security A1: the early fail through `pnpm run`'s exported setting
+      'exports it to the script as `npm_config_pnpmfile`',
+      'fails closed',
+    ]) {
+      expect(limits, text).toContain(text);
+    }
+  });
+
   it('states the tarball reproducibility scope and the after-bump checks (#53, ADR 0020)', () => {
     const flat = (text: string): string => text.replace(/\s+/g, ' ');
     const limits = flat(doc.slice(doc.indexOf('## Known limits')));

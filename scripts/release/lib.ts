@@ -123,12 +123,19 @@ export function checkWorkspaceRanges(packages: readonly WorkspacePackage[]): str
   return problems;
 }
 
-/** Settings that make pnpm load a pnpmfile (compared case-insensitively). */
+/**
+ * Settings that make pnpm load a pnpmfile. Env names are compared in lower
+ * case with `-` read as `_` (#63, ADR 0021 R2): pnpm reads
+ * `npm_config_global-pnpmfile` as well as `npm_config_global_pnpmfile`.
+ */
 const PNPMFILE_ENV = ['npm_config_pnpmfile', 'npm_config_global_pnpmfile'];
 
 /**
  * #53, ADR 0020 (L4, R7): no pnpmfile. Its `beforePacking` hook could rewrite
- * the packed package.json after every source-level check.
+ * the packed package.json after every source-level check. This is the early,
+ * loud signal for the common cases; the pack itself ignores every pnpmfile
+ * (`PACK_ARGS`, #63, ADR 0021), including routes this check does not read
+ * (`.npmrc`, `pnpm-workspace.yaml`, config-dependency plugins, user rc files).
  */
 export function checkNoPnpmfile(root: string, env: NodeJS.ProcessEnv): string[] {
   const problems: string[] = [];
@@ -136,7 +143,8 @@ export function checkNoPnpmfile(root: string, env: NodeJS.ProcessEnv): string[] 
     problems.push('.pnpmfile.cjs exists at the repo root; no pnpmfile is allowed (#53, ADR 0020)');
   }
   for (const name of Object.keys(env)) {
-    if (PNPMFILE_ENV.includes(name.toLowerCase()) && env[name] !== undefined) {
+    const normalised = name.toLowerCase().replaceAll('-', '_');
+    if (PNPMFILE_ENV.includes(normalised) && env[name] !== undefined) {
       problems.push(`${name} is set; no pnpmfile is allowed (#53, ADR 0020)`);
     }
   }
@@ -316,16 +324,23 @@ export function npmCommand(): { file: string; prefix: string[] } {
   return { file: process.execPath, prefix: [cli] };
 }
 
+/**
+ * Runs a child with an argument array, never a shell. `env` is for tests only
+ * (#63 R5): production callers leave it out, so the child inherits the
+ * environment unchanged.
+ */
 export function run(
   command: { file: string; prefix: string[] },
   args: readonly string[],
   cwd: string,
+  env?: NodeJS.ProcessEnv,
 ): string {
   try {
     return execFileSync(command.file, [...command.prefix, ...args], {
       cwd,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'inherit'],
+      ...(env === undefined ? {} : { env }),
     });
   } catch (error) {
     // Show what the failed command printed (tsc reports to stdout).
@@ -335,12 +350,29 @@ export function run(
   }
 }
 
-/** Packs each published package into `dir` with `pnpm pack`; returns the file names. */
+/**
+ * The only way the release scripts call `pnpm pack` (#63, ADR 0021, R1).
+ * `ignore-pnpmfile` switches off pnpm's pnpmfile loader for the pack child, so
+ * no `beforePacking` hook can rewrite the packed package.json, whichever route
+ * names the pnpmfile (root `.pnpmfile.cjs`, `pnpmfile` / `global-pnpmfile` in
+ * `.npmrc` or `pnpm-workspace.yaml`, config-dependency plugins, env, user rc
+ * files). pnpm 10.28.0 rejects `pnpm pack --ignore-pnpmfile` (not a `pack`
+ * option) but accepts the generic `--config.` form. It must stay on the
+ * command line: the env-var form loses to `pnpm-workspace.yaml`. The
+ * integration test in pack-check.test.ts fails if a pnpm upgrade drops it.
+ */
+export const PACK_ARGS: readonly string[] = ['pack', '--config.ignore-pnpmfile=true'];
+
+/** Packs the package in `pkgDir` into `dest` with `PACK_ARGS`. `env`: tests only (R5). */
+export function packOne(pkgDir: string, dest: string, env?: NodeJS.ProcessEnv): void {
+  run(pnpmCommand(), [...PACK_ARGS, '--pack-destination', dest], pkgDir, env);
+}
+
+/** Packs each published package into `dir` with `packOne`; returns the file names. */
 export function packAll(dir: string): string[] {
-  const pnpm = pnpmCommand();
   return PUBLISHED.map((pkg) => {
     const version = String(readManifest(pkg.dir).version);
-    run(pnpm, ['pack', '--pack-destination', dir], join(repoRoot, pkg.dir));
+    packOne(join(repoRoot, pkg.dir), dir);
     const file = tarballName(pkg.name, version);
     if (!existsSync(join(dir, file))) throw new Error(`pnpm pack did not write ${file}`);
     return file;

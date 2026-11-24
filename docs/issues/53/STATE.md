@@ -1,6 +1,6 @@
 # State: #53 chore(release): investigate react tarball hash differences across node:24 images
 - Path: fast
-- Phase: ready-to-merge
+- Phase: merged
 - Branch: chore/53-react-tarball-hash
 - PR: #62
 - Plan approved by user: yes (revised Gate 2, 2026-11-24: ADR 0020 option D1 with controls R1–R7, L1–L4)
