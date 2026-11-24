@@ -42,7 +42,7 @@ Scope of items 7-9 is taken from the PRD ("Product 1: the reading app", "Deliver
 - #51 `fix(docs): operator guide passes TOKEN_SECRET with docker run -e (follow-up to #37)` (security low 2): done (PR #57 merged 2026-11-23 as 4125318). Follow-ups #58, #59 and #60 are open.
 - #52 `fix(release): move the docker ps check in RELEASING.md step 4 to its own block (follow-up to #37)` (QA A2): done (PR #61 merged 2026-11-23 as 15bc31e).
 - #53 `chore(release): investigate react tarball hash differences across node:24 images (follow-up to #37)` (QA A3, security L7): done (PR #62 merged 2026-11-24 as 0ea7dc8). Follow-up #63 is open.
-- #63 `chore(release): close remaining pnpmfile routes in pack:check guard (follow-up to #53)` (security A1, low): in progress (PR #64): `docs/issues/63/`.
+- #63 `chore(release): close remaining pnpmfile routes in pack:check guard (follow-up to #53)` (security A1, low): done (PR #64 merged 2026-11-24 as 97687de): `docs/issues/63/`.
 - #54 `fix(ci): repo-hygiene CI trigger test blocks pnpm test in the release procedure (follow-up to #37)`: done (PR #55 merged 2026-11-23 as b42b396; unblocks the real 1.0.0 release, done by hand per `RELEASING.md`).
 - #56 `test(server): harden repo-hygiene ci.yml trigger and permissions checks (follow-up to #54)` (security L1, L2): open.
 - #58 `feat(server): read secrets from files via _FILE variables (follow-up to #51)` (asked for at #51 Gate 2; needs an ADR 0015 amendment): open.
