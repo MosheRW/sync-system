@@ -10,7 +10,7 @@
 This covers the npm packages `@mosherw/sync-system-protocol`,
 `@mosherw/sync-system-client` and `@mosherw/sync-system-react`, and the
 server image `ghcr.io/mosherw/sync-system-server` (mirror
-`docker.io/mosherw/sync-system-server`).
+`docker.io/moshewin/sync-system-server`).
 
 ## Reporting a vulnerability
 

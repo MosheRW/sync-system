@@ -8,13 +8,13 @@ group.
 
 ## What is here
 
-| Package                         | Path                | Published as                                                                               | What                                                    |
-| ------------------------------- | ------------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------- |
-| `@mosherw/sync-system-protocol` | `packages/protocol` | npm                                                                                        | Wire protocol: versions, error codes, message schemas.  |
-| `@mosherw/sync-system-client`   | `packages/client`   | npm                                                                                        | Framework-free client for browsers and Node.            |
-| `@mosherw/sync-system-react`    | `packages/react`    | npm                                                                                        | React/Next provider and hooks over the client.          |
-| `@mosherw/sync-system-server`   | `apps/sync-server`  | image `ghcr.io/mosherw/sync-system-server` (mirror `docker.io/mosherw/sync-system-server`) | The sync server (HTTP `/health`, `/ready` + WebSocket). |
-| `@mosherw/sync-system-reader`   | `apps/reader`       | not published                                                                              | The reading app (React + Vite, Node server).            |
+| Package                         | Path                | Published as                                                                                | What                                                    |
+| ------------------------------- | ------------------- | ------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| `@mosherw/sync-system-protocol` | `packages/protocol` | npm                                                                                         | Wire protocol: versions, error codes, message schemas.  |
+| `@mosherw/sync-system-client`   | `packages/client`   | npm                                                                                         | Framework-free client for browsers and Node.            |
+| `@mosherw/sync-system-react`    | `packages/react`    | npm                                                                                         | React/Next provider and hooks over the client.          |
+| `@mosherw/sync-system-server`   | `apps/sync-server`  | image `ghcr.io/mosherw/sync-system-server` (mirror `docker.io/moshewin/sync-system-server`) | The sync server (HTTP `/health`, `/ready` + WebSocket). |
+| `@mosherw/sync-system-reader`   | `apps/reader`       | not published                                                                               | The reading app (React + Vite, Node server).            |
 
 The three npm packages and the server share one version number (see
 [`docs/versioning.md`](docs/versioning.md)). `packages/*` holds libraries and

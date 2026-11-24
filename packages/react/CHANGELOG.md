@@ -12,7 +12,7 @@
   (`@mosherw/sync-system-protocol`, `@mosherw/sync-system-client`,
   `@mosherw/sync-system-react`), licensed GPL-3.0-only, and the server ships as
   the image `ghcr.io/mosherw/sync-system-server` (mirror
-  `docker.io/mosherw/sync-system-server`).
+  `docker.io/moshewin/sync-system-server`).
 
   Notes for anyone who ran pre-release builds:
 

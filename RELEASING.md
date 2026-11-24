@@ -91,8 +91,11 @@ Do all of this **before** the repository is made public:
       TOTP), recovery codes are stored offline, and the account's Access
       Tokens page lists **no** token (no classic and no older granular
       tokens).
-- [ ] Docker Hub: the public repository `mosherw/sync-system-server` exists
-      under your account.
+- [ ] Docker Hub: `moshewin` is your Docker Hub **username** (Account
+      settings), not an organization; step 6 logs in with `-u moshewin`.
+      The public repository `moshewin/sync-system-server` exists under that
+      account. The old Docker Hub namespace `mosherw` is held only as an
+      empty placeholder against look-alikes: never push to it.
 - [ ] GHCR: the `ghcr.io/mosherw` namespace is your GitHub account.
 - [ ] Run `gitleaks git --redact` over the full history (it must find
       nothing), and check the repo settings (Actions secrets, environments,
@@ -359,8 +362,8 @@ export IMG="$(mktemp -d)"
 
 Create two tokens, each with the shortest expiry offered: a GitHub
 **classic** personal access token with only `write:packages`, and a Docker
-Hub personal access token limited to the `mosherw/sync-system-server`
-repository if offered (else "Read & Write"). Then push. The registry logins
+Hub personal access token with "Read & Write" (not "Read, Write &
+Delete"). Then push. The registry logins
 use a temporary `DOCKER_CONFIG`, and the `trap` is set before the first
 login so both logouts and the removal of the config run on every exit:
 
@@ -378,18 +381,18 @@ login so both logouts and the removal of the config run on every exit:
   printf '%s' "$T" | docker login ghcr.io -u mosherw --password-stdin
   unset T
   read -rs -p 'Docker Hub token: ' T; echo
-  printf '%s' "$T" | docker login docker.io -u mosherw --password-stdin
+  printf '%s' "$T" | docker login docker.io -u moshewin --password-stdin
   unset T
   docker buildx build --platform linux/amd64,linux/arm64 --push \
     -f "$D/src/apps/sync-server/Dockerfile" \
     --label "org.opencontainers.image.version=$V" --label "org.opencontainers.image.revision=$M" \
     -t "ghcr.io/mosherw/sync-system-server:$V" -t "ghcr.io/mosherw/sync-system-server:$MAJOR.$MINOR" \
     -t "ghcr.io/mosherw/sync-system-server:$MAJOR" -t ghcr.io/mosherw/sync-system-server:latest \
-    -t "docker.io/mosherw/sync-system-server:$V" -t "docker.io/mosherw/sync-system-server:$MAJOR.$MINOR" \
-    -t "docker.io/mosherw/sync-system-server:$MAJOR" -t docker.io/mosherw/sync-system-server:latest \
+    -t "docker.io/moshewin/sync-system-server:$V" -t "docker.io/moshewin/sync-system-server:$MAJOR.$MINOR" \
+    -t "docker.io/moshewin/sync-system-server:$MAJOR" -t docker.io/moshewin/sync-system-server:latest \
     "$D/src"
   docker buildx imagetools inspect "ghcr.io/mosherw/sync-system-server:$V"
-  docker buildx imagetools inspect "docker.io/mosherw/sync-system-server:$V"
+  docker buildx imagetools inspect "docker.io/moshewin/sync-system-server:$V"
 )
 ```
 

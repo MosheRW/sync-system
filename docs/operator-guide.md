@@ -18,7 +18,7 @@ The server ships as one image, in two registries with the same tags:
 | Registry                  | Image                                            |
 | ------------------------- | ------------------------------------------------ |
 | GitHub Container Registry | `ghcr.io/mosherw/sync-system-server` (canonical) |
-| Docker Hub                | `docker.io/mosherw/sync-system-server` (mirror)  |
+| Docker Hub                | `docker.io/moshewin/sync-system-server` (mirror) |
 
 Tags: `X.Y.Z` (one release), `X.Y`, `X` and `latest` (moving), for
 `linux/amd64` and `linux/arm64`. **Pin `X.Y.Z` or a digest**
@@ -722,7 +722,7 @@ config change; a major release lists what to change.
 
 - **1.0.0, the first public release:** the server image is now
   `ghcr.io/mosherw/sync-system-server` (mirror
-  `docker.io/mosherw/sync-system-server`) and the packages are
+  `docker.io/moshewin/sync-system-server`) and the packages are
   `@mosherw/sync-system-*` on npm. The server's own `package.json` name is
   `@mosherw/sync-system-server`; a custom image must ship the new one (the
   server refuses to start with another name). Coming from a pre-release
