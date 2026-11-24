@@ -1,12 +1,12 @@
 # State: #63 chore(release): close remaining pnpmfile routes in pack:check guard
 - Path: fast
-- Phase: validation
+- Phase: ready-to-merge
 - Branch: chore/63-pnpmfile-routes
 - PR: #64
 - Plan approved by user: yes (Gate 2, 2026-11-24: ADR 0021 option C)
 - Security-sensitive: yes (release integrity)
 - Review rounds: 2
-- Last updated by: qa
+- Last updated by: orchestrator
 ## Model log
 - pm spec: sonnet (default) → DONE
 - architect plan: opus (default + NEXT_MODEL) → DONE
@@ -17,6 +17,8 @@
 - Gate 3: PR #64 ready to merge (2026-11-24); user chose to fix A1, A2 now
 - engineer fix r1: opus (rule) → DONE
 - qa review r2: opus (rule) → PASS (local Docker CI green, 3/3 pack:check = baseline, new tests mutation-checked)
+- security code r2: opus (rule) → PASS (low A3)
+- Gate 3 (round 2): PR #64 ready to merge (2026-11-24)
 ## Open questions
 - none (Gate 2 decided: ADR 0021 option C, Accepted)
 ## Deviations from plan
