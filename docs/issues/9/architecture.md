@@ -32,12 +32,15 @@ successful write or remove clears it (#7 L-c). Two weaknesses:
 
 ## Decisions
 
-`Decisions: 1 open (D1, below).` No ADR: it is one numeric constant inside
+`Decisions: 1, decided (D1 = B, user at Gate 2).` No ADR: it is one numeric constant inside
 an existing, already-accepted mechanism (#7 L-c), not a stack, storage or
 dependency choice; `docs-conventions` reserves ADRs for those. The choice is
 recorded here and in the README.
 
 ### D1. Skew margin on the cut-off: yes or no, how large?
+
+**Decided at Gate 2 (user): B**, monotonic cut-off plus a 60 s margin;
+no option D floor.
 
 The margin `M` is **added** to the device time: `cutoff = floor(now/1000) + M`.
 It covers a device clock up to `M` seconds behind the server. Its cost: a
