@@ -1,12 +1,12 @@
 # State: #63 chore(release): close remaining pnpmfile routes in pack:check guard
 - Path: fast
-- Phase: ready-to-merge
+- Phase: validation
 - Branch: chore/63-pnpmfile-routes
 - PR: #64
 - Plan approved by user: yes (Gate 2, 2026-11-24: ADR 0021 option C)
 - Security-sensitive: yes (release integrity)
-- Review rounds: 2
-- Last updated by: orchestrator
+- Review rounds: 3
+- Last updated by: engineer
 ## Model log
 - pm spec: sonnet (default) → DONE
 - architect plan: opus (default + NEXT_MODEL) → DONE
@@ -19,6 +19,7 @@
 - qa review r2: opus (rule) → PASS (local Docker CI green, 3/3 pack:check = baseline, new tests mutation-checked)
 - security code r2: opus (rule) → PASS (low A3)
 - Gate 3 (round 2): PR #64 ready to merge (2026-11-24)
+- engineer fix r2: opus (rule) → DONE
 ## Open questions
 - none (Gate 2 decided: ADR 0021 option C, Accepted)
 ## Deviations from plan
@@ -38,3 +39,15 @@
   new env route case and the `pnpm run` export test); 3/3 pack:check runs
   match the 40/40 baseline; `pnpm pack:check` with `pnpmfile` in `.npmrc`
   or `pnpm-workspace.yaml` exits 1 on `npm_config_pnpmfile is set`.
+- Fix r2 (security A3): the A1 fixture script now writes only the
+  `npm_config_*` keys (name lowercased, `-` read as `_`, as the guard does)
+  instead of the whole child env, and the test asserts the dump is non-empty
+  and holds only such keys. Every name checkNoPnpmfile reads
+  (`PNPMFILE_ENV`) has that prefix. Local Docker CI (node:24 pinned digest +
+  redis sidecar, CI=true): audit, lint, typecheck, test (vitest + node
+  --test 103/103), build, smoke green; 3/3 pack:check match the 40/40
+  baseline. Mutations (filter drops pnpmfile keys, filter dumps whole env,
+  filter dumps nothing, guard drops `npm_config_pnpmfile`) each fail A1.
+  Note: A1 needs the outer `pnpm run` env, as `pnpm test` provides; plain
+  `node --test` or `pnpm exec` fails its set cases, before and after this
+  fix (unchanged harness behaviour).
