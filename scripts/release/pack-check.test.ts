@@ -746,3 +746,72 @@ describe('packing ignores every pnpmfile route (#63, ADR 0021, R3)', { skip: ski
     });
   }
 });
+
+// ---------------------------------------------------------------------------
+// #63 (security A1): `pnpm pack:check` fails closed early when `.npmrc` or
+// `pnpm-workspace.yaml` sets `pnpmfile`, because `pnpm run` exports the
+// setting to the script as `npm_config_pnpmfile` and checkNoPnpmfile rejects
+// that env. If a pnpm upgrade stops exporting it, this test fails, so the
+// early warning documented in RELEASING.md cannot vanish unnoticed. The
+// control case (no setting) proves the child env is clean otherwise.
+
+const DUMP_ENV = "require('node:fs').writeFileSync('env.json', JSON.stringify(process.env));\n";
+
+const RUN_ENV_CASES: { name: string; set: boolean; setup(fixture: Fixture): void }[] = [
+  { name: 'no pnpmfile setting (control)', set: false, setup: () => undefined },
+  {
+    name: '.npmrc pnpmfile',
+    set: true,
+    setup: (f) => f.write('.npmrc', `pnpmfile=${slashed(f.hook('npmrc'))}\n`),
+  },
+  {
+    name: 'pnpm-workspace.yaml pnpmfile',
+    set: true,
+    setup: (f) => {
+      f.workspaceYaml.push(`pnpmfile: ${JSON.stringify(slashed(f.hook('yaml')))}`);
+    },
+  },
+];
+
+describe(
+  'pnpm run exports a configured pnpmfile to the guard (#63, A1)',
+  { skip: skipRoutes },
+  () => {
+    for (const runCase of RUN_ENV_CASES) {
+      it(runCase.name, () => {
+        assert.ok(PNPM, 'pnpm not found');
+        const base = mkdtempSync(join(tmpdir(), 'sync-pnpmfile-run-'));
+        try {
+          const { env } = buildFixture(base, {
+            name: runCase.name,
+            label: 'run',
+            setup: (f) => {
+              runCase.setup(f);
+              f.rootManifest['scripts'] = { 'dump-env': 'node dump-env.cjs' };
+              f.write('dump-env.cjs', DUMP_ENV);
+              return {};
+            },
+          });
+          const root = join(base, 'ws');
+          run(PNPM, ['run', 'dump-env'], root, env);
+          const childEnv = JSON.parse(
+            readFileSync(join(root, 'env.json'), 'utf8'),
+          ) as NodeJS.ProcessEnv;
+          const problems = checkNoPnpmfile(root, childEnv);
+          if (runCase.set) {
+            assert.ok(childEnv['npm_config_pnpmfile'], 'pnpm run exports npm_config_pnpmfile');
+            assert.ok(
+              problems.some((p) => p.startsWith('npm_config_pnpmfile is set')),
+              `guard rejects it: ${JSON.stringify(problems)}`,
+            );
+          } else {
+            assert.equal(childEnv['npm_config_pnpmfile'], undefined);
+            assert.deepEqual(problems, []);
+          }
+        } finally {
+          rmSync(base, { recursive: true, force: true });
+        }
+      });
+    }
+  },
+);
