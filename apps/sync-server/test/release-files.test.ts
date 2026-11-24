@@ -134,6 +134,70 @@ describe('no credentials or old names in tracked files', () => {
       .filter((path) => existsSync(join(repoRoot, path)) && read(path).includes(oldScope));
     expect(hits).toEqual([]);
   });
+
+  it('names the Docker Hub mirror under moshewin, never the mosherw namespace (#65)', () => {
+    // Built at run time so this file doesn't match itself.
+    const oldMirror = ['docker.io/', 'mosherw'].join('');
+    // The mosherw name is right only after `ghcr.io/` or as the npm `@` scope.
+    const bareOld = /(?<!ghcr\.io\/|@)mosherw\/sync-system-server/;
+    const hits = trackedFiles()
+      .filter((path) => !path.startsWith('docs/issues/') && !path.endsWith('.zip'))
+      .filter((path) => existsSync(join(repoRoot, path)))
+      .filter((path) => {
+        const text = read(path);
+        return text.includes(oldMirror) || bareOld.test(text);
+      });
+    expect(hits).toEqual([]);
+  });
+});
+
+/** The one non-test fingerprint ADR 0022 allows: the public JWT header constant. */
+const JWT_HEADER_ENTRY =
+  '09c7cacfc5432e2293a101649d0e40e009aa52f6:apps/sync-server/src/tokens/jwt.ts:generic-api-key:10';
+
+/** Why a `.gitleaksignore` entry is outside ADR 0022's scope, or null if it is inside. */
+function gitleaksIgnoreViolation(entry: string): string | null {
+  const match = /^[0-9a-f]{40}:([^:]+):([a-z0-9-]+):\d+$/.exec(entry);
+  if (!match) return 'not <commit>:<file>:<rule>:<line>';
+  const [, path = '', rule = ''] = match;
+  if (rule !== 'generic-api-key') return `rule ${rule} is not generic-api-key`;
+  if (!/(^|\/)test\//.test(path) && entry !== JWT_HEADER_ENTRY) return 'file is not under test/';
+  return null;
+}
+
+describe('.gitleaksignore scope (ADR 0022, security M1)', () => {
+  const entries = read('.gitleaksignore')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !line.startsWith('#'));
+
+  it('has entries, each a test-file or jwt.ts header generic-api-key fingerprint', () => {
+    expect(entries.length).toBeGreaterThan(0);
+    const outside = entries
+      .map((entry) => [entry, gitleaksIgnoreViolation(entry)] as const)
+      .filter(([, why]) => why !== null);
+    expect(outside).toEqual([]);
+    expect(entries).toContain(JWT_HEADER_ENTRY);
+  });
+
+  it('rejects entries outside the scope', () => {
+    const sha = 'a'.repeat(40);
+    for (const entry of [
+      `${sha}:apps/sync-server/src/config/env.ts:generic-api-key:3`,
+      `${sha}:apps/sync-server/test/main.test.ts:private-key:3`,
+      `${sha}:apps/sync-server/test/main.test.ts:npm-access-token:3`,
+      `${sha}:apps/sync-server/src/tokens/jwt.ts:generic-api-key:10`,
+      '09c7cacfc5432e2293a101649d0e40e009aa52f6:apps/sync-server/src/tokens/jwt.ts:generic-api-key:11',
+      `${sha}:apps/sync-server/latest/x.ts:generic-api-key:3`,
+      `${sha.slice(1)}:apps/sync-server/test/main.test.ts:generic-api-key:3`,
+      `${sha}:apps/sync-server/test/main.test.ts:generic-api-key`,
+    ]) {
+      expect(gitleaksIgnoreViolation(entry), entry).not.toBeNull();
+    }
+    expect(
+      gitleaksIgnoreViolation(`${sha}:packages/client/test/x.test.ts:generic-api-key:1`),
+    ).toBeNull();
+  });
 });
 
 describe('changesets (ADR 0016, AC49, C9)', () => {
@@ -278,6 +342,48 @@ describe('RELEASING.md load-bearing lines (C1-C5, M6, L1, L5, L8, L9, L11-L13)',
     expect(push).toContain('--password-stdin');
     expect(push).toContain('docker-credential-');
     expect(push).toMatch(/revoke both registry tokens/i);
+  });
+
+  it('pushes the mirror to docker.io/moshewin and GHCR to ghcr.io/mosherw (#65)', () => {
+    const push = step('6. The server image');
+    expect(push).toContain(`docker login ghcr.io -u mosherw --password-stdin`);
+    expect(push).toContain(`docker login docker.io -u moshewin --password-stdin`);
+    for (const tag of ['$V', '$MAJOR.$MINOR', '$MAJOR', 'latest']) {
+      expect(push, tag).toContain(`ghcr.io/mosherw/sync-system-server:${tag}`);
+      expect(push, tag).toContain(`docker.io/moshewin/sync-system-server:${tag}`);
+    }
+    expect(push).toContain('imagetools inspect "docker.io/moshewin/sync-system-server:$V"');
+    expect(step('0. First release only')).toContain('`moshewin` is your Docker Hub **username**');
+  });
+
+  it('checks the real npm user, and org ownership only in step 0 (#65)', () => {
+    expect(publishBlock).toContain(
+      `[ "$(docker exec "$C" npm whoami)" = moshe-winberg ] || { echo 'npm whoami is not moshe-winberg'; exit 1; }`,
+    );
+    expect(publishBlock).not.toContain('npm org');
+    const first = step('0. First release only');
+    expect(first).toContain('`npm org ls mosherw`');
+    expect(first).toContain('`npm logout`');
+    expect(doc).toContain('Organizations: no access');
+  });
+
+  it('runs a pinned, offline, read-only gitleaks scan in step 0 (#65, ADR 0022, L1)', () => {
+    expect(doc).toMatch(/^GITLEAKS_IMAGE='zricethezav\/gitleaks:v8\.24\.0@sha256:[0-9a-f]{64}'$/m);
+    for (const match of doc.matchAll(/zricethezav\/gitleaks:([^\s'`]*)/g)) {
+      // skip the bump instructions' placeholder and the block's own format check
+      if (match[1] === '<tag>' || match[1]?.startsWith('v[0-9.]+@')) continue;
+      expect(match[1], match[0]).toMatch(/^v[0-9.]+@sha256:[0-9a-f]{64}$/);
+    }
+    const first = step('0. First release only');
+    const scans = first.split(/\r?\n/).filter((line) => line.includes('"$GITLEAKS_IMAGE"'));
+    expect(scans).toHaveLength(1);
+    const scan = scans[0] ?? '';
+    expect(scan).toMatch(/docker run --rm /);
+    expect(scan).toContain('--network none');
+    expect(scan).toContain(':/repo:ro"');
+    expect(scan).toMatch(/ git \/repo --redact$/);
+    expect(scan).not.toMatch(/\s(-e|--env|--env-file)\b/);
+    expect(first).toContain('.gitleaksignore');
   });
 
   it('tags only on the host, from the verified merge commit (C2)', () => {
