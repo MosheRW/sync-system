@@ -2,7 +2,7 @@
 - Path: full
 - Phase: architecture
 - Branch: feat/58-secret-files
-- PR: none
+- PR: #76
 - Plan approved by user: no
 - Security-sensitive: yes
 - Review rounds: 0
