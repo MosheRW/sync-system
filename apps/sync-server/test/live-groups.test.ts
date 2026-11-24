@@ -71,6 +71,58 @@ describe('bucketStep (#12 3.1)', () => {
     expect(long).toMatchObject({ ok: true, ttlMs: MAX_RETRY_AFTER_MS });
   });
 
+  it('ends the bucket with the last group of the app when burst > rate x L (#47 AC1)', () => {
+    // cap 12, burst 4 (above cap / 4), the derived rate for 60 min: 2 per L.
+    const limits = { appBurst: 4, appMaxPerMinute: 120, maxLiveGroups: 12 };
+    const refillPerMinute = appCreateRefillPerMinute(limits, 60);
+    const lifeMs = lifetime(60) * 60_000;
+    let state: BucketState | undefined;
+    let ttlMs = 0;
+    for (let i = 0; i < 4; i += 1) {
+      const step = bucketStep(state, T0, { expiresAt: T0 + lifeMs, burst: 4, refillPerMinute });
+      expect(step.ok).toBe(true);
+      ({ next: state, ttlMs } = step as { next: BucketState; ttlMs: number });
+    }
+    // Time to full is about 2 L; the bucket still ends 1 ms after u.
+    const toFull = (4 * 60_000) / refillPerMinute;
+    expect(toFull).toBeGreaterThan(1.9 * lifeMs);
+    expect(ttlMs).toBe(Math.ceil(lifeMs) + 1);
+    expect(ttlMs).toBeLessThanOrEqual(state!.u - T0 + 1);
+  });
+
+  it('ends the bucket at u + 1 ms when the per-minute bound is below the derived rate (#47 L1)', () => {
+    // burst 120 at 1 per minute, 60 min: time to full 120 min > L.
+    const limits = { appBurst: 120, appMaxPerMinute: 1, maxLiveGroups: 10_000 };
+    const refillPerMinute = appCreateRefillPerMinute(limits, 60);
+    expect(refillPerMinute).toBe(1);
+    const lifeMs = lifetime(60) * 60_000;
+    const budget = { expiresAt: T0 + lifeMs, burst: 120, refillPerMinute };
+    let state: BucketState | undefined;
+    let ttlMs = 0;
+    // The whole burst at once: 120 min to full again, longer than L.
+    for (let i = 0; i < 120; i += 1) {
+      const step = bucketStep(state, T0, budget);
+      expect(step.ok).toBe(true);
+      ({ next: state, ttlMs } = step as { next: BucketState; ttlMs: number });
+    }
+    expect(state!.t).toBe(0);
+    expect((120 * 60_000) / refillPerMinute).toBeGreaterThan(lifeMs);
+    expect(ttlMs).toBe(Math.ceil(lifeMs) + 1);
+  });
+
+  it('keeps the bucket at u and drops it 1 ms later (#47 AC1 boundary)', () => {
+    const step = bucketStep(undefined, T0, {
+      expiresAt: T0 + 5_000.5,
+      burst: 3,
+      refillPerMinute: 1,
+    });
+    // ceil(u) + 1 from now: kept through now == ceil(u).
+    expect(step).toMatchObject({ ok: true, ttlMs: 5_002 });
+    // u in the past: at least 1 ms.
+    const past = bucketStep(undefined, T0, { expiresAt: T0 - 10, burst: 3, refillPerMinute: 1 });
+    expect(past).toMatchObject({ ok: true, ttlMs: 1 });
+  });
+
   it('clamps the wait to a safe integer at a tiny rate (R14, L8)', () => {
     const state: BucketState = { t: 0, a: T0, r: 1e-300, b: 1, u: T0 + 6e16 };
     expect(bucketStep(state, T0, { ...limits, refillPerMinute: 1e-300 })).toEqual({
@@ -95,6 +147,56 @@ describe('MemoryLiveGroups (#12 3.1)', () => {
     expect(store.size).toBe(0);
     store.clear();
     expect(store.count('app-a')).toBe(0);
+  });
+
+  it('keeps the bucket at its end bound and refills it only after (#47 AC1, H1)', async () => {
+    // cap 12, burst 5, the derived rate: rate x L = 1 token.
+    const limits = { appBurst: 5, appMaxPerMinute: 120, maxLiveGroups: 12 };
+    const refillPerMinute = appCreateRefillPerMinute(limits, 60);
+    const lifeMs = lifetime(60) * 60_000;
+    let time = T0;
+    const store = new MemoryLiveGroups(() => time);
+    const reserve = (ns: string, id: string) =>
+      store.reserve(ns, id, {
+        now: time,
+        expiresAt: time + lifeMs,
+        burst: 5,
+        refillPerMinute,
+        cap: 12,
+      });
+    const ids = (letter: string) => [0, 1, 2, 3, 4].map((i) => `${letter}${i}`.padEnd(43, 'x'));
+    for (const id of ids('a')) expect(await reserve('app-a', id)).toEqual({ ok: true });
+    for (const id of ids('b')) expect(await reserve('app-b', id)).toEqual({ ok: true });
+    // Exactly at u: the T0 groups still count and the bucket is kept, so
+    // only rate x L = 1 more is admitted, not a fresh burst.
+    time = T0 + lifeMs;
+    const atEnd = [];
+    for (const id of ids('c')) atEnd.push(await reserve('app-a', id));
+    expect(atEnd.filter((r) => r.ok)).toHaveLength(1);
+    expect(atEnd.filter((r) => !r.ok && r.reason === 'rate')).toHaveLength(4);
+    expect(store.count('app-a')).toBe(6);
+    expect(store.count('app-a')).toBeLessThanOrEqual(12 / 2);
+    // Idle past u + 1 ms: the bucket is gone, a full burst is back, and
+    // every group it charged has ended.
+    time = T0 + Math.ceil(lifeMs) + 1;
+    for (const id of ids('d')) expect(await reserve('app-b', id)).toEqual({ ok: true });
+    expect(store.count('app-b')).toBe(5);
+  });
+
+  it('forgets an app once its bucket has ended, even before it is full (#47)', async () => {
+    let time = T0;
+    const store = new MemoryLiveGroups(() => time);
+    // 1 per minute: full again only after 2 min, but the group ends at 10 s.
+    const budget = { now: T0, expiresAt: T0 + 10_000, burst: 2, refillPerMinute: 1, cap: 5 };
+    await store.reserve('app-a', G('A'), budget);
+    await store.reserve('app-a', G('B'), budget);
+    await store.release('app-a', G('A'));
+    await store.release('app-a', G('B'));
+    expect(store.size).toBe(1);
+    time = T0 + 10_001;
+    await store.register('app-a', G('C'), T0 + 20_000);
+    await store.release('app-a', G('C'));
+    expect(store.size).toBe(0);
   });
 
   it('clear forgets everything (shutdown)', async () => {
@@ -233,6 +335,10 @@ describe('H1 simulation on MemoryLiveGroups (#12 R1)', () => {
     ['defaults at 480 min', DEFAULT_LIMITS, 480],
     ['cap 3, burst 1 at 180 min', EXTREMES.smallest!, 180],
     ['cap 100 000, burst 1, rate bound 60 000 at 180 min', EXTREMES['widest headroom']!, 180],
+    // #47: a retry lands exactly on u; the bucket must still be there.
+    ['cap 100 000, burst 49 999 at 180 min', EXTREMES['tightest headroom']!, 180],
+    // #47 L1: burst > rate x L through the per-minute bound, not the cap.
+    ['rate bound 1 at 60 min', EXTREMES['rate bound 1']!, 60],
   ];
 
   for (const [label, limits, minutes] of CASES) {
