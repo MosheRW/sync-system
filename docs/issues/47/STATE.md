@@ -2,7 +2,7 @@
 - Path: fast
 - Phase: architecture
 - Branch: fix/47-live-group-limits
-- PR: none
+- PR: #75
 - Plan approved by user: no
 - Security-sensitive: yes
 - Review rounds: 0
