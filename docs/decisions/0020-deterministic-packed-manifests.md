@@ -1,6 +1,8 @@
 # 0020. Deterministic packed manifests (supersedes 0019)
 
-- Status: Proposed
+- Status: Accepted (revised Gate 2, 2026-11-24: user chose the recommended D1,
+  with security controls R1–R7 and advisories L1–L4 of
+  [`docs/issues/53/security.md`](../issues/53/security.md))
 - Date: 2026-11-23
 - Issue: #53
 - Supersedes: [0019](0019-release-tarball-reproducibility.md)
@@ -96,24 +98,43 @@ when two separate pack runs are compared: a rebuild, a post-bump baseline
 
 ## Decision
 
-**D1** (recommended, the user decides at Gate 2). It makes every pack run
+**D1** (chosen by the user at the revised Gate 2, 2026-11-24). It makes every pack run
 of the same commit in the pinned image byte-identical with the smallest
 change to the release path. It leaves the publish step as it is. It also
 turns the trigger into a `pack:check` failure, so the race cannot come
 back silently. D2 is the fallback if two workspace ranges in one map are
 ever needed. F is the long-term fix.
 
-The pin-bump procedure in `RELEASING.md` "Before you start" adds the two
-low advisories from the #53 security review:
+The user also adopted the plan review's required controls R1–R7 and
+advisories L1–L4 ([`docs/issues/53/security.md`](../issues/53/security.md)):
 
-- **L1 (provenance of a new digest):** bump in its own reviewed PR, check
-  the new index with `docker buildx imagetools inspect` (the official
-  `library/node` repository, its attestation manifests present), and check
-  that `node --version` in the new image matches an official Node.js
-  release.
-- **L2 (post-bump baseline):** run the [dry run](../../RELEASING.md#dry-run-qa)
-  **twice** on the new digest and require the three values to be identical
-  between the two runs. With D1 this holds for react too.
+- **The guard** (R1, R2, L1 of the review) runs in `packAndCheck`, before
+  packing, with no way to skip it. It counts every value that contains
+  `workspace:` (pnpm's peer converter uses `includes`, so a compound peer
+  range such as `"^1 || workspace:^"` counts too) in all four dependency
+  maps of each published package's source manifest. It fails closed: a
+  missing published package or a dependency field that is not a plain
+  object is a problem too.
+- **No pnpmfile** (R7, L4): `pack:check` also fails if `.pnpmfile.cjs`
+  exists at the repo root or `npm_config_pnpmfile` /
+  `npm_config_global_pnpmfile` is set, because a `beforePacking` hook could
+  rewrite the packed manifest after every source-level check.
+- **Lockfile** (R3): the only lockfile change is the removal of the
+  three-line importer entry.
+- **Provenance of a new digest** (R4, L2 of the review): the bump is its own
+  PR, reviewed by a second person or session. `docker buildx imagetools
+inspect` of the official `docker.io/library/node` tag shows the new index
+  digest, with `attestation-manifest` entries and Docker Official Images
+  provenance. `node --version` in the new image is listed in
+  `https://nodejs.org/dist/index.json` and is not older than the current
+  pin. The PR records the old and new index digests and the `linux/amd64`
+  manifest digest.
+- **Post-bump baseline** (R5, L3 of the review): run the
+  [dry run](../../RELEASING.md#dry-run-qa) **twice** on the new digest, save
+  the first `INTEGRITY.txt` before the second run, and require `diff` of the
+  two files to print nothing. Those values are the new baseline; never
+  compare them with the old digest's values.
+- **Step 4, CI and the Dockerfiles stay unchanged** (R6).
 
 ## Consequences
 
@@ -127,6 +148,7 @@ low advisories from the #53 security review:
   value changes once, to a single stable value.
 - `RELEASING.md` says the values are identical across pack runs of the same
   commit in the pinned image on linux/amd64 (still not across host OSes or
-  digests). The pin bump gains L1 and L2.
+  digests). The pin bump gains the provenance and two-run baseline checks.
+- `pack:check` and `release:dry-run` fail when a pnpmfile is present.
 - When the project moves to pnpm 11 (F), remove the check, and expect new
   values for client and react.
