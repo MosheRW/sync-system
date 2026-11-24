@@ -1,17 +1,18 @@
 # State: #65 fix: correct Docker Hub namespace, npm identity wording, gitleaks false positives
 - Path: fast
-- Phase: implementation
+- Phase: validation
 - Branch: fix/65-release-namespace-gitleaks
 - PR: #66
 - Plan approved by user: yes (Gate 2, 2026-11-24)
 - Security-sensitive: yes
-- Review rounds: 0
-- Last updated by: engineer
+- Review rounds: 1
+- Last updated by: qa
 ## Model log
 - pm grooming: sonnet (default) → DONE
 - architect plan: opus (rule: one tier up, secret-scan scope) → DONE (ADR 0022 Proposed; NEXT_MODEL opus for engineer)
 - security plan: opus (rule: security always opus) → PASS (0 critical, 0 high, 1 medium, 4 low; see security.md)
 - engineer implement: opus (rule: security-sensitive plan, Implementer model: opus) → DONE
+- qa review r1: sonnet (NEXT_MODEL) → PASS (lint, typecheck, server suite, release-files, pinned gitleaks scan clean; 8/8 criteria met; QA verdict: PASS)
 ## Gate 2 decisions (2026-11-24)
 - ADR 0022: option 1 (one fingerprint per finding in `.gitleaksignore`) → Accepted
 - Security advisories folded in: M1 (scope test also requires rule `generic-api-key`), L1 (gitleaks container runs with `--network none`, tested), L3 (step 0 checks the Docker Hub username is `moshewin`), L4 (`npm logout` after the step 0 npm checks; no claim that Docker Hub personal tokens can be scoped to one repository)
