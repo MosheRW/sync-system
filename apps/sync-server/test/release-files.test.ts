@@ -510,10 +510,21 @@ describe('release candidate 1.0.0 (AC48, AC49)', () => {
     expect(changelog).toMatch(/^## 1\.0\.0$/m);
   });
 
-  it('keeps the reader private at 0.1.0, outside the group', () => {
-    expect(manifest('apps/reader').version).toBe('0.1.0');
+  it('keeps the reader private at its own 1.0.0, outside the group (ADR 0023 B1)', () => {
+    expect(manifest('apps/reader').version).toBe('1.0.0');
     expect(manifest('apps/reader').private).toBe(true);
-    expect(existsSync(join(repoRoot, 'apps/reader/CHANGELOG.md'))).toBe(false);
+    expect(read('apps/reader/src/config/version.ts')).toMatch(
+      /^export const READER_VERSION = '1\.0\.0';$/m,
+    );
+    const changelog = read('apps/reader/CHANGELOG.md');
+    expect(changelog).toMatch(/^# @mosherw\/sync-system-reader$/m);
+    expect(changelog).toMatch(/^## 1\.0\.0$/m);
+    const config = JSON.parse(read('.changeset/config.json')) as {
+      fixed: string[][];
+      ignore: string[];
+    };
+    expect(config.ignore).toEqual(['@mosherw/sync-system-reader']);
+    expect(config.fixed.flat()).not.toContain('@mosherw/sync-system-reader');
   });
 
   it('states protocol 1 with minimum 1 and the notes for pre-release builds', () => {
