@@ -1,12 +1,12 @@
 # State: #58 feat(server): read secrets from files via _FILE variables (follow-up to #51)
 - Path: full
-- Phase: ready-to-merge
+- Phase: validation
 - Branch: feat/58-secret-files
 - PR: #76
 - Plan approved by user: yes
 - Security-sensitive: yes
 - Review rounds: 1
-- Last updated by: qa
+- Last updated by: engineer
 ## Model log
 - pm grooming: sonnet (default) → DONE
 - architect plan: opus (rule: security-sensitive + NEXT_MODEL) → DONE
@@ -14,6 +14,7 @@
 - engineer implement: opus (rule: Implementer model + security-sensitive) → DONE (one run, interrupted once by an API rate limit and resumed from the pushed commits)
 - qa review: sonnet (NEXT_MODEL) → PASS
 - security code: opus (rule) → PASS (0 critical/high/medium, 2 low advisories)
+- engineer fix: opus (rule: fix round) → DONE
 ## Gate 2 decisions (user)
 - ADR 0023 option 1: Accepted; ADR 0015 gains only a "Related: 0023" line; conventions.md row added
 - Q6 narrowing accepted: the path is omitted for "does not exist" (ENOENT/ENOTDIR) and unknown errors; printed (via shownText) only for entries that exist
@@ -31,3 +32,4 @@
 - `TokenSecrets` stays an interface (tests build it as a literal); the collector returns a frozen object with non-enumerable `toJSON` / `toString` / `inspect.custom` (C7).
 - The log message of `token_secret_source` is static ("token secret source at startup"); the source is only in the `source` field.
 - POSIX-only tests (FIFO, `chmod 000`) skip on Windows; they were run and pass in the pinned `node:24` Linux image as uid 1000.
+- Gate 3: user asked to fix the two low advisories. Fixed in  (token secrets are a frozen class instance with prototype //; their Buffers redact JSON, inspect and string conversion, so a spread copy stays redacted; new export , used by  to keep a redacted copy of caller-built secrets;  interface unchanged) and  (EACCES/EPERM on open prints the path only after an  of it succeeds; else new path-less message ;  gained ; startup-errors.md, operator guide and ADR 0023 updated). An explicit  still decodes a secret Buffer (TokenKeyring and tests rely on the bytes). POSIX tests rerun in the local node:24 image as uid 1000: pass. Per the orchestrator, these fix commits carry  only, no Co-Authored-By trailers.
