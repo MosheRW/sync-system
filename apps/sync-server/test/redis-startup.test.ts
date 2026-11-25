@@ -4,7 +4,7 @@ import { type AddressInfo, type Server, createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer as createTlsServer } from 'node:tls';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { parseRedisSettings } from '../src/config/redis.js';
 import { createLogger } from '../src/logging/logger.js';
 import { connectRedis } from '../src/storage/redis/connect.js';
@@ -83,6 +83,13 @@ function makeCertificate(dir: string): { key: Buffer; cert: Buffer } {
 }
 
 describe('Redis startup errors without a Redis (#35 AC4, security C9, C10)', () => {
+  // connectRedis loads @redis/client lazily (ADR 0010). Warm that import so
+  // the timed assertions below measure the connect, not the module load,
+  // which is slow under the parallel full run (#78).
+  beforeAll(async () => {
+    await import('@redis/client');
+  }, 60_000);
+
   it('reports a refused port as unreachable, fast', async () => {
     const port = await listen(createServer());
     servers.pop()!.close();
@@ -119,5 +126,5 @@ describe('Redis startup errors without a Redis (#35 AC4, security C9, C10)', () 
     const port = await listen(server);
     const result = await attempt(`rediss://${USER}:${PASSWORD}@localhost:${port}`);
     expect(result).toEqual({ ok: false, message: 'Redis TLS handshake failed (REDIS_URL)' });
-  });
+  }, 30_000);
 });

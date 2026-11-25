@@ -292,20 +292,24 @@ return dropped
  * score at or before `now` whose timer still exists gets the lease end as
  * its score; members whose group's timer hash entry is gone are dropped,
  * and live-group members past their end bound too (F13), with their slot in
- * their app's live-group set (#12). KEYS: due, live; ARGV: timer hash key
+ * their app's live-group set (#12). The batch size bounds both: at most
+ * `limit` expired live members are freed per call (#47), each removed from
+ * `live` whatever its shape, so a backlog is drained over several short
+ * calls and no member can stall it. KEYS: due, live; ARGV: timer hash key
  * base, now, lease end, batch size, live-group set key base. Returns
- * `{member, timerJson, ...}`. Hash and set keys are built from members of
- * the due and live sets, which only ever hold checked members.
+ * `{freed, member, timerJson, ...}`. Hash and set keys are built from
+ * members of the due and live sets, which only ever hold checked members.
  */
 export const CLAIM_DUE = new LuaScript(`
 local due, live = KEYS[1], KEYS[2]
 local tp, now, lease, limit, lgp = ARGV[1], ARGV[2], ARGV[3], tonumber(ARGV[4]), ARGV[5]
-for _, m in ipairs(redis.call('ZRANGEBYSCORE', live, '-inf', '(' .. now)) do
+local expired = redis.call('ZRANGEBYSCORE', live, '-inf', '(' .. now, 'LIMIT', 0, limit)
+for _, m in ipairs(expired) do
   local i = string.find(m, ':', 1, true)
   if i ~= nil then redis.call('ZREM', lgp .. string.sub(m, 1, i - 1), string.sub(m, i + 1)) end
+  redis.call('ZREM', live, m)
 end
-redis.call('ZREMRANGEBYSCORE', live, '-inf', '(' .. now)
-local out = {}
+local out = {#expired}
 for _, m in ipairs(redis.call('ZRANGEBYSCORE', due, '-inf', now, 'LIMIT', 0, limit)) do
   local i = string.find(m, ':[^:]*$')
   if i == nil then
@@ -453,7 +457,12 @@ return out
  * prune -> held member (no charge) -> `register` -> effective r/b/u and
  * refill -> rate refusal (no write) -> cap refusal (no charge) -> charge +
  * ZADD. Every number written to a command is an integer string (`%.0f`,
- * L8) or a `%.17g` score; float fields are stored with `%.17g`. Returns
+ * L8) or a `%.17g` score; float fields are stored with `%.17g`. The bucket
+ * expires at `ceil(u) + 1` (PEXPIREAT, clamped to [now + 1, now + 1e13];
+ * #47): never longer than the app's latest charged group plus 1 ms, and
+ * never before it, so a fresh full bucket never shares the live set with a
+ * group it charged (#12 H1). When `burst > rate x L`, the budget is full
+ * again sooner than the refill alone would make it. Returns
  * `{'ok', fresh}` (1 when the member was added, 0 when it was held),
  * `{'rate', ms}` or `{'cap'}`; `ms` is an integer (ceil, clamped to 1e13).
  */
@@ -532,8 +541,9 @@ if redis.call('ZCARD', set) >= cap then return {'cap'} end
 tokens = tokens - 1
 at = math.max(at, now)
 redis.call('HSET', bucket, 't', num(tokens), 'a', num(at), 'r', num(r), 'b', num(b), 'u', num(u))
-local ttl = math.min(math.ceil(math.max((b - tokens) * 60000 / r, u - now)), MAXT)
-redis.call('PEXPIRE', bucket, int(math.max(ttl, 1)))
+-- The bucket ends 1 ms after u (#47): absolute, from the same TIME as u,
+-- so it is present at every now <= ceil(u) whatever the expiry check.
+redis.call('PEXPIREAT', bucket, int(math.max(math.min(math.ceil(u) + 1, now + MAXT), now + 1)))
 redis.call('ZADD', set, num(score), member)
 extend_set()
 return {'ok', 1}
