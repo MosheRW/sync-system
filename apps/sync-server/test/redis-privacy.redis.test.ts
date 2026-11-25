@@ -134,6 +134,15 @@ describeRedis('Redis keys, values and logs (#35 AC5, AC8, AC24, AC25, F13)', () 
       else if (key.includes(':inst:')) expect(ttl, key).toBeLessThanOrEqual(15_000);
       else expect(ttl, key).toBeLessThanOrEqual(key.endsWith(':epoch') ? end + 5 * MINUTE : end);
     }
+    // The create budget `lb:<ns>` is the one key bounded at E + 1 ms (#47):
+    // it ends 1 ms after the app's latest group, so its PTTL above is within
+    // E only because time has passed since the create. Its absolute expiry
+    // is at most 1 ms after the app's live set's.
+    const budgetEnd = await inspect.client.pExpireTime(`${prefix}:v1:lb:app-a`);
+    expect(budgetEnd).toBeGreaterThan(0);
+    expect(budgetEnd).toBeLessThanOrEqual(
+      (await inspect.client.pExpireTime(`${prefix}:v1:lg:app-a`)) + 1,
+    );
     const leader = (await resumeWith(ts, group.leaderToken)).client;
     leader.send({ type: 'group.end' });
     await leader.next('group.ended');

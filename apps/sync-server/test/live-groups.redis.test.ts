@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeAll, expect, it } from 'vitest';
 import { createLogger } from '../src/logging/logger.js';
 import type { CreateBudget } from '../src/groups/live-groups.js';
 import { MAX_RETRY_AFTER_MS } from '../src/groups/live-groups.js';
+import { END_TTL_SLACK_MS, appCreateRefillPerMinute } from '../src/limits/constants.js';
 import { StorageReplyError } from '../src/storage/errors.js';
 import type { RedisLink } from '../src/storage/redis/connect.js';
 import { RedisLiveGroups } from '../src/storage/redis/live-groups.js';
@@ -73,10 +74,40 @@ describeRedis('RedisLiveGroups (#12 R5, R13, R14, AC2, AC3)', () => {
     expect(await inspect.client.pExpireTime(setKey())).toBe(setExpiry);
     const bucketTtl = await inspect.client.pTTL(bucketKey());
     expect(Number.isSafeInteger(bucketTtl)).toBe(true);
-    // max(time to full = 2 tokens at 1/s, u - now = 2 h).
+    // u - now + 1 ms (#47; u = the later group's end, 2 h), not
+    // max(time to full, u - now).
     expect(bucketTtl).toBeGreaterThan(2 * HOUR - 1_000);
-    expect(bucketTtl).toBeLessThanOrEqual(2 * HOUR);
+    expect(bucketTtl).toBeLessThanOrEqual(2 * HOUR + 1);
     expect(await inspect.client.hGetAll(bucketKey())).toMatchObject({ b: '10', r: '60' });
+  });
+
+  it('ends the bucket 1 ms after the latest group of the app above a quarter of the cap (#47 AC1)', async () => {
+    prefix = randomPrefix();
+    const store = await instance();
+    // cap 12, burst 4, the derived rate for 60 min: time to full after the
+    // burst is about 2 L (the old TTL), the group ends after L.
+    const lifeMs = HOUR + END_TTL_SLACK_MS;
+    const refillPerMinute = appCreateRefillPerMinute(
+      { appBurst: 4, appMaxPerMinute: 120, maxLiveGroups: 12 },
+      60,
+    );
+    for (const letter of ['A', 'B', 'C', 'D']) {
+      const now = Date.now();
+      expect(
+        await store.reserve(
+          'app-a',
+          G(letter),
+          budget({ now, expiresAt: now + lifeMs, cap: 12, burst: 4, refillPerMinute }),
+        ),
+      ).toEqual({ ok: true });
+    }
+    const u = Number(await inspect.client.hGet(bucketKey(), 'u'));
+    const bucketEnd = await inspect.client.pExpireTime(bucketKey());
+    // Absolute, from the same Redis TIME as u (not a PTTL that depends on
+    // the time elapsed since).
+    expect(bucketEnd).toBe(Math.ceil(u) + 1);
+    expect(bucketEnd).toBeLessThanOrEqual((await inspect.client.pExpireTime(setKey())) + 1);
+    expect(await inspect.client.pTTL(bucketKey())).toBeLessThanOrEqual(lifeMs + 1);
   });
 
   it('clamps the bucket TTL and the wait at a tiny rate (R14, L8, L12)', async () => {

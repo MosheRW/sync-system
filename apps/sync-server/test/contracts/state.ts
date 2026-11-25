@@ -410,8 +410,9 @@ export function liveGroupsContract(label: string, harness: LiveGroupsHarness): v
     });
 
     it('keeps the smallest recent burst, and new values apply after u (R13, L6)', async () => {
-      // 600 per minute: one token every 100 ms.
-      const soon = now() + 300;
+      // 600 per minute: one token every 100 ms. The bucket ends 1 ms after
+      // u (#47), so u leaves room for two real-clock Redis round trips.
+      const soon = now() + 600;
       const strict = { burst: 1, refillPerMinute: 600, expiresAt: soon };
       expect(await store.reserve('app-a', L1, budget(strict))).toEqual({ ok: true });
       await advance(250);
@@ -419,8 +420,8 @@ export function liveGroupsContract(label: string, harness: LiveGroupsHarness): v
       const big = { burst: 5, refillPerMinute: 600, expiresAt: soon };
       expect(await store.reserve('app-a', L2, budget(big))).toEqual({ ok: true });
       expect(await store.reserve('app-a', L3, budget(big))).toMatchObject({ reason: 'rate' });
-      await advance(400);
-      // u passed: the burst of 5 applies (4 tokens refilled).
+      await advance(500);
+      // u passed: the burst of 5 applies (the bucket ended 1 ms after u).
       for (const id of [L3, L4, L5]) {
         expect(await store.reserve('app-a', id, budget(big))).toEqual({ ok: true });
       }

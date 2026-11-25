@@ -650,7 +650,17 @@ Raising `MAX_LIVE_GROUPS_PER_APP` raises the sustained rate (up to
 `MAX_GROUP_CREATES_PER_APP_PER_MINUTE`); raising the burst lowers it, and a
 limit just above twice the burst leaves almost no sustained rate. Keep the
 burst well below half the limit (for example at most a quarter): each
-restart that empties the budget state lets one more burst in. Raising
+restart that empties the budget state lets one more burst in. The budget
+state lives no longer than the app's latest group: the Redis key
+`lb:<ns>` ends 1 ms after that group's end bound, so once every group of
+the app has ended, the budget is full again. When the burst is more than
+the sustained rate times the group's life (`burst > rate x
+(maxSessionMinutes + 5 s)`, from a burst above a quarter of the limit or
+from a low `MAX_GROUP_CREATES_PER_APP_PER_MINUTE`), this refills sooner than
+the rate alone would: an app that is idle until its groups end gets its
+full burst back, so the per-minute setting limits creates while an app is
+busy, not across idle periods. Live creates still never pass half the
+limit. Raising
 `MAX_SESSION_MINUTES_CEILING` lowers the sustained rate of apps that use the
 longer sessions. Creates hold at most `MAX_LIVE_GROUPS_PER_APP / 2 / 10^6` of
 the 6-digit group codes: 0.5 % at the default, 5 % at the largest limit
