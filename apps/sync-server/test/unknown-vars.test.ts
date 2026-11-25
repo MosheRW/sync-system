@@ -114,6 +114,26 @@ describe('unknown look-alike variables (#36 AC37a, ADR 0015)', () => {
     ]);
   });
 
+  it('knows only the three _FILE names; other _FILE names in a family are still flagged (#58, ADR 0023)', () => {
+    expect(
+      problemsOf({
+        TOKEN_SECRET_FILE: 'x',
+        TOKEN_SECRET_PREVIOUS_FILE: 'x',
+        REDIS_URL_FILE: 'x',
+        MAX_X_FILE: 'SENTINEL-a',
+        REDIS_PASSWORD_FILE: 'SENTINEL-b',
+        TOKEN_SECRET_FILES: 'SENTINEL-c',
+        TOKEN_SECRET_FIEL: 'SENTINEL-d',
+        PORT_FILE: 'x',
+      }),
+    ).toEqual([
+      `MAX_X_FILE is not a sync server variable; ${README_HINT}`,
+      `REDIS_PASSWORD_FILE is not a sync server variable; ${README_HINT}`,
+      'TOKEN_SECRET_FIEL is not a sync server variable; did you mean TOKEN_SECRET_FILE?',
+      'TOKEN_SECRET_FILES is not a sync server variable; did you mean TOKEN_SECRET_FILE?',
+    ]);
+  });
+
   it('flags lower-case and mixed-case names in a family', () => {
     expect(problemsOf({ redis_url: 'x', Token_Secret: 'y' })).toEqual([
       'Token_Secret is not a sync server variable; did you mean TOKEN_SECRET?',

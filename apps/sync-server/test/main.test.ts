@@ -1,16 +1,17 @@
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:net';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import { run } from '../src/main.js';
 import type { SyncServer } from '../src/server.js';
 import { DEV_TOKEN_SECRET } from '../src/config/token-secret.js';
 import { LogCapture } from './helpers/log-capture.js';
 import { httpGet } from './helpers/test-server.js';
 import { childEnv } from './helpers/child-env.js';
+import { expectNoSentinel, secretFileDir } from './helpers/secret-files.js';
 
 const SECRET_KEY = 'SENTINEL-main-key-0123456789-0123456789-xyz';
 /** A strong-looking test token secret (not a real one). */
@@ -273,4 +274,89 @@ describe('process entry (AC6)', () => {
     expect(child.stderr).not.toContain('SENTINEL');
     expect(child.stdout).not.toContain('SENTINEL');
   });
+});
+
+describe('secret files end to end (#58 AC12, AC7, AC9)', () => {
+  const files = secretFileDir('sync-main-secret-');
+  afterAll(() => files.cleanup());
+
+  /**
+   * Spawns the real entry point and waits for it to listen or to exit.
+   * Resolves with everything it printed; the process is killed afterwards.
+   */
+  function startProcess(
+    env: Record<string, string>,
+  ): Promise<{ code: number | null; stdout: string; stderr: string }> {
+    return new Promise((resolve, reject) => {
+      const child = spawn(process.execPath, ['--import', 'tsx', 'src/index.ts'], {
+        cwd: serverDir,
+        env: childEnv({ NODE_OPTIONS: '--conditions=@mosherw/sync-system-source', ...env }),
+      });
+      let stdout = '';
+      let stderr = '';
+      let listening = false;
+      const timer = setTimeout(() => {
+        child.kill();
+        reject(new Error('the server neither listened nor exited in time'));
+      }, 50_000);
+      child.stdout.setEncoding('utf8').on('data', (chunk: string) => {
+        stdout += chunk;
+        if (!listening && stdout.includes('"server_listening"')) {
+          listening = true;
+          child.kill();
+        }
+      });
+      child.stderr.setEncoding('utf8').on('data', (chunk: string) => (stderr += chunk));
+      child.once('error', reject);
+      child.once('exit', (code) => {
+        clearTimeout(timer);
+        resolve({ code: listening ? null : code, stdout, stderr });
+      });
+    });
+  }
+
+  it('starts with TOKEN_SECRET_FILE only, logs the file source and never the secret', async () => {
+    const secretPath = files.file('token-secret', `${TOKEN_SECRET}\n`);
+    const out = await startProcess({
+      NODE_ENV: 'production',
+      SYNC_CONFIG_PATH: writeConfig(validConfig),
+      TOKEN_SECRET_FILE: secretPath,
+      HOST: '127.0.0.1',
+      PORT: String(await freePort()),
+    });
+    expect(out.stderr).toBe('');
+    expect(out.code).toBeNull();
+    const records = out.stdout
+      .split('\n')
+      .filter((line) => line.startsWith('{'))
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    const source = records.find((r) => r.event === 'token_secret_source');
+    expect(source).toMatchObject({ level: 30, source: 'file' });
+    expect(Object.keys(source ?? {}).sort()).toEqual([
+      'event',
+      'hostname',
+      'level',
+      'msg',
+      'pid',
+      'source',
+      'time',
+    ]);
+    expect(records.some((r) => r.event === 'server_listening')).toBe(true);
+    expectNoSentinel(out.stdout + out.stderr, TOKEN_SECRET);
+    expect(out.stdout).not.toContain(secretPath);
+  }, 60_000);
+
+  it('exits 1 when TOKEN_SECRET and TOKEN_SECRET_FILE are both set, printing neither value', async () => {
+    const out = await startProcess({
+      SYNC_CONFIG_PATH: writeConfig(validConfig),
+      TOKEN_SECRET,
+      TOKEN_SECRET_FILE: files.file('token-secret-conflict', TOKEN_SECRET),
+      PORT: String(await freePort()),
+    });
+    expect(out.code).toBe(1);
+    expect(out.stderr).toBe(
+      'Config error: TOKEN_SECRET and TOKEN_SECRET_FILE are both set; set only one\n',
+    );
+    expectNoSentinel(out.stdout + out.stderr, TOKEN_SECRET);
+  }, 60_000);
 });

@@ -4,10 +4,12 @@
  * `startup-errors-doc.test.ts` (every printed line must be listed in
  * docs/startup-errors.md). All values are test-only, never real.
  */
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { shownText } from '../src/config/apps-config.js';
 import { DEV_REDIS_PASSWORD } from '../src/config/redis.js';
+import type { SecretFileVariable } from '../src/config/secret-file.js';
 import { DEV_TOKEN_SECRET, PUBLIC_EXAMPLE_SECRETS } from '../src/config/token-secret.js';
 import { DEV_API_KEYS } from '../src/config/dev-key.js';
 import type { ServerVariable } from '../src/config/known-vars.js';
@@ -34,6 +36,10 @@ export type AppsFile =
   | { kind: 'missing' }
   | { kind: 'directory' };
 
+/** A secret file of a case (#58): content written with mode 600, a directory, or no file. */
+export type SecretFileSpec =
+  { kind: 'content'; content: string | Buffer } | { kind: 'directory' } | { kind: 'missing' };
+
 export interface ConfigCase {
   /** Unique label. */
   id: string;
@@ -45,6 +51,12 @@ export interface ConfigCase {
   unset?: string[];
   /** Apps file; defaults to one valid app. */
   apps?: AppsFile;
+  /**
+   * Secret files (#58): each is created in the case dir and its path set as
+   * the variable's value. `<file>` in `problems` stands for that path as the
+   * server shows it (control characters replaced, cut at 64 characters).
+   */
+  files?: Partial<Record<SecretFileVariable, SecretFileSpec>>;
   /** Text that must not appear in stderr or the logs. */
   sentinels: string[];
   /**
@@ -617,6 +629,172 @@ export const APPS_CASES: readonly ConfigCase[] = [
   },
 ];
 
+const content = (text: string | Buffer): SecretFileSpec => ({ kind: 'content', content: text });
+
+/** A secret pasted into `TOKEN_SECRET_FILE` by mistake, shaped like a path (security C9). */
+const PASTED_SECRET = 'SENTINEL/pasted+Qm7Zx2Lv9Kd4/Rt8Wn3Hb6Jf1Pc0Ys5Hb6Jf1=';
+
+/** `_FILE` variables (#58, ADR 0023): conflicts, file problems, rules from a file. */
+export const SECRET_FILE_CASES: readonly ConfigCase[] = [
+  {
+    id: 'TOKEN_SECRET and TOKEN_SECRET_FILE both set',
+    target: 'TOKEN_SECRET_FILE',
+    files: { TOKEN_SECRET_FILE: content('SENTINEL-FILE-conflict-Qm7Zx2Lv9Kd4Rt8Wn3') },
+    sentinels: ['SENTINEL-FILE-conflict-Qm7Zx2Lv9Kd4Rt8Wn3'],
+    problems: ['TOKEN_SECRET and TOKEN_SECRET_FILE are both set; set only one'],
+  },
+  {
+    id: 'TOKEN_SECRET empty and TOKEN_SECRET_FILE set',
+    target: 'TOKEN_SECRET_FILE',
+    env: { TOKEN_SECRET: '' },
+    files: { TOKEN_SECRET_FILE: content(`${STRONG_2}\n`) },
+    sentinels: [],
+    problems: ['TOKEN_SECRET and TOKEN_SECRET_FILE are both set; set only one'],
+  },
+  {
+    id: 'TOKEN_SECRET_PREVIOUS and TOKEN_SECRET_PREVIOUS_FILE both set',
+    target: 'TOKEN_SECRET_PREVIOUS_FILE',
+    env: { TOKEN_SECRET_PREVIOUS: STRONG_2, TOKEN_SECRET_PREVIOUS_FILE: '' },
+    sentinels: [],
+    problems: ['TOKEN_SECRET_PREVIOUS and TOKEN_SECRET_PREVIOUS_FILE are both set; set only one'],
+  },
+  {
+    id: 'REDIS_URL and REDIS_URL_FILE both set',
+    target: 'REDIS_URL_FILE',
+    env: { REDIS_URL: `redis://${R_USER}:${R_PASS}@${R_HOST}:6379` },
+    files: { REDIS_URL_FILE: content(`redis://${R_USER}:${R_PASS}@${R_HOST}:6379\n`) },
+    sentinels: REDIS_PARTS,
+    problems: ['REDIS_URL and REDIS_URL_FILE are both set; set only one'],
+  },
+  {
+    id: 'TOKEN_SECRET_FILE missing',
+    target: 'TOKEN_SECRET_FILE',
+    unset: ['TOKEN_SECRET'],
+    files: { TOKEN_SECRET_FILE: { kind: 'missing' } },
+    sentinels: [],
+    problems: ['TOKEN_SECRET_FILE file does not exist'],
+  },
+  {
+    id: 'TOKEN_SECRET_FILE holds the secret itself',
+    target: 'TOKEN_SECRET_FILE',
+    env: { NODE_ENV: 'production', TOKEN_SECRET_FILE: PASTED_SECRET },
+    unset: ['TOKEN_SECRET'],
+    sentinels: [PASTED_SECRET, 'SENTINEL', 'pasted'],
+    problems: ['TOKEN_SECRET_FILE file does not exist'],
+  },
+  {
+    id: 'REDIS_URL_FILE holds the URL itself',
+    target: 'REDIS_URL_FILE',
+    env: { REDIS_URL_FILE: `redis://${R_USER}:${R_PASS}@${R_HOST}:6379` },
+    sentinels: REDIS_PARTS,
+    problems: ['REDIS_URL_FILE file does not exist'],
+  },
+  {
+    id: 'TOKEN_SECRET_FILE a directory',
+    target: 'TOKEN_SECRET_FILE',
+    unset: ['TOKEN_SECRET'],
+    files: { TOKEN_SECRET_FILE: { kind: 'directory' } },
+    sentinels: [],
+    problems: ['TOKEN_SECRET_FILE file "<file>" is not a regular file'],
+  },
+  {
+    id: 'TOKEN_SECRET_PREVIOUS_FILE empty file',
+    target: 'TOKEN_SECRET_PREVIOUS_FILE',
+    files: { TOKEN_SECRET_PREVIOUS_FILE: content('\r\n') },
+    sentinels: [],
+    problems: ['TOKEN_SECRET_PREVIOUS_FILE file "<file>" is empty'],
+  },
+  {
+    id: 'REDIS_URL_FILE larger than 4096 bytes',
+    target: 'REDIS_URL_FILE',
+    files: {
+      REDIS_URL_FILE: content(`redis://${R_USER}:${R_PASS}@${R_HOST}/${'0'.repeat(4096)}`),
+    },
+    sentinels: REDIS_PARTS,
+    problems: ['REDIS_URL_FILE file "<file>" is larger than 4096 bytes'],
+  },
+  {
+    id: 'TOKEN_SECRET_FILE not UTF-8',
+    target: 'TOKEN_SECRET_FILE',
+    unset: ['TOKEN_SECRET'],
+    files: {
+      TOKEN_SECRET_FILE: content(
+        Buffer.concat([Buffer.from('SENTINEL-utf8'), Buffer.from([0xc3])]),
+      ),
+    },
+    sentinels: ['SENTINEL-utf8'],
+    problems: ['TOKEN_SECRET_FILE file "<file>" is not valid UTF-8'],
+  },
+  {
+    id: 'TOKEN_SECRET_FILE with a NUL',
+    target: 'TOKEN_SECRET_FILE',
+    unset: ['TOKEN_SECRET'],
+    files: { TOKEN_SECRET_FILE: content('SENTINEL-nul\0Qm7Zx2Lv9Kd4Rt8Wn3Hb6Jf1') },
+    sentinels: ['SENTINEL-nul', 'Qm7Zx2Lv9Kd4Rt8Wn3Hb6Jf1'],
+    problems: ['TOKEN_SECRET_FILE file "<file>" contains a NUL character'],
+  },
+  {
+    id: 'TOKEN_SECRET from a file with two trailing newlines',
+    target: 'TOKEN_SECRET_FILE',
+    unset: ['TOKEN_SECRET'],
+    files: { TOKEN_SECRET_FILE: content(`${STRONG_2}\n\n`) },
+    sentinels: [],
+    problems: ['TOKEN_SECRET (from TOKEN_SECRET_FILE) must not start or end with whitespace'],
+  },
+  {
+    id: 'TOKEN_SECRET_PREVIOUS from a file too short',
+    target: 'TOKEN_SECRET_PREVIOUS_FILE',
+    files: { TOKEN_SECRET_PREVIOUS_FILE: content('SENTINEL-prev-file\n') },
+    sentinels: ['SENTINEL-prev-file'],
+    problems: [
+      `TOKEN_SECRET_PREVIOUS (from TOKEN_SECRET_PREVIOUS_FILE) must be at least 32 bytes (${GENERATE})`,
+    ],
+  },
+  {
+    id: 'TOKEN_SECRET_PREVIOUS_FILE equal to TOKEN_SECRET',
+    target: 'TOKEN_SECRET_PREVIOUS_FILE',
+    files: { TOKEN_SECRET_PREVIOUS_FILE: content(`${STRONG}\r\n`) },
+    sentinels: [],
+    problems: ['TOKEN_SECRET_PREVIOUS must differ from TOKEN_SECRET'],
+  },
+  {
+    id: 'REDIS_URL_FILE wrong scheme',
+    target: 'REDIS_URL_FILE',
+    files: { REDIS_URL_FILE: content(`http://${R_USER}:${R_PASS}@${R_HOST}:6379\n`) },
+    sentinels: REDIS_PARTS,
+    problems: ['REDIS_URL (from REDIS_URL_FILE) is not a valid redis:// or rediss:// URL'],
+  },
+  {
+    id: 'REDIS_URL_FILE dev password in production',
+    target: 'REDIS_URL_FILE',
+    env: { NODE_ENV: 'production' },
+    files: {
+      REDIS_URL_FILE: content(`redis://${R_USER}:${DEV_REDIS_PASSWORD}@${R_HOST}:6379\n`),
+    },
+    sentinels: [R_USER, R_HOST, DEV_REDIS_PASSWORD],
+    problems: [
+      'REDIS_URL (from REDIS_URL_FILE) uses the public development Redis password; it is only accepted when NODE_ENV is development or test',
+    ],
+  },
+  {
+    id: 'several file problems with an unrelated one',
+    target: 'all',
+    env: { MAX_GROUP_SIZE_CEILING: 'SENTINEL-ceiling', TOKEN_SECRET_PREVIOUS_FILE: '' },
+    unset: ['TOKEN_SECRET'],
+    files: {
+      TOKEN_SECRET_FILE: content('\n'),
+      REDIS_URL_FILE: { kind: 'missing' },
+    },
+    sentinels: ['SENTINEL-ceiling'],
+    problems: [
+      'MAX_GROUP_SIZE_CEILING must be a positive integer',
+      'REDIS_URL_FILE file does not exist',
+      'TOKEN_SECRET_FILE file "<file>" is empty',
+      'TOKEN_SECRET_PREVIOUS_FILE must not be empty',
+    ],
+  },
+];
+
 /** Unknown look-alike variables (AC37a, ADR 0015). */
 export const UNKNOWN_CASES: readonly ConfigCase[] = [
   {
@@ -643,8 +821,17 @@ export const ALL_CASES: readonly ConfigCase[] = [
   ...ENV_CASES,
   ...CROSS_FIELD_CASES,
   ...APPS_CASES,
+  ...SECRET_FILE_CASES,
   ...UNKNOWN_CASES,
 ];
+
+/** Valid secret files for VALID_VALUES (#58), created once; test-only values. */
+const validFilesDir = mkdtempSync(join(tmpdir(), 'sync-matrix-files-'));
+function validFile(name: string, text: string): string {
+  const path = join(validFilesDir, name);
+  writeFileSync(path, text, { mode: 0o600 });
+  return path;
+}
 
 /** A documented default and a valid non-default value for every known variable (AC41). */
 export const VALID_VALUES: Readonly<Record<ServerVariable, readonly string[]>> = {
@@ -678,17 +865,27 @@ export const VALID_VALUES: Readonly<Record<ServerVariable, readonly string[]>> =
   MAX_LIVE_GROUPS_PER_APP: ['10000', '100000'],
   TOKEN_SECRET: [STRONG, STRONG_2],
   TOKEN_SECRET_PREVIOUS: [STRONG_2],
-  TOKEN_SECRET_FILE: [],
-  TOKEN_SECRET_PREVIOUS_FILE: [],
+  TOKEN_SECRET_FILE: [
+    validFile('token-secret', `${STRONG}\n`),
+    validFile('token-secret-crlf', `${STRONG_2}\r\n`),
+  ],
+  TOKEN_SECRET_PREVIOUS_FILE: [validFile('token-secret-previous', STRONG_2)],
   REDIS_URL: ['redis://localhost:6379', 'rediss://user:pw@redis.internal:6380/2'],
-  REDIS_URL_FILE: [],
+  REDIS_URL_FILE: [
+    validFile('redis-url', 'redis://localhost:6379\n'),
+    validFile('redis-url-tls', 'rediss://user:pw@redis.internal:6380/2'),
+  ],
   REDIS_KEY_PREFIX: ['sync', 'tenant-a'],
   REDIS_CONNECT_TIMEOUT_SECONDS: ['10', '30'],
   REDIS_COMMAND_TIMEOUT_MS: ['2000', '500'],
 };
 
 /** The env (and apps file path) of a case, with the apps file written to a temp dir. */
-export function materialize(c: ConfigCase): { env: Record<string, string>; path: string } {
+export function materialize(c: ConfigCase): {
+  env: Record<string, string>;
+  path: string;
+  files: Record<string, string>;
+} {
   const dir = mkdtempSync(join(tmpdir(), 'sync-matrix-'));
   const apps = c.apps ?? json({ apps: [baseApp()] });
   let path = join(dir, 'apps.json');
@@ -703,10 +900,29 @@ export function materialize(c: ConfigCase): { env: Record<string, string>; path:
     ...c.env,
   };
   for (const name of c.unset ?? []) delete env[name];
-  return { env, path };
+  const files: Record<string, string> = {};
+  for (const [variable, spec] of Object.entries(c.files ?? {})) {
+    const file = join(dir, variable.toLowerCase());
+    if (spec.kind === 'content') writeFileSync(file, spec.content, { mode: 0o600 });
+    else if (spec.kind === 'directory') mkdirSync(file);
+    env[variable] = file;
+    files[variable] = file;
+  }
+  return { env, path, files };
 }
 
-/** The expected problem lines of a case, with `<path>` filled in. */
-export function expectedProblems(c: ConfigCase, path: string): string[] {
-  return c.problems.map((problem) => problem.replaceAll('<path>', path));
+/**
+ * The expected problem lines of a case, with `<path>` filled in and each
+ * `<file>` replaced by that variable's secret file path as the server shows it.
+ */
+export function expectedProblems(
+  c: ConfigCase,
+  path: string,
+  files: Record<string, string> = {},
+): string[] {
+  return c.problems.map((problem) => {
+    const line = problem.replaceAll('<path>', path);
+    const variable = /^([A-Z_]+_FILE) file "<file>"/.exec(line)?.[1];
+    return variable === undefined ? line : line.replace('<file>', shownText(files[variable] ?? ''));
+  });
 }
