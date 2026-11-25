@@ -1,6 +1,6 @@
 # State: #58 feat(server): read secrets from files via _FILE variables (follow-up to #51)
 - Path: full
-- Phase: validation
+- Phase: ready-to-merge
 - Branch: feat/58-secret-files
 - PR: #76
 - Plan approved by user: yes
@@ -16,6 +16,7 @@
 - security code: opus (rule) → PASS (0 critical/high/medium, 2 low advisories)
 - engineer fix: opus (rule: fix round) → DONE
 - qa review r2: opus (rule: round 2) → PASS
+- security code r2: opus (rule) → PASS (0 critical/high/medium, 1 low advisory A1)
 ## Gate 2 decisions (user)
 - ADR 0023 option 1: Accepted; ADR 0015 gains only a "Related: 0023" line; conventions.md row added
 - Q6 narrowing accepted: the path is omitted for "does not exist" (ENOENT/ENOTDIR) and unknown errors; printed (via shownText) only for entries that exist
