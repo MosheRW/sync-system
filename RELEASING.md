@@ -24,9 +24,30 @@ that holds a credential runs no project code. Three places:
 ## Before you start
 
 - Docker with `buildx` (Docker Desktop is fine), `git`, `gh` (logged in),
-  `bash`. On Windows use Git Bash; every block below starts with
-  `export MSYS_NO_PATHCONV=1` so container paths such as `/release/...` are
-  not rewritten, and converts host paths with `cygpath -m`.
+  `bash`.
+- **The blocks are bash, never PowerShell or cmd.** There
+  `( set -euo pipefail`, `$V` and `read -rs` mean something else or nothing
+  (PowerShell stops with `ParserError: Missing closing ')'`). On Windows run
+  them in Git Bash. From a PowerShell terminal, start bash in it first:
+  `& "C:\Program Files\Git\bin\bash.exe" -l` (the prompt changes to `$`),
+  then paste the [Phase B setup](#phase-b-release-maintainer-only-after-the-merge)
+  and the blocks there. Alternative: save one block to a `.sh` file
+  **outside the repo** and run `& "C:\Program Files\Git\bin\bash.exe" <file>`.
+  A script does not see variables exported in another shell, so start the
+  file with the Phase B setup lines (and `M`, see
+  [Resume in another terminal](#resume-in-another-terminal)). Never write a
+  token into such a file: blocks read tokens only at their prompt. Delete
+  the file after the release.
+- Every block starts with `export MSYS_NO_PATHCONV=1` so container paths
+  such as `/release/...` are not rewritten in Git Bash, and converts host
+  paths with `cygpath -m`.
+- **Paste a token only right after its token prompt is visible.** If the
+  block has already stopped (a failed check, Ctrl-C), the paste lands at the
+  shell prompt, and PowerShell writes it to its history file at once. If a
+  token is ever pasted at a shell prompt (PowerShell or bash), revoke it now,
+  create a new one, and remove the line from the history file (PowerShell:
+  the file `(Get-PSReadLineOption).HistorySavePath` names; bash:
+  `history -d <number>`, and `~/.bash_history`).
 - **Paste each block as one piece and only that block.** Each credential
   block is one `( set -euo pipefail; ... )` subshell, so its `trap ... EXIT`
   cleanup runs when the block ends (or fails), not when the terminal closes.
@@ -83,10 +104,63 @@ index digest, and the step 0 scan with the new reference still prints
 Set these in your shell first (none of them is a secret):
 
 ```sh
-export V=1.0.0                 # the version the release PR set
-export PR=0                    # replace 0 with the release PR number
-export REL="$(mktemp -d)"      # outside the repo: bundle and checked tarballs
+unset REF MODE SRC_URL M                # left over from a dry run in this terminal
+export V=1.0.0                          # the version on main
+export PR=0                             # the merged PR to release, see "Which PR" below
+export REL="$HOME/sync-release-$V"      # outside the repo; the same in every terminal
+export IMG="$REL/image"                 # the step 6 clone
+( set -euo pipefail
+  [[ "$V" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'set V=X.Y.Z'; exit 1; }
+  [ ! -L "$REL" ] || { echo "$REL is a symlink"; exit 1; }
+  mkdir -p "$REL" && chmod 700 "$REL"
+)
 ```
+
+`$REL` holds the bundle, the checked tarballs and the step 6 clone. It is
+fixed per version, so a new terminal finds the same folder. It is outside
+the working copy as long as the repo is not checked out at `$HOME` itself.
+Nothing secret is ever written there: the npm token goes only into the
+publish container, and the registry logins only into step 6's temporary
+`DOCKER_CONFIG`. `chmod 700` keeps other users out on Linux and macOS; on
+Windows it does nothing in Git Bash, and the user profile's permissions do
+that.
+
+### Which PR
+
+`PR` is the **merged PR whose merge commit you release**. Normally that is
+the release PR of Phase A. When there is no separate release PR (the
+versions reached `main` through another PR), or other PRs were merged after
+it, use the newest merged PR on `main`: 1.0.0 was the merge commit of #68
+(`d37f1b3`), not of the PR that set the versions. List the candidates:
+
+```sh
+gh pr list --state merged --base main --limit 10 --json number,title,mergedAt,mergeCommit \
+  --jq '.[] | "\(.number) \(.mergedAt) \(.mergeCommit.oid[0:7]) \(.title)"'
+```
+
+Step 1 refuses a merge commit that is not on `origin/main` or where any of
+the four `package.json` files is not at `V`, so a wrong pick stops there.
+
+### Resume in another terminal
+
+Every block reads `V`, `PR`, `REL`, `IMG` and (from step 2 on) `M` from the
+shell, and a new terminal has none of them. Run the
+[Phase B setup](#phase-b-release-maintainer-only-after-the-merge) lines
+again with the same `V` and `PR`, then, if step 1 is done, take `M` from the
+tag step 1 made (in the same clone; never run step 1 again):
+
+```sh
+export M="$(git rev-parse "refs/tags/v$V^{commit}")"
+( set -euo pipefail
+  [[ "$M" =~ ^[0-9a-f]{40}$ ]] || { echo "no tag v$V here: run step 1 first"; exit 1; }
+  git fetch origin
+  git merge-base --is-ancestor "$M" origin/main || { echo 'M is not on origin/main'; exit 1; }
+  echo "M=$M: it must equal the M in the release notes draft; stop if it differs"
+)
+```
+
+A token never survives a block, so a resume always starts the credential
+step again (step 3 for npm, the step 6 push block) with a new token.
 
 ### 0. First release only: ownership checklist (before the repo goes public)
 
@@ -160,7 +234,8 @@ the only git write of the release.
 ```
 
 Run the printed `export M=...` line: later steps check every build against
-this commit.
+this commit. Note `M` in the release notes draft too; a
+[resumed terminal](#resume-in-another-terminal) compares against it.
 
 ### 2. Build container (no credential)
 
@@ -318,19 +393,6 @@ mosherw-sync-system-react-$V.tgz"
   publish @mosherw/sync-system-react "mosherw-sync-system-react-$V.tgz"
   docker exec "$C" npm logout >/dev/null 2>&1 || true
   docker exec "$C" rm -f /root/.npmrc
-
-  verify () { # $1 package name, $2 tarball file name: anonymous registry read
-    want="$(grep "^$2 " "$H/out/INTEGRITY.txt" | cut -d' ' -f2)"
-    for attempt in 1 2 3 4 5 6; do
-      got="$(docker exec "$C" npm view "$1@$V" dist.integrity 2>/dev/null || true)"
-      if [ -n "$want" ] && [ "$got" = "$want" ]; then echo "$1@$V dist.integrity ok"; return 0; fi
-      sleep 10
-    done
-    echo "$1@$V: dist.integrity differs from the checked tarball: INCIDENT (deprecate, revoke, report)"; return 1
-  }
-  verify @mosherw/sync-system-protocol "mosherw-sync-system-protocol-$V.tgz"
-  verify @mosherw/sync-system-client "mosherw-sync-system-client-$V.tgz"
-  verify @mosherw/sync-system-react "mosherw-sync-system-react-$V.tgz"
 )
 ```
 
@@ -349,31 +411,83 @@ If the block stopped after a partial publish, the cleanup already ended the
 token's session: start again at **step 3 with a new token**; the re-run
 skips what is already published. Step 5 revokes every token created.
 
-### 5. Revoke the npm token (now, before the image push)
+### 5. Revoke the npm token, then verify the registry
 
 On npmjs.com, Access Tokens: delete `sync-system-release-vX.Y.Z` (and any
-other token created for this release). Do this even if the cleanup logged
-out. The page must list **no** token afterwards. Revoke within minutes; the
-expiry is only the backstop.
+other token created for this release). Do this **now**, right after the
+`docker ps -a` check, even if the cleanup logged out. The page must list
+**no** token afterwards. Revoke within minutes; the expiry is only the
+backstop.
+
+Then verify (anonymous, re-run any time). The block needs no token, so it
+runs after the revocation: npm can take minutes to show a new package (at
+1.0.0 the packages of the new scope took about 2-3 minutes), and the token
+must not stay alive while you wait. Each attempt is a fresh container with
+no token, no environment variable, no volume and no standard input;
+`--prefer-online` stops npm from serving a cached "not found" again. The
+block waits about 5 minutes (30 attempts, 10 s apart). "Not visible yet"
+(`E404`, or an empty answer) is **not** an incident: run the block again a
+few minutes later. Only a registry value that differs from the checked
+tarball is an INCIDENT. Re-running is safe at any time: it only reads. It
+must print three `ok` lines before you go on to step 6.
+
+```sh
+( set -euo pipefail
+  export MSYS_NO_PATHCONV=1
+  NODE_IMAGE='node:24@sha256:9d266751ca3d7fdbe651c878ffd5ad0a42fed49a18c283509267c97f025b7496'
+  [[ "$V" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'set V=X.Y.Z'; exit 1; }
+  H="$REL"; if command -v cygpath >/dev/null; then H="$(cygpath -m "$REL")"; fi
+  verify () { # $1 package name, $2 tarball file name: anonymous registry read, no credential
+    want="$(awk -v f="$2" '$1 == f { print $2 }' "$H/out/INTEGRITY.txt")"
+    [ -n "$want" ] || { echo "no line for $2 in INTEGRITY.txt (a local problem, not an incident)"; exit 1; }
+    echo "$2 expected $want"
+    for attempt in $(seq 30); do
+      if got="$(docker run --rm "$NODE_IMAGE" npm view "$1@$V" dist.integrity --prefer-online 2>"$H/verify-stderr.txt")"; then
+        if [ "$got" = "$want" ]; then echo "$1@$V dist.integrity ok"; return 0; fi
+        if [ -n "$got" ]; then
+          echo "$1@$V: dist.integrity differs from the checked tarball: INCIDENT (deprecate, revoke, report)"; exit 1
+        fi
+        echo "$1@$V not visible yet (empty answer), attempt $attempt of 30"
+      elif grep -q E404 "$H/verify-stderr.txt"; then
+        echo "$1@$V not visible yet (E404), attempt $attempt of 30"
+      else
+        echo "$1@$V: registry not reachable, attempt $attempt of 30"
+      fi
+      sleep 10
+    done
+    echo "$1@$V is not visible on the registry yet (not an incident): run this block again in a few minutes"; exit 1
+  }
+  verify @mosherw/sync-system-protocol "mosherw-sync-system-protocol-$V.tgz"
+  verify @mosherw/sync-system-client "mosherw-sync-system-client-$V.tgz"
+  verify @mosherw/sync-system-react "mosherw-sync-system-react-$V.tgz"
+)
+```
+
+Compare the three `expected` values the block prints with the three lines
+in the release notes draft. Only the stdout of `npm view` is compared, so an
+npm notice or warning (stderr) never counts as a different value.
 
 ### 6. The server image (on the host)
 
 Build from a fresh clone of the tag, check it, then push one multi-platform
 build with the same tags to both registries.
 
-Check first (no credential):
+Check first (no credential). It deletes an old clone before cloning, so it can
+always be run again:
 
 ```sh
-export IMG="$(mktemp -d)"
 ( set -euo pipefail
   export MSYS_NO_PATHCONV=1
   [[ "$V" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'set V=X.Y.Z'; exit 1; }
   [[ "$M" =~ ^[0-9a-f]{40}$ ]] || { echo 'set M (step 1)'; exit 1; }
+  [ -n "${IMG:-}" ] && [ "$IMG" = "${REL:-}/image" ] || { echo 'set REL and IMG (Phase B setup)'; exit 1; }
   SRC_URL="${SRC_URL:-https://github.com/MosheRW/sync-system.git}"; REF="${REF:-v$V}"
   D="$IMG"; if command -v cygpath >/dev/null; then D="$(cygpath -m "$IMG")"; fi
+  rm -rf "$D/src"
+  mkdir -p "$D"
   git clone --quiet --branch "$REF" --depth 1 "$SRC_URL" "$D/src"
   [ "$(git -C "$D/src" rev-parse HEAD)" = "$M" ] || { echo 'the clone is not the release commit'; exit 1; }
-  [ -z "$(git -C "$D/src" status --porcelain)" ] || { echo 'the clone is not clean'; exit 1; }
+  [ -z "$(git -C "$D/src" status --porcelain --ignored)" ] || { echo 'the clone is not clean'; exit 1; }
   docker buildx build --platform linux/amd64 --load -f "$D/src/apps/sync-server/Dockerfile" \
     --label "org.opencontainers.image.version=$V" --label "org.opencontainers.image.revision=$M" \
     -t "sync-release-check:$V" "$D/src"
@@ -391,12 +505,32 @@ export IMG="$(mktemp -d)"
 )
 ```
 
-Create two tokens, each with the shortest expiry offered: a GitHub
-**classic** personal access token with only `write:packages`, and a Docker
-Hub personal access token with "Read & Write" (not "Read, Write &
-Delete"). Then push. The registry logins
-use a temporary `DOCKER_CONFIG`, and the `trap` is set before the first
-login so both logouts and the removal of the config run on every exit:
+Create two tokens right before the push block, each with the shortest
+expiry offered (a custom date of the next day; never "No expiration"):
+
+- GitHub: Settings, Developer settings, Personal access tokens,
+  **Tokens (classic)**, Generate new token (classic). Scope **only**
+  `write:packages` (it adds `read:packages`). GitHub may tick `repo` along
+  with it: **untick `repo`**, and before copying check that the token's
+  scope list shows only `write:packages` and `read:packages`. A
+  fine-grained token (`github_pat_...`) is not an alternative: GHCR refuses
+  it with "The token provided does not match expected scopes". A classic
+  token can write every package your account can, so it is revoked right
+  after the push. The push block refuses a token that does not start with
+  `ghp_`.
+- Docker Hub: Account settings, Personal access tokens, "Read & Write" (not
+  "Read, Write & Delete").
+
+**Before the push block**, note what your platform's credential helper
+lists (it prints registry URLs and user names, no secrets): Docker Desktop
+`docker-credential-desktop list`, Windows `docker-credential-wincred list`,
+macOS `docker-credential-osxkeychain list`. Look at
+`~/.docker/config.json` too.
+
+Then push. The block checks the clone again (a resumed terminal must not
+push a stale one). The registry logins use a temporary `DOCKER_CONFIG`
+(never under `$REL`), and the `trap` is set before the first login so both
+logouts and the removal of the config run on every exit:
 
 ```sh
 ( set -euo pipefail
@@ -404,11 +538,15 @@ login so both logouts and the removal of the config run on every exit:
   [[ "$M" =~ ^[0-9a-f]{40}$ ]] || { echo 'set M (step 1)'; exit 1; }
   [[ "$V" =~ ^([0-9]+)\.([0-9]+)\.[0-9]+$ ]] || { echo 'set V=X.Y.Z'; exit 1; }
   MAJOR="${BASH_REMATCH[1]}"; MINOR="${BASH_REMATCH[2]}"
+  [ -n "${IMG:-}" ] && [ "$IMG" = "${REL:-}/image" ] || { echo 'set REL and IMG (Phase B setup)'; exit 1; }
   D="$IMG"; if command -v cygpath >/dev/null; then D="$(cygpath -m "$IMG")"; fi
+  [ "$(git -C "$D/src" rev-parse HEAD)" = "$M" ] || { echo 'the clone is not the release commit: run the check block again'; exit 1; }
+  [ -z "$(git -C "$D/src" status --porcelain --ignored)" ] || { echo 'the clone is not clean: run the check block again'; exit 1; }
   CFG="$(mktemp -d)"; if command -v cygpath >/dev/null; then CFG="$(cygpath -m "$CFG")"; fi
   export DOCKER_CONFIG="$CFG"
   trap 'docker logout ghcr.io >/dev/null 2>&1 || true; docker logout docker.io >/dev/null 2>&1 || true; rm -rf "$DOCKER_CONFIG"' EXIT
-  read -rs -p 'GHCR token (write:packages): ' T; echo
+  read -rs -p 'GHCR classic token (write:packages): ' T; echo
+  case "$T" in ghp_*) ;; *) echo 'not a classic GitHub token (ghp_...): GHCR needs a classic token with write:packages'; exit 1 ;; esac
   printf '%s' "$T" | docker login ghcr.io -u mosherw --password-stdin
   unset T
   read -rs -p 'Docker Hub token: ' T; echo
@@ -431,16 +569,33 @@ Record the manifest-list `Digest:` both inspections print (it is the same
 image). If the default builder cannot build two platforms, run
 `docker buildx create --use --name sync-release` once and repeat the block.
 
-After the block, check that no registry login is left on the host. Use
-your platform's credential helper (Docker Desktop: `docker-credential-desktop
-list`; Windows: `docker-credential-wincred list`; macOS:
-`docker-credential-osxkeychain list`) and look at `~/.docker/config.json`:
-neither may show `ghcr.io` or `index.docker.io`. If one does, run
-`docker logout <registry>`.
+After the block, run the same credential helper `list` and look at
+`~/.docker/config.json` again:
+
+- `ghcr.io` must not be listed. If it is, run `docker logout ghcr.io`.
+- Any other entry that is new since the list before the push block: run
+  `docker logout <registry>` for it.
+- `index.docker.io` (`https://index.docker.io/v1/`) cannot be checked this
+  way. Docker Desktop keeps its own Docker Hub sign-in under that key, and
+  the block's `docker login docker.io` can write the release token under
+  the same key, replacing it. So that entry cannot be told apart from a
+  leftover release login, and comparing it with the list from before the
+  push proves no logout. Do not run `docker logout docker.io` just to clear
+  it: that signs Docker Desktop out and proves nothing either. **Revoking
+  the Docker Hub token (below) is the control, and it is mandatory.**
+  - If Docker Desktop shows you signed out of Docker Hub after the block
+    (the block's logout removed the shared entry), sign in again from
+    Docker Desktop if you want; that is its own sign-in, not the release
+    token.
+  - If Docker Desktop still shows you signed in and you did not sign in
+    again yourself, treat the entry as possibly the release token: revoke
+    the token, then sign out and back in from Docker Desktop so its own
+    sign-in replaces the entry.
 
 Then **revoke both registry tokens** (GitHub, Settings, Developer settings,
-Personal access tokens; Docker Hub, Account settings, Personal access
-tokens).
+Personal access tokens, Tokens (classic); Docker Hub, Account settings,
+Personal access tokens). This is mandatory whatever the lists show: it
+makes any copy of a release token useless, wherever it was left.
 
 ### 7. GitHub release notes
 
@@ -476,9 +631,16 @@ gh release create "v$V" --title "v$V" --notes-file notes.md
   use "Require two-factor authentication and disallow tokens" (it would
   refuse the step 3 token) and never "Don't require two-factor
   authentication".
-- Every release: `rm -rf "$REL" "$IMG"`, and check that the npm Access
-  Tokens page and both registries' token lists hold nothing from this
-  release.
+- Every release: remove the release folder (the image clone is inside it),
+  and check that the npm Access Tokens page and both registries' token
+  lists hold nothing from this release.
+
+  ```sh
+  ( set -euo pipefail
+    [[ "${REL:-}" == "$HOME"/sync-release-[0-9]* ]] || { echo 'REL is not a release folder (Phase B setup)'; exit 1; }
+    rm -rf "$REL"
+  )
+  ```
 
 ## Dry run (QA)
 
@@ -486,7 +648,8 @@ The same steps without a tag, a token, a login, a push or a publish (AC54).
 From the repo, on the release PR's branch:
 
 ```sh
-export V=1.0.0 REL="$(mktemp -d)"
+export V=1.0.0 REL="$(mktemp -d)"    # never the release folder of the same V
+export IMG="$REL/image"
 export REF="$(git rev-parse --abbrev-ref HEAD)" M="$(git rev-parse HEAD)" MODE=dry-run
 ```
 
@@ -499,7 +662,7 @@ export REF="$(git rev-parse --abbrev-ref HEAD)" M="$(git rev-parse HEAD)" MODE=d
    involved). `docker ps -a --filter name=sync-release-publish` must then
    list no container.
 3. Run step 6's **check** block from your local clone instead of GitHub:
-   `export IMG="$(mktemp -d)" SRC_URL="file://$(if command -v cygpath >/dev/null; then cygpath -m "$(pwd)"; else pwd; fi)"`
+   `export SRC_URL="file://$(if command -v cygpath >/dev/null; then cygpath -m "$(pwd)"; else pwd; fi)"`
    first. Git Bash needs the `cygpath -m` form because the block sets
    `MSYS_NO_PATHCONV=1`. The block then clones `$REF`, checks `M`, builds
    `linux/amd64` with `--load` and checks that `/health` reports `V`. Do not

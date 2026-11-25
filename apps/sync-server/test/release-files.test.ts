@@ -273,7 +273,9 @@ describe('RELEASING.md load-bearing lines (C1-C5, M6, L1, L5, L8, L9, L11-L13)',
     expect(publishBlock).toContain('find /release -mindepth 1 ! -type f');
     expect(publishBlock).toContain('tar -xOzf');
     expect(publishBlock).toContain('sha512-');
-    expect(publishBlock).toContain('dist.integrity');
+    // #81: the registry check is its own anonymous block, after the revocation
+    expect(publishBlock).not.toContain('dist.integrity');
+    expect(step('5. Revoke the npm token')).toContain('dist.integrity');
     const tokenRead = publishBlock.indexOf('read -rs');
     for (const check of ['find /release', 'tar -xOzf', 'diff "$H/recomputed.txt"']) {
       expect(publishBlock.indexOf(check), check).toBeLessThan(tokenRead);
@@ -408,9 +410,173 @@ describe('RELEASING.md load-bearing lines (C1-C5, M6, L1, L5, L8, L9, L11-L13)',
     expect(doc).not.toMatch(/file:\/\/\$\(pwd\)/);
   });
 
-  it('keeps bundles and outputs outside the repo (L11)', () => {
-    expect(doc).toContain('export REL="$(mktemp -d)"');
-    expect(doc).toContain('export IMG="$(mktemp -d)"');
+  it('keeps bundles and outputs outside the repo in a fixed per-version folder (L11, #81)', () => {
+    const setup = shell.slice(shell.indexOf('unset REF MODE SRC_URL M'));
+    for (const line of [
+      'unset REF MODE SRC_URL M',
+      'export REL="$HOME/sync-release-$V"',
+      'export IMG="$REL/image"',
+      '[ ! -L "$REL" ] || { echo "$REL is a symlink"; exit 1; }',
+      'mkdir -p "$REL" && chmod 700 "$REL"',
+    ]) {
+      expect(setup, line).toContain(line);
+    }
+    expect(doc).not.toContain('export IMG="$(mktemp -d)"');
+    expect(doc.replace(/\s+/g, ' ')).toContain('not checked out at `$HOME` itself');
+    // the dry run must not collide with a real release folder of the same V
+    const dryRun = doc.slice(doc.indexOf('## Dry run (QA)'));
+    expect(dryRun).toContain('REL="$(mktemp -d)"');
+    expect(dryRun).toContain('export IMG="$REL/image"');
+    // step 8 removes the folder, guarded
+    const after = step('8. After the release');
+    expect(after).toContain('[[ "${REL:-}" == "$HOME"/sync-release-[0-9]* ]]');
+    expect(after).toContain('rm -rf "$REL"');
+  });
+
+  it('keeps the registry DOCKER_CONFIG a mktemp folder, never under $REL (L9, #81)', () => {
+    const push = step('6. The server image');
+    expect(push).toContain('CFG="$(mktemp -d)"');
+    expect(push).toContain('export DOCKER_CONFIG="$CFG"');
+    expect(shell).not.toMatch(/DOCKER_CONFIG=[^\n]*\$\{?(REL|IMG|H|D)\b/);
+    expect(shell).not.toMatch(/CFG=[^\n]*\$\{?(REL|IMG|H|D)\b/);
+  });
+
+  it('re-clones in the check block and re-checks the clone before the push (#81, L2, L3)', () => {
+    const push = step('6. The server image');
+    const guard =
+      '[ -n "${IMG:-}" ] && [ "$IMG" = "${REL:-}/image" ] || { echo \'set REL and IMG (Phase B setup)\'; exit 1; }';
+    expect(push.split(guard).length - 1).toBe(2);
+    const clone = push.indexOf('git clone');
+    expect(push.indexOf('rm -rf "$D/src"')).toBeLessThan(clone);
+    const statuses = push.split('status --porcelain --ignored').length - 1;
+    expect(statuses).toBe(2);
+    expect(push).not.toMatch(/status --porcelain\)/);
+    const firstLogin = push.indexOf('docker login');
+    const recheck = push.indexOf('run the check block again');
+    expect(recheck).toBeGreaterThan(clone);
+    expect(recheck).toBeLessThan(firstLogin);
+  });
+
+  it('has a resume section that sets M again from the tag (#81, L5)', () => {
+    const resume = step('Resume in another terminal');
+    expect(resume).toContain('export M="$(git rev-parse "refs/tags/v$V^{commit}")"');
+    expect(resume).toContain('[[ "$M" =~ ^[0-9a-f]{40}$ ]]');
+    expect(resume).toContain('git merge-base --is-ancestor "$M" origin/main');
+    expect(resume).toContain('release notes draft');
+    expect(resume).toContain('never run step 1 again');
+    expect(resume).toMatch(/new token/);
+  });
+
+  it('says the blocks are bash and how to run them from PowerShell (#81 AC1, M4, R7)', () => {
+    const before = doc
+      .slice(doc.indexOf('## Before you start'), doc.indexOf('## Phase A'))
+      .replace(/\s+/g, ' ');
+    for (const text of [
+      'never PowerShell or cmd',
+      "ParserError: Missing closing ')'",
+      '& "C:\\Program Files\\Git\\bin\\bash.exe" -l',
+      '& "C:\\Program Files\\Git\\bin\\bash.exe" <file>',
+      '**outside the repo**',
+      'Never write a token into such a file',
+      'Delete the file after the release',
+      'Paste a token only right after its token prompt is visible',
+      '(Get-PSReadLineOption).HistorySavePath',
+      'history -d',
+      'revoke it now',
+    ]) {
+      expect(before, text).toContain(text);
+    }
+  });
+
+  it('verifies the registry anonymously after the revocation, ~5 minutes (#81 AC2, R4, M2, L6)', () => {
+    const verify = step('5. Revoke the npm token');
+    // revocation comes first, then the verify block
+    expect(verify.indexOf('delete `sync-system-release-vX.Y.Z`')).toBeLessThan(
+      verify.indexOf('```sh'),
+    );
+    const code = verify.slice(verify.indexOf('```sh'));
+    const runs = code.split(/\r?\n/).filter((line) => /docker (run|exec)\b/.test(line));
+    expect(runs).toHaveLength(1);
+    const run = runs[0] ?? '';
+    expect(run).toContain(
+      'docker run --rm "$NODE_IMAGE" npm view "$1@$V" dist.integrity --prefer-online',
+    );
+    expect(run).not.toMatch(/\s(-e|-i|-it|-v|--env|--env-file|--volume|--mount)\b/);
+    expect(code).not.toMatch(/DOCKER_CONFIG|read -r|_authToken|NPM_TOKEN|\btrap\b/);
+    expect(code).toContain('$(seq 30)');
+    expect(code).toContain('sleep 10');
+    expect(code).toContain('E404');
+    expect(code).toContain(`awk -v f="$2" '$1 == f { print $2 }' "$H/out/INTEGRITY.txt"`);
+    expect(code).toContain('echo "$2 expected $want"');
+    expect(code).toContain('(not an incident): run this block again in a few minutes');
+    // INCIDENT only on a non-empty, different value, and only once in all shell code
+    expect(shell.split('INCIDENT').length - 1).toBe(1);
+    const incident = code.indexOf('INCIDENT');
+    const nonEmpty = code.indexOf('if [ -n "$got" ]; then');
+    expect(nonEmpty).toBeGreaterThan(code.indexOf('if [ "$got" = "$want" ]'));
+    expect(incident).toBeGreaterThan(nonEmpty);
+    expect(verify.replace(/\s+/g, ' ')).toContain('2-3 minutes');
+    // the publish block keeps its cleanup, and only the "already published" view
+    expect(publishBlock).toContain('docker exec "$C" rm -f /root/.npmrc');
+    expect(publishBlock).toMatch(/npm view "\$1@\$V" version/);
+  });
+
+  it('needs a classic GHCR token and checks its prefix before the login (#81 AC3, R2, R3)', () => {
+    const push = step('6. The server image');
+    const flat = push.replace(/\s+/g, ' ');
+    for (const text of [
+      '**Tokens (classic)**',
+      '**untick `repo`**',
+      'only `write:packages` and `read:packages`',
+      'fine-grained',
+      'The token provided does not match expected scopes',
+      'never "No expiration"',
+    ]) {
+      expect(flat, text).toContain(text);
+    }
+    const check = push.indexOf('case "$T" in ghp_*)');
+    expect(check).toBeGreaterThan(
+      push.indexOf("read -rs -p 'GHCR classic token (write:packages): ' T"),
+    );
+    expect(check).toBeLessThan(push.indexOf('docker login ghcr.io'));
+    expect(push.indexOf('trap ')).toBeLessThan(check);
+    // $T is only matched by `case` or piped by printf into docker login, never printed
+    const usesT = shell.split(/\r?\n/).filter((line) => /\$\{?T\b/.test(line));
+    expect(usesT.length).toBeGreaterThanOrEqual(3);
+    for (const line of usesT) {
+      const piped = /^\s*printf '%s' "\$T" \| docker login \S+ -u \S+ --password-stdin$/.test(line);
+      const matched = /^\s*case "\$T" in ghp_\*\) ;; \*\) echo '[^'$]*'; exit 1 ;; esac$/.test(
+        line,
+      );
+      expect(piped || matched, line).toBe(true);
+    }
+  });
+
+  it('says which PR to release when there is no separate release PR (#81 AC5)', () => {
+    const which = step('Which PR');
+    expect(which).toContain('gh pr list --state merged --base main');
+    expect(which).toContain('mergeCommit');
+    expect(which).toMatch(/no separate release PR/);
+    expect(which).toContain('newest merged PR on `main`');
+  });
+
+  it('treats the shared index.docker.io entry as unprovable and revocation as the control (#81 AC6, R6)', () => {
+    const push = step('6. The server image');
+    const flat = push.replace(/\s+/g, ' ');
+    for (const text of [
+      '**Before the push block**',
+      'Docker Desktop',
+      'https://index.docker.io/v1/',
+      'cannot be told apart from a leftover release login',
+      'proves no logout',
+      '`ghcr.io` must not be listed',
+      'Revoking the Docker Hub token (below) is the control, and it is mandatory.',
+      'This is mandatory whatever the lists show',
+    ]) {
+      expect(flat, text).toContain(text);
+    }
+    expect(push.indexOf('**Before the push block**')).toBeLessThan(push.indexOf('docker login'));
+    expect(flat).not.toMatch(/neither may show `ghcr\.io` or `index\.docker\.io`/);
   });
 
   it('has the first-release ownership checklist and the npm settings (C5, E2)', () => {
