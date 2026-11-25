@@ -925,7 +925,9 @@ secrets:
 - A compose `file:` secret is bind-mounted with the host file's owner and
   mode (the long syntax's `uid`, `gid` and `mode` apply only in Swarm), so it
   must be readable by uid 1000, as above. If the server reports the file "is
-  not readable by the server user", fix the owner and mode on the host
+  not readable by the server user" (or "is not accessible to the server
+  user", when a directory on the path is not searchable by uid 1000), fix
+  the owner and mode on the host
   (`sudo chown 1000:1000 FILE` and `sudo chmod 400 FILE`). **Never** make it
   world-readable (`chmod 644` or `o+r`), and never run the container as root
   to get around it: every host user could then read it. A host account with

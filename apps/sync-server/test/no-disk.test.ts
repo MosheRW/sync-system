@@ -33,7 +33,7 @@ describe('the server persists nothing (#5 AC11)', () => {
     // #58: secret files, opened read-only (security C1).
     const secrets = files.find((f) => f.name === 'config/secret-file.ts')!;
     expect(secrets.text).toMatch(
-      /import \{ closeSync, constants, fstatSync, openSync, readSync \} from 'node:fs'/,
+      /import \{ closeSync, constants, fstatSync, lstatSync, openSync, readSync \} from 'node:fs'/,
     );
     expect(secrets.text).toMatch(/SECRET_FILE_OPEN_FLAGS =\s+constants\.O_RDONLY \|/);
     expect(secrets.text).not.toMatch(/O_WRONLY|O_RDWR|O_CREAT|O_TRUNC|O_APPEND/);

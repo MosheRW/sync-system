@@ -72,9 +72,10 @@ describe('docs/startup-errors.md lists every server startup error (#36 AC40)', (
   }
 
   // Secret file errors no portable case can trigger (#58): an unreadable file
-  // (root and Windows ignore modes) and any other errno.
+  // or directory on its path (root and Windows ignore modes) and any other errno.
   for (const problem of [
     SECRET_FILE_MESSAGES.notReadable('TOKEN_SECRET_FILE', '/run/secrets/sync_token_secret'),
+    SECRET_FILE_MESSAGES.notAccessible('TOKEN_SECRET_PREVIOUS_FILE'),
     SECRET_FILE_MESSAGES.cannotRead('REDIS_URL_FILE', 'EIO'),
   ]) {
     printed.set(`Config error: ${problem}`, 'SECRET_FILE_MESSAGES');

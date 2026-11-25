@@ -1,4 +1,4 @@
-import { closeSync, constants, fstatSync, openSync, readSync } from 'node:fs';
+import { closeSync, constants, fstatSync, lstatSync, openSync, readSync } from 'node:fs';
 import { shownText } from './apps-config.js';
 import type { EnvSource } from './env.js';
 
@@ -35,6 +35,9 @@ export const SECRET_FILE_MESSAGES = {
   missing: (variable: SecretFileVariable): string => `${variable} file does not exist`,
   notReadable: (variable: SecretFileVariable, path: string): string =>
     `${variable} file "${shownText(path)}" is not readable by the server user`,
+  /** EACCES/EPERM where the entry is not known to exist (an unsearchable directory). */
+  notAccessible: (variable: SecretFileVariable): string =>
+    `${variable} file is not accessible to the server user`,
   notRegular: (variable: SecretFileVariable, path: string): string =>
     `${variable} file "${shownText(path)}" is not a regular file`,
   tooLarge: (variable: SecretFileVariable, path: string): string =>
@@ -55,9 +58,11 @@ export interface SecretFileSystem {
   fstatSync(fd: number): { isFile(): boolean; size: number };
   readSync(fd: number, buffer: Buffer, offset: number, length: number, position: null): number;
   closeSync(fd: number): void;
+  /** Only to learn whether the entry exists; the file is not opened (no content is read). */
+  lstatSync(path: string): unknown;
 }
 
-const NODE_FS: SecretFileSystem = { openSync, fstatSync, readSync, closeSync };
+const NODE_FS: SecretFileSystem = { openSync, fstatSync, readSync, closeSync, lstatSync };
 
 /** Flags that only exist on some platforms are undefined elsewhere (Windows). */
 function optionalFlag(name: 'O_NONBLOCK' | 'O_NOCTTY'): number {
@@ -80,23 +85,37 @@ function errnoCode(err: unknown): string | undefined {
   return typeof code === 'string' ? code : undefined;
 }
 
+/** True when `lstat` finds an entry at `path`; it reads no content. */
+function entryExists(fs: SecretFileSystem, path: string): boolean {
+  try {
+    fs.lstatSync(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * The problem for a failed system call. `exists` is true once the open
- * succeeded; before that the path is printed only for errors that prove the
- * entry exists, so a secret pasted into `X_FILE` is never echoed (Gate 2,
- * narrowing of Q6).
+ * succeeded; before that the path is printed only for an entry known to
+ * exist: EISDIR proves it, and for EACCES/EPERM an `lstat` of the path must
+ * succeed (an unsearchable directory on the path also gives EACCES). So a
+ * secret pasted into `X_FILE` is never echoed (Gate 2, narrowing of Q6).
  */
 function errorProblem(
   variable: SecretFileVariable,
   path: string,
   err: unknown,
   exists: boolean,
+  fs: SecretFileSystem,
 ): string {
   const code = errnoCode(err);
   switch (code) {
     case 'EACCES':
     case 'EPERM':
-      return SECRET_FILE_MESSAGES.notReadable(variable, path);
+      return exists || entryExists(fs, path)
+        ? SECRET_FILE_MESSAGES.notReadable(variable, path)
+        : SECRET_FILE_MESSAGES.notAccessible(variable);
     case 'EISDIR':
       return SECRET_FILE_MESSAGES.notRegular(variable, path);
     case 'ENOENT':
@@ -135,7 +154,7 @@ export function readSecretFile(
   try {
     fd = fs.openSync(path, SECRET_FILE_OPEN_FLAGS);
   } catch (err) {
-    return { ok: false, problem: errorProblem(variable, path, err, false) };
+    return { ok: false, problem: errorProblem(variable, path, err, false, fs) };
   }
   const buffer = Buffer.alloc(MAX_SECRET_FILE_BYTES + 1);
   try {
@@ -156,7 +175,7 @@ export function readSecretFile(
         length += read;
       }
     } catch (err) {
-      return { ok: false, problem: errorProblem(variable, path, err, true) };
+      return { ok: false, problem: errorProblem(variable, path, err, true, fs) };
     } finally {
       try {
         fs.closeSync(fd);

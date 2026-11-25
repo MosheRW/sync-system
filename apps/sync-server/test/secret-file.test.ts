@@ -38,6 +38,8 @@ function fakeFs(
     content?: Buffer;
     chunk?: number;
     readError?: Error;
+    /** Throws to say the path names no entry the server can see; succeeds by default. */
+    lstat?: (path: string) => unknown;
   } = {},
 ): SecretFileSystem & { closed: number; opened: number } {
   const content = options.content ?? Buffer.from(SENTINEL);
@@ -60,6 +62,7 @@ function fakeFs(
     closeSync: () => {
       fs.closed += 1;
     },
+    lstatSync: (path: string) => (options.lstat ? options.lstat(path) : {}),
   };
   return fs;
 }
@@ -225,6 +228,79 @@ describe('readSecretFile: file system errors (AC4, AC7, Q6 narrowing)', () => {
     expectNoSentinel(problem, SENTINEL);
     expect(fs.closed).toBe(0);
   });
+
+  it.each([
+    ['EACCES', 'EACCES'],
+    ['EACCES', 'ENOENT'],
+    ['EPERM', 'EACCES'],
+    ['EPERM', 'ENOTDIR'],
+    ['EACCES', undefined],
+  ])(
+    'an open error %s omits the path when lstat fails with %s (entry not known to exist)',
+    (code, lstatCode) => {
+      const lstat = vi.fn(() => {
+        throw errno(lstatCode);
+      });
+      const fs = fakeFs({
+        open: () => {
+          throw errno(code);
+        },
+        lstat,
+      });
+      const problem = problemOf(readSecretFile('TOKEN_SECRET_FILE', SENTINEL, fs));
+      expect(problem).toBe(SECRET_FILE_MESSAGES.notAccessible('TOKEN_SECRET_FILE'));
+      expect(problem).toBe('TOKEN_SECRET_FILE file is not accessible to the server user');
+      expect(lstat).toHaveBeenCalledTimes(1);
+      expectNoSentinel(problem, SENTINEL);
+    },
+  );
+
+  it('an open error EACCES prints the path only after lstat finds the entry', () => {
+    const lstat = vi.fn(() => ({}));
+    const fs = fakeFs({
+      open: () => {
+        throw errno('EACCES');
+      },
+      lstat,
+    });
+    expect(problemOf(readSecretFile('TOKEN_SECRET_FILE', '/run/secrets/x', fs))).toBe(
+      SECRET_FILE_MESSAGES.notReadable('TOKEN_SECRET_FILE', '/run/secrets/x'),
+    );
+    expect(lstat).toHaveBeenCalledWith('/run/secrets/x');
+  });
+
+  it('does not lstat for an error after a successful open', () => {
+    const lstat = vi.fn(() => {
+      throw errno('ENOENT');
+    });
+    const fs = fakeFs({
+      stat: () => {
+        throw errno('EACCES');
+      },
+      lstat,
+    });
+    expect(problemOf(readSecretFile('TOKEN_SECRET_FILE', '/s', fs))).toBe(
+      SECRET_FILE_MESSAGES.notReadable('TOKEN_SECRET_FILE', '/s'),
+    );
+    expect(lstat).not.toHaveBeenCalled();
+  });
+
+  it.skipIf(isWindows || isRoot)(
+    'a file under an unsearchable directory does not print its path',
+    () => {
+      const locked = join(files.dir, 'locked');
+      mkdirSync(locked, { mode: 0o700 });
+      const path = join(locked, SENTINEL);
+      chmodSync(locked, 0o000);
+      try {
+        const problem = problemOf(readSecretFile('TOKEN_SECRET_FILE', path));
+        expect(problem).toBe(SECRET_FILE_MESSAGES.notAccessible('TOKEN_SECRET_FILE'));
+        expectNoSentinel(problem, SENTINEL);
+      } finally {
+        chmodSync(locked, 0o700);
+      }
+    },
+  );
 
   it('maps a thrown non-error value to "unknown"', () => {
     const fs = fakeFs({

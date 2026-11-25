@@ -34,7 +34,11 @@ The behaviour of the `_FILE` variables was fixed at Gate 1 of #58:
   (sanitized, control characters replaced, cut at 64 characters) is printed
   only for an entry that exists: not for "does not exist" (`ENOENT`,
   `ENOTDIR`) and not for an unknown error, so a secret pasted into `X_FILE`
-  by mistake is never echoed (Gate 2 narrowing of Gate 1 Q6).
+  by mistake is never echoed (Gate 2 narrowing of Gate 1 Q6). A permission
+  error (`EACCES`, `EPERM`) from opening the file prints the path only
+  when an `lstat` of the path succeeds (it reads no content); otherwise,
+  for example under an unsearchable directory, the message has no path
+  (Gate 3, #58 security advisory).
   The token-secret source `file` may be logged; the value and path never.
 - A value from `REDIS_URL_FILE` keeps the URL parser's lenient handling of
   leading and trailing whitespace, exactly like `REDIS_URL` from the
