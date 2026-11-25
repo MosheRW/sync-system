@@ -246,6 +246,8 @@ describe('token secrets (#5 AC1-AC3, R4)', () => {
 });
 
 describe('process entry (AC6)', () => {
+  // The child compiles the server source with tsx, which is slow under the
+  // parallel full run, so the test gets the child's budget (#78).
   it('exits non-zero and prints the config error to stderr', () => {
     const path = writeConfig(
       JSON.stringify({
@@ -272,5 +274,5 @@ describe('process entry (AC6)', () => {
     );
     expect(child.stderr).not.toContain('SENTINEL');
     expect(child.stdout).not.toContain('SENTINEL');
-  });
+  }, 60_000);
 });
