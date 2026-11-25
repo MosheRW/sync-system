@@ -186,7 +186,7 @@ export interface SecretWarnLogger {
 export function warnAboutSecrets(secrets: TokenSecrets, logger: SecretWarnLogger): void {
   logger.info(
     { event: 'token_secret_source', source: secrets.source },
-    `token secret source: ${secrets.source}`,
+    'token secret source at startup',
   );
   if (secrets.source === 'random') {
     logger.warn(
