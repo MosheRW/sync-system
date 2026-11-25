@@ -2,7 +2,7 @@
 - Path: fast
 - Phase: architecture
 - Branch: test/80-load-stable-tests
-- PR: none
+- PR: #85
 - Plan approved by user: no
 - Security-sensitive: no
 - Review rounds: 0
