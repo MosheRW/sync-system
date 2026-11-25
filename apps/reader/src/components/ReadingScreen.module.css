@@ -33,9 +33,21 @@
   font-size: var(--text-lg);
   line-height: var(--text-lg-lh);
   font-weight: var(--weight-strong);
+  /* Guard only: the ellipsis is drawn by the title's own bdi (below). */
   white-space: nowrap;
   overflow: hidden;
+}
+
+/* The title is truncated inside its own direction: text-overflow follows the
+   direction of the block that clips, so the bdi (dir = document direction)
+   clips, not the paragraph (interface direction). */
+.title > bdi {
+  display: inline-block;
+  max-inline-size: 100%;
+  overflow: hidden;
+  white-space: nowrap;
   text-overflow: ellipsis;
+  vertical-align: top;
 }
 
 .counter {
