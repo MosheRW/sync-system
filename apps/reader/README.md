@@ -76,8 +76,9 @@ The reader is published as a Docker image with its own version
 | GitHub (canonical)           | `ghcr.io/mosherw/sync-system-reader`    |
 | Docker Hub (the same images) | `docker.io/moshewin/sync-system-reader` |
 
-These two are the only official names. Anything else, for example
-`docker.io/mosherw/sync-system-reader`, is not this project.
+These two are the only official names. Anything else, for example the same
+image name under the `mosherw` namespace on Docker Hub (only GHCR uses
+`mosherw`), is not this project.
 
 **Release status:** the first image, `1.0.0` (git tag `reader-v1.0.0`), is
 published only after #27 and #28 are closed. Until then, build it locally
