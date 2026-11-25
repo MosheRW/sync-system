@@ -71,9 +71,16 @@ async function guard(context: BrowserContext, problems: string[]): Promise<void>
   context.on('page', watch);
 }
 
+/**
+ * The context options a test may set. Narrowed on purpose (#27 security L1):
+ * a pass-through of every `BrowserContextOptions` would let a test set
+ * `bypassCSP: true` and silently disable the CSP and Trusted Types guard.
+ */
+export type PageOptions = Pick<BrowserContextOptions, 'locale' | 'viewport'>;
+
 export interface Pages {
   /** A new page in its own browser context (its own sessionStorage). */
-  open(options?: BrowserContextOptions): Promise<Page>;
+  open(options?: PageOptions): Promise<Page>;
 }
 
 /** Every page fails the test on a CSP or Trusted Types violation. */
@@ -82,8 +89,9 @@ export const test = base.extend<{ pages: Pages }>({
     const contexts: BrowserContext[] = [];
     const problems: string[] = [];
     await use({
-      open: async (options) => {
-        const context = await browser.newContext(options);
+      open: async (options = {}) => {
+        const { locale, viewport } = options;
+        const context = await browser.newContext({ locale, viewport, bypassCSP: false });
         await guard(context, problems);
         contexts.push(context);
         return context.newPage();
