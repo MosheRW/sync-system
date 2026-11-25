@@ -5,18 +5,20 @@
 - PR: #76
 - Plan approved by user: yes
 - Security-sensitive: yes
-- Review rounds: 0
-- Last updated by: engineer
+- Review rounds: 1
+- Last updated by: qa
 ## Model log
 - pm grooming: sonnet (default) → DONE
 - architect plan: opus (rule: security-sensitive + NEXT_MODEL) → DONE
 - security plan: opus (rule) → PASS
 - engineer implement: opus (rule: Implementer model + security-sensitive) → DONE (one run, interrupted once by an API rate limit and resumed from the pushed commits)
+- qa review: sonnet (NEXT_MODEL) → PASS
 ## Gate 2 decisions (user)
 - ADR 0023 option 1: Accepted; ADR 0015 gains only a "Related: 0023" line; conventions.md row added
 - Q6 narrowing accepted: the path is omitted for "does not exist" (ENOENT/ENOTDIR) and unknown errors; printed (via shownText) only for entries that exist
 - REDIS_URL from a file keeps the URL parser's lenient leading/trailing whitespace handling (parity with env)
 - Gate 1 answers stand: strip one `\n` or `\r\n`; terminator-only file is empty; 4096-byte cap; empty X plus X_FILE is a conflict; `file` logged as token-secret source; no permission check
+- QA verdict (round 1): PASS, 13/13 criteria met; POSIX-only tests not rerun by QA (Docker unavailable)
 ## Open questions
 - none
 ## Deviations from plan
