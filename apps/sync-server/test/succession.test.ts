@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { GroupRecord } from '../src/groups/group-store.js';
 import { type RosterState, admit, setConnected } from '../src/lifecycle/roster.js';
-import { nextTerm, pickSuccessor } from '../src/lifecycle/succession.js';
+import { nextTerm, pickSuccessor, successorCandidates } from '../src/lifecycle/succession.js';
 
 function record(names: string[], overrides: Partial<GroupRecord> = {}) {
   let state: RosterState = { roster: [], nextAdmissionSeq: 0, nextGuestNumber: 1 };
@@ -50,5 +50,40 @@ describe('pickSuccessor (#13 AC20, Q2.2, AC12)', () => {
       undefined,
     );
     expect(pickSuccessor(record(['L']), all)).toBeUndefined();
+  });
+});
+
+describe('successorCandidates (#42, security R2)', () => {
+  it('lists the vice first, then the connected roster, with the pickSuccessor filters', () => {
+    expect(successorCandidates(record(['L', 'a', 'b', 'c'], { viceId: 'c' }))).toEqual([
+      'c',
+      'a',
+      'b',
+    ]);
+    expect(successorCandidates(record(['L', 'a', 'b']))).toEqual(['a', 'b']);
+  });
+
+  it('excludes the leader, the displaced leader, blocked, detached and disconnected pids', () => {
+    const base = record(['L', 'a', 'b', 'c', 'd', 'e']);
+    const view = {
+      ...base,
+      displacedLeaderId: 'a',
+      blockList: ['b'],
+      participantIds: base.participantIds.filter((pid) => pid !== 'c'),
+      roster: setConnected(base.roster, 'd', false, 1),
+    };
+    expect(successorCandidates(view)).toEqual(['e']);
+    expect(successorCandidates({ ...view, viceId: 'b' })).toEqual(['e']);
+    expect(successorCandidates(record(['L']))).toEqual([]);
+  });
+
+  it('contains every pid pickSuccessor can pick, whatever isConnected says', () => {
+    const view = record(['L', 'a', 'b', 'c'], { viceId: 'b', blockList: ['a'] });
+    const candidates = successorCandidates(view);
+    for (const pid of ['L', 'a', 'b', 'c']) {
+      const picked = pickSuccessor(view, (p) => p === pid);
+      if (picked !== undefined) expect(candidates).toContain(picked);
+    }
+    expect(pickSuccessor(view, (p) => candidates.includes(p))).toBe('b');
   });
 });

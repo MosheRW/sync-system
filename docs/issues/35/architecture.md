@@ -687,6 +687,14 @@ New `storage/redis/instance.ts`.
   }
   ```
 
+  A remote `isOpen()` is a hint from the live cache. At a grace end and in a
+  handoff (#42), a remote miss is confirmed in Redis: `openHints`
+  (`src/groups/open-hints.ts`) makes one `liveOf` read (`MGET` of the distinct
+  missed instance IDs) per grace end or take-back, only when a successor
+  candidate or the old leader is on an instance missing from the cache. The
+  result only feeds `pickSuccessor` and the old-leader check (`oldAttached`);
+  a failed read counts as "not live" (C12).
+
   The three detach sites (`replaceOwner`, `detachRemoved`, `endGroup`) collapse into
   `Recipient.detach`. `LocalRecipient` wraps today's code exactly: `touch`,
   `unregister`, `membership = undefined`, and an outbox closure with
@@ -953,7 +961,9 @@ Parking only happens when a group is missing from Redis (AC14 path).
     `pubsub_message_invalid` (warn);
   - `remote_effect_dropped {op}` (debug); `remote_effect_too_large {op}` (error);
   - `group_lock_busy {groupRef}` (debug); `group_lease_lost {groupRef}` (warn);
-    `group_lease_hold_cap {groupRef}` (warn, renewals stopped at the 30 s hold cap).
+    `group_lease_hold_cap {groupRef}` (warn, renewals stopped at the 30 s hold cap);
+  - `liveness_hint_failed {err}` (warn, #42: the Redis read confirming a cache
+    miss at a grace end or take-back failed; the miss stays "not live").
 
 ### 12.14 `compose.multi.yaml` (AC23, P2-8)
 
@@ -1163,11 +1173,19 @@ No other job changes.
   - frames published to it are lost, and those clients resume anyway.
 - **Timers on a killed instance** fire up to 30 s late (ADR 0013 lease).
 - **A newly started instance** is in a peer's live-instance cache only after that
-  peer's next heartbeat (up to 5 s). Until then the peer treats its participants as
-  not connected wherever it checks `isOpen()`: for example, a grace ending on the peer
-  in that window skips them as successors (with nobody else eligible, the group stays
-  paused). Frames and detaches are still published to them. Found by the fix round 1
-  tests (`cluster.converged()` waits it out); not changed in PR 2.
+  peer's next heartbeat (up to 5 s). Fixed by #42 for the successor pick at a grace
+  end and for the old-leader check in a handoff (S4): there a cache miss is confirmed
+  in Redis (12.6), so the new instance's members are successors and an old leader
+  there gets `leader.lost` and keeps its membership. Every other `isOpen()` hint (for
+  example the leader guard, joins, `anyoneAttached`) still lags up to 5 s; frames and
+  detaches are published to them either way. Residual cases:
+  - if the confirming read fails (Redis error or timeout), the miss stays "not live",
+    as before #42: a take-back can then drop an old leader on a just-started instance
+    without `leader.lost` until the sweep or reconcile (#42 security L1);
+  - an instance whose liveness key has not expired yet (killed, or fenced, up to about
+    15 s) is confirmed live, as the cache would say: a successor there gets a grant it
+    never sees, and the sweep later puts that leader offline with a new grace (see
+    "Dead-but-not-yet-swept instances" above; #42 security L2).
 - **Self-fence on a slow Redis** (renewals take more than 10 s) closes sessions without
   a real partition. This fails safe; clients resume.
 - **Large frames through pub/sub**: a roster snapshot is up to about 45 KB, under the
