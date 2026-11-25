@@ -6,6 +6,7 @@ import { createHandler, parsePath } from '../server/handler.js';
 import { contentSecurityPolicy, securityHeaders } from '../server/headers.js';
 import { run } from '../server/run.js';
 import type { StaticFile } from '../server/static-files.js';
+import { READER_VERSION } from '../src/config/version.js';
 import { makeDist, rawRequest } from './helpers/server.js';
 
 const SECURITY_HEADERS = [
@@ -67,11 +68,28 @@ describe('reader server responses (architecture 5.5, security C1)', () => {
     expectSecurityHeaders(response);
   });
 
-  it('answers /health with ok', async () => {
+  it('answers /health with the status and the reader version as JSON (ADR 0023 C1)', async () => {
     const response = await fetch(`${base}/health`);
     expect(response.status).toBe(200);
-    expect(await response.text()).toBe('ok\n');
+    expect(response.headers.get('content-type')).toBe('application/json');
+    expect(response.headers.get('cache-control')).toBe('no-store');
+    expect(await response.text()).toBe(`{"status":"ok","version":"${READER_VERSION}"}`);
     expectSecurityHeaders(response);
+  });
+
+  it('answers HEAD /health without a body', async () => {
+    const response = await fetch(`${base}/health`, { method: 'HEAD' });
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toBe('application/json');
+    expect(await response.text()).toBe('');
+    expect(Number(response.headers.get('content-length'))).toBe(
+      `{"status":"ok","version":"${READER_VERSION}"}`.length,
+    );
+    expectSecurityHeaders(response);
+  });
+
+  it('has no /ready endpoint (liveness only, #36 Q25)', async () => {
+    expect((await fetch(`${base}/ready`)).status).toBe(404);
   });
 
   it.each([
@@ -156,11 +174,51 @@ describe('handler edge cases', () => {
     };
   }
 
+  it('/health reports the build version, never READER_SYNC_APP_VERSION', async () => {
+    const result = await run(
+      {
+        PORT: '0',
+        HOST: '127.0.0.1',
+        READER_SYNC_URL: 'wss://sync.example/ws',
+        READER_SYNC_API_KEY: 'k'.repeat(40),
+        READER_SYNC_APP_VERSION: '9.9.9',
+      },
+      { distDir: dist.dir, stdout: () => undefined, stderr: () => undefined },
+    );
+    if (!result.ok) throw new Error('server did not start');
+    try {
+      const body = await (await fetch(`http://127.0.0.1:${result.port}/health`)).text();
+      expect(body).toBe(`{"status":"ok","version":"${READER_VERSION}"}`);
+      expect(body).not.toContain('9.9.9');
+    } finally {
+      await result.close();
+    }
+  });
+
+  it('builds the /health body from the version option only, never the request', async () => {
+    const s = await serve({
+      files: new Map(),
+      indexHtml: 'x',
+      libraryOn: false,
+      version: '3.2.1',
+      headers: securityHeaders({ srcOrigins: [] }),
+    });
+    try {
+      const response = await fetch(`${s.url}/health?version=6.6.6`, {
+        headers: { 'X-Version': '7.7.7' },
+      });
+      expect(await response.text()).toBe('{"status":"ok","version":"3.2.1"}');
+    } finally {
+      await s.close();
+    }
+  });
+
   it('404s /library when the library is off', async () => {
     const s = await serve({
       files: new Map(),
       indexHtml: 'x',
       libraryOn: false,
+      version: READER_VERSION,
       headers: securityHeaders({ srcOrigins: [] }),
     });
     try {
@@ -180,6 +238,7 @@ describe('handler edge cases', () => {
       files,
       indexHtml: 'x',
       libraryOn: true,
+      version: READER_VERSION,
       headers: securityHeaders({ srcOrigins: [] }),
     });
     try {

@@ -10,6 +10,8 @@ export interface HandlerOptions {
   libraryOn: boolean;
   /** Security headers for every response. */
   headers: Readonly<Record<string, string>>;
+  /** The build's `READER_VERSION`, reported on `/health` (ADR 0023 C1). */
+  version: string;
 }
 
 const URL_BASE = 'http://reader.invalid';
@@ -17,13 +19,19 @@ const URL_BASE = 'http://reader.invalid';
 /**
  * The reader's request handler (architecture 5.5, security C1): GET and
  * HEAD only; `/health`, `/`, `/library` and the in-memory files; everything
- * else 404. A malformed target is 400; any unexpected error is a 500 with a
+ * else 404. `/health` answers `{"status":"ok","version":"X.Y.Z"}` with the
+ * build's version, built once here from `options.version` (ADR 0023 C1),
+ * never from the env or the request. A malformed target is 400; any unexpected error is a 500 with a
  * fixed body. Never echoes the path, query or headers, and logs nothing per
  * request (query strings carry URLs, C9). The reader server never fetches
  * anything (C8).
  */
 export function createHandler(options: HandlerOptions) {
   const indexBody = Buffer.from(options.indexHtml, 'utf8');
+  const healthBody = Buffer.from(
+    JSON.stringify({ status: 'ok', version: options.version }),
+    'utf8',
+  );
 
   return function handle(req: IncomingMessage, res: ServerResponse): void {
     try {
@@ -49,7 +57,7 @@ export function createHandler(options: HandlerOptions) {
       return;
     }
     if (pathname === '/health') {
-      send(req, res, 200, 'text/plain; charset=utf-8', 'no-store', 'ok\n');
+      send(req, res, 200, 'application/json', 'no-store', healthBody);
       return;
     }
     if (pathname === '/' || (pathname === '/library' && options.libraryOn)) {
