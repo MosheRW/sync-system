@@ -6,10 +6,11 @@
 - Plan approved by user: no
 - Security-sensitive: yes
 - Review rounds: 0
-- Last updated by: architect
+- Last updated by: security
 ## Model log
 - pm grooming: sonnet (default) → DONE
 - architect plan: opus → DONE
+- security plan: opus (rule) → PASS (0 critical, 0 high, 4 medium, 6 low; see security.md)
 ## Open questions
 - Issue #81 body and spec.md contain #80's text; pm must replace them with AC1-AC9 from architecture.md before Gate 2.
 ## Deviations from plan
