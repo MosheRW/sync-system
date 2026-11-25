@@ -1,17 +1,18 @@
 # State: #47 fix(storage): bound create-budget key TTL and batch expired live-group cleanup
 - Path: fast
-- Phase: implementation
+- Phase: validation
 - Branch: fix/47-live-group-limits
 - PR: #75
 - Plan approved by user: yes
 - Security-sensitive: yes
-- Review rounds: 0
-- Last updated by: engineer
+- Review rounds: 1
+- Last updated by: qa
 ## Model log
 - pm groom: sonnet (default) → DONE
 - architect plan: opus (default + NEXT_MODEL) → DONE
 - security plan: opus (rule) → PASS
 - engineer implement: opus (architect Implementer model + NEXT_MODEL) → DONE
+- qa review: opus (NEXT_MODEL) → PASS (round 1; lint, typecheck, test with Redis 7.2.17, build green; AC 4/4 met; non-blocking: load-sensitive pre-existing test flakes, unticked PR checkboxes, 11 commits without Co-Authored-By trailers per orchestrator instruction)
 ## Gate 2 decisions (user)
 - AC1: cap the `lb:<ns>` TTL (not the document-only option)
 - The 1 ms margin is accepted: `lb:<ns>` expires at `PEXPIREAT ceil(u) + 1`, from Redis TIME
