@@ -5,13 +5,16 @@
 - PR: #72
 - Plan approved by user: yes
 - Security-sensitive: yes
-- Review rounds: 0
-- Last updated by: engineer
+- Review rounds: 1
+- Last updated by: qa
 ## Model log
 - pm grooming: sonnet (default) → DONE
 - architect plan: opus (NEXT_MODEL) → DONE
 - security plan: opus (rule) → PASS
 - engineer implement: opus (rule: security-sensitive) → DONE
+- qa review r1: sonnet (NEXT_MODEL) → PASS
+- security code r1: opus (rule) → PASS
+- QA verdict (r1): PASS
 ## Open questions
 - none (D1 decided at Gate 2: B, monotonic + 60 s, no D floor)
 ## Deviations from plan
