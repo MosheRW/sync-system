@@ -1,7 +1,9 @@
 import { randomBytes } from 'node:crypto';
+import { inspect } from 'node:util';
 import { ConfigError } from './config-error.js';
 import { DEV_KEY_NODE_ENVS } from './dev-key.js';
 import type { EnvSource } from './env.js';
+import { resolveSecret } from './secret-file.js';
 
 /**
  * The public development token secret. It is committed (compose.yaml), so it
@@ -30,10 +32,35 @@ export interface TokenSecrets {
   /** Verifies only (rotation, AC2). */
   readonly previous?: Buffer;
   /**
-   * Where `current` came from: the env, the public dev secret, or a random
-   * per-process secret (tokens do not survive a restart).
+   * Where `current` came from: the env, a file (`TOKEN_SECRET_FILE`, #58),
+   * the public dev secret, or a random per-process secret (tokens do not
+   * survive a restart).
    */
-  readonly source: 'env' | 'dev' | 'random';
+  readonly source: 'env' | 'file' | 'dev' | 'random';
+}
+
+const REDACTED = '[redacted token secrets]';
+
+/**
+ * The secrets as returned by `collectTokenSecrets`: `toJSON`, `toString`
+ * and `inspect` return a fixed marker, so logging the object by mistake
+ * shows no byte of a secret (#58 security C7). The Buffers stay readable
+ * for `TokenKeyring`.
+ */
+function redactedTokenSecrets(
+  current: Buffer,
+  previous: Buffer | undefined,
+  source: TokenSecrets['source'],
+): TokenSecrets {
+  const secrets: TokenSecrets =
+    previous === undefined ? { current, source } : { current, previous, source };
+  const marker = { value: () => REDACTED, enumerable: false };
+  Object.defineProperties(secrets, {
+    toJSON: marker,
+    toString: marker,
+    [inspect.custom]: marker,
+  });
+  return Object.freeze(secrets);
 }
 
 const GENERATE_HINT = 'use `openssl rand -base64 32`';
@@ -46,7 +73,8 @@ function isDevEnvironment(nodeEnv: string | undefined): boolean {
  * Checks one set secret. Messages name the variable and the rule, never the
  * value. The secret is used exactly as given: it is never trimmed, so leading
  * or trailing whitespace is an error rather than a silent difference between
- * instances (M3).
+ * instances (M3). `name` is the label of the source: `TOKEN_SECRET` or
+ * `TOKEN_SECRET (from TOKEN_SECRET_FILE)` (#58).
  */
 function checkSecret(
   name: string,
@@ -82,19 +110,22 @@ function checkSecret(
 }
 
 /**
- * Reads TOKEN_SECRET and TOKEN_SECRET_PREVIOUS (architecture 5.1, R4):
+ * Reads TOKEN_SECRET and TOKEN_SECRET_PREVIOUS (architecture 5.1, R4), each
+ * from the environment or from the file named by its `_FILE` twin (#58,
+ * ADR 0023):
  * - a missing TOKEN_SECRET is allowed only when NODE_ENV is exactly
  *   `development` or `test` (a random per-process secret is used); anywhere
  *   else it is an error (fail closed, Q-A);
  * - a set secret must be at least 32 bytes with at least 16 distinct byte
  *   values, must not be a docs example, and must not be the dev secret
- *   outside development/test, in every environment;
+ *   outside development/test, in every environment, whatever its source;
  * - TOKEN_SECRET_PREVIOUS follows the same rules and must differ from
  *   TOKEN_SECRET.
  *
  * Every problem is pushed to `errors`; values are never echoed. Returns
  * undefined when any problem was found: never a random or dev fallback for a
- * secret that failed (#36 security C1).
+ * secret that failed, including a `TOKEN_SECRET_FILE` that could not be read
+ * (#36 security C1, #58 security C3).
  */
 export function collectTokenSecrets(
   env: EnvSource,
@@ -102,34 +133,37 @@ export function collectTokenSecrets(
   errors: string[],
 ): TokenSecrets | undefined {
   const before = errors.length;
-  const raw = env.TOKEN_SECRET;
-  const rawPrevious = env.TOKEN_SECRET_PREVIOUS;
+  const current = resolveSecret(env, 'TOKEN_SECRET', errors);
 
-  let source: TokenSecrets['source'] = 'env';
-  if (raw === undefined) {
+  let source: TokenSecrets['source'] | undefined;
+  if (current.kind === 'unset') {
     if (isDevEnvironment(nodeEnv)) {
       source = 'random';
     } else {
       errors.push(`TOKEN_SECRET is required (${GENERATE_HINT})`);
     }
-  } else if (checkSecret('TOKEN_SECRET', raw, nodeEnv, errors) === 'dev') {
-    source = 'dev';
+  } else if (current.kind === 'set') {
+    source =
+      checkSecret(current.label, current.value, nodeEnv, errors) === 'dev' ? 'dev' : current.from;
   }
 
-  if (rawPrevious !== undefined) {
-    checkSecret('TOKEN_SECRET_PREVIOUS', rawPrevious, nodeEnv, errors);
-    if (raw !== undefined && rawPrevious === raw) {
+  const previous = resolveSecret(env, 'TOKEN_SECRET_PREVIOUS', errors);
+  if (previous.kind === 'set') {
+    checkSecret(previous.label, previous.value, nodeEnv, errors);
+    if (current.kind === 'set' && previous.value === current.value) {
       errors.push('TOKEN_SECRET_PREVIOUS must differ from TOKEN_SECRET');
     }
   }
 
-  if (errors.length > before) return undefined;
+  if (errors.length > before || source === undefined) return undefined;
 
-  const current =
-    source === 'random' ? randomBytes(MIN_TOKEN_SECRET_BYTES) : Buffer.from(raw!, 'utf8');
-  return rawPrevious === undefined
-    ? { current, source }
-    : { current, previous: Buffer.from(rawPrevious, 'utf8'), source };
+  return redactedTokenSecrets(
+    source === 'random' || current.kind !== 'set'
+      ? randomBytes(MIN_TOKEN_SECRET_BYTES)
+      : Buffer.from(current.value, 'utf8'),
+    previous.kind === 'set' ? Buffer.from(previous.value, 'utf8') : undefined,
+    source,
+  );
 }
 
 /** `collectTokenSecrets` that throws one ConfigError with every problem. */
@@ -141,11 +175,19 @@ export function parseTokenSecrets(env: EnvSource, nodeEnv: string | undefined): 
 }
 
 export interface SecretWarnLogger {
+  info(obj: object, msg: string): void;
   warn(obj: object, msg: string): void;
 }
 
-/** Startup warnings about the secrets. Never logs a value (M1, AC3). */
+/**
+ * Startup log lines about the secrets. Never logs a value, a path or a
+ * length (M1, AC3; #58 security C6): the source is one of a fixed set.
+ */
 export function warnAboutSecrets(secrets: TokenSecrets, logger: SecretWarnLogger): void {
+  logger.info(
+    { event: 'token_secret_source', source: secrets.source },
+    `token secret source: ${secrets.source}`,
+  );
   if (secrets.source === 'random') {
     logger.warn(
       { event: 'token_secret_random' },

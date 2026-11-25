@@ -117,6 +117,15 @@ A rule is checked only when every number it compares is valid on its own.
 | `` Config error: <name> looks weak; use `openssl rand -base64 32` ``                        | Generate a new secret with the command shown.                                           |
 | `Config error: TOKEN_SECRET_PREVIOUS must differ from TOKEN_SECRET`                         | Set the new secret in `TOKEN_SECRET` and the old one in `TOKEN_SECRET_PREVIOUS`.        |
 
+### Config error: secret files
+
+`<name>` is `TOKEN_SECRET_FILE`, `TOKEN_SECRET_PREVIOUS_FILE` or
+`REDIS_URL_FILE`, the variables that name a file holding a secret.
+
+| Message                                  | Fix                                                                                                |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `Config error: <name> must not be empty` | Unset it, or set it to the path of the secret file (for example `/run/secrets/sync_token_secret`). |
+
 ### Config error: unknown variables
 
 A set variable whose name starts with `MAX_`, `TOKEN_`, `REDIS_`, `SYNC_`,

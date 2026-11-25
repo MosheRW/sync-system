@@ -96,6 +96,8 @@ describe('env reference in docs/operator-guide.md (#37 AC45)', () => {
       NODE_ENV: 'unset',
       TOKEN_SECRET: 'none',
       TOKEN_SECRET_PREVIOUS: 'unset',
+      TOKEN_SECRET_FILE: 'unset',
+      TOKEN_SECRET_PREVIOUS_FILE: 'unset',
       REDIS_URL: 'unset',
     };
     const numeric = new Set(NUMERIC.map((v) => v.name));

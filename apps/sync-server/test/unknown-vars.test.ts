@@ -163,7 +163,7 @@ describe('unknown look-alike variables (#36 AC37a, ADR 0015)', () => {
 
 describe('no false positives (#36 AC37a, AC41)', () => {
   it('never flags a known variable', () => {
-    expect(KNOWN_SERVER_VARIABLES).toHaveLength(34);
+    expect(KNOWN_SERVER_VARIABLES).toHaveLength(36);
     expect(
       problemsOf(Object.fromEntries(KNOWN_SERVER_VARIABLES.map((name) => [name, 'x']))),
     ).toEqual([]);
