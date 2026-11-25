@@ -38,7 +38,10 @@ export interface AppKeys {
  * derived once per namespace and cached. A token signed for app A fails the
  * signature check on app B, so it takes the same path as a random string
  * (AC8, AC15). Each purpose has its own keyring instance, so the cache can
- * never hand out one purpose's key for another (#10 R4).
+ * never hand out one purpose's key for another (#10 R4). Besides the secrets
+ * module, this is the only server module that reads the secret Buffers, and
+ * only as HKDF input; it never decodes or copies them (#58 A1,
+ * `test/token-secret-readers.test.ts`).
  */
 export class TokenKeyring {
   private readonly cache = new Map<string, AppKeys>();
