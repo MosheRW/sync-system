@@ -2,7 +2,7 @@
 - Path: fast
 - Phase: architecture
 - Branch: fix/81-releasing-procedure-lessons
-- PR: none
+- PR: #84
 - Plan approved by user: no
 - Security-sensitive: yes
 - Review rounds: 0
