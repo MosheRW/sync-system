@@ -563,13 +563,21 @@ same group is kept. The remaining cross-tab limits:
   token also undoes another tab's `forgetGroup()` or `forgetAllGroups()` for
   that group: the group is stored again.
 - If `forgetAllGroups()` can neither delete nor read the stored document, the
-  tab cannot list the groups other tabs stored. It remembers the time of the
-  call instead: until its next successful write, every successful read drops
-  stored tokens issued at or before that second, and that write removes them
-  from storage. Tokens issued strictly later (stored by another tab after the
-  call) are kept. The time is this device's clock against the server's
-  issue time, so a large clock difference can keep an older token or drop
-  one issued in the same few seconds.
+  tab cannot list the groups other tabs stored. It remembers a cut-off
+  instead, in this tab's memory only (reloading the tab before a successful
+  write loses it): the time of the call plus a 60 second margin. Until its
+  next successful write, every successful read drops stored tokens issued at
+  or before the cut-off, and that write removes them from storage. Tokens
+  issued strictly later are kept. Another failed call only ever moves the
+  cut-off forward, never back, even if the device clock was set back in
+  between.
+- The cut-off is this device's clock against the server's issue time. The
+  60 second margin covers a device clock up to one minute behind the server;
+  if it is further behind, an older token can still survive. The cost of the
+  margin: a token another tab stores within about a minute after the failed
+  call is dropped too, and that group must be joined again with a code; a
+  device clock ahead of the server widens that window by the difference.
+  Tokens this tab stores itself are never dropped.
 
 ### `checkTokens()`
 

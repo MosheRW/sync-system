@@ -368,8 +368,61 @@ export function packOne(pkgDir: string, dest: string, env?: NodeJS.ProcessEnv): 
   run(pnpmCommand(), [...PACK_ARGS, '--pack-destination', dest], pkgDir, env);
 }
 
-/** Packs each published package into `dir` with `packOne`; returns the file names. */
-export function packAll(dir: string): string[] {
+const PINNED_PNPM = /^pnpm@(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)(?:\+.+)?$/;
+
+/**
+ * #69 (security L1 of #67): the pnpm version the root `packageManager` pins,
+ * `pnpm@10.28.0+sha512...` gives `10.28.0`. Fails closed: anything that is
+ * not an exact pnpm pin (missing, not a string, another package manager, no
+ * version, a range) throws, so the version check is never skipped.
+ */
+export function pinnedPnpmVersion(packageManager: unknown): string {
+  const match = typeof packageManager === 'string' ? PINNED_PNPM.exec(packageManager) : null;
+  if (match?.[1] === undefined) {
+    throw new Error(
+      'root package.json packageManager must pin pnpm (pnpm@<version>[+<hash>]), ' +
+        `got ${JSON.stringify(packageManager)} (#69)`,
+    );
+  }
+  return match[1];
+}
+
+/**
+ * #69: the pnpm that would pack is the pinned one. `actual` is the
+ * `pnpm --version` output, compared exactly after `trim()`; empty output is
+ * a mismatch.
+ */
+export function checkPnpmVersion(actual: string, expected: string): string[] {
+  const version = actual.trim();
+  if (version !== '' && version === expected) return [];
+  return [
+    `pnpm ${version === '' ? '(no output)' : version} would pack the release, but the repo ` +
+      `pins pnpm ${expected} (packageManager in package.json); run through pnpm (for example ` +
+      '`pnpm pack:check`) with corepack enabled (#69, ADR 0021)',
+  ];
+}
+
+/** `pnpm --version` through the same resolver and `run` path as `packOne`. */
+function defaultPnpmVersion(): string {
+  return run(pnpmCommand(), ['--version'], repoRoot);
+}
+
+export interface PackAllOptions {
+  /** Tests only (like `env`, #63 R5): returns the `pnpm --version` output. */
+  pnpmVersion?: () => string;
+}
+
+/**
+ * Packs each published package into `dir` with `packOne`; returns the file
+ * names. First checks, once, that `pnpm --version` equals the root
+ * `packageManager` pin and throws before packing anything otherwise (#69,
+ * security L1 of #67): ADR 0021 verified `PACK_ARGS` for that version only.
+ */
+export function packAll(dir: string, options: PackAllOptions = {}): string[] {
+  const expected = pinnedPnpmVersion(readManifest('.')['packageManager']);
+  const actual = (options.pnpmVersion ?? defaultPnpmVersion)();
+  const problems = checkPnpmVersion(actual, expected);
+  if (problems.length > 0) throw new Error(problems.join('; '));
   return PUBLISHED.map((pkg) => {
     const version = String(readManifest(pkg.dir).version);
     packOne(join(repoRoot, pkg.dir), dir);

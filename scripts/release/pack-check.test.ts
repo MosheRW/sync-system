@@ -1,11 +1,19 @@
 // Unit tests of the pure release checks (#37 AC50, AC51, C4, C6, C10, L10;
-// #53 ADR 0020 R2, L4; #63 ADR 0021 R1, R2), and the pnpmfile route
+// #53 ADR 0020 R2, L4; #63 ADR 0021 R1, R2; #69), and the pnpmfile route
 // integration test (#63 R3, R4).
 // Run with Node's built-in runner: node --test "scripts/release/*.test.ts".
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
@@ -14,12 +22,16 @@ import {
   checkEntries,
   checkManifest,
   checkNoPnpmfile,
+  checkPnpmVersion,
   checkPublishableSet,
   checkSameVersion,
   checkWorkspaceRanges,
   integrityLine,
   PACK_ARGS,
+  packAll,
   packOne,
+  PUBLISHED,
+  pinnedPnpmVersion,
   pnpmCommand,
   readManifest,
   readTarball,
@@ -887,3 +899,102 @@ describe(
     }
   },
 );
+
+// ---------------------------------------------------------------------------
+// #69 (security L1 of #67): packAll packs only with the pinned pnpm.
+
+describe('pinnedPnpmVersion (#69)', () => {
+  it('returns the version of a pin with a hash', () => {
+    assert.equal(pinnedPnpmVersion('pnpm@10.28.0+sha512.abc'), '10.28.0');
+  });
+
+  it('returns the version of a pin without a hash', () => {
+    assert.equal(pinnedPnpmVersion('pnpm@10.28.0'), '10.28.0');
+  });
+
+  for (const value of [undefined, 42, 'yarn@4.0.0', 'pnpm@', 'pnpm@^10']) {
+    it(`throws on ${JSON.stringify(value)}`, () => {
+      assert.throws(() => pinnedPnpmVersion(value), /packageManager must pin pnpm.*#69/);
+    });
+  }
+
+  it('parses the real root packageManager', () => {
+    assert.match(pinnedPnpmVersion(readManifest('.')['packageManager']), /^\d+\.\d+\.\d+/);
+  });
+});
+
+describe('checkPnpmVersion (#69)', () => {
+  it('accepts the pinned version', () => {
+    assert.deepEqual(checkPnpmVersion('10.28.0', '10.28.0'), []);
+  });
+
+  it('accepts the version with a trailing newline', () => {
+    assert.deepEqual(checkPnpmVersion('10.28.0\n', '10.28.0'), []);
+  });
+
+  it('names both versions on a mismatch', () => {
+    const problems = checkPnpmVersion('9.15.0', '10.28.0');
+    assert.equal(problems.length, 1);
+    assert.match(problems[0] ?? '', /pnpm 9\.15\.0 would pack/);
+    assert.match(problems[0] ?? '', /pins pnpm 10\.28\.0/);
+    assert.match(problems[0] ?? '', /packageManager/);
+    assert.match(problems[0] ?? '', /#69/);
+  });
+
+  it('treats empty output as a mismatch', () => {
+    const problems = checkPnpmVersion('', '10.28.0');
+    assert.equal(problems.length, 1);
+    assert.match(problems[0] ?? '', /\(no output\)/);
+  });
+});
+
+/** A `pnpm --version` stand-in that counts its calls. */
+function versionReader(output: string): { read: () => string; calls: () => number } {
+  let calls = 0;
+  return {
+    read: () => {
+      calls += 1;
+      return output;
+    },
+    calls: () => calls,
+  };
+}
+
+const PINNED_PNPM_VERSION = pinnedPnpmVersion(readManifest('.')['packageManager']);
+
+describe('packAll checks the pnpm version first (#69)', () => {
+  it('fails on another pnpm version, reads it once and packs nothing', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sync-pack-version-'));
+    try {
+      const reader = versionReader('9.15.0');
+      assert.throws(
+        () => packAll(dir, { pnpmVersion: reader.read }),
+        (error: Error) =>
+          error.message.includes('pnpm 9.15.0') &&
+          error.message.includes(`pins pnpm ${PINNED_PNPM_VERSION}`),
+      );
+      assert.equal(reader.calls(), 1);
+      assert.deepEqual(readdirSync(dir), []);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('packAll packs with the pinned pnpm version (#69)', { skip: skipRoutes }, () => {
+  it('reads the version once and packs every published package', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sync-pack-version-'));
+    try {
+      const reader = versionReader(`${PINNED_PNPM_VERSION}\n`);
+      const files = packAll(dir, { pnpmVersion: reader.read });
+      assert.equal(reader.calls(), 1);
+      assert.deepEqual(
+        files,
+        PUBLISHED.map((pkg) => tarballName(pkg.name, String(readManifest(pkg.dir).version))),
+      );
+      for (const file of files) assert.ok(existsSync(join(dir, file)), `${file} missing`);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
