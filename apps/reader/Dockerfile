@@ -4,6 +4,9 @@
 # The image holds the built app (dist/), the server (dist-server/) and zod,
 # its only runtime dependency. Configuration comes from env variables only
 # (apps/reader/README.md); never put a secret in them: the reader has none.
+# Published as ghcr.io/mosherw/sync-system-reader and
+# docker.io/moshewin/sync-system-reader by hand (ADR 0023, RELEASING.md
+# "Reader image release").
 
 # node:24-alpine, pinned by digest (same as the sync server). Bump deliberately:
 #   docker buildx imagetools inspect node:24-alpine
@@ -38,6 +41,14 @@ COPY --from=build /out/package.json ./
 COPY --from=build /out/node_modules ./node_modules
 COPY --from=build /out/dist ./dist
 COPY --from=build /out/dist-server ./dist-server
+# The license text, one file only (never a directory or the context root).
+COPY LICENSE ./LICENSE
+# Static OCI labels (ADR 0017, ADR 0023). A release adds only .version and
+# .revision with --label at build time; no credential is ever a build ARG or ENV.
+LABEL org.opencontainers.image.source="https://github.com/MosheRW/sync-system" \
+  org.opencontainers.image.licenses="GPL-3.0-only" \
+  org.opencontainers.image.title="sync-system-reader" \
+  org.opencontainers.image.description="Reading app: renders JSON content with RTL, LTR and mixed-direction text, and fingerprints it for group sync."
 USER node
 EXPOSE 8080
 HEALTHCHECK --interval=10s --timeout=3s --retries=3 --start-period=5s \
