@@ -1,6 +1,7 @@
 # 0023. Reader version, git tag and image publishing
 
-- Status: Proposed
+- Status: Accepted (Gate 2, 2026-11-25: user chose the recommended A1, B1,
+  C1, D1)
 - Date: 2026-11-25
 - Issue: #77
 
@@ -115,11 +116,35 @@ Open here: the reader's git tag name (A), how its version is set (B), the
 The reader tag block refuses to tag unless every listed blocker issue is
 `CLOSED` (`gh issue view <n> --json state`), with `27 28` listed for
 `1.0.0`. This is not an option set: Gate 1 decided it; it is recorded here so
-the procedure can point to it.
+the procedure can point to it. The security plan review of #77 (L1)
+tightened the check: the issue's `stateReason` must be `COMPLETED`, and the
+merge commit of every pull request that closed it
+(`closedByPullRequestsReferences`) must be an ancestor of the commit being
+tagged; a blocker closed without a pull request needs a typed confirmation.
+The tagged commit defaults to the current `origin/main`.
 
 ## Decision
 
-Recommended: **A1, B1, C1, D1** (and E as decided at Gate 1).
+**A1, B1, C1 and D1** (accepted at Gate 2, 2026-11-25), and E as decided
+at Gate 1:
+
+- Git tag `reader-vX.Y.Z`, annotated; the first is `reader-v1.0.0`.
+- The reader's version is bumped by hand in a reviewed PR
+  (`apps/reader/package.json`, `READER_VERSION`, `apps/reader/CHANGELOG.md`);
+  #77 bumps it to `1.0.0`. It stays `private: true` and in the Changesets
+  `ignore` list.
+- `/health` answers `{"status":"ok","version":"X.Y.Z"}` (JSON), built once
+  from `READER_VERSION` only.
+- Image tags `X.Y.Z`, `X.Y`, `X` and `latest` on both
+  `ghcr.io/mosherw/sync-system-reader` and
+  `docker.io/moshewin/sync-system-reader`, `linux/amd64` and `linux/arm64`,
+  with the ADR 0017 procedure. The GHCR token is created from
+  `https://github.com/settings/tokens/new?scopes=write:packages` and its
+  scope list is checked (no `repo`) before use (security M2 of #77). The
+  push refuses unless the image check of the same clone passed (M1), and
+  the GitHub release is created with `--verify-tag --latest=false` (L2).
+
+Reasons:
 
 - A1 because it cannot collide with `vX.Y.Z`, is safe in shell and URLs,
   and the server's step 1 regex never matches it.
