@@ -1,16 +1,17 @@
 # State: #78 fix(sync-server): flaky test failures in the full parallel test run
 - Path: fast
-- Phase: implementation
+- Phase: validation
 - Branch: fix/78-sync-server-flaky-tests
 - PR: #83
 - Plan approved by user: yes
 - Security-sensitive: no
-- Review rounds: 0
-- Last updated by: engineer
+- Review rounds: 1
+- Last updated by: qa
 ## Model log
 - pm groom: sonnet (default) → DONE
 - architect plan: opus (NEXT_MODEL + default) → DONE (root causes: 1 main.test tsx child without test timeout; 2 redis-startup lazy @redis/client import in timed window, reproduced under stress; 3+4 release-files not reproduced, stale expectation/environment ruled out, likely load)
 - engineer implement: sonnet (architect Implementer model) → DONE
+- qa review r1: sonnet (default + NEXT_MODEL) → PASS (lint, typecheck, 2 full root test runs, 3 files alone 82/82; 4/4 criteria met; all commits signed)
 ## Open questions
 - none
 ## Deviations from plan
