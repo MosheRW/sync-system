@@ -9,7 +9,11 @@ import { LocalNotifier } from './groups/notifier.js';
 import { ClusterNotifier } from './groups/cluster-notifier.js';
 import type { ServerEnv } from './config/env.js';
 import { ConfigError } from './config/config-error.js';
-import { MIN_TOKEN_SECRET_BYTES, type TokenSecrets } from './config/token-secret.js';
+import {
+  MIN_TOKEN_SECRET_BYTES,
+  type TokenSecrets,
+  redactTokenSecrets,
+} from './config/token-secret.js';
 import { createHttpHandler } from './http/health.js';
 import {
   CLOSE_TIMEOUT_MS,
@@ -68,6 +72,8 @@ export interface SyncServerOptions {
   /**
    * Token signing secrets from `parseTokenSecrets()` (required, #7 L1).
    * There is no fallback: a missing or malformed value refuses to start.
+   * The server keeps a redacted copy (JSON, inspect and string output show a
+   * marker); the object passed in is not changed.
    */
   tokenSecrets: TokenSecrets;
   /**
@@ -195,8 +201,11 @@ function assertTokenSecrets(value: unknown): asserts value is TokenSecrets {
 
 export function createSyncServer(options: SyncServerOptions): SyncServer {
   // Before anything is created, so a bad config binds no socket (R1).
-  const tokenSecrets: unknown = options.tokenSecrets;
-  assertTokenSecrets(tokenSecrets);
+  const givenSecrets: unknown = options.tokenSecrets;
+  assertTokenSecrets(givenSecrets);
+  // A copy in the redacted form, also when a library caller built the
+  // secrets itself, so nothing the server holds can log a secret (#58 C7).
+  const tokenSecrets = redactTokenSecrets(givenSecrets);
   const { env, logger, registry } = options;
   // Read once (#12 R15): the env values, or the checked test-only overrides.
   const createLimits = groupCreateLimits(env, options.groupLimits);

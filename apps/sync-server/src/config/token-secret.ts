@@ -40,27 +40,74 @@ export interface TokenSecrets {
 }
 
 const REDACTED = '[redacted token secrets]';
+const REDACTED_SECRET = '[redacted token secret]';
 
 /**
- * The secrets as returned by `collectTokenSecrets`: `toJSON`, `toString`
- * and `inspect` return a fixed marker, so logging the object by mistake
- * shows no byte of a secret (#58 security C7). The Buffers stay readable
- * for `TokenKeyring`.
+ * A copy of `bytes` whose JSON, inspect and string conversion (`String()`,
+ * template literals) return a fixed marker, so a secret Buffer copied out of
+ * its `TokenSecrets` (for example by `{ ...secrets }`) still logs no byte
+ * (#58 security C7). An explicit `toString(encoding)` still decodes the
+ * bytes. The caller's Buffer is never changed.
  */
-function redactedTokenSecrets(
-  current: Buffer,
-  previous: Buffer | undefined,
-  source: TokenSecrets['source'],
-): TokenSecrets {
-  const secrets: TokenSecrets =
-    previous === undefined ? { current, source } : { current, previous, source };
-  const marker = { value: () => REDACTED, enumerable: false };
-  Object.defineProperties(secrets, {
+function redactedSecretBuffer(bytes: Buffer): Buffer {
+  const copy = Buffer.from(bytes);
+  const marker = { value: () => REDACTED_SECRET, enumerable: false };
+  Object.defineProperties(copy, {
     toJSON: marker,
-    toString: marker,
+    [Symbol.toPrimitive]: marker,
     [inspect.custom]: marker,
   });
-  return Object.freeze(secrets);
+  return copy;
+}
+
+/**
+ * The secrets as handed to the rest of the server: frozen, and `toJSON`,
+ * `toString` and `inspect` return a fixed marker (prototype methods, so they
+ * survive as long as the object does and never show as fields). The Buffers
+ * are redacted too, so a copy of the object (spread, `Object.assign`) logs
+ * no byte of a secret either (#58 security C7). The Buffers stay readable
+ * for `TokenKeyring`.
+ */
+class RedactedTokenSecrets implements TokenSecrets {
+  readonly current: Buffer;
+  declare readonly previous?: Buffer;
+  readonly source: TokenSecrets['source'];
+
+  constructor(current: Buffer, previous: Buffer | undefined, source: TokenSecrets['source']) {
+    this.current = redactedSecretBuffer(current);
+    // An own field only when set, like the object literal this replaces.
+    if (previous !== undefined) {
+      Object.defineProperty(this, 'previous', {
+        value: redactedSecretBuffer(previous),
+        enumerable: true,
+      });
+    }
+    this.source = source;
+    Object.freeze(this);
+  }
+
+  toJSON(): string {
+    return REDACTED;
+  }
+
+  toString(): string {
+    return REDACTED;
+  }
+
+  [inspect.custom](): string {
+    return REDACTED;
+  }
+}
+
+/**
+ * `secrets` in the redacted form: returned as is when it already is one,
+ * otherwise copied (the caller's object and Buffers are not changed).
+ * `createSyncServer` passes secrets a library caller built itself through
+ * this (#58 security C7).
+ */
+export function redactTokenSecrets(secrets: TokenSecrets): TokenSecrets {
+  if (secrets instanceof RedactedTokenSecrets) return secrets;
+  return new RedactedTokenSecrets(secrets.current, secrets.previous, secrets.source);
 }
 
 const GENERATE_HINT = 'use `openssl rand -base64 32`';
@@ -157,7 +204,7 @@ export function collectTokenSecrets(
 
   if (errors.length > before || source === undefined) return undefined;
 
-  return redactedTokenSecrets(
+  return new RedactedTokenSecrets(
     source === 'random' || current.kind !== 'set'
       ? randomBytes(MIN_TOKEN_SECRET_BYTES)
       : Buffer.from(current.value, 'utf8'),

@@ -7,6 +7,7 @@ import {
   PUBLIC_EXAMPLE_SECRETS,
   type TokenSecrets,
   parseTokenSecrets,
+  redactTokenSecrets,
   warnAboutSecrets,
 } from '../src/config/token-secret.js';
 import { expectNoSentinel, secretFileDir } from './helpers/secret-files.js';
@@ -353,6 +354,74 @@ describe('parseTokenSecrets: _FILE variables (#58 AC1, AC2, AC5, AC9)', () => {
     expect(secrets.current.toString('utf8')).toBe(FILE_SECRET);
     expect(Object.keys(secrets).sort()).toEqual(['current', 'previous', 'source']);
     expect(Object.isFrozen(secrets)).toBe(true);
+  });
+
+  /** JSON, inspect (deep, hidden too) and string forms of `value`; must hold no sentinel. */
+  function shown(value: unknown): string {
+    return [
+      JSON.stringify(value),
+      inspect(value, { depth: 10 }),
+      inspect(value, { depth: 10, showHidden: true }),
+      String(value),
+    ].join('\n');
+  }
+
+  function expectRedacted(text: string): void {
+    expectNoSentinel(text, FILE_SECRET);
+    expectNoSentinel(text, FILE_SECRET_2);
+  }
+
+  it('stays redacted when the secrets or their Buffers are copied out (C7)', () => {
+    const secrets = parseTokenSecrets(
+      { TOKEN_SECRET_FILE: secretFile(FILE_SECRET), TOKEN_SECRET_PREVIOUS: FILE_SECRET_2 },
+      'production',
+    );
+    const spread = { ...secrets };
+    const assigned: object = Object.assign({}, secrets);
+    for (const copy of [
+      spread,
+      assigned,
+      { nested: spread },
+      [secrets.current, secrets.previous],
+    ]) {
+      expectRedacted(shown(copy));
+    }
+    for (const buffer of [spread.current, spread.previous]) {
+      expectRedacted(shown(buffer));
+      expectRedacted(shown({ buffer }));
+    }
+    expect(JSON.parse(JSON.stringify(spread))).toEqual({
+      current: '[redacted token secret]',
+      previous: '[redacted token secret]',
+      source: 'file',
+    });
+    // The bytes stay usable by an explicit decode and by Buffer APIs.
+    expect(spread.current.toString('utf8')).toBe(FILE_SECRET);
+    expect(spread.previous?.equals(Buffer.from(FILE_SECRET_2, 'utf8'))).toBe(true);
+  });
+
+  it('redacts secrets a caller built itself, without changing them (C7)', () => {
+    const current = Buffer.from(FILE_SECRET, 'utf8');
+    const previous = Buffer.from(FILE_SECRET_2, 'utf8');
+    const given: TokenSecrets = { current, previous, source: 'env' };
+    const secrets = redactTokenSecrets(given);
+    expect(secrets).not.toBe(given);
+    expect(secrets.current.equals(current)).toBe(true);
+    expect(secrets.previous?.equals(previous)).toBe(true);
+    expect(secrets.source).toBe('env');
+    expect(Object.isFrozen(secrets)).toBe(true);
+    expect(Object.keys(secrets).sort()).toEqual(['current', 'previous', 'source']);
+    for (const value of [secrets, { ...secrets }, secrets.current, secrets.previous]) {
+      expectRedacted(shown(value));
+    }
+    // The caller's object and Buffers are left as they were.
+    expect(JSON.stringify(given)).toContain('"type":"Buffer"');
+    expect(String(current)).toBe(FILE_SECRET);
+    // Already redacted secrets are not copied again; no previous stays absent.
+    expect(redactTokenSecrets(secrets)).toBe(secrets);
+    const single = redactTokenSecrets({ current, source: 'file' });
+    expect(Object.keys(single).sort()).toEqual(['current', 'source']);
+    expectRedacted(shown(single));
   });
 });
 
