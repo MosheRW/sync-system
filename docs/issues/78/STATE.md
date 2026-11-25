@@ -2,7 +2,7 @@
 - Path: fast
 - Phase: architecture
 - Branch: fix/78-sync-server-flaky-tests
-- PR: none
+- PR: #83
 - Plan approved by user: no
 - Security-sensitive: no
 - Review rounds: 0

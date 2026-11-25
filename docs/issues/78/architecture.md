@@ -190,6 +190,13 @@ Also run each changed file alone 3 times (`npx vitest run test/main.test.ts
 test/redis-startup.test.ts test/release-files.test.ts`), and `pnpm lint` and
 `pnpm typecheck`.
 
+## Open questions
+- None blocking. Coordination: this plan touches no shared config (no root or
+  package `vitest.config.ts`, no turbo/pnpm concurrency settings, no root
+  `test` script). It changes only the three sync-server test files above,
+  which #78 owns. A parallel "stabilize load-sensitive tests" effort can
+  change shared settings independently.
+
 ## Implementation chunks
 1. `test(server): give the process entry test its child's time budget`
    (`main.test.ts`)
