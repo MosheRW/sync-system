@@ -106,7 +106,16 @@ function read(env: EnvSource, name: string): string | undefined {
   return value === undefined || value === '' ? undefined : value;
 }
 
-const shown = (value: string) => `"${truncate(value)}"`;
+/**
+ * Replace control characters and line separators with `?`, so one problem is
+ * always one line. Same character set as `shownText` in
+ * apps/sync-server/src/config/apps-config.ts: keep the two in step (#44).
+ */
+const escapeControls = (value: string) =>
+  // eslint-disable-next-line no-control-regex
+  value.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, '?');
+
+const shown = (value: string) => `"${truncate(escapeControls(value))}"`;
 
 /**
  * A refused URL for an error line, with everything up to the last `@`

@@ -51,7 +51,8 @@ It never shows a token secret, any part of `REDIS_URL` (user, password or
 host), an API key, or the text of a parser or file-system error.
 
 The reader shows the offending value of a non-secret `READER_*` variable,
-cut at 40 characters plus `…`, so you can see what it read. In a URL
+with control characters and line separators replaced by `?` and then cut at
+40 characters plus `…`, so you can see what it read. In a URL
 (`READER_SYNC_URL`, `READER_SRC_ORIGINS`), everything up to the last `@` is
 replaced by `***`, so a user name or password is never shown.
 `READER_SYNC_API_KEY` is never shown. Do not put a secret in another

@@ -31,6 +31,13 @@ export const DEFAULT_MAX_SESSION_MINUTES = 480;
 /** Position saves are written at most this often (architecture 7.2). */
 export const POSITION_SAVE_INTERVAL_MS = 1_000;
 
+/**
+ * Seconds added to the `forgetAllGroups()` cut-off when the stored document
+ * can be neither deleted nor read (#9): covers a device clock up to this far
+ * behind the server that issued the tokens. Fixed, not configurable.
+ */
+export const FORGET_CUTOFF_MARGIN_SECONDS = 60;
+
 /** The single storage key per server and app (#5 AC33, Q12). */
 export function storageKey(namespace: string, host: string): string {
   return `sync-system:v1:${namespace}@${host}`;
@@ -255,9 +262,11 @@ function serialize(entries: readonly StoredEntry[]): string {
  *   removed, an unsaved token stays) until a successful write (#7 L-a).
  * - If `removeAll()` can neither delete the key nor read it, groups other
  *   tabs stored that this store never saw get no mark. A cut-off (the `iat`
- *   second of the failed call) is kept instead: until a successful write,
- *   every successful read drops stored entries issued at or before it, so
- *   only tokens issued strictly later survive (#7 L-c).
+ *   second of the failed call plus `FORGET_CUTOFF_MARGIN_SECONDS`) is kept
+ *   instead: until a successful write, every successful read drops stored
+ *   entries issued at or before it, so only tokens issued strictly later
+ *   survive (#7 L-c). A later failed call only ever raises it, never
+ *   lowers it (#9).
  */
 export class TokenStore {
   readonly #storage: TokenStorage;
@@ -278,7 +287,8 @@ export class TokenStore {
   /**
    * Set when `removeAll()` failed to delete and to read (#7 L-c): stored
    * entries with `iat` at or before it are dropped on read until a write
-   * succeeds.
+   * succeeds. The highest `iat` second of the failed calls plus the margin;
+   * never lowered (#9).
    */
   #removeAllCutoff: number | undefined;
   #positionTimer: TimerHandle | undefined;
@@ -496,7 +506,11 @@ export class TokenStore {
         } else {
           // Groups other tabs stored that this store never saw cannot be
           // marked: drop what was issued up to now on the next read (#7 L-c).
-          this.#removeAllCutoff = Math.floor(now() / 1000);
+          // The margin covers a device clock behind the server; never
+          // lowered, so a clock stepped back cannot undo an earlier failed
+          // call (#9).
+          const cutoff = Math.floor(now() / 1000) + FORGET_CUTOFF_MARGIN_SECONDS;
+          this.#removeAllCutoff = Math.max(this.#removeAllCutoff ?? cutoff, cutoff);
         }
         const groups = new Set([
           ...this.#known.keys(),
