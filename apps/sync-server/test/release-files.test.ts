@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 
 const repoRoot = fileURLToPath(new URL('../../../', import.meta.url));
 
@@ -119,19 +119,29 @@ describe('publishable set (C4, security M3)', () => {
 });
 
 describe('no credentials or old names in tracked files', () => {
+  // Read every tracked file once for the three checks below. Scanning the whole
+  // repo per test is slow under the parallel full run (#78). Tests only filter.
+  let tracked: { path: string; text: string }[] = [];
+  beforeAll(() => {
+    tracked = trackedFiles()
+      .filter((path) => existsSync(join(repoRoot, path)))
+      .map((path) => ({ path, text: read(path) }));
+  }, 60_000);
+
   it('has no tracked .npmrc with an auth token (L6)', () => {
-    const npmrcs = trackedFiles().filter((path) => /(^|\/)\.npmrc$/.test(path));
-    for (const path of npmrcs) {
-      expect(read(path), path).not.toMatch(/_authToken/);
+    const npmrcs = tracked.filter(({ path }) => /(^|\/)\.npmrc$/.test(path));
+    for (const { path, text } of npmrcs) {
+      expect(text, path).not.toMatch(/_authToken/);
     }
   });
 
   it('has no old placeholder scope left outside history (AC50, Q-C)', () => {
     const oldScope = ['@sync', '-system/'].join('');
     const history = /^(docs\/issues\/|docs\/decisions\/00(0\d|1[0-5])-)/;
-    const hits = trackedFiles()
-      .filter((path) => !history.test(path) && !path.endsWith('.zip'))
-      .filter((path) => existsSync(join(repoRoot, path)) && read(path).includes(oldScope));
+    const hits = tracked
+      .filter(({ path }) => !history.test(path) && !path.endsWith('.zip'))
+      .filter(({ text }) => text.includes(oldScope))
+      .map(({ path }) => path);
     expect(hits).toEqual([]);
   });
 
@@ -140,13 +150,10 @@ describe('no credentials or old names in tracked files', () => {
     const oldMirror = ['docker.io/', 'mosherw'].join('');
     // The mosherw name is right only after `ghcr.io/` or as the npm `@` scope.
     const bareOld = /(?<!ghcr\.io\/|@)mosherw\/sync-system-server/;
-    const hits = trackedFiles()
-      .filter((path) => !path.startsWith('docs/issues/') && !path.endsWith('.zip'))
-      .filter((path) => existsSync(join(repoRoot, path)))
-      .filter((path) => {
-        const text = read(path);
-        return text.includes(oldMirror) || bareOld.test(text);
-      });
+    const hits = tracked
+      .filter(({ path }) => !path.startsWith('docs/issues/') && !path.endsWith('.zip'))
+      .filter(({ text }) => text.includes(oldMirror) || bareOld.test(text))
+      .map(({ path }) => path);
     expect(hits).toEqual([]);
   });
 });
