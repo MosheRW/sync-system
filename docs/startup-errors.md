@@ -117,18 +117,15 @@ In the URL rows, `<name>` is `REDIS_URL`, or
 `TOKEN_SECRET_PREVIOUS (from TOKEN_SECRET_PREVIOUS_FILE)` when the value was
 read from a file. A file value goes through the same rules.
 
-| Message                                                                                     | Fix                                                                                                                            |
-| ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| ``Config error: TOKEN_SECRET is required (use `openssl rand -base64 32`)``                  | Set `TOKEN_SECRET`. It may be unset only when `NODE_ENV` is `development` or `test`.                                           |
-| `Config error: <name> must not start or end with whitespace`                                | Remove the spaces or line breaks around the value (a secret is used exactly as given). A secret file may end in one newline (` |
-| `or`                                                                                        |
-| `); anything else, such as a second newline, a lone `                                       |
-| ` or a byte order mark, counts.                                                             |
-| ``Config error: <name> must be at least 32 bytes (use `openssl rand -base64 32`)``          | Generate a new secret with the command shown.                                                                                  |
-| `` Config error: <name> is an example value from the docs; use `openssl rand -base64 32` `` | Generate a new secret; never use a value printed in the docs.                                                                  |
-| `` Config error: <name> is the public development secret; use `openssl rand -base64 32` ``  | Generate a new secret; the development secret is accepted only in development and test.                                        |
-| `` Config error: <name> looks weak; use `openssl rand -base64 32` ``                        | Generate a new secret with the command shown.                                                                                  |
-| `Config error: TOKEN_SECRET_PREVIOUS must differ from TOKEN_SECRET`                         | Set the new secret in `TOKEN_SECRET` and the old one in `TOKEN_SECRET_PREVIOUS`.                                               |
+| Message                                                                                     | Fix                                                                                                                                                                                                                                    |
+| ------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ``Config error: TOKEN_SECRET is required (use `openssl rand -base64 32`)``                  | Set `TOKEN_SECRET`. It may be unset only when `NODE_ENV` is `development` or `test`.                                                                                                                                                   |
+| `Config error: <name> must not start or end with whitespace`                                | Remove the spaces or line breaks around the value (a secret is used exactly as given). A secret file may end in one line break (`\n` or `\r\n`); anything else, such as a second line break, a lone `\r` or a byte order mark, counts. |
+| ``Config error: <name> must be at least 32 bytes (use `openssl rand -base64 32`)``          | Generate a new secret with the command shown.                                                                                                                                                                                          |
+| `` Config error: <name> is an example value from the docs; use `openssl rand -base64 32` `` | Generate a new secret; never use a value printed in the docs.                                                                                                                                                                          |
+| `` Config error: <name> is the public development secret; use `openssl rand -base64 32` ``  | Generate a new secret; the development secret is accepted only in development and test.                                                                                                                                                |
+| `` Config error: <name> looks weak; use `openssl rand -base64 32` ``                        | Generate a new secret with the command shown.                                                                                                                                                                                          |
+| `Config error: TOKEN_SECRET_PREVIOUS must differ from TOKEN_SECRET`                         | Set the new secret in `TOKEN_SECRET` and the old one in `TOKEN_SECRET_PREVIOUS`.                                                                                                                                                       |
 
 ### Config error: secret files
 
