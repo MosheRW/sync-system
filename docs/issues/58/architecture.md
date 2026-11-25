@@ -203,7 +203,8 @@ to 64 characters + `...`), printed **only** when it names an existing entry
 | `<base> and <var> are both set; set only one` | Both set, either may be `""`. |
 | `<var> must not be empty` | `<var>=""`. |
 | `<var> file does not exist` | `ENOENT`, `ENOTDIR` (path not printed). |
-| `<var> file "<path>" is not readable by the server user` | `EACCES`, `EPERM`. |
+| `<var> file "<path>" is not readable by the server user` | `EACCES`, `EPERM`, and an `lstat` of the path succeeds (the entry exists). |
+| `<var> file is not accessible to the server user` | `EACCES`, `EPERM`, and the `lstat` fails too (e.g. a directory on the path cannot be searched), so the entry may not exist (path not printed; Gate 3 fix). |
 | `<var> file "<path>" is not a regular file` | Directory, FIFO, device, socket (`EISDIR` or `fstat`). |
 | `<var> file "<path>" is larger than 4096 bytes` | `fstat` size or bytes read > 4096. |
 | `<var> file "<path>" is empty` | 0 bytes, or only one `\n` / `\r\n`. |
