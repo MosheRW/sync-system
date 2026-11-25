@@ -2,6 +2,7 @@ import { inspect } from 'node:util';
 import { ConfigError } from './config-error.js';
 import { DEV_KEY_NODE_ENVS } from './dev-key.js';
 import type { EnvSource } from './env.js';
+import { resolveSecret } from './secret-file.js';
 
 /**
  * The public development Redis password of `compose.redis.yaml`. It is
@@ -22,7 +23,7 @@ export const REDIS_COMMAND_TIMEOUT_MS_MAX = 30000;
 /** `<prefix>:v1:...`; never contains `:` (#35 AC5). */
 export const REDIS_KEY_PREFIX_PATTERN = /^[a-z0-9][a-z0-9_-]{0,31}$/;
 
-const INVALID_URL = 'REDIS_URL is not a valid redis:// or rediss:// URL';
+const invalidUrl = (label: string): string => `${label} is not a valid redis:// or rediss:// URL`;
 
 /** Where and how to connect. Only `connect.ts` reads these fields. */
 export interface RedisEndpoint {
@@ -95,37 +96,41 @@ function decode(part: string): string | undefined {
 /**
  * Parses REDIS_URL. Every message names the variable only, never the value,
  * host, user or password (AC3, security C9); the `new URL` error (whose
- * `input` holds the raw value) is discarded.
+ * `input` holds the raw value) is discarded. `label` is `REDIS_URL` or
+ * `REDIS_URL (from REDIS_URL_FILE)` (#58), so env-only messages are
+ * unchanged. Leading and trailing whitespace is handled by `new URL` the
+ * same way for both sources (Gate 2 of #58).
  */
 function parseUrl(
   raw: string,
+  label: string,
   nodeEnv: string | undefined,
   errors: string[],
 ): RedisEndpoint | undefined {
   if (raw === '') {
-    errors.push('REDIS_URL must not be empty');
+    errors.push(`${label} must not be empty`);
     return undefined;
   }
   let url: URL;
   try {
     url = new URL(raw);
   } catch {
-    errors.push(INVALID_URL);
+    errors.push(invalidUrl(label));
     return undefined;
   }
   if ((url.protocol !== 'redis:' && url.protocol !== 'rediss:') || url.hostname === '') {
-    errors.push(INVALID_URL);
+    errors.push(invalidUrl(label));
     return undefined;
   }
   if (url.search !== '' || url.hash !== '' || raw.includes('?') || raw.includes('#')) {
-    errors.push('REDIS_URL must not have a query string or fragment');
+    errors.push(`${label} must not have a query string or fragment`);
     return undefined;
   }
   let port = 6379;
   if (url.port !== '') {
     const parsed = integerIn(url.port, 1, 65535);
     if (parsed === undefined) {
-      errors.push('REDIS_URL port must be between 1 and 65535');
+      errors.push(`${label} port must be between 1 and 65535`);
       return undefined;
     }
     port = parsed;
@@ -135,7 +140,7 @@ function parseUrl(
     const db = url.pathname.slice(1);
     const parsed = db === '0' ? 0 : integerIn(db, 1, 15);
     if (parsed === undefined) {
-      errors.push('REDIS_URL database must be a number from 0 to 15');
+      errors.push(`${label} database must be a number from 0 to 15`);
       return undefined;
     }
     database = parsed;
@@ -146,7 +151,7 @@ function parseUrl(
     (url.username !== '' && username === undefined) ||
     (url.password !== '' && password === undefined)
   ) {
-    errors.push(INVALID_URL);
+    errors.push(invalidUrl(label));
     return undefined;
   }
   if (
@@ -154,7 +159,7 @@ function parseUrl(
     (nodeEnv === undefined || !DEV_KEY_NODE_ENVS.includes(nodeEnv))
   ) {
     errors.push(
-      'REDIS_URL uses the public development Redis password; it is only accepted when NODE_ENV is development or test',
+      `${label} uses the public development Redis password; it is only accepted when NODE_ENV is development or test`,
     );
     return undefined;
   }
@@ -165,7 +170,8 @@ function parseUrl(
 
 /**
  * Checks every `REDIS_*` variable and returns the settings, or undefined
- * when REDIS_URL is unset (memory store). Problems are pushed to `errors`
+ * when neither REDIS_URL nor REDIS_URL_FILE is set (memory store), or when
+ * any problem was found. Problems are pushed to `errors`
  * so they are reported with every other config problem (AC3). The prefix
  * and timeouts are checked even without REDIS_URL, so a typo shows before
  * Redis is turned on.
@@ -212,8 +218,10 @@ export function collectRedisSettings(env: EnvSource, errors: string[]): RedisSet
       commandMs = parsed;
     }
   }
-  if (env.REDIS_URL === undefined) return undefined;
-  const endpoint = parseUrl(env.REDIS_URL, env.NODE_ENV, errors);
+  // REDIS_URL or REDIS_URL_FILE (#58, ADR 0023); `invalid` never means the memory store.
+  const url = resolveSecret(env, 'REDIS_URL', errors);
+  if (url.kind !== 'set') return undefined;
+  const endpoint = parseUrl(url.value, url.label, env.NODE_ENV, errors);
   // Never settings built from a default after a problem (#36 security C1).
   if (endpoint === undefined || errors.length > before) return undefined;
   return new RedisSettings(endpoint, keyPrefix, connectSeconds * 1000, commandMs);

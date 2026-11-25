@@ -254,6 +254,13 @@ export const ENV_CASES: readonly ConfigCase[] = [
     ],
   },
   {
+    id: 'REDIS_URL_FILE empty',
+    target: 'REDIS_URL_FILE',
+    env: { REDIS_URL_FILE: '' },
+    sentinels: [],
+    problems: ['REDIS_URL_FILE must not be empty'],
+  },
+  {
     id: 'REDIS_KEY_PREFIX with a colon',
     target: 'REDIS_KEY_PREFIX',
     env: { REDIS_KEY_PREFIX: 'SENTINEL:prefix' },
@@ -674,6 +681,7 @@ export const VALID_VALUES: Readonly<Record<ServerVariable, readonly string[]>> =
   TOKEN_SECRET_FILE: [],
   TOKEN_SECRET_PREVIOUS_FILE: [],
   REDIS_URL: ['redis://localhost:6379', 'rediss://user:pw@redis.internal:6380/2'],
+  REDIS_URL_FILE: [],
   REDIS_KEY_PREFIX: ['sync', 'tenant-a'],
   REDIS_CONNECT_TIMEOUT_SECONDS: ['10', '30'],
   REDIS_COMMAND_TIMEOUT_MS: ['2000', '500'],
