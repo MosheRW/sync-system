@@ -1,6 +1,8 @@
 # 0023. Reading secrets from files (`_FILE` variables)
 
-- Status: Proposed
+- Status: Accepted (Gate 2, 2026-11-25: user chose the recommended option 1,
+  with the narrowed path rule below and the security controls C1–C11 of
+  [`docs/issues/58/security.md`](../issues/58/security.md))
 - Date: 2026-11-24
 - Issue: #58
 
@@ -28,11 +30,18 @@ The behaviour of the `_FILE` variables was fixed at Gate 1 of #58:
 - A file larger than 4 KiB is a `Config error`; it is never read whole.
 - The value from the file goes through exactly the same checks as the same
   value from the environment.
-- Messages name variables; a file path may be printed, file content never.
+- Messages name variables; file content is never printed. The path
+  (sanitized, control characters replaced, cut at 64 characters) is printed
+  only for an entry that exists: not for "does not exist" (`ENOENT`,
+  `ENOTDIR`) and not for an unknown error, so a secret pasted into `X_FILE`
+  by mistake is never echoed (Gate 2 narrowing of Gate 1 Q6).
   The token-secret source `file` may be logged; the value and path never.
+- A value from `REDIS_URL_FILE` keeps the URL parser's lenient handling of
+  leading and trailing whitespace, exactly like `REDIS_URL` from the
+  environment (Gate 2).
 - No permission check on the file (the operator guide gives mode 400).
 
-What is left open is only **how this is recorded** against ADR 0015 (Q8).
+What was left open at Gate 1 was only **how this is recorded** against ADR 0015 (Q8).
 ADR 0015's rule is the family list; it is not changed by #58: no prefix is
 added or removed, the three names simply become known variables, and
 other unknown `_FILE` names in a family (for example `MAX_X_FILE`,
@@ -66,16 +75,12 @@ prefix means updating this ADR."
 
 ## Decision
 
-Option 1 (recommended; the user decides at Gate 2 of #58). The `_FILE`
+Option 1 (chosen by the user at Gate 2 of #58). The `_FILE`
 behaviour above is the decision recorded here. ADR 0015's rule stays as it
 is; only its known list in `apps/sync-server/src/config/known-vars.ts` grows
 by three names, which 0015 already allows, and 0015 gets one line
 `- Related: [0023](0023-secrets-from-files.md) (secret files, #58)` under its
 header. Its Decision and Consequences are not edited.
-
-If the user picks option 2 or 3 instead, the first implementation chunk
-moves the contract text of this ADR into that record and this file is
-removed (option 2) or becomes the superseding ADR (option 3).
 
 ## Consequences
 

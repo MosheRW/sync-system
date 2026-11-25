@@ -3,6 +3,7 @@
 - Status: Accepted
 - Date: 2026-11-15
 - Issue: #36
+- Related: [0023](0023-secrets-from-files.md) (secret files, #58)
 
 ## Context
 
