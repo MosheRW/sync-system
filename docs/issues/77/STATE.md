@@ -2,7 +2,7 @@
 - Path: full
 - Phase: architecture
 - Branch: feat/77-reader-image-release
-- PR: none
+- PR: #79
 - Plan approved by user: no
 - Security-sensitive: yes
 - Review rounds: 0
