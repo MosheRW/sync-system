@@ -1,12 +1,12 @@
 # State: #42 fix(server): treat a just-started instance as live when picking a successor (follow-up to #35)
 - Path: fast
-- Phase: validation
+- Phase: ready-to-merge
 - Branch: fix/42-successor-liveness
 - PR: #74
 - Plan approved by user: yes (Gate 2, as written, no ADRs)
 - Security-sensitive: yes (touches control C12: liveness feeding leadership hints)
 - Review rounds: 1
-- Last updated by: qa
+- Last updated by: orchestrator
 ## Model log
 - pm groom: sonnet (default) → DONE
 - architect plan: opus (NEXT_MODEL) → DONE
@@ -14,6 +14,7 @@
 - engineer implement: opus (rule: security-sensitive; architect Implementer model) → BLOCKED (all chunks done; Docker Desktop went down mid-run, so the full Redis suite and SYNC_TEST_STORE=redis could not run; the new multi-liveness suite passed 6 times on Redis 7.2 before that)
 - engineer continue: opus (rule: continuation) → DONE (Redis suites run on Redis 7.2, both plain and SYNC_TEST_STORE=redis; PR #74 marked ready)
 - qa review r1: sonnet (NEXT_MODEL) → PASS (QA verdict PASS: lint, typecheck, build, unit and Redis suites pass; 8/8 criteria met; all commits signed; known load flakes confirmed on rerun)
+- security code r1: opus (rule) → PASS (R1–R9 implemented and tested; no new findings; L1/L2 documented in #35 §12.18)
 ## Open questions
 - Resolved in architecture.md: direct Redis check on a cache miss (one MGET per grace end or take-back); re-arm rejected (does not cover handoff/S4). Security plan review (C12): PASS, see security.md (R1-R9, advisories L1-L2).
 ## Deviations from plan
