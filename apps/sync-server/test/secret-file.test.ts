@@ -80,7 +80,7 @@ describe('readSecretFile: content rules (AC1, AC6)', () => {
     ['trailing space (kept)', 'abc \n', 'abc '],
     ['leading tab (kept)', '\tabc', '\tabc'],
     ['interior spaces (kept)', 'a b  c\n', 'a b  c'],
-    ['a BOM (kept)', '﻿abc', '﻿abc'],
+    ['a BOM (kept)', '\uFEFFabc', '\uFEFFabc'],
     ['multi-byte UTF-8', 'àéî\n', 'àéî'],
   ])('%s', (_label, content, value) => {
     const path = files.file(`content-${Math.random().toString(36).slice(2)}`, content);
