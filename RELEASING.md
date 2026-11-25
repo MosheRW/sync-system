@@ -6,6 +6,9 @@ hand, without GitHub Actions. The decisions behind it are
 and [ADR 0017](docs/decisions/0017-server-image-publishing.md) (image); the
 version rules are [`docs/versioning.md`](docs/versioning.md).
 
+The reading app's image has its own standalone release: see
+[Reader image release](#reader-image-release).
+
 **Only the maintainer runs Phase B.** Agents and automation prepare the
 release PR and run the [dry run](#dry-run-qa); they never tag, publish, push
 an image or create a GitHub release.
@@ -479,6 +482,285 @@ gh release create "v$V" --title "v$V" --notes-file notes.md
 - Every release: `rm -rf "$REL" "$IMG"`, and check that the npm Access
   Tokens page and both registries' token lists hold nothing from this
   release.
+
+## Reader image release
+
+The reading app (`apps/reader`) is released on its own, with its own
+version, only as a Docker image
+([ADR 0023](docs/decisions/0023-reader-version-tag-and-image.md)):
+`ghcr.io/mosherw/sync-system-reader` (canonical) and
+`docker.io/moshewin/sync-system-reader` (mirror), tags `X.Y.Z`, `X.Y`, `X`
+and `latest`, for `linux/amd64` and `linux/arm64`. Its git tag is
+`reader-vX.Y.Z`. It is never published to npm (`private: true`). The
+[rule](#the-rule) and [Before you start](#before-you-start) apply as for
+the packages: the tag and the image push run on the host, the checks run
+in the build container with no credential. Only the maintainer runs it;
+agents never tag, push an image or create a release.
+
+**Blocked:** do not release the reader image until #27 and #28 are closed.
+The R1 block enforces it (`BLOCKERS`); for a later release, edit that list
+to the issues that block it, or leave it empty.
+
+The reader version is bumped by hand in a reviewed PR before this section
+is run: `apps/reader/package.json`, `READER_VERSION` in
+`apps/reader/src/config/version.ts` and a `## X.Y.Z` entry in
+`apps/reader/CHANGELOG.md` (see [`docs/versioning.md`](docs/versioning.md#the-reading-app)).
+Set these in your shell first (none of them is a secret). `RV` and `RM` are
+the reader's own names, so they never mix with the packages' `V` and `M`:
+
+```sh
+export RV=1.0.0                # the reader version on main (apps/reader/package.json)
+export REL="$(mktemp -d)"      # outside the repo: R2's bundle and outputs
+export IMG="$(mktemp -d)"      # outside the repo: the fresh clone of R3 and R4
+```
+
+Optional, before R1: run the [reader dry run](#reader-dry-run-qa) on
+`main` at the commit you will tag, so a broken build is found before the
+public tag exists.
+
+### R0. First reader release only
+
+- The Docker Hub repository `moshewin/sync-system-reader` exists and is
+  public (create it by hand under your Docker Hub **username** `moshewin`).
+  Never push the reader to Docker Hub under the GitHub name `mosherw`: that
+  is not this project's namespace there.
+- On GitHub, the package `sync-system-reader` is created under `mosherw` by
+  the first push, private; R6 makes it public.
+
+### R1. Tag on the host
+
+With your normal git credentials; nothing goes into a container. `RM` is
+the commit to tag: unless you set it, it is the current `origin/main`. The
+block checks that `RM` is on `origin/main` and carries the reader version,
+then checks every blocker issue: it must be closed as completed, and the
+merge commit of every pull request that closed it must be in `RM`. An issue
+closed without a pull request asks you to confirm by hand. An issue closed
+as anything but completed (`NOT_PLANNED`, `DUPLICATE`) stops the block,
+unless you list it in `ACCEPT_UNFIXED` (for example
+`ACCEPT_UNFIXED=28`) after deciding that the release does not need it.
+
+```sh
+( set -euo pipefail
+  BLOCKERS="27 28"
+  [[ "$RV" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'set RV=X.Y.Z'; exit 1; }
+  git fetch origin
+  RM="${RM:-$(git rev-parse origin/main)}"
+  [[ "$RM" =~ ^[0-9a-f]{40}$ ]] || { echo 'RM is not a full commit id'; exit 1; }
+  git merge-base --is-ancestor "$RM" origin/main || { echo 'RM is not on origin/main'; exit 1; }
+  git show "$RM:apps/reader/package.json" | grep -q "\"version\": \"$RV\"" || { echo "the reader is not $RV at RM"; exit 1; }
+  git show "$RM:apps/reader/package.json" | grep -q '"private": true' || { echo 'the reader is not private at RM'; exit 1; }
+  git show "$RM:apps/reader/src/config/version.ts" | grep -qF "READER_VERSION = '$RV';" || { echo "READER_VERSION is not $RV at RM"; exit 1; }
+  git show "$RM:apps/reader/CHANGELOG.md" | grep -qx "## $RV" || { echo "apps/reader/CHANGELOG.md has no ## $RV at RM"; exit 1; }
+  for n in $BLOCKERS; do
+    S="$(gh issue view "$n" --json state,stateReason --jq '.state + " " + (.stateReason // "")')"
+    echo "#$n: $S"
+    [ "${S%% *}" = CLOSED ] || { echo "#$n is open: the reader is not released yet"; exit 1; }
+    if [ "$S" != 'CLOSED COMPLETED' ]; then
+      case " ${ACCEPT_UNFIXED:-} " in
+        *" $n "*) echo "#$n accepted without a fix (ACCEPT_UNFIXED)"; continue ;;
+        *) echo "#$n was not closed as completed; set ACCEPT_UNFIXED=$n only if the release does not need it"; exit 1 ;;
+      esac
+    fi
+    PRS="$(gh issue view "$n" --json closedByPullRequestsReferences --jq '.closedByPullRequestsReferences[].url')"
+    if [ -z "$PRS" ]; then
+      echo "#$n was closed without a pull request: check by hand that its fix is in $RM"
+      read -r -p "Type yes if the fix for #$n is in $RM: " OK
+      [ "$OK" = yes ] || { echo 'not confirmed'; exit 1; }
+    fi
+    for p in $PRS; do
+      MC="$(gh pr view "$p" --json mergeCommit --jq '.mergeCommit.oid // ""')"
+      [[ "$MC" =~ ^[0-9a-f]{40}$ ]] || { echo "$p (closes #$n) is not merged"; exit 1; }
+      git merge-base --is-ancestor "$MC" "$RM" || { echo "$p (closes #$n) is not in $RM"; exit 1; }
+      echo "#$n: $p merged as $MC, which is in RM"
+    done
+  done
+  if git rev-parse -q --verify "refs/tags/reader-v$RV" >/dev/null; then echo "reader-v$RV exists locally"; exit 1; fi
+  if git ls-remote --exit-code --tags origin "refs/tags/reader-v$RV" >/dev/null; then echo "reader-v$RV exists on origin"; exit 1; fi
+  git tag -a "reader-v$RV" "$RM" -m "reader-v$RV"
+  git push origin "refs/tags/reader-v$RV"
+  echo "export RM=$RM"
+)
+```
+
+Run the printed `export RM=...` line: R2 to R4 check every build against
+this commit. The block pushes only that one tag.
+
+### R2. Checks in the build container (no credential)
+
+Run the **[step 2](#2-build-container-no-credential)** block unchanged
+(full install, audit, lint, typecheck, tests with Redis, build and smoke of
+the tagged commit), pointed at the reader tag:
+
+```sh
+export REF="reader-v$RV" M="$RM" MODE=dry-run
+```
+
+It must finish green. With `MODE=dry-run` it packs the npm packages only to
+check them (no token, nothing published); ignore the integrity lines it
+prints. Then run `unset REF M MODE`.
+
+### R3. Check the image (no credential)
+
+Builds `linux/amd64` from a fresh clone of the tag and checks the running
+container: the commit, a clean tree, `/health` with the tag's version, a
+non-root user, no source maps, and the labels. Then it builds `linux/arm64`
+(build only). Only when every check passed does it write `RM` to
+`$IMG/checked`, which R4 requires. The container gets no environment
+variable, no mount and no credential.
+
+```sh
+( set -euo pipefail
+  export MSYS_NO_PATHCONV=1
+  [[ "$RV" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'set RV=X.Y.Z'; exit 1; }
+  [[ "$RM" =~ ^[0-9a-f]{40}$ ]] || { echo 'set RM (R1)'; exit 1; }
+  SRC_URL="${SRC_URL:-https://github.com/MosheRW/sync-system.git}"; REF="${REF:-reader-v$RV}"
+  D="$IMG"; if command -v cygpath >/dev/null; then D="$(cygpath -m "$IMG")"; fi
+  rm -rf "$D/src" "$D/checked"
+  git clone --quiet --branch "$REF" --depth 1 "$SRC_URL" "$D/src"
+  [ "$(git -C "$D/src" rev-parse HEAD)" = "$RM" ] || { echo 'the clone is not the reader commit'; exit 1; }
+  [ -z "$(git -C "$D/src" status --porcelain)" ] || { echo 'the clone is not clean'; exit 1; }
+  docker buildx build --platform linux/amd64 --load -f "$D/src/apps/reader/Dockerfile" \
+    --label "org.opencontainers.image.version=$RV" --label "org.opencontainers.image.revision=$RM" \
+    -t "sync-reader-check:$RV" "$D/src"
+  trap 'docker rm -f sync-reader-health >/dev/null 2>&1 || true' EXIT
+  docker run -d --name sync-reader-health "sync-reader-check:$RV" >/dev/null
+  H=''
+  for attempt in 1 2 3 4 5 6 7 8 9 10; do
+    if H="$(docker exec sync-reader-health node -e "fetch('http://127.0.0.1:8080/health').then(r=>r.text()).then(t=>console.log(t))" 2>/dev/null)"; then break; fi
+    sleep 1
+  done
+  echo "$H"
+  echo "$H" | grep -qx "{\"status\":\"ok\",\"version\":\"$RV\"}" || { echo '/health version is not the tag'; exit 1; }
+  [ "$(docker exec sync-reader-health id -u)" != 0 ] || { echo 'the image runs as root'; exit 1; }
+  [ -z "$(docker exec sync-reader-health find /app/dist /app/dist-server -name '*.map')" ] || { echo 'the image has source maps'; exit 1; }
+  docker inspect -f '{{json .Config.Labels}}' "sync-reader-check:$RV"
+  [ "$(docker inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' "sync-reader-check:$RV")" = "$RM" ] || { echo 'wrong revision label'; exit 1; }
+  docker buildx build --platform linux/arm64 -f "$D/src/apps/reader/Dockerfile" "$D/src"
+  echo "$RM" > "$D/checked"
+  echo "R3 passed for $RM"
+)
+```
+
+The arm64 build runs under emulation and takes several minutes. If the
+default builder cannot build `linux/arm64`, run
+`docker buildx create --use --name sync-release` once and repeat the block.
+Optional: if a scanner is installed, run
+`docker scout cves --only-severity critical,high "sync-reader-check:$RV"`
+and keep the result with the release notes draft.
+
+### R4. Push the image (on the host)
+
+Create two tokens, each with the shortest expiry offered:
+
+- A GitHub **classic** personal access token from
+  `https://github.com/settings/tokens/new?scopes=write:packages` (that link
+  ticks only `write:packages`). Before you generate it, check the scope
+  list: only `write:packages` (and the `read:packages` it implies) may be
+  ticked. GitHub's form can tick `repo` along with it; if `repo` is ticked,
+  untick it. A `repo` token could push code and move tags.
+- A Docker Hub personal access token with "Read & Write" (not "Read, Write
+  & Delete"). Docker Hub tokens are account-wide: this one can also push
+  the server image until you revoke it.
+
+Then push. The block refuses to run unless R3 passed for `RM` on this clone
+(`$IMG/checked`), and checks the clone's commit and clean tree again before
+the first login. The logins use a temporary `DOCKER_CONFIG`, and the `trap`
+is set before the first login so both logouts and the removal of the
+config run on every exit:
+
+```sh
+( set -euo pipefail
+  export MSYS_NO_PATHCONV=1
+  [[ "$RM" =~ ^[0-9a-f]{40}$ ]] || { echo 'set RM (R1)'; exit 1; }
+  [[ "$RV" =~ ^([0-9]+)\.([0-9]+)\.[0-9]+$ ]] || { echo 'set RV=X.Y.Z'; exit 1; }
+  MAJOR="${BASH_REMATCH[1]}"; MINOR="${BASH_REMATCH[2]}"
+  D="$IMG"; if command -v cygpath >/dev/null; then D="$(cygpath -m "$IMG")"; fi
+  [ -f "$D/checked" ] && [ "$(tail -n 1 "$D/checked")" = "$RM" ] || { echo 'R3 has not passed for RM: run R3 first'; exit 1; }
+  [ "$(git -C "$D/src" rev-parse HEAD)" = "$RM" ] || { echo 'the clone is not the reader commit'; exit 1; }
+  [ -z "$(git -C "$D/src" status --porcelain)" ] || { echo 'the clone is not clean'; exit 1; }
+  CFG="$(mktemp -d)"; if command -v cygpath >/dev/null; then CFG="$(cygpath -m "$CFG")"; fi
+  export DOCKER_CONFIG="$CFG"
+  trap 'docker logout ghcr.io >/dev/null 2>&1 || true; docker logout docker.io >/dev/null 2>&1 || true; rm -rf "$DOCKER_CONFIG"' EXIT
+  read -rs -p 'GHCR token (write:packages only): ' T; echo
+  printf '%s' "$T" | docker login ghcr.io -u mosherw --password-stdin
+  unset T
+  read -rs -p 'Docker Hub token: ' T; echo
+  printf '%s' "$T" | docker login docker.io -u moshewin --password-stdin
+  unset T
+  docker buildx build --platform linux/amd64,linux/arm64 --push \
+    -f "$D/src/apps/reader/Dockerfile" \
+    --label "org.opencontainers.image.version=$RV" --label "org.opencontainers.image.revision=$RM" \
+    -t "ghcr.io/mosherw/sync-system-reader:$RV" -t "ghcr.io/mosherw/sync-system-reader:$MAJOR.$MINOR" \
+    -t "ghcr.io/mosherw/sync-system-reader:$MAJOR" -t ghcr.io/mosherw/sync-system-reader:latest \
+    -t "docker.io/moshewin/sync-system-reader:$RV" -t "docker.io/moshewin/sync-system-reader:$MAJOR.$MINOR" \
+    -t "docker.io/moshewin/sync-system-reader:$MAJOR" -t docker.io/moshewin/sync-system-reader:latest \
+    "$D/src"
+  docker buildx imagetools inspect "ghcr.io/mosherw/sync-system-reader:$RV"
+  docker buildx imagetools inspect "docker.io/moshewin/sync-system-reader:$RV"
+)
+```
+
+Record the manifest-list `Digest:` both inspections print (it is the same
+image). Then check that no registry login is left on the host and **revoke
+both registry tokens**, exactly as after
+[step 6](#6-the-server-image-on-the-host)'s push.
+
+### R5. GitHub release
+
+Write `notes.md`: the `## RV` section of `apps/reader/CHANGELOG.md`, then
+the image's manifest-list digest from R4:
+
+```md
+Image `ghcr.io/mosherw/sync-system-reader:X.Y.Z` (and docker.io): `sha256:...`
+```
+
+```sh
+gh release create "reader-v$RV" --verify-tag --latest=false --title "Reader $RV" --notes-file notes.md
+```
+
+`--verify-tag` refuses when `reader-v$RV` is not on origin (instead of
+creating it on the default branch), and `--latest=false` keeps the
+packages' release as "Latest".
+
+### R6. After the reader release
+
+- [ ] First release only: set the GHCR package `sync-system-reader` public
+      (GitHub, Packages, Package settings).
+- [ ] Pull by tag works anonymously from both registries, and the digests
+      equal R4's:
+
+```sh
+( set -euo pipefail
+  export MSYS_NO_PATHCONV=1
+  CFG="$(mktemp -d)"; if command -v cygpath >/dev/null; then CFG="$(cygpath -m "$CFG")"; fi
+  export DOCKER_CONFIG="$CFG"
+  trap 'rm -rf "$DOCKER_CONFIG"' EXIT
+  for ref in "ghcr.io/mosherw/sync-system-reader:$RV" "docker.io/moshewin/sync-system-reader:$RV"; do
+    docker pull --quiet "$ref" >/dev/null
+    echo "$ref $(docker buildx imagetools inspect "$ref" --format '{{json .Manifest.Digest}}')"
+  done
+)
+```
+
+- [ ] Both registry tokens revoked; no `ghcr.io` or `index.docker.io` login
+      left in the credential helper or `~/.docker/config.json`.
+- [ ] `rm -rf "$IMG" "$REL"`.
+
+### Reader dry run (QA)
+
+R3 without a tag, a token, a login or a push. From the repo, on the PR's
+branch, with the reader version that branch sets:
+
+```sh
+export RV=1.0.0 IMG="$(mktemp -d)"
+export REF="$(git rev-parse --abbrev-ref HEAD)" RM="$(git rev-parse HEAD)"
+export SRC_URL="file://$(if command -v cygpath >/dev/null; then cygpath -m "$(pwd)"; else pwd; fi)"
+```
+
+Then run the **R3** block (the branch must be committed: the block clones
+it). It builds `linux/amd64`, checks `/health`, the user and the labels,
+and builds `linux/arm64`. Never run R1, R4 or R5 in a dry run. Afterwards:
+`unset REF RM SRC_URL` and `rm -rf "$IMG"`.
 
 ## Dry run (QA)
 
