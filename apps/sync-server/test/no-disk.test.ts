@@ -24,12 +24,19 @@ describe('the server persists nothing (#5 AC11)', () => {
     expect(files.map((f) => f.name)).toContain('tokens/token-service.ts');
   });
 
-  it('only the apps-config loader and the version reader import the file system, to read', () => {
+  it('only the apps-config loader, the secret file reader and the version reader import the file system, to read', () => {
     const importers = files
       .filter((f) => /from\s+['"](node:)?fs(\/promises)?['"]/.test(f.text))
       .map((f) => f.name)
       .sort();
-    expect(importers).toEqual(['config/apps-config.ts', 'version.ts']);
+    expect(importers).toEqual(['config/apps-config.ts', 'config/secret-file.ts', 'version.ts']);
+    // #58: secret files, opened read-only (security C1).
+    const secrets = files.find((f) => f.name === 'config/secret-file.ts')!;
+    expect(secrets.text).toMatch(
+      /import \{ closeSync, constants, fstatSync, openSync, readSync \} from 'node:fs'/,
+    );
+    expect(secrets.text).toMatch(/SECRET_FILE_OPEN_FLAGS =\s+constants\.O_RDONLY \|/);
+    expect(secrets.text).not.toMatch(/O_WRONLY|O_RDWR|O_CREAT|O_TRUNC|O_APPEND/);
     const loader = files.find((f) => f.name === 'config/apps-config.ts')!;
     expect(loader.text).toMatch(/import \{ readFileSync \} from 'node:fs'/);
     // #36 AC33: the server's package.json, opened read-only.
