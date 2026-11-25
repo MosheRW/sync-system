@@ -8,8 +8,9 @@
 - Review rounds: 0
 - Last updated by: pm
 ## Model log
-- pm grooming: sonnet (orchestrator choice) → DONE
+- pm grooming: sonnet (default) → DONE
+- pm gate-1 update: sonnet (default) → DONE
 ## Open questions
-- Q1-Q5 in spec.md awaiting Gate 1.
+- none
 ## Deviations from plan
 - none

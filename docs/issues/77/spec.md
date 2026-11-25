@@ -14,12 +14,14 @@ The reading app `apps/reader` (`@mosherw/sync-system-reader`, `private: true`, v
 ## Acceptance criteria
 - [ ] `RELEASING.md` documents the reader image release (build from a fresh clone of the tag, clean-tree and commit check, `/health` check on the built image, multi-platform buildx push of the same tags to both registries, temporary `DOCKER_CONFIG`, classic GHCR PAT with `write:packages`), consistent with step 6 / ADR 0017 for the server. Edits are limited to a reader section so as not to conflict with parallel edits.
 - [ ] The reader image build is verified: from a fresh clone, `docker buildx build` of `apps/reader/Dockerfile` succeeds for linux/amd64 and linux/arm64 (same platforms as the server), the container runs as non-root, and `GET /health` returns 200 with a `version` equal to the release version (check scripted in the procedure).
-- [ ] If the server image does, the reader image carries the same static OCI labels (`org.opencontainers.image.source`, etc.) in `apps/reader/Dockerfile`, plus `version` and `revision` labels passed at build time; the server Dockerfile's labels are the reference (currently the reader has none).
-- [ ] The reader version scheme from the Gate 1 decision (Q1) is applied: `apps/reader/package.json`, Changesets config, and `docs/versioning.md` agree, and the version the reader reports on `/health` equals the image tag.
-- [ ] `apps/reader/README.md` (and a pointer from `docs/operator-guide.md`) documents running the public image: `docker run` example with both registries, every env variable, how to point it at a sync server, the exposed port and `/health`, and states that no secret belongs in or is baked into the image (Q4).
-- [ ] The docs state that the reader API key is public by design (security finding M1) and that `?src` remote content fetching is off by default (ADR 0006), with how to enable it and the risk.
-- [ ] The release docs state the image's readiness behavior per the Q5 decision (`/health` only, or a `/ready` added with tests).
-- [ ] Any ADR needed (version scheme, image publishing for the reader) is added under `docs/decisions/` and accepted at Gate 2.
+- [ ] The reader image carries the same static OCI labels (`org.opencontainers.image.source`, etc.) in `apps/reader/Dockerfile` as the server image, plus `version` and `revision` labels passed at build time; the server Dockerfile's labels are the reference (currently the reader has none). Inapplicable only if the architect shows the server Dockerfile has none.
+- [ ] The reader has its own independent version, first public release `1.0.0`, outside the Changesets fixed group. `apps/reader/package.json`, the Changesets config and `docs/versioning.md` agree, and the version the reader reports on `/health` equals the image tag.
+- [ ] The reader's git tag name does not collide with the existing `v1.0.0` tag (the architect decides the name, e.g. `reader-v1.0.0`, via ADR), and `RELEASING.md` and `docs/versioning.md` use it.
+- [ ] The release procedure and checklist state that the reader image is not released until both #27 (Hebrew header bidi, PR #73) and #28 (native-speaker review of Hebrew strings) are closed. This issue's PR does not fix them; they stay their own issues. The docs, Dockerfile and procedure work proceeds now.
+- [ ] `apps/reader/README.md` (and a pointer from `docs/operator-guide.md`) documents running the public image: `docker run` example with both registries, every env variable, how to point it at a sync server, the exposed port and `/health`, and states that no secret belongs in or is baked into the image.
+- [ ] The operator docs state that the reader API key is public by design (security finding M1) and recommend per-IP rate limits at the proxy. `?src` remote content fetching is documented with the ADR 0006 risk, is off by default, and is marked to be kept off on public deployments.
+- [ ] The image keeps `/health` only (no `/ready`, Q25 from #36 stands); the HEALTHCHECK and the release check both use `/health`, and the docs say so.
+- [ ] Any ADR needed (reader version scheme and git tag name, image publishing for the reader) is added under `docs/decisions/` and accepted at Gate 2.
 - [ ] The release checklist has a reader line: pull-by-tag from both registries works anonymously (verified after the maintainer's push), and the GHCR package is set public.
 - [ ] `docs/roadmap.md` records this issue (decided after checking the roadmap convention; it is updated on merge, and the parallel session is also editing it, so only this issue's own line is added).
 - [ ] No image is pushed, no tag created, and nothing is published by this issue's agents; the maintainer performs the push by hand. The PR body says so.
@@ -29,28 +31,17 @@ The reading app `apps/reader` (`@mosherw/sync-system-reader`, `private: true`, v
 - Publishing or pushing images, tagging, or running the release (maintainer, manual).
 - Re-enabling CI/Actions or automated image publishing (ADR 0018).
 - Image signing, SBOM or provenance attestation (as for the server in 1.0.0).
-- Fixing reader bugs #27 and #28 (unless Gate 1 Q2 makes them blockers, then they stay their own issues).
+- Fixing reader bugs #27 and #28. They block the reader image release (see acceptance criteria) but stay their own issues.
+- Adding a `/ready` endpoint to the reader.
+- Tying the reader release to the next server/package release (it is standalone).
 - Changes to reader features, content, or the sync protocol.
 - Re-releasing 1.0.0 packages or the server image.
 
-## Open questions (for Gate 1; PM does not decide)
-1. **Reader version scheme.**
-   a) Join the Changesets fixed group at the next server version (one version everywhere, consistent with Q-F in #37; reader jumps from 0.1.0).
-   b) Independent version, first release 1.0.0 (own cadence, stable-API signal).
-   c) Independent version, first release 0.x (signals the reader is still maturing, e.g. Hebrew strings unreviewed).
-   Recommendation: (a) at the next release if shipping together (Q3a), else (b) 1.0.0 independent. Fewer moving parts, and tag/`/health` match the other artifacts.
-2. **Must open reader bugs be fixed first?** #27 (Hebrew header bidi, PR #73 open) and #28 (native-speaker review of Hebrew strings) are open; #44 is already closed (PR #70).
-   a) Block on neither; document them as known limits.
-   b) Block on #27 (PR #73 merged), ship with #28 as a known limit.
-   c) Block on both.
-   Recommendation: (b). #27 is a visible defect and its fix is in review; #28 needs an external reviewer and would delay indefinitely.
-3. **Release timing.**
-   a) Ship with the next regular release (all artifacts together, one release run).
-   b) Standalone reader release now.
-   Recommendation: (b) if Q1 is independent (nothing to wait for), (a) if the reader joins the fixed group.
-4. **Runtime configuration docs.** The operator docs must cover env vars, pointing at a sync server, no secrets in the image, public API key (M1), `?src` off by default (ADR 0006). Open points: should the docs also recommend per-IP proxy limits and a separate registration for the reader key (M1 follow-up, `docs/issues/24/`), and should enabling `?src` be documented or discouraged for public deployments?
-   Recommendation: document the key as public and recommend proxy limits; document `?src` with the ADR 0006 risk but mark it off for public deployments.
-5. **Readiness.** The reader has `/health` but no `/ready` (Q25 in #36).
-   a) Keep `/health` only (it serves static files and holds no state; nothing to be unready for).
-   b) Add `/ready`.
-   Recommendation: (a), keeping Q25; the image HEALTHCHECK and the release check both use `/health`.
+## Decisions (Gate 1, 2026-11-25)
+- **Version scheme and timing (Q1, Q3).** The reader gets its own independent version, first public release `1.0.0`, outside the Changesets fixed group. It is a standalone reader release, not tied to the next server/package release. The git tag name must not collide with `v1.0.0`; the architect decides it via ADR (e.g. `reader-v1.0.0`).
+- **Blockers (Q2).** The reader image is blocked on both #27 (PR #73) and #28. The docs, Dockerfile and procedure work in this issue proceeds now; the release procedure and checklist state that the image is not released until both are closed. This PR does not fix them.
+- **Runtime docs (Q4).** Document that the reader API key is public by design (M1) and recommend per-IP proxy limits. Document `?src` with the ADR 0006 risk and mark it to be kept off on public deployments. Also cover env vars, pointing at a sync server, and that no secret is in the image.
+- **Readiness (Q5).** Keep `/health` only (Q25 from #36 stands). HEALTHCHECK and release check use `/health`.
+
+## Open questions
+None.
