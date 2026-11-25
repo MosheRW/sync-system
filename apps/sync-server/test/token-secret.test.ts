@@ -1,3 +1,4 @@
+import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { join } from 'node:path';
 import { inspect } from 'node:util';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -10,6 +11,13 @@ import {
   redactTokenSecrets,
   warnAboutSecrets,
 } from '../src/config/token-secret.js';
+import {
+  CODES_BLOB_INFO_PREFIX,
+  HKDF_INFO_PREFIX,
+  QR_TICKET_INFO_PREFIX,
+  TokenKeyring,
+} from '../src/tokens/token-keys.js';
+import { TokenService } from '../src/tokens/token-service.js';
 import { expectNoSentinel, secretFileDir } from './helpers/secret-files.js';
 
 /** openssl-style values (base64 of 32 random bytes). Test-only, never real. */
@@ -422,6 +430,94 @@ describe('parseTokenSecrets: _FILE variables (#58 AC1, AC2, AC5, AC9)', () => {
     const single = redactTokenSecrets({ current, source: 'file' });
     expect(Object.keys(single).sort()).toEqual(['current', 'source']);
     expectRedacted(shown(single));
+  });
+
+  it('redacts toString() with no encoding and subarray/slice views (A1)', () => {
+    const parsed = parseTokenSecrets(
+      { TOKEN_SECRET_FILE: secretFile(FILE_SECRET), TOKEN_SECRET_PREVIOUS: FILE_SECRET_2 },
+      'production',
+    );
+    const built = redactTokenSecrets({
+      current: Buffer.from(FILE_SECRET, 'utf8'),
+      previous: Buffer.from(FILE_SECRET_2, 'utf8'),
+      source: 'env',
+    });
+    for (const secrets of [parsed, built, { ...parsed }]) {
+      for (const buffer of [secrets.current, secrets.previous!]) {
+        expect(buffer.toString()).toBe('[redacted token secret]');
+        expect(buffer.toLocaleString()).toBe('[redacted token secret]');
+        for (const view of [
+          buffer.subarray(),
+          buffer.subarray(9),
+          buffer.slice(),
+          buffer.slice(0, 20),
+          buffer.subarray(2).subarray(1),
+        ]) {
+          expect(view.toString()).toBe('[redacted token secret]');
+          expectRedacted(shown(view));
+          expectRedacted(shown({ view }));
+        }
+        // Own, non-enumerable: no new fields show up anywhere.
+        expect(Object.keys(buffer).every((key) => /^\d+$/.test(key))).toBe(true);
+        // Explicit decodes still read the bytes (TokenKeyring, library callers).
+        expect(buffer.subarray(0, 8).toString('utf8')).toBe('SENTINEL');
+      }
+      expect(secrets.current.toString('utf8')).toBe(FILE_SECRET);
+      expect(secrets.current.toString('hex')).toBe(
+        Buffer.from(FILE_SECRET, 'utf8').toString('hex'),
+      );
+      expect(secrets.previous?.toString('base64')).toBe(
+        Buffer.from(FILE_SECRET_2, 'utf8').toString('base64'),
+      );
+    }
+  });
+
+  it('keeps signing, verification and rotation byte-identical with redacted Buffers (A1)', () => {
+    const plain = {
+      current: Buffer.from(FILE_SECRET, 'utf8'),
+      previous: Buffer.from(FILE_SECRET_2, 'utf8'),
+    };
+    const secrets = parseTokenSecrets(
+      { TOKEN_SECRET_FILE: secretFile(FILE_SECRET), TOKEN_SECRET_PREVIOUS: FILE_SECRET_2 },
+      'production',
+    );
+    for (const prefix of [HKDF_INFO_PREFIX, QR_TICKET_INFO_PREFIX, CODES_BLOB_INFO_PREFIX]) {
+      const redacted = new TokenKeyring(secrets, prefix).keysFor('app-a');
+      const reference = new TokenKeyring(plain, prefix).keysFor('app-a');
+      expect(redacted.current.equals(reference.current)).toBe(true);
+      expect(redacted.verify).toHaveLength(2);
+      redacted.verify.forEach((key, i) => expect(key.equals(reference.verify[i]!)).toBe(true));
+    }
+    expect(timingSafeEqual(secrets.current, plain.current)).toBe(true);
+    expect(createHmac('sha256', secrets.current).update('x').digest('hex')).toBe(
+      createHmac('sha256', plain.current).update('x').digest('hex'),
+    );
+
+    // A token from the current secret verifies; after rotation (the old
+    // current becomes previous) it still verifies; a token from the
+    // previous secret alone verifies too.
+    const issuer = new TokenService(new TokenKeyring(secrets));
+    const NOW = 1_767_225_600_000;
+    const token = issuer.issue({
+      namespace: 'app-a',
+      groupId: 'g'.repeat(43),
+      participantId: randomUUID(),
+      role: 'leader',
+      groupCreatedAt: NOW - 60_000,
+      lastActivityAt: NOW - 1_000,
+      term: NOW - 30_000,
+      now: NOW,
+    });
+    expect(issuer.verify(token, 'app-a', NOW).ok).toBe(true);
+    const rotated = parseTokenSecrets(
+      { TOKEN_SECRET: STRONG, TOKEN_SECRET_PREVIOUS_FILE: secretFile(FILE_SECRET) },
+      'production',
+    );
+    expect(new TokenService(new TokenKeyring(rotated)).verify(token, 'app-a', NOW).ok).toBe(true);
+    const unrelated = parseTokenSecrets({ TOKEN_SECRET: STRONG }, 'production');
+    expect(new TokenService(new TokenKeyring(unrelated)).verify(token, 'app-a', NOW).ok).toBe(
+      false,
+    );
   });
 });
 

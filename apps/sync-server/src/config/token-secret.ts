@@ -43,21 +43,62 @@ const REDACTED = '[redacted token secrets]';
 const REDACTED_SECRET = '[redacted token secret]';
 
 /**
- * A copy of `bytes` whose JSON, inspect and string conversion (`String()`,
- * template literals) return a fixed marker, so a secret Buffer copied out of
- * its `TokenSecrets` (for example by `{ ...secrets }`) still logs no byte
- * (#58 security C7). An explicit `toString(encoding)` still decodes the
- * bytes. The caller's Buffer is never changed.
+ * Marks `buffer` (in place) so its JSON, inspect and string conversion
+ * (`String()`, template literals, `toString()` and `toLocaleString()` with no
+ * encoding) return a fixed marker, and its `subarray` / `slice` views are
+ * marked the same way (#58 security C7, advisory A1). Own non-enumerable
+ * properties: they never show as fields and the bytes are not changed, so
+ * HKDF, HMAC, `equals` and `timingSafeEqual` (which read the bytes natively)
+ * work as before.
+ *
+ * Still not redacted, by design: an explicit `toString(encoding)` (the
+ * bytes must stay readable for `TokenKeyring`, and library callers and
+ * tests read them this way), and copies made through `Buffer.from(buffer)`,
+ * `Buffer.prototype.*.call(buffer)` or `Uint8Array` methods, which give a
+ * plain Buffer. A JavaScript object cannot hide its bytes from those, so
+ * `test/token-secret-readers.test.ts` checks statically that only this
+ * module and `TokenKeyring` read `current` / `previous`, and that neither
+ * decodes or copies them.
  */
-function redactedSecretBuffer(bytes: Buffer): Buffer {
-  const copy = Buffer.from(bytes);
+function markSecretBuffer(buffer: Buffer): Buffer {
   const marker = { value: () => REDACTED_SECRET, enumerable: false };
-  Object.defineProperties(copy, {
+  // Typed: `Buffer.prototype` itself is `any`.
+  const proto = Buffer.prototype as Buffer;
+  Object.defineProperties(buffer, {
     toJSON: marker,
     [Symbol.toPrimitive]: marker,
     [inspect.custom]: marker,
+    toLocaleString: marker,
+    toString: {
+      value(this: Buffer, ...args: Parameters<Buffer['toString']>): string {
+        return args[0] === undefined ? REDACTED_SECRET : proto.toString.apply(this, args);
+      },
+      enumerable: false,
+    },
+    subarray: {
+      value(this: Buffer, start?: number, end?: number): Buffer {
+        return markSecretBuffer(proto.subarray.call(this, start, end));
+      },
+      enumerable: false,
+    },
+    // `Buffer#slice` is a view like `subarray` (deprecated alias).
+    slice: {
+      value(this: Buffer, start?: number, end?: number): Buffer {
+        return markSecretBuffer(proto.subarray.call(this, start, end));
+      },
+      enumerable: false,
+    },
   });
-  return copy;
+  return buffer;
+}
+
+/**
+ * A redacted copy of `bytes` (see `markSecretBuffer`), so a secret Buffer
+ * copied out of its `TokenSecrets` (for example by `{ ...secrets }`) still
+ * logs no byte (#58 security C7). The caller's Buffer is never changed.
+ */
+function redactedSecretBuffer(bytes: Buffer): Buffer {
+  return markSecretBuffer(Buffer.from(bytes));
 }
 
 /**
