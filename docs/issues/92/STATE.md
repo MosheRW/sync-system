@@ -2,7 +2,7 @@
 - Path: fast
 - Phase: architecture
 - Branch: fix/92-dry-run-published-version
-- PR: none
+- PR: #95
 - Plan approved by user: no
 - Security-sensitive: yes
 - Review rounds: 0
