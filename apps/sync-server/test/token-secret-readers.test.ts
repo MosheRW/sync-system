@@ -79,9 +79,9 @@ describe('only TokenKeyring and the secrets module read secret bytes (#58 A1, st
     expect(files.length).toBeGreaterThan(20);
     const names = files.map((f) => f.name);
     for (const reader of READERS) expect(names).toContain(reader);
-    // The readers really do read them, so the patterns are not stale.
+    // The keyring really does read them, so the check is not stale.
     const keyring = files.find((f) => f.name === 'tokens/token-keys.ts')!;
-    expect(keyring.bare).toMatch(SECRET_FIELD_READ);
+    expect(keyring.bare).toMatch(/\btokenSecretBytes\(/);
   });
 
   it('matches the read, destructure and decode forms it is meant to catch', () => {
@@ -134,8 +134,9 @@ describe('only TokenKeyring and the secrets module read secret bytes (#58 A1, st
     }
   });
 
-  it('never decodes or copies a secret Buffer in the reader modules', () => {
-    for (const { name, bare } of files.filter((f) => READERS.includes(f.name))) {
+  it('never decodes or copies a secret Buffer in TokenKeyring', () => {
+    // The secrets module copies the caller's bytes into the handle by design.
+    for (const { name, bare } of files.filter((f) => f.name === 'tokens/token-keys.ts')) {
       for (const rule of SECRET_DECODE) expect(bare, name).not.toMatch(rule);
     }
   });

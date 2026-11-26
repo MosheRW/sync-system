@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import type { ServerMessage } from '@mosherw/sync-system-protocol';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { TokenSecrets } from '../src/config/token-secret.js';
+import type { TokenSecretsInput } from '../src/config/token-secret.js';
 import { InMemoryGroupStore } from '../src/groups/in-memory-group-store.js';
 import { createGroupWithMembers, joinByCode, resumeWith } from './helpers/groups.js';
 import { GRACE_MS } from './helpers/lifecycle.js';
@@ -25,7 +25,7 @@ async function frameOf(client: TestClient, type: string): Promise<ServerMessage>
 
 describe('a removed member cannot get back by any path (#13 AC33, AC45, RC4)', () => {
   it('the block list moves to the new leader on handoff and holds after a later restart', async () => {
-    const secrets: TokenSecrets = { current: randomBytes(32), source: 'env' };
+    const secrets: TokenSecretsInput = { current: randomBytes(32), source: 'env' };
     const scheduler = new ManualScheduler();
     ts = await startTestServer({
       tokenSecrets: secrets,

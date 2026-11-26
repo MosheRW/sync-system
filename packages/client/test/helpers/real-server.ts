@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { AppRegistry } from '@mosherw/sync-system-server/src/apps/app-registry.js';
 import { parseAppsConfig } from '@mosherw/sync-system-server/src/config/apps-config.js';
 import { parseEnv } from '@mosherw/sync-system-server/src/config/env.js';
-import type { TokenSecrets } from '@mosherw/sync-system-server/src/config/token-secret.js';
+import type { TokenSecretsInput } from '@mosherw/sync-system-server/src/config/token-secret.js';
 import { createLogger } from '@mosherw/sync-system-server/src/logging/logger.js';
 import { type SyncServer, createSyncServer } from '@mosherw/sync-system-server/src/server.js';
 import { WebSocket as WsWebSocket } from 'ws';
@@ -37,7 +37,7 @@ export interface RealServerOptions {
   /** Fixed port, for restart tests. Default: a random free port. */
   port?: number;
   /** Token secrets; pass the same ones to a restarted server so tokens survive (#5). */
-  tokenSecrets?: TokenSecrets;
+  tokenSecrets?: TokenSecretsInput;
 }
 
 export interface RealServer {
@@ -78,7 +78,7 @@ async function listenWithRetry(server: SyncServer, port: number): Promise<number
 const RESTART_CLOCK_STEP_MS = 1_500;
 const startsBySecrets = new WeakMap<object, number>();
 
-function restartOffset(tokenSecrets: TokenSecrets | undefined): number {
+function restartOffset(tokenSecrets: TokenSecretsInput | undefined): number {
   if (tokenSecrets === undefined) return 0;
   const starts = startsBySecrets.get(tokenSecrets) ?? 0;
   startsBySecrets.set(tokenSecrets, starts + 1);

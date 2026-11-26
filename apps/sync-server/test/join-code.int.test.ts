@@ -22,6 +22,7 @@ import {
   type TestServer,
   startTestServer,
 } from './helpers/test-server.js';
+import { testSecrets } from './helpers/token-secrets.js';
 
 const SECRET = Buffer.from('q9Zt2Lx7Vb4Nm1Rt6Yw0Ue5Io3AaKd8Fj2Hs7Gp1Wc=');
 const ALL: JoinMethod[] = ['A', 'B', 'C', 'D'];
@@ -55,7 +56,9 @@ async function create(
   return client.next('group.created');
 }
 
-const blobs = new CodesBlobService(new TokenKeyring({ current: SECRET }, CODES_BLOB_INFO_PREFIX));
+const blobs = new CodesBlobService(
+  new TokenKeyring(testSecrets({ current: SECRET }), CODES_BLOB_INFO_PREFIX),
+);
 
 describe('codes at group creation (#10 AC5, AC6)', () => {
   it('returns the codes of the group methods, a generation and a verifiable blob', async () => {

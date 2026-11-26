@@ -11,7 +11,8 @@ import type { ServerEnv } from './config/env.js';
 import { ConfigError } from './config/config-error.js';
 import {
   MIN_TOKEN_SECRET_BYTES,
-  type TokenSecrets,
+  TokenSecrets,
+  type TokenSecretsInput,
   redactTokenSecrets,
 } from './config/token-secret.js';
 import { createHttpHandler } from './http/health.js';
@@ -70,12 +71,13 @@ export interface SyncServerOptions {
   /** Defaults to HANDSHAKE_TIMEOUT_MS; shortened by tests. */
   handshakeTimeoutMs?: number;
   /**
-   * Token signing secrets from `parseTokenSecrets()` (required, #7 L1).
+   * Token signing secrets (required, #7 L1): the handle from
+   * `parseTokenSecrets()`, or Buffers a library caller supplies itself.
    * There is no fallback: a missing or malformed value refuses to start.
-   * The server keeps a redacted copy (JSON, inspect and string output show a
-   * marker); the object passed in is not changed.
+   * Caller Buffers are copied into an opaque `TokenSecrets` handle that
+   * gives no bytes back out (#58 C7); the object passed in is not changed.
    */
-  tokenSecrets: TokenSecrets;
+  tokenSecrets: TokenSecrets | TokenSecretsInput;
   /**
    * Integer source for join code draws (#10). Defaults to `crypto.randomInt`;
    * tests inject one to force code collisions.
@@ -180,11 +182,12 @@ function isSecretBuffer(value: unknown): boolean {
 }
 
 /**
- * Runtime check for untyped callers (#7 L1, R1): `current` and, when set,
- * `previous` must be Buffers of at least 32 bytes. The message names the
- * field only, never a value.
+ * Runtime check for untyped callers (#7 L1, R1): a `TokenSecrets` handle,
+ * or an object whose `current` and, when set, `previous` are Buffers of at
+ * least 32 bytes. The message names the field only, never a value.
  */
-function assertTokenSecrets(value: unknown): asserts value is TokenSecrets {
+function assertTokenSecrets(value: unknown): asserts value is TokenSecrets | TokenSecretsInput {
+  if (value instanceof TokenSecrets) return;
   if (typeof value !== 'object' || value === null) throw new ConfigError(TOKEN_SECRETS_REQUIRED);
   const { current, previous } = value as { current?: unknown; previous?: unknown };
   if (!isSecretBuffer(current)) {
@@ -203,8 +206,8 @@ export function createSyncServer(options: SyncServerOptions): SyncServer {
   // Before anything is created, so a bad config binds no socket (R1).
   const givenSecrets: unknown = options.tokenSecrets;
   assertTokenSecrets(givenSecrets);
-  // A copy in the redacted form, also when a library caller built the
-  // secrets itself, so nothing the server holds can log a secret (#58 C7).
+  // An opaque handle, also when a library caller supplied the Buffers, so
+  // nothing the server holds can log or hand out a secret (#58 C7).
   const tokenSecrets = redactTokenSecrets(givenSecrets);
   const { env, logger, registry } = options;
   // Read once (#12 R15): the env values, or the checked test-only overrides.

@@ -5,7 +5,7 @@ import { AppRegistry } from '../src/apps/app-registry.js';
 import { parseAppsConfig } from '../src/config/apps-config.js';
 import { ConfigError } from '../src/config/config-error.js';
 import { parseEnv } from '../src/config/env.js';
-import type { TokenSecrets } from '../src/config/token-secret.js';
+import type { TokenSecretsInput } from '../src/config/token-secret.js';
 import { createLogger } from '../src/logging/logger.js';
 import { type SyncServerOptions, createSyncServer } from '../src/server.js';
 import { LogCapture } from './helpers/log-capture.js';
@@ -96,7 +96,7 @@ describe('createSyncServer token secrets (#7 L1)', () => {
   });
 
   it('starts with a 32-byte current and an optional 32-byte previous', async () => {
-    const secrets: TokenSecrets = {
+    const secrets: TokenSecretsInput = {
       current: randomBytes(32),
       previous: randomBytes(32),
       source: 'env',

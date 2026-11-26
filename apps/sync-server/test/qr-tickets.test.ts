@@ -10,6 +10,7 @@ import {
   deriveAppKey,
 } from '../src/tokens/token-keys.js';
 import { TokenService } from '../src/tokens/token-service.js';
+import { testSecrets } from './helpers/token-secrets.js';
 
 const SECRET = Buffer.from('q9Zt2Lx7Vb4Nm1Rt6Yw0Ue5Io3AaKd8Fj2Hs7Gp1Wc=');
 const PREVIOUS = Buffer.from('Xr4Tn8Qm2Vk6Bz0Pc9Ls3Hd7Jf1Gw5Ye8Ua2Ii6Oo4=');
@@ -19,7 +20,10 @@ const CEILING = 3600;
 
 function qr(previous?: Buffer, current = SECRET): QrTicketService {
   const secrets = previous ? { current, previous } : { current };
-  return new QrTicketService(new TokenKeyring(secrets, QR_TICKET_INFO_PREFIX), CEILING);
+  return new QrTicketService(
+    new TokenKeyring(testSecrets(secrets), QR_TICKET_INFO_PREFIX),
+    CEILING,
+  );
 }
 
 function forge(claims: unknown, ns = 'app-a'): string {
@@ -44,7 +48,7 @@ describe('QrTicketService.issue (#10 AC23)', () => {
 
   it('stays within 256 characters at the largest generation and expiry (R3)', () => {
     const svc = new QrTicketService(
-      new TokenKeyring({ current: SECRET }, QR_TICKET_INFO_PREFIX),
+      new TokenKeyring(testSecrets({ current: SECRET }), QR_TICKET_INFO_PREFIX),
       86_400,
     );
     const { ticket } = svc.issue(
@@ -138,8 +142,10 @@ describe('QrTicketService.verify (#10 AC25, R5)', () => {
 });
 
 describe('tickets, tokens and blobs never verify as each other (#10 AC26, R4)', () => {
-  const tokens = new TokenService(new TokenKeyring({ current: SECRET }));
-  const blobs = new CodesBlobService(new TokenKeyring({ current: SECRET }, CODES_BLOB_INFO_PREFIX));
+  const tokens = new TokenService(new TokenKeyring(testSecrets({ current: SECRET })));
+  const blobs = new CodesBlobService(
+    new TokenKeyring(testSecrets({ current: SECRET }), CODES_BLOB_INFO_PREFIX),
+  );
 
   it('a token is not a ticket and a ticket is not a token', () => {
     const token = tokens.issue({

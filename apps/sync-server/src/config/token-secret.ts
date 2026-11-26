@@ -26,105 +26,67 @@ export const MIN_TOKEN_SECRET_BYTES = 32;
 /** Minimum number of distinct byte values; random base64 of 32 bytes has about 30 (M3). */
 export const MIN_TOKEN_SECRET_DISTINCT_BYTES = 16;
 
-export interface TokenSecrets {
+/**
+ * Where the current token secret came from: the env, a file
+ * (`TOKEN_SECRET_FILE`, #58), the public dev secret, or a random per-process
+ * secret (tokens do not survive a restart).
+ */
+export type TokenSecretSource = 'env' | 'file' | 'dev' | 'random';
+
+/**
+ * Secrets a library caller (or a test) supplies itself. Bytes go in here;
+ * the server turns them into a `TokenSecrets` handle with
+ * `redactTokenSecrets` and never gives them back out.
+ */
+export interface TokenSecretsInput {
   /** Signs and verifies. */
   readonly current: Buffer;
   /** Verifies only (rotation, AC2). */
   readonly previous?: Buffer;
-  /**
-   * Where `current` came from: the env, a file (`TOKEN_SECRET_FILE`, #58),
-   * the public dev secret, or a random per-process secret (tokens do not
-   * survive a restart).
-   */
-  readonly source: 'env' | 'file' | 'dev' | 'random';
+  readonly source: TokenSecretSource;
+}
+
+/** The raw bytes of a `TokenSecrets`, for `TokenKeyring` only. */
+export interface TokenSecretBytes {
+  readonly current: Buffer;
+  readonly previous: Buffer | undefined;
 }
 
 const REDACTED = '[redacted token secrets]';
-const REDACTED_SECRET = '[redacted token secret]';
+
+/** Set once by the static block of `TokenSecrets`; reads its private fields. */
+let readSecretBytes: (secrets: TokenSecrets) => TokenSecretBytes;
 
 /**
- * Marks `buffer` (in place) so its JSON, inspect and string conversion
- * (`String()`, template literals, `toString()` and `toLocaleString()` with no
- * encoding) return a fixed marker, and its `subarray` / `slice` views are
- * marked the same way (#58 security C7, advisory A1). Own non-enumerable
- * properties: they never show as fields and the bytes are not changed, so
- * HKDF, HMAC, `equals` and `timingSafeEqual` (which read the bytes natively)
- * work as before.
- *
- * Still not redacted, by design: an explicit `toString(encoding)` (the
- * bytes must stay readable for `TokenKeyring`, and library callers and
- * tests read them this way), and copies made through `Buffer.from(buffer)`,
- * `Buffer.prototype.*.call(buffer)` or `Uint8Array` methods, which give a
- * plain Buffer. A JavaScript object cannot hide its bytes from those, so
- * `test/token-secret-readers.test.ts` checks statically that only this
- * module and `TokenKeyring` read `current` / `previous`, and that neither
- * decodes or copies them.
+ * The token secrets as the server holds them: an opaque, frozen handle (#58
+ * security C7, Gate 3 round 3). The bytes live in private fields, copied
+ * from the input, so no property, spread, `Object.values`, JSON, inspect or
+ * string conversion reaches them, and there is no byte accessor on the
+ * object. Only `tokenSecretBytes` (imported by `tokens/token-keys.ts` alone,
+ * `test/token-secret-readers.test.ts`) reads them, as HKDF input. The
+ * private fields also make the type nominal: a plain object is never a
+ * `TokenSecrets`.
  */
-function markSecretBuffer(buffer: Buffer): Buffer {
-  const marker = { value: () => REDACTED_SECRET, enumerable: false };
-  // Typed: `Buffer.prototype` itself is `any`.
-  const proto = Buffer.prototype as Buffer;
-  Object.defineProperties(buffer, {
-    toJSON: marker,
-    [Symbol.toPrimitive]: marker,
-    [inspect.custom]: marker,
-    toLocaleString: marker,
-    toString: {
-      value(this: Buffer, ...args: Parameters<Buffer['toString']>): string {
-        return args[0] === undefined ? REDACTED_SECRET : proto.toString.apply(this, args);
-      },
-      enumerable: false,
-    },
-    subarray: {
-      value(this: Buffer, start?: number, end?: number): Buffer {
-        return markSecretBuffer(proto.subarray.call(this, start, end));
-      },
-      enumerable: false,
-    },
-    // `Buffer#slice` is a view like `subarray` (deprecated alias).
-    slice: {
-      value(this: Buffer, start?: number, end?: number): Buffer {
-        return markSecretBuffer(proto.subarray.call(this, start, end));
-      },
-      enumerable: false,
-    },
-  });
-  return buffer;
-}
+export class TokenSecrets {
+  readonly #current: Buffer;
+  readonly #previous: Buffer | undefined;
+  readonly source: TokenSecretSource;
 
-/**
- * A redacted copy of `bytes` (see `markSecretBuffer`), so a secret Buffer
- * copied out of its `TokenSecrets` (for example by `{ ...secrets }`) still
- * logs no byte (#58 security C7). The caller's Buffer is never changed.
- */
-function redactedSecretBuffer(bytes: Buffer): Buffer {
-  return markSecretBuffer(Buffer.from(bytes));
-}
+  static {
+    readSecretBytes = (secrets) => ({ current: secrets.#current, previous: secrets.#previous });
+  }
 
-/**
- * The secrets as handed to the rest of the server: frozen, and `toJSON`,
- * `toString` and `inspect` return a fixed marker (prototype methods, so they
- * survive as long as the object does and never show as fields). The Buffers
- * are redacted too, so a copy of the object (spread, `Object.assign`) logs
- * no byte of a secret either (#58 security C7). The Buffers stay readable
- * for `TokenKeyring`.
- */
-class RedactedTokenSecrets implements TokenSecrets {
-  readonly current: Buffer;
-  declare readonly previous?: Buffer;
-  readonly source: TokenSecrets['source'];
-
-  constructor(current: Buffer, previous: Buffer | undefined, source: TokenSecrets['source']) {
-    this.current = redactedSecretBuffer(current);
-    // An own field only when set, like the object literal this replaces.
-    if (previous !== undefined) {
-      Object.defineProperty(this, 'previous', {
-        value: redactedSecretBuffer(previous),
-        enumerable: true,
-      });
-    }
+  /** Copies `current` and `previous`; the caller's Buffers are never kept or changed. */
+  constructor(current: Buffer, previous: Buffer | undefined, source: TokenSecretSource) {
+    this.#current = Buffer.from(current);
+    this.#previous = previous === undefined ? undefined : Buffer.from(previous);
     this.source = source;
     Object.freeze(this);
+  }
+
+  /** Whether a previous secret (rotation) is set; never its value. */
+  get hasPrevious(): boolean {
+    return this.#previous !== undefined;
   }
 
   toJSON(): string {
@@ -141,14 +103,26 @@ class RedactedTokenSecrets implements TokenSecrets {
 }
 
 /**
- * `secrets` in the redacted form: returned as is when it already is one,
- * otherwise copied (the caller's object and Buffers are not changed).
- * `createSyncServer` passes secrets a library caller built itself through
- * this (#58 security C7).
+ * The raw bytes of `secrets`. Internal to the server: `tokens/token-keys.ts`
+ * is the only module allowed to import it (static check in
+ * `test/token-secret-readers.test.ts`), and it is not exported from the
+ * package entry point. Throws a TypeError for anything that is not a
+ * `TokenSecrets` built by this module.
  */
-export function redactTokenSecrets(secrets: TokenSecrets): TokenSecrets {
-  if (secrets instanceof RedactedTokenSecrets) return secrets;
-  return new RedactedTokenSecrets(secrets.current, secrets.previous, secrets.source);
+export function tokenSecretBytes(secrets: TokenSecrets): TokenSecretBytes {
+  return readSecretBytes(secrets);
+}
+
+/**
+ * `secrets` as a `TokenSecrets` handle: returned as is when it already is
+ * one, otherwise built from a copy of the caller's Buffers (the caller's
+ * object and Buffers are not changed). This is the constructor path for
+ * library callers who supply their own secrets; `createSyncServer` passes
+ * what it is given through it (#58 security C7).
+ */
+export function redactTokenSecrets(secrets: TokenSecrets | TokenSecretsInput): TokenSecrets {
+  if (secrets instanceof TokenSecrets) return secrets;
+  return new TokenSecrets(secrets.current, secrets.previous, secrets.source);
 }
 
 const GENERATE_HINT = 'use `openssl rand -base64 32`';
@@ -223,7 +197,7 @@ export function collectTokenSecrets(
   const before = errors.length;
   const current = resolveSecret(env, 'TOKEN_SECRET', errors);
 
-  let source: TokenSecrets['source'] | undefined;
+  let source: TokenSecretSource | undefined;
   if (current.kind === 'unset') {
     if (isDevEnvironment(nodeEnv)) {
       source = 'random';
@@ -245,7 +219,7 @@ export function collectTokenSecrets(
 
   if (errors.length > before || source === undefined) return undefined;
 
-  return new RedactedTokenSecrets(
+  return new TokenSecrets(
     source === 'random' || current.kind !== 'set'
       ? randomBytes(MIN_TOKEN_SECRET_BYTES)
       : Buffer.from(current.value, 'utf8'),
@@ -284,7 +258,7 @@ export function warnAboutSecrets(secrets: TokenSecrets, logger: SecretWarnLogger
   } else if (secrets.source === 'dev') {
     logger.warn({ event: 'dev_token_secret' }, 'the public development token secret is in use');
   }
-  if (secrets.previous !== undefined) {
+  if (secrets.hasPrevious) {
     logger.warn(
       { event: 'token_secret_previous_set' },
       'TOKEN_SECRET_PREVIOUS is set: remove it after the rotation window',

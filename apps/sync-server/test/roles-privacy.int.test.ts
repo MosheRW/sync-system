@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import type { ServerMessage } from '@mosherw/sync-system-protocol';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { TokenSecrets } from '../src/config/token-secret.js';
+import type { TokenSecretsInput } from '../src/config/token-secret.js';
 import { InMemoryGroupStore } from '../src/groups/in-memory-group-store.js';
 import { joinByCode, resumeWith } from './helpers/groups.js';
 import { GRACE_MS } from './helpers/lifecycle.js';
@@ -34,7 +34,7 @@ function text(logs: LogCapture[]): string {
 
 describe('role flows never log names, IDs, tokens, codes or payloads (#13 AC43)', () => {
   it('names, roster, vice, lock, removal, keep-alive, handoff, take-back, restart and supersede', async () => {
-    const secrets: TokenSecrets = { current: randomBytes(32), source: 'env' };
+    const secrets: TokenSecretsInput = { current: randomBytes(32), source: 'env' };
     const scheduler = new ManualScheduler();
     ts = await startTestServer({ tokenSecrets: secrets, scheduler, logLevel: 'trace' });
     const sentinels: string[] = [];

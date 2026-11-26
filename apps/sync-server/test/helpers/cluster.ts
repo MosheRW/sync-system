@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { parseRedisSettings } from '../../src/config/redis.js';
-import type { TokenSecrets } from '../../src/config/token-secret.js';
+import type { TokenSecrets, TokenSecretsInput } from '../../src/config/token-secret.js';
 import { createLogger } from '../../src/logging/logger.js';
 import { type RedisLink, connectRedis } from '../../src/storage/redis/connect.js';
 import type { ClusterTimings } from '../../src/storage/redis/redis-storage.js';
@@ -33,7 +33,7 @@ export interface ClusterNode {
 
 export interface TestCluster {
   prefix: string;
-  secrets: TokenSecrets;
+  secrets: TokenSecrets | TokenSecretsInput;
   nodes: ClusterNode[];
   /** Starts one more instance on the same prefix. */
   add(): Promise<ClusterNode>;
@@ -69,7 +69,7 @@ export async function startCluster(options: ClusterOptions = {}): Promise<TestCl
   const { size = 2, perNode, commandTimeoutMs = 500, ...rest } = options;
   let started = 0;
   const prefix = randomPrefix();
-  const secrets: TokenSecrets = rest.tokenSecrets ?? {
+  const secrets: TokenSecrets | TokenSecretsInput = rest.tokenSecrets ?? {
     current: randomBytes(32),
     source: 'env',
   };

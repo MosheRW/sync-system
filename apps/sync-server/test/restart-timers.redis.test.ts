@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, expect, it } from 'vitest';
-import type { TokenSecrets } from '../src/config/token-secret.js';
+import type { TokenSecretsInput } from '../src/config/token-secret.js';
 import { TIMER_LEASE_MS } from '../src/limits/constants.js';
 import { createGroupWithMembers, resumeWith } from './helpers/groups.js';
 import { ManualScheduler } from './helpers/manual-scheduler.js';
@@ -31,7 +31,7 @@ const TIMER_EVENTS = ['timer_claimed', 'keepalive_missed', 'group_ended', 'join_
 describeRedis('deadlines passed while down, at the start (#35 AC12)', () => {
   let inspect: Awaited<ReturnType<typeof inspector>>;
   let prefix: string;
-  let secrets: TokenSecrets;
+  let secrets: TokenSecretsInput;
   let scheduler: ManualScheduler;
   let apps: TestAppInput[] | undefined;
   const servers: TestServer[] = [];

@@ -1,5 +1,5 @@
 import { hkdfSync } from 'node:crypto';
-import type { TokenSecrets } from '../config/token-secret.js';
+import { type TokenSecrets, tokenSecretBytes } from '../config/token-secret.js';
 
 /** Constant HKDF salt. Changing it (or the label) invalidates every token. */
 export const HKDF_SALT = 'sync-system/hkdf-salt/v1';
@@ -38,16 +38,16 @@ export interface AppKeys {
  * derived once per namespace and cached. A token signed for app A fails the
  * signature check on app B, so it takes the same path as a random string
  * (AC8, AC15). Each purpose has its own keyring instance, so the cache can
- * never hand out one purpose's key for another (#10 R4). Besides the secrets
- * module, this is the only server module that reads the secret Buffers, and
- * only as HKDF input; it never decodes or copies them (#58 A1,
- * `test/token-secret-readers.test.ts`).
+ * never hand out one purpose's key for another (#10 R4). This is the only
+ * server module that reads the secret bytes (through `tokenSecretBytes`),
+ * and only as HKDF input; it never decodes or copies them (#58 A1, Gate 3
+ * round 3, `test/token-secret-readers.test.ts`).
  */
 export class TokenKeyring {
   private readonly cache = new Map<string, AppKeys>();
 
   constructor(
-    private readonly secrets: Pick<TokenSecrets, 'current' | 'previous'>,
+    private readonly secrets: TokenSecrets,
     /** The HKDF purpose label; participant tokens by default. */
     readonly infoPrefix: string = HKDF_INFO_PREFIX,
   ) {}
@@ -55,11 +55,12 @@ export class TokenKeyring {
   keysFor(namespace: string): AppKeys {
     let keys = this.cache.get(namespace);
     if (keys === undefined) {
-      const current = deriveAppKey(this.secrets.current, namespace, this.infoPrefix);
+      const bytes = tokenSecretBytes(this.secrets);
+      const current = deriveAppKey(bytes.current, namespace, this.infoPrefix);
       const verify =
-        this.secrets.previous === undefined
+        bytes.previous === undefined
           ? [current]
-          : [current, deriveAppKey(this.secrets.previous, namespace, this.infoPrefix)];
+          : [current, deriveAppKey(bytes.previous, namespace, this.infoPrefix)];
       keys = { current, verify };
       this.cache.set(namespace, keys);
     }

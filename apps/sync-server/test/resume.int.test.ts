@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { TokenSecrets } from '../src/config/token-secret.js';
+import type { TokenSecretsInput } from '../src/config/token-secret.js';
 import { InMemoryGroupStore } from '../src/groups/in-memory-group-store.js';
 import { TokenKeyring, deriveAppKey } from '../src/tokens/token-keys.js';
 import { TokenService } from '../src/tokens/token-service.js';
@@ -9,6 +9,7 @@ import { ManualScheduler } from './helpers/manual-scheduler.js';
 import { KEY_A, KEY_B, type TestServer, startTestServer } from './helpers/test-server.js';
 import { claimsOf, forge, headerSegment } from './helpers/tokens.js';
 import { waitUntil } from './helpers/wait.js';
+import { testSecrets } from './helpers/token-secrets.js';
 
 const MINUTE = 60_000;
 const WINDOW = 20 * MINUTE + 300_000;
@@ -20,7 +21,7 @@ afterEach(async () => {
   ts = undefined;
 });
 
-function secrets(): TokenSecrets {
+function secrets(): TokenSecretsInput {
   return { current: randomBytes(32), source: 'env' };
 }
 
@@ -294,7 +295,7 @@ describe('token rejections (#5 AC7, AC8, AC9, AC27)', () => {
     const tokenSecrets = secrets();
     ts = await startTestServer({ tokenSecrets });
     const group = await createGroupWithMembers(ts, 0);
-    const issuer = new TokenService(new TokenKeyring(tokenSecrets));
+    const issuer = new TokenService(new TokenKeyring(testSecrets(tokenSecrets)));
     const claims = claimsOf(group.leaderToken);
     const impostor = issuer.issue({
       namespace: 'app-a',
@@ -388,7 +389,7 @@ describe('token rejections (#5 AC7, AC8, AC9, AC27)', () => {
     // needs one, so create it again through the leader's member.
     const live = await createGroupWithMembers(ts, 1);
     await live.members[0]!.close();
-    const reissued = new TokenService(new TokenKeyring({ current: old.current }));
+    const reissued = new TokenService(new TokenKeyring(testSecrets({ current: old.current })));
     const claims = claimsOf(live.memberTokens[0]);
     const oldToken = reissued.issue({
       namespace: 'app-a',
@@ -402,7 +403,9 @@ describe('token rejections (#5 AC7, AC8, AC9, AC27)', () => {
     });
     const { reply } = await resumeWith(ts, oldToken);
     if (reply.type !== 'group.joined') throw new Error(`expected joined, got ${reply.type}`);
-    const verifyCurrent = new TokenService(new TokenKeyring({ current: fresh.current }));
+    const verifyCurrent = new TokenService(
+      new TokenKeyring(testSecrets({ current: fresh.current })),
+    );
     expect(verifyCurrent.verify(reply.token, 'app-a', Date.now()).ok).toBe(true);
     expect(group.groupId).not.toBe(live.groupId);
   });

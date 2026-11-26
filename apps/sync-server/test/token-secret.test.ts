@@ -6,7 +6,8 @@ import { ConfigError } from '../src/config/config-error.js';
 import {
   DEV_TOKEN_SECRET,
   PUBLIC_EXAMPLE_SECRETS,
-  type TokenSecrets,
+  TokenSecrets,
+  type TokenSecretsInput,
   parseTokenSecrets,
   redactTokenSecrets,
   warnAboutSecrets,
@@ -16,6 +17,7 @@ import {
   HKDF_INFO_PREFIX,
   QR_TICKET_INFO_PREFIX,
   TokenKeyring,
+  deriveAppKey,
 } from '../src/tokens/token-keys.js';
 import { TokenService } from '../src/tokens/token-service.js';
 import { expectNoSentinel, secretFileDir } from './helpers/secret-files.js';
@@ -23,6 +25,25 @@ import { expectNoSentinel, secretFileDir } from './helpers/secret-files.js';
 /** openssl-style values (base64 of 32 random bytes). Test-only, never real. */
 const STRONG = 'q9Zt2Lx7Vb4Nm1Rt6Yw0Ue5Io3AaKd8Fj2Hs7Gp1Wc=';
 const STRONG_2 = 'Xr4Tn8Qm2Vk6Bz0Pc9Ls3Hd7Jf1Gw5Ye8Ua2Ii6Oo4=';
+
+/**
+ * Checks the bytes of `secrets` without reading them (the handle has no byte
+ * accessor, #58 Gate 3 round 3): its keyring must derive the same keys as
+ * the expected bytes.
+ */
+function expectSecretBytes(
+  secrets: TokenSecrets,
+  current: string | Buffer,
+  previous?: string | Buffer,
+): void {
+  const reference = (value: string | Buffer) =>
+    deriveAppKey(typeof value === 'string' ? Buffer.from(value, 'utf8') : value, 'probe');
+  const keys = new TokenKeyring(secrets).keysFor('probe');
+  expect(keys.current.equals(reference(current))).toBe(true);
+  expect(secrets.hasPrevious).toBe(previous !== undefined);
+  expect(keys.verify).toHaveLength(previous === undefined ? 1 : 2);
+  if (previous !== undefined) expect(keys.verify[1]!.equals(reference(previous))).toBe(true);
+}
 
 function configError(fn: () => unknown): string {
   try {
@@ -43,13 +64,14 @@ describe('parseTokenSecrets: environments (Q-A)', () => {
     }
   });
 
-  it('uses a random 32-byte secret per call in development and test', () => {
+  it('uses a random secret per call in development and test', () => {
     for (const nodeEnv of ['development', 'test']) {
       const a = parseTokenSecrets({}, nodeEnv);
       const b = parseTokenSecrets({}, nodeEnv);
       expect(a.source).toBe('random');
-      expect(a.current).toHaveLength(32);
-      expect(a.current.equals(b.current)).toBe(false);
+      expect(a.hasPrevious).toBe(false);
+      const keyA = new TokenKeyring(a).keysFor('app-a').current;
+      expect(keyA.equals(new TokenKeyring(b).keysFor('app-a').current)).toBe(false);
     }
   });
 
@@ -66,7 +88,8 @@ describe('parseTokenSecrets: environments (Q-A)', () => {
 
   it('uses a set secret byte for byte in production', () => {
     const secrets = parseTokenSecrets({ TOKEN_SECRET: STRONG }, 'production');
-    expect(secrets).toEqual({ current: Buffer.from(STRONG, 'utf8'), source: 'env' });
+    expect(secrets.source).toBe('env');
+    expectSecretBytes(secrets, STRONG);
   });
 });
 
@@ -96,7 +119,7 @@ describe('parseTokenSecrets: strength rules (AC1, M3)', () => {
     // 16 two-byte characters = 32 bytes (17 distinct byte values).
     const value = 'ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏ';
     expect(Buffer.byteLength(value)).toBe(32);
-    expect(parseTokenSecrets({ TOKEN_SECRET: value }, 'production').current).toHaveLength(32);
+    expectSecretBytes(parseTokenSecrets({ TOKEN_SECRET: value }, 'production'), value);
   });
 
   it('accepts openssl-style secrets', () => {
@@ -111,7 +134,7 @@ describe('parseTokenSecrets: previous secret (AC2)', () => {
       { TOKEN_SECRET: STRONG, TOKEN_SECRET_PREVIOUS: STRONG_2 },
       'production',
     );
-    expect(secrets.previous?.toString('utf8')).toBe(STRONG_2);
+    expectSecretBytes(secrets, STRONG, STRONG_2);
   });
 
   it('applies the same rules and must differ from the current secret', () => {
@@ -201,8 +224,7 @@ describe('parseTokenSecrets: _FILE variables (#58 AC1, AC2, AC5, AC9)', () => {
     for (const content of [FILE_SECRET, `${FILE_SECRET}\n`, `${FILE_SECRET}\r\n`]) {
       const secrets = parseTokenSecrets({ TOKEN_SECRET_FILE: secretFile(content) }, 'production');
       expect(secrets.source).toBe('file');
-      expect(secrets.current.toString('utf8')).toBe(FILE_SECRET);
-      expect(secrets.previous).toBeUndefined();
+      expectSecretBytes(secrets, FILE_SECRET);
     }
   });
 
@@ -213,13 +235,13 @@ describe('parseTokenSecrets: _FILE variables (#58 AC1, AC2, AC5, AC9)', () => {
       'production',
     );
     expect(fromEnv.source).toBe('env');
-    expect(fromEnv.previous?.toString('utf8')).toBe(FILE_SECRET_2);
+    expectSecretBytes(fromEnv, STRONG, FILE_SECRET_2);
     const fromFile = parseTokenSecrets(
       { TOKEN_SECRET_FILE: secretFile(FILE_SECRET), TOKEN_SECRET_PREVIOUS: STRONG_2 },
       'production',
     );
     expect(fromFile.source).toBe('file');
-    expect(fromFile.previous?.toString('utf8')).toBe(STRONG_2);
+    expectSecretBytes(fromFile, FILE_SECRET, STRONG_2);
   });
 
   const GENERATE = 'use `openssl rand -base64 32`';
@@ -345,7 +367,7 @@ describe('parseTokenSecrets: _FILE variables (#58 AC1, AC2, AC5, AC9)', () => {
     }
   });
 
-  it('redacts the secrets in JSON, string and inspect output but keeps the Buffers (C7)', () => {
+  it('redacts the secrets in JSON, string and inspect output (C7)', () => {
     const secrets = parseTokenSecrets(
       { TOKEN_SECRET_FILE: secretFile(FILE_SECRET), TOKEN_SECRET_PREVIOUS: FILE_SECRET_2 },
       'production',
@@ -358,10 +380,8 @@ describe('parseTokenSecrets: _FILE variables (#58 AC1, AC2, AC5, AC9)', () => {
     expect(`${secrets as unknown as string}`).toBe('[redacted token secrets]');
     expect(inspect(secrets)).toBe('[redacted token secrets]');
     expect(inspect({ nested: { secrets } }, { depth: 5 })).not.toContain('Buffer');
-    expect(Buffer.isBuffer(secrets.current)).toBe(true);
-    expect(secrets.current.toString('utf8')).toBe(FILE_SECRET);
-    expect(Object.keys(secrets).sort()).toEqual(['current', 'previous', 'source']);
     expect(Object.isFrozen(secrets)).toBe(true);
+    expectSecretBytes(secrets, FILE_SECRET, FILE_SECRET_2);
   });
 
   /** JSON, inspect (deep, hidden too) and string forms of `value`; must hold no sentinel. */
@@ -379,60 +399,7 @@ describe('parseTokenSecrets: _FILE variables (#58 AC1, AC2, AC5, AC9)', () => {
     expectNoSentinel(text, FILE_SECRET_2);
   }
 
-  it('stays redacted when the secrets or their Buffers are copied out (C7)', () => {
-    const secrets = parseTokenSecrets(
-      { TOKEN_SECRET_FILE: secretFile(FILE_SECRET), TOKEN_SECRET_PREVIOUS: FILE_SECRET_2 },
-      'production',
-    );
-    const spread = { ...secrets };
-    const assigned: object = Object.assign({}, secrets);
-    for (const copy of [
-      spread,
-      assigned,
-      { nested: spread },
-      [secrets.current, secrets.previous],
-    ]) {
-      expectRedacted(shown(copy));
-    }
-    for (const buffer of [spread.current, spread.previous]) {
-      expectRedacted(shown(buffer));
-      expectRedacted(shown({ buffer }));
-    }
-    expect(JSON.parse(JSON.stringify(spread))).toEqual({
-      current: '[redacted token secret]',
-      previous: '[redacted token secret]',
-      source: 'file',
-    });
-    // The bytes stay usable by an explicit decode and by Buffer APIs.
-    expect(spread.current.toString('utf8')).toBe(FILE_SECRET);
-    expect(spread.previous?.equals(Buffer.from(FILE_SECRET_2, 'utf8'))).toBe(true);
-  });
-
-  it('redacts secrets a caller built itself, without changing them (C7)', () => {
-    const current = Buffer.from(FILE_SECRET, 'utf8');
-    const previous = Buffer.from(FILE_SECRET_2, 'utf8');
-    const given: TokenSecrets = { current, previous, source: 'env' };
-    const secrets = redactTokenSecrets(given);
-    expect(secrets).not.toBe(given);
-    expect(secrets.current.equals(current)).toBe(true);
-    expect(secrets.previous?.equals(previous)).toBe(true);
-    expect(secrets.source).toBe('env');
-    expect(Object.isFrozen(secrets)).toBe(true);
-    expect(Object.keys(secrets).sort()).toEqual(['current', 'previous', 'source']);
-    for (const value of [secrets, { ...secrets }, secrets.current, secrets.previous]) {
-      expectRedacted(shown(value));
-    }
-    // The caller's object and Buffers are left as they were.
-    expect(JSON.stringify(given)).toContain('"type":"Buffer"');
-    expect(String(current)).toBe(FILE_SECRET);
-    // Already redacted secrets are not copied again; no previous stays absent.
-    expect(redactTokenSecrets(secrets)).toBe(secrets);
-    const single = redactTokenSecrets({ current, source: 'file' });
-    expect(Object.keys(single).sort()).toEqual(['current', 'source']);
-    expectRedacted(shown(single));
-  });
-
-  it('redacts toString() with no encoding and subarray/slice views (A1)', () => {
+  it('is an opaque handle: no field, copy or member gives the bytes back (Gate 3 round 3)', () => {
     const parsed = parseTokenSecrets(
       { TOKEN_SECRET_FILE: secretFile(FILE_SECRET), TOKEN_SECRET_PREVIOUS: FILE_SECRET_2 },
       'production',
@@ -442,37 +409,74 @@ describe('parseTokenSecrets: _FILE variables (#58 AC1, AC2, AC5, AC9)', () => {
       previous: Buffer.from(FILE_SECRET_2, 'utf8'),
       source: 'env',
     });
-    for (const secrets of [parsed, built, { ...parsed }]) {
-      for (const buffer of [secrets.current, secrets.previous!]) {
-        expect(buffer.toString()).toBe('[redacted token secret]');
-        expect(buffer.toLocaleString()).toBe('[redacted token secret]');
-        for (const view of [
-          buffer.subarray(),
-          buffer.subarray(9),
-          buffer.slice(),
-          buffer.slice(0, 20),
-          buffer.subarray(2).subarray(1),
-        ]) {
-          expect(view.toString()).toBe('[redacted token secret]');
-          expectRedacted(shown(view));
-          expectRedacted(shown({ view }));
-        }
-        // Own, non-enumerable: no new fields show up anywhere.
-        expect(Object.keys(buffer).every((key) => /^\d+$/.test(key))).toBe(true);
-        // Explicit decodes still read the bytes (TokenKeyring, library callers).
-        expect(buffer.subarray(0, 8).toString('utf8')).toBe('SENTINEL');
+    for (const secrets of [parsed, built]) {
+      expect(secrets).toBeInstanceOf(TokenSecrets);
+      // The only own field is the source; the prototype has no byte accessor.
+      expect(Reflect.ownKeys(secrets)).toEqual(['source']);
+      expect(Reflect.ownKeys(TokenSecrets.prototype).map(String).sort()).toEqual([
+        'Symbol(nodejs.util.inspect.custom)',
+        'constructor',
+        'hasPrevious',
+        'toJSON',
+        'toString',
+      ]);
+      const record = secrets as unknown as Record<string, unknown>;
+      expect(record['current']).toBeUndefined();
+      expect(record['previous']).toBeUndefined();
+      const spread = { ...secrets };
+      const assigned: object = Object.assign({}, secrets);
+      for (const copy of [
+        spread,
+        assigned,
+        { nested: spread },
+        Object.values(secrets),
+        Object.entries(secrets),
+        Object.getOwnPropertyDescriptors(secrets),
+        structuredClone(spread),
+      ]) {
+        expectRedacted(shown(copy));
       }
-      expect(secrets.current.toString('utf8')).toBe(FILE_SECRET);
-      expect(secrets.current.toString('hex')).toBe(
-        Buffer.from(FILE_SECRET, 'utf8').toString('hex'),
-      );
-      expect(secrets.previous?.toString('base64')).toBe(
-        Buffer.from(FILE_SECRET_2, 'utf8').toString('base64'),
-      );
+      expect(JSON.parse(JSON.stringify(spread))).toEqual({ source: secrets.source });
+      for (const conversion of [
+        String(secrets),
+        secrets.toString(),
+        secrets.toLocaleString(),
+        `${secrets as unknown as string}`,
+      ]) {
+        expect(conversion).toBe('[redacted token secrets]');
+      }
     }
   });
 
-  it('keeps signing, verification and rotation byte-identical with redacted Buffers (A1)', () => {
+  it('copies secrets a caller built itself, without changing them (C7)', () => {
+    const current = Buffer.from(FILE_SECRET, 'utf8');
+    const previous = Buffer.from(FILE_SECRET_2, 'utf8');
+    const given: TokenSecretsInput = { current, previous, source: 'env' };
+    const secrets = redactTokenSecrets(given);
+    expect(secrets).not.toBe(given);
+    expect(secrets.source).toBe('env');
+    expect(Object.isFrozen(secrets)).toBe(true);
+    expectSecretBytes(secrets, FILE_SECRET, FILE_SECRET_2);
+    expectRedacted(shown(secrets));
+    // The caller's object and Buffers are left as they were, and changing
+    // them later does not change the held copy.
+    expect(Object.isFrozen(given)).toBe(false);
+    expect(String(current)).toBe(FILE_SECRET);
+    current.fill(0);
+    previous.fill(0);
+    expectSecretBytes(secrets, FILE_SECRET, FILE_SECRET_2);
+    // Already a handle: returned as is. No previous stays absent.
+    expect(redactTokenSecrets(secrets)).toBe(secrets);
+    const single = redactTokenSecrets({
+      current: Buffer.from(FILE_SECRET, 'utf8'),
+      source: 'file',
+    });
+    expect(single.hasPrevious).toBe(false);
+    expectSecretBytes(single, FILE_SECRET);
+    expectRedacted(shown(single));
+  });
+
+  it('keeps signing, verification and rotation byte-identical through the handle (A1)', () => {
     const plain = {
       current: Buffer.from(FILE_SECRET, 'utf8'),
       previous: Buffer.from(FILE_SECRET_2, 'utf8'),
@@ -482,16 +486,19 @@ describe('parseTokenSecrets: _FILE variables (#58 AC1, AC2, AC5, AC9)', () => {
       'production',
     );
     for (const prefix of [HKDF_INFO_PREFIX, QR_TICKET_INFO_PREFIX, CODES_BLOB_INFO_PREFIX]) {
-      const redacted = new TokenKeyring(secrets, prefix).keysFor('app-a');
-      const reference = new TokenKeyring(plain, prefix).keysFor('app-a');
-      expect(redacted.current.equals(reference.current)).toBe(true);
-      expect(redacted.verify).toHaveLength(2);
-      redacted.verify.forEach((key, i) => expect(key.equals(reference.verify[i]!)).toBe(true));
+      const held = new TokenKeyring(secrets, prefix).keysFor('app-a');
+      const reference = [plain.current, plain.previous].map((secret) =>
+        deriveAppKey(secret, 'app-a', prefix),
+      );
+      expect(held.current.equals(reference[0]!)).toBe(true);
+      expect(held.verify).toHaveLength(2);
+      held.verify.forEach((key, i) => expect(timingSafeEqual(key, reference[i]!)).toBe(true));
     }
-    expect(timingSafeEqual(secrets.current, plain.current)).toBe(true);
-    expect(createHmac('sha256', secrets.current).update('x').digest('hex')).toBe(
-      createHmac('sha256', plain.current).update('x').digest('hex'),
-    );
+    expect(
+      createHmac('sha256', new TokenKeyring(secrets).keysFor('app-a').current)
+        .update('x')
+        .digest('hex'),
+    ).toBe(createHmac('sha256', deriveAppKey(plain.current, 'app-a')).update('x').digest('hex'));
 
     // A token from the current secret verifies; after rotation (the old
     // current becomes previous) it still verifies; a token from the

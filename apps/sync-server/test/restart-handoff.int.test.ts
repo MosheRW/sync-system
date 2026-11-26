@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { TokenSecrets } from '../src/config/token-secret.js';
+import type { TokenSecretsInput } from '../src/config/token-secret.js';
 import type { GroupRecord, GroupStore } from '../src/groups/group-store.js';
 import { InMemoryGroupStore } from '../src/groups/in-memory-group-store.js';
 import { DOOR_FAILURES_BEFORE_ROTATION } from '../src/limits/constants.js';
@@ -18,6 +18,7 @@ import type { TestClient } from './helpers/test-client.js';
 import { KEY_A, type TestServer, startTestServer } from './helpers/test-server.js';
 import { claimsOf } from './helpers/tokens.js';
 import { waitUntil } from './helpers/wait.js';
+import { testSecrets } from './helpers/token-secrets.js';
 
 let ts: TestServer | undefined;
 
@@ -35,7 +36,7 @@ async function frameOf(client: TestClient, type: string) {
 }
 
 interface Line {
-  secrets: TokenSecrets;
+  secrets: TokenSecretsInput;
   scheduler: ManualScheduler;
   group: TestGroup;
   /** A's leader token (term T0). */
@@ -52,7 +53,7 @@ interface Line {
  * to B (term T1 > T0); B removes A. Then the server restarts (P2).
  */
 async function lineThenRestart(): Promise<Line & { store: InMemoryGroupStore }> {
-  const secrets: TokenSecrets = { current: randomBytes(32), source: 'env' };
+  const secrets: TokenSecretsInput = { current: randomBytes(32), source: 'env' };
   const scheduler = new ManualScheduler();
   ts = await startTestServer({ tokenSecrets: secrets, scheduler });
   const group = await createGroupWithMembers(ts, 2);
@@ -152,7 +153,7 @@ describe('supersede after a restart (#13 AC26, 6.6, RC6, RC7)', () => {
   });
 
   it('rotates when the requester blob differs only by a door rotation: no stale ticket or code survives (L-2)', async () => {
-    const secrets: TokenSecrets = { current: randomBytes(32), source: 'env' };
+    const secrets: TokenSecretsInput = { current: randomBytes(32), source: 'env' };
     const scheduler = new ManualScheduler();
     const apps = [{ namespace: 'app-a', apiKey: KEY_A, joinMethods: ['A', 'D'] }];
     ts = await startTestServer({ tokenSecrets: secrets, scheduler, apps });
@@ -255,13 +256,13 @@ describe('supersede after a restart (#13 AC26, 6.6, RC6, RC7)', () => {
   });
 
   it('a group created in this process never supersedes (6.6.3 row 5)', async () => {
-    const secrets: TokenSecrets = { current: randomBytes(32), source: 'env' };
+    const secrets: TokenSecretsInput = { current: randomBytes(32), source: 'env' };
     const scheduler = new ManualScheduler();
     const store = new InMemoryGroupStore();
     ts = await startTestServer({ tokenSecrets: secrets, scheduler, store });
     const group = await createGroupWithMembers(ts, 0);
     const claims = claimsOf(group.leaderToken);
-    const issuer = new TokenService(new TokenKeyring(secrets));
+    const issuer = new TokenService(new TokenKeyring(testSecrets(secrets)));
     for (const term of [claims.gct, scheduler.now()]) {
       const forged = issuer.issue({
         namespace: 'app-a',
@@ -282,7 +283,7 @@ describe('supersede after a restart (#13 AC26, 6.6, RC6, RC7)', () => {
     const line = await lineThenRestart();
     const { store, group, secrets } = line;
     await resumeWith(ts!, line.a, { metadata: {} });
-    const issuer = new TokenService(new TokenKeyring(secrets));
+    const issuer = new TokenService(new TokenKeyring(testSecrets(secrets)));
     const t0 = claimsOf(line.a);
     const bClaims = claimsOf(line.b);
     const pre = (pid: string, term: number) =>
@@ -389,7 +390,7 @@ class RacingStore extends InMemoryGroupStore {
 
 describe('recreation fallback and the clock (#13 L9 / RC15, L10 / RC16)', () => {
   it('re-classifies against a group someone else recreated: never a leader return for another pid', async () => {
-    const secrets: TokenSecrets = { current: randomBytes(32), source: 'env' };
+    const secrets: TokenSecretsInput = { current: randomBytes(32), source: 'env' };
     const scheduler = new ManualScheduler();
     ts = await startTestServer({ tokenSecrets: secrets, scheduler });
     const group = await createGroupWithMembers(ts, 0);

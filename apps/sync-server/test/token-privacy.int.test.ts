@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { ServerMessage } from '@mosherw/sync-system-protocol';
-import type { TokenSecrets } from '../src/config/token-secret.js';
+import type { TokenSecretsInput } from '../src/config/token-secret.js';
 import { createLogger, groupRef, participantRef } from '../src/logging/logger.js';
 import { createGroupWithMembers, resumeWith } from './helpers/groups.js';
 import { LogCapture } from './helpers/log-capture.js';
@@ -14,7 +14,7 @@ const SENTINEL = {
   position: 'SENTINEL-TOKEN-POSITION-page-9',
 };
 
-const tokenSecrets: TokenSecrets = { current: randomBytes(32), source: 'env' };
+const tokenSecrets: TokenSecretsInput = { current: randomBytes(32), source: 'env' };
 const scheduler = new ManualScheduler();
 /** Log captures of every server instance (one per restart). */
 const captures: LogCapture[] = [];

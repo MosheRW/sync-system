@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import type { TokenSecrets } from '../src/config/token-secret.js';
+import type { TokenSecretsInput } from '../src/config/token-secret.js';
 import { endedRef } from '../src/groups/ended-groups.js';
 import { createLogger } from '../src/logging/logger.js';
 import type { RedisLink } from '../src/storage/redis/connect.js';
@@ -171,7 +171,7 @@ describeRedis('invalid stored values fail closed (#35 security C1, M1)', () => {
 describeRedis('invalid stored values stop recreation (#35 security C1, AC13)', () => {
   let inspect: Awaited<ReturnType<typeof inspector>>;
   let prefix: string;
-  let secrets: TokenSecrets;
+  let secrets: TokenSecretsInput;
   let scheduler: ManualScheduler;
   const servers: TestServer[] = [];
 

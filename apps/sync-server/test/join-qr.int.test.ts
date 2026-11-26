@@ -8,6 +8,7 @@ import { ManualScheduler } from './helpers/manual-scheduler.js';
 import { expireHold } from './helpers/lifecycle.js';
 import type { TestClient } from './helpers/test-client.js';
 import { KEY_A, KEY_B, type TestServer, startTestServer } from './helpers/test-server.js';
+import { testSecrets } from './helpers/token-secrets.js';
 
 const ALL: JoinMethod[] = ['A', 'B', 'C', 'D'];
 const SECRET = Buffer.from('q9Zt2Lx7Vb4Nm1Rt6Yw0Ue5Io3AaKd8Fj2Hs7Gp1Wc=');
@@ -227,7 +228,7 @@ describe('invalid tickets (#10 AC25, R7)', () => {
     const { created } = await group(server, ['C']);
     // A correctly signed ticket for a group without D.
     const forged = new QrTicketService(
-      new TokenKeyring({ current: SECRET }, QR_TICKET_INFO_PREFIX),
+      new TokenKeyring(testSecrets({ current: SECRET }), QR_TICKET_INFO_PREFIX),
       3600,
     ).issue('app-a', created.groupId, created.codes.generation, scheduler.now(), 300).ticket;
     expect((await joinQr(server, forged)).reply).toMatchObject({ code: 'QR_INVALID' });
@@ -279,7 +280,7 @@ describe('keys (#10 AC26)', () => {
     const { server, scheduler } = await start(PREVIOUS);
     const { created } = await group(server, ['D']);
     const old = new QrTicketService(
-      new TokenKeyring({ current: PREVIOUS }, QR_TICKET_INFO_PREFIX),
+      new TokenKeyring(testSecrets({ current: PREVIOUS }), QR_TICKET_INFO_PREFIX),
       3600,
     ).issue('app-a', created.groupId, created.codes.generation, scheduler.now(), 300).ticket;
     expect((await joinQr(server, old)).reply.type).toBe('group.joined');

@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { TokenSecrets } from '../src/config/token-secret.js';
+import type { TokenSecretsInput } from '../src/config/token-secret.js';
 import { InMemoryGroupStore } from '../src/groups/in-memory-group-store.js';
 import { createGroupWithMembers, resumeWith } from './helpers/groups.js';
 import { type TestServer, startTestServer } from './helpers/test-server.js';
@@ -129,7 +129,7 @@ describe('block list on leader return and recreation (#5 AC26, L5)', () => {
   });
 
   it('a recreation enforces the list on parked and later members', async () => {
-    const tokenSecrets: TokenSecrets = { current: randomBytes(32), source: 'env' };
+    const tokenSecrets: TokenSecretsInput = { current: randomBytes(32), source: 'env' };
     ts = await startTestServer({ tokenSecrets });
     const group = await createGroupWithMembers(ts, 2);
     await ts.close();

@@ -1,6 +1,6 @@
 import type { JoinMethod, ServerMessage } from '@mosherw/sync-system-protocol';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { TokenSecrets } from '../src/config/token-secret.js';
+import type { TokenSecretsInput } from '../src/config/token-secret.js';
 import {
   MAX_BLOCK_LIST_SIZE,
   MAX_CODES_BLOB_LENGTH,
@@ -20,15 +20,18 @@ import {
   type TestServer,
   startTestServer,
 } from './helpers/test-server.js';
+import { testSecrets } from './helpers/token-secrets.js';
 
 const SECRET = Buffer.from('q9Zt2Lx7Vb4Nm1Rt6Yw0Ue5Io3AaKd8Fj2Hs7Gp1Wc=');
-const TOKEN_SECRETS: TokenSecrets = { current: SECRET, source: 'env' };
+const TOKEN_SECRETS: TokenSecretsInput = { current: SECRET, source: 'env' };
 const ALL: JoinMethod[] = ['A', 'B', 'C', 'D'];
 const APPS: TestAppInput[] = [
   { namespace: 'app-a', apiKey: KEY_A, joinMethods: ALL },
   { namespace: 'app-b', apiKey: KEY_B, joinMethods: ALL },
 ];
-const blobs = new CodesBlobService(new TokenKeyring({ current: SECRET }, CODES_BLOB_INFO_PREFIX));
+const blobs = new CodesBlobService(
+  new TokenKeyring(testSecrets({ current: SECRET }), CODES_BLOB_INFO_PREFIX),
+);
 
 let ts: TestServer | undefined;
 const scheduler = new ManualScheduler();

@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, expect, it } from 'vitest';
 import { parseRedisSettings } from '../src/config/redis.js';
-import type { TokenSecrets } from '../src/config/token-secret.js';
+import type { TokenSecretsInput } from '../src/config/token-secret.js';
 import { endedRef } from '../src/groups/ended-groups.js';
 import { createLogger } from '../src/logging/logger.js';
 import { connectRedis } from '../src/storage/redis/connect.js';
@@ -35,7 +35,7 @@ describeRedis('Redis keys, values and logs (#35 AC5, AC8, AC24, AC25, F13)', () 
 
   async function start(
     prefix: string,
-    extra: { scheduler?: ManualScheduler; tokenSecrets?: TokenSecrets } = {},
+    extra: { scheduler?: ManualScheduler; tokenSecrets?: TokenSecretsInput } = {},
   ): Promise<TestServer> {
     prefixes.push(prefix);
     const ts = await startTestServer({ redisPrefix: prefix, ...extra });
@@ -150,7 +150,7 @@ describeRedis('Redis keys, values and logs (#35 AC5, AC8, AC24, AC25, F13)', () 
 
   it('prunes a group that expired while the server was down (AC24, F13)', async () => {
     const scheduler = new ManualScheduler();
-    const tokenSecrets: TokenSecrets = { current: randomBytes(32), source: 'env' };
+    const tokenSecrets: TokenSecretsInput = { current: randomBytes(32), source: 'env' };
     const prefix = randomPrefix();
     const first = await start(prefix, { scheduler, tokenSecrets });
     const group = await createGroupWithMembers(first, 1);

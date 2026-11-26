@@ -5,6 +5,7 @@ import { TOKEN_HEADER_SEGMENT } from '../src/tokens/jwt.js';
 import { TokenKeyring, deriveAppKey } from '../src/tokens/token-keys.js';
 import { TokenService } from '../src/tokens/token-service.js';
 import { b64url, claimsAt, claimsOf, forge, headerSegment } from './helpers/tokens.js';
+import { testSecrets } from './helpers/token-secrets.js';
 
 const SECRET = Buffer.from('q9Zt2Lx7Vb4Nm1Rt6Yw0Ue5Io3AaKd8Fj2Hs7Gp1Wc=');
 const PREVIOUS = Buffer.from('Xr4Tn8Qm2Vk6Bz0Pc9Ls3Hd7Jf1Gw5Ye8Ua2Ii6Oo4=');
@@ -15,7 +16,7 @@ const KEY_A = deriveAppKey(SECRET, 'app-a');
 
 function service(previous?: Buffer): TokenService {
   return new TokenService(
-    new TokenKeyring(previous ? { current: SECRET, previous } : { current: SECRET }),
+    new TokenKeyring(testSecrets(previous ? { current: SECRET, previous } : { current: SECRET })),
   );
 }
 
@@ -80,7 +81,11 @@ describe('TokenService.issue (AC5)', () => {
     const token = issueAt(service(PREVIOUS));
     expect(service().verify(token, 'app-a', NOW).ok).toBe(true);
     expect(
-      new TokenService(new TokenKeyring({ current: PREVIOUS })).verify(token, 'app-a', NOW).ok,
+      new TokenService(new TokenKeyring(testSecrets({ current: PREVIOUS }))).verify(
+        token,
+        'app-a',
+        NOW,
+      ).ok,
     ).toBe(false);
   });
 });
@@ -89,14 +94,14 @@ describe('TokenService.verify (AC7, AC8, M2)', () => {
   const svc = service();
 
   it('accepts a token signed with the previous secret and says so (AC2)', () => {
-    const old = issueAt(new TokenService(new TokenKeyring({ current: PREVIOUS })));
+    const old = issueAt(new TokenService(new TokenKeyring(testSecrets({ current: PREVIOUS }))));
     const result = service(PREVIOUS).verify(old, 'app-a', NOW);
     expect(result).toMatchObject({ ok: true, viaPrevious: true });
     expect(service().verify(old, 'app-a', NOW).ok).toBe(false);
   });
 
   it('re-signs the same claims with the current secret', () => {
-    const old = issueAt(new TokenService(new TokenKeyring({ current: PREVIOUS })));
+    const old = issueAt(new TokenService(new TokenKeyring(testSecrets({ current: PREVIOUS }))));
     const both = service(PREVIOUS);
     const result = both.verify(old, 'app-a', NOW);
     if (!result.ok) throw new Error('expected ok');
