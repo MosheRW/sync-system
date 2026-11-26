@@ -497,8 +497,8 @@ While Redis is unreachable (or answers nothing for `REDIS_COMMAND_TIMEOUT_MS`):
   are not outages are `INTERNAL_ERROR` to the one request.
 
 Limits stay per instance: `MAX_CONNECTIONS`, the per-app connection cap, the
-join and token-check budgets and the leader update rate are counted by the
-process, as without Redis (with several instances, see the table below).
+token-check budget and the leader update rate are counted by the process, as
+without Redis (with several instances, see the table below).
 
 Sizing: the group document is about 45 KB at `MAX_GROUP_SIZE_CEILING` 100 with
 the longest names, a full block list and 4 KiB of metadata. A position update
@@ -569,22 +569,31 @@ above). Frames in transit are not stored by Redis.
 
 Limits with several instances:
 
-| Limit                                                                               | Counted                        |
-| ----------------------------------------------------------------------------------- | ------------------------------ |
-| `MAX_CONNECTIONS`, the per-app connection cap, inbound message rates                | Per instance                   |
-| Join attempts per connection and **per app** (`group.joinByCode`, `group.joinByQr`) | Per instance                   |
-| `tokens.check`, QR tickets, recreations, code rotations                             | Per instance                   |
-| `group.create` attempts per connection                                              | Per instance                   |
-| The per-app create budget and the live groups per app                               | Global                         |
-| Leader update rate                                                                  | On the leader's own instance   |
-| Wrong door codes per group (rotation after 5) and the method A pause                | Global (stored with the group) |
+| Limit                                                                | Counted                                           |
+| -------------------------------------------------------------------- | ------------------------------------------------- |
+| `MAX_CONNECTIONS`, the per-app connection cap, inbound message rates | Per instance                                      |
+| Join attempts per connection (`group.joinByCode`, `group.joinByQr`)  | Per instance (a connection lives on one instance) |
+| Join attempts **per app** (`group.joinByCode`, `group.joinByQr`)     | Global                                            |
+| Wrong door codes per app (60 a minute)                               | Per instance                                      |
+| `tokens.check`, QR tickets, recreations, code rotations              | Per instance                                      |
+| `group.create` attempts per connection                               | Per instance                                      |
+| The per-app create budget and the live groups per app                | Global                                            |
+| Leader update rate                                                   | On the leader's own instance                      |
+| Wrong door codes per group (rotation after 5) and the method A pause | Global (stored with the group)                    |
 
-**The join-attempt budget multiplies by the number of instances.** The
-per-app join budget, and with it the code-guessing budget for group and
-alphanumeric codes, is counted by each instance, so N instances allow N
-times as many attempts per minute. Door codes stay bounded by the global
-door-failure rotation and pause. A Redis-backed global join limiter is
-tracked in issue #41.
+**The per-app join budget is shared by every instance.** The 600 join
+attempts per app per minute, and with them the code-guessing budget for
+group and alphanumeric codes, are counted once in Redis (`lj:<namespace>`)
+whichever instance gets them; the 10 attempts per connection are counted by
+the connection's instance. If the budget step cannot reach Redis, the join
+attempt closes its connection with `1001` like any other request that needs
+storage, and nothing is looked up
+([ADR 0024](decisions/0024-join-budget-while-redis-is-unreachable.md)).
+Each instance times attempts with its own clock: keep instance clocks within
+well under a second of each other (NTP), since a clock that runs ahead
+loosens the shared budget. The per-app wrong-door budget and `tokens.check`
+stay per instance (see the table); door codes stay bounded by the global
+door-failure rotation and pause.
 
 ## Joining (methods A to D)
 
@@ -1179,10 +1188,6 @@ server {
 
 ## Known limits of 1.0.0
 
-- **Join attempts are limited per instance** (issue #41): with N instances an
-  app gets N times the join-attempt and code-guessing budget. Door codes stay
-  bounded by the global rotation and pause. See
-  [Several instances](#several-instances).
 - No global connection or request limits across instances; use per-IP limits
   at the reverse proxy.
 - Redis Cluster and Sentinel are not supported: one Redis endpoint.

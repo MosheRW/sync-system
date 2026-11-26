@@ -456,8 +456,11 @@ describe('operator guide documents the lifecycle (#13 AC4, AC38, RC14)', () => {
     const flat = readme.replace(/\s+/g, ' ');
     for (const text of [
       'compose.multi.yaml',
-      'The join-attempt budget multiplies by the number of instances.',
-      'issue #41',
+      // #41: the per-app join budget is global, with ADR 0024 and the clock note.
+      'The per-app join budget is shared by every instance.',
+      'closes its connection with `1001` like any other request that needs storage',
+      'keep instance clocks within well under a second of each other (NTP)',
+      'The per-app wrong-door budget and `tokens.check` stay per instance',
       'stop every instance before starting the new ones',
       'An outage longer than 10 seconds closes every group session of the instance with `1001`',
       'including leader-only frames with display names',
@@ -467,6 +470,8 @@ describe('operator guide documents the lifecycle (#13 AC4, AC38, RC14)', () => {
       expect(flat, text).toContain(text);
     }
     expect(flat).not.toContain('+@pubsub`');
+    expect(flat).not.toContain('The join-attempt budget multiplies by the number of instances.');
+    expect(flat).not.toContain('Join attempts are limited per instance');
   });
 
   it('states the token rules after #13: no lifelong take-back, supersede kills stale codes', () => {

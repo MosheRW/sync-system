@@ -17,6 +17,7 @@ import { LEASE_TIMINGS, type LeaseTimings, RedisLeaseSource } from './lease-lock
 import { RedisPubSub } from './pubsub.js';
 import { OrphanSweeper } from './sweeper.js';
 import { RedisApprovals } from './approvals.js';
+import { RedisJoinBudget } from './join-budget.js';
 import { RedisParking } from './parking.js';
 import { type RedisContext, RedisWorkSource } from './unit-of-work.js';
 
@@ -132,6 +133,7 @@ export function redisStorage(options: RedisStorageOptions): Storage {
     },
     leases,
     approvals: new RedisApprovals(ctx, work),
+    joinBudget: new RedisJoinBudget(ctx),
     parked: new RedisParking(ctx, work),
     cluster: {
       host: {

@@ -54,6 +54,7 @@ import {
   type TakenRequest,
 } from './approval-store.js';
 import type { DoorStateStore } from './door-guard.js';
+import { type JoinBudgetStore, MemoryJoinBudget } from './join-budget.js';
 import { isValidGroupMethodSet, resolveGroupMethods } from './join-methods.js';
 
 export interface JoinServiceDeps {
@@ -76,6 +77,11 @@ export interface JoinServiceDeps {
   groupExpiry(namespace: string, createdAt: number): number;
   /** Pending method B requests; defaults to the in-memory store (#35 architecture 12.9). */
   approvals?: ApprovalStore;
+  /**
+   * The per-app join-attempt budget (#41): set with Redis, shared by every
+   * instance; defaults to the in-memory budget.
+   */
+  joinBudget?: JoinBudgetStore;
 }
 
 /**
@@ -236,8 +242,8 @@ export class JoinService {
   private readonly random: RandomInt;
   /** Join attempts per connection (#10 AC27). */
   private readonly joinLimiter: SlidingWindowRateLimiter;
-  /** Join attempts per app, shared by its connections (#10 AC28). */
-  private readonly appJoinLimiter: SlidingWindowRateLimiter;
+  /** Join attempts per app, shared by its connections (#10 AC28) and, with Redis, its instances (#41). */
+  private readonly appJoinBudget: JoinBudgetStore;
   /** When a per-app budget warning was last logged, per `event:namespace`. */
   private readonly warnedAt = new Map<string, number>();
   /** Wrong door codes per app, checked before the compare (#10 R1b). */
@@ -256,7 +262,7 @@ export class JoinService {
     this.random = deps.random ?? cryptoRandomInt;
     const now = (): number => this.now();
     this.joinLimiter = new SlidingWindowRateLimiter(now, JOIN_WINDOW_MS);
-    this.appJoinLimiter = new SlidingWindowRateLimiter(now, JOIN_WINDOW_MS);
+    this.appJoinBudget = deps.joinBudget ?? new MemoryJoinBudget(now, JOIN_WINDOW_MS);
     this.wrongDoorLimiter = new SlidingWindowRateLimiter(now, DOOR_FAILURES_APP_WINDOW_MS);
     this.rotateLimiter = new SlidingWindowRateLimiter(now, CODE_ROTATION_WINDOW_MS);
     this.approvals = deps.approvals ?? new MemoryApprovals(deps.scheduler);
@@ -316,7 +322,7 @@ export class JoinService {
    */
   async joinByQr(session: Session, message: GroupJoinByQrMessage): Promise<ServerMessage> {
     if (this.host.busy(session)) return errorMessage(ErrorCode.ALREADY_IN_GROUP);
-    const limited = this.spendJoinAttempt(session, 'group.joinByQr');
+    const limited = await this.spendJoinAttempt(session, 'group.joinByQr');
     if (limited !== undefined) return limited;
     const namespace = session.app.namespace;
     const name = nameOf(message.displayName);
@@ -762,13 +768,16 @@ export class JoinService {
   /**
    * The join attempt budgets (#10 AC27, AC28, R8): per connection first, so
    * one socket over its own limit cannot drain the app's budget, then per
-   * app. Both run before any normalization or code lookup. Undefined when
-   * the attempt may go on.
+   * app (shared by every instance with Redis, #41). Both run before any
+   * normalization or code lookup. Undefined when the attempt may go on.
+   * Nothing here catches a storage failure of the app budget: it closes the
+   * connection with `1001` like any storage failure (ADR 0024), and no
+   * lookup runs.
    */
-  private spendJoinAttempt(
+  private async spendJoinAttempt(
     session: Session,
     action: 'group.joinByCode' | 'group.joinByQr',
-  ): ErrorMessage | undefined {
+  ): Promise<ErrorMessage | undefined> {
     const rate = this.joinLimiter.tryAcquire(
       session.connectionId,
       JOIN_ATTEMPTS_PER_CONNECTION_PER_MINUTE,
@@ -779,7 +788,10 @@ export class JoinService {
       });
     }
     const namespace = session.app.namespace;
-    const appRate = this.appJoinLimiter.tryAcquire(namespace, JOIN_ATTEMPTS_PER_APP_PER_MINUTE);
+    const appRate = await this.appJoinBudget.tryAcquire(
+      namespace,
+      JOIN_ATTEMPTS_PER_APP_PER_MINUTE,
+    );
     if (!appRate.ok) {
       this.warnOnce(
         'join_app_budget_exhausted',
@@ -816,7 +828,7 @@ export class JoinService {
   async joinByCode(session: Session, message: GroupJoinByCodeMessage): Promise<ServerMessage> {
     // A busy session spends no budget (AC18).
     if (this.host.busy(session)) return errorMessage(ErrorCode.ALREADY_IN_GROUP);
-    const limited = this.spendJoinAttempt(session, 'group.joinByCode');
+    const limited = await this.spendJoinAttempt(session, 'group.joinByCode');
     if (limited !== undefined) return limited;
     const namespace = session.app.namespace;
     const parsed = parseCodeJoin(message);
@@ -1162,7 +1174,7 @@ export class JoinService {
   close(): void {
     this.deps.codes.clear();
     this.joinLimiter.clear();
-    this.appJoinLimiter.clear();
+    this.appJoinBudget.clear();
     this.wrongDoorLimiter.clear();
     this.rotateLimiter.clear();
     this.qrLimiter.clear();
@@ -1175,7 +1187,7 @@ export class JoinService {
   get limiterSize(): number {
     return (
       this.joinLimiter.size +
-      this.appJoinLimiter.size +
+      this.appJoinBudget.size +
       this.wrongDoorLimiter.size +
       this.rotateLimiter.size +
       this.qrLimiter.size
