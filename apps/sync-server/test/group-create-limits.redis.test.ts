@@ -1,4 +1,6 @@
-import { afterAll, afterEach, beforeAll, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest';
+import { GroupService } from '../src/groups/group-service.js';
+import { LeaderControls } from '../src/lifecycle/leader-controls.js';
 import type { TestClient } from './helpers/test-client.js';
 import { describeRedis, inspector, randomPrefix } from './helpers/redis.js';
 import { type StartOptions, type TestServer, startTestServer } from './helpers/test-server.js';
@@ -20,6 +22,7 @@ describeRedis('group creation limits on Redis (#12)', () => {
     inspect.close();
   });
   afterEach(async () => {
+    vi.restoreAllMocks();
     for (const ts of servers.splice(0)) await ts.close();
     await inspect.flush(prefix);
   });
@@ -102,5 +105,54 @@ describeRedis('group creation limits on Redis (#12)', () => {
     for (let i = 0; i < 3; i++) replies.push(await create(await large.connectReady()));
     expect(replies.filter((r) => r.type === 'group.created')).toHaveLength(1);
     expect(replies.slice(1)).toMatchObject([{ code: 'RATE_LIMITED' }, { code: 'RATE_LIMITED' }]);
+  });
+
+  // #48: forgetGroup also runs for the cluster `forget` op, so neither may
+  // free the slot; only endGroup does, in the delete's commit (R6). The
+  // service is reached through the class prototype (no test-only export).
+  type Forgetter = {
+    forgetGroup(ns: string, gid: string, record: undefined): Promise<void>;
+    lock: { run<T>(ns: string, gid: string, task: () => Promise<T>): Promise<T> };
+    receiveRemote(effects: { op: 'forget'; ns: string; gid: string }[]): void;
+  };
+
+  async function createOne() {
+    const created = vi.spyOn(GroupService.prototype, 'create');
+    const ts = await start();
+    const leader = await ts.connectReady();
+    const reply = await create(leader);
+    expect(reply).toMatchObject({ type: 'group.created' });
+    const service = created.mock.contexts[0] as unknown as Forgetter;
+    return { leader, service, groupId: (reply as { groupId: string }).groupId };
+  }
+
+  async function end(leader: TestClient) {
+    leader.send({ type: 'group.end', reqId: 'e' });
+    await leader.next('group.ended');
+  }
+
+  it('forgetGroup keeps the slot; group.end then frees it (#48)', async () => {
+    prefix = randomPrefix();
+    const { leader, service, groupId } = await createOne();
+    expect(await live()).toBe(1);
+    // On Redis the cleanup needs a group task, as endGroup has.
+    await service.lock.run('app-a', groupId, () =>
+      service.forgetGroup('app-a', groupId, undefined),
+    );
+    expect(await live()).toBe(1);
+    await end(leader);
+    expect(await live()).toBe(0);
+  });
+
+  it('a cluster forget from another instance keeps the slot; group.end then frees it (#48)', async () => {
+    prefix = randomPrefix();
+    const forgotten = vi.spyOn(LeaderControls.prototype, 'forgetGroup');
+    const { leader, service, groupId } = await createOne();
+    expect(await live()).toBe(1);
+    service.receiveRemote([{ op: 'forget', ns: 'app-a', gid: groupId }]);
+    await vi.waitFor(() => expect(forgotten).toHaveBeenCalledWith('app-a', groupId));
+    expect(await live()).toBe(1);
+    await end(leader);
+    expect(await live()).toBe(0);
   });
 });
