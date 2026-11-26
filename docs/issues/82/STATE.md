@@ -5,8 +5,8 @@
 - PR: #96
 - Plan approved by user: yes
 - Security-sensitive: yes
-- Review rounds: 1
-- Last updated by: engineer
+- Review rounds: 2
+- Last updated by: qa
 ## Model log
 - pm grooming: sonnet (default) → DONE
 - architect plan: opus (rule: security-sensitive) → DONE
@@ -15,6 +15,7 @@
 - qa validate: opus (NEXT_MODEL; security-sensitive shell) → FAIL (round 1: scope check accepts only `read:packages write:packages`, may reject a valid `write:packages`-only token; PR body stale)
 - security code: opus (rule) → PASS (round 1: low A-1 advisory, left for Gate 3)
 - engineer fix round 1: opus (rule: fix rounds) → DONE
+- qa validate round 2: opus (rule: round 2+) → PASS (QA #1 and #2 fixed; lint, typecheck pass; tests pass per package except the pre-existing L11 #81; merge-tree against origin/main clean; 15/15 commits signed)
 ## Open questions
 - none
 ## Deviations from plan
