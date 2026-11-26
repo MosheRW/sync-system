@@ -2,7 +2,7 @@
 - Path: fast
 - Phase: architecture
 - Branch: test/87-redis-load-stable-tests
-- PR: none
+- PR: #98
 - Plan approved by user: no
 - Security-sensitive: no
 - Review rounds: 0
