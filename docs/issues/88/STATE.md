@@ -1,13 +1,14 @@
 # State: #88 test(sync-server): fail the .npmrc _authToken guard when a tracked .npmrc is missing
 - Path: fast
-- Phase: validation
+- Phase: ready-to-merge
 - Branch: test/88-npmrc-guard-missing-file
 - PR: #89
 - Plan approved by user: yes
 - Security-sensitive: no
 - Review rounds: 1
-- Last updated by: qa
+- Last updated by: orchestrator
 ## Model log
+- security code: opus (rule) → PASS (L1 closed; 1 low advisory, pre-existing: L6 regex misses legacy _auth=/_password= keys)
 - qa review: sonnet (NEXT_MODEL from engineer) → PASS
 - engineer implement: sonnet (architect Implementer model) → DONE
 - architect plan: sonnet (NEXT_MODEL from pm) → DONE
