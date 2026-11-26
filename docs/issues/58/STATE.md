@@ -1,12 +1,12 @@
 # State: #58 feat(server): read secrets from files via _FILE variables (follow-up to #51)
 - Path: full
-- Phase: ready-to-merge
+- Phase: validation
 - Branch: feat/58-secret-files
 - PR: #76
 - Plan approved by user: yes
 - Security-sensitive: yes
 - Review rounds: 2
-- Last updated by: qa
+- Last updated by: engineer
 ## Model log
 - pm grooming: sonnet (default) → DONE
 - architect plan: opus (rule: security-sensitive + NEXT_MODEL) → DONE
@@ -17,6 +17,7 @@
 - engineer fix: opus (rule: fix round) → DONE
 - qa review r2: opus (rule: round 2) → PASS
 - security code r2: opus (rule) → PASS (0 critical/high/medium, 1 low advisory A1)
+- engineer fix r2: opus (rule: fix round) → DONE (interrupted once by an API rate limit while writing the guard test; resumed from the pushed commits)
 ## Gate 2 decisions (user)
 - ADR 0023 option 1: Accepted; ADR 0015 gains only a "Related: 0023" line; conventions.md row added
 - Q6 narrowing accepted: the path is omitted for "does not exist" (ENOENT/ENOTDIR) and unknown errors; printed (via shownText) only for entries that exist
@@ -36,3 +37,4 @@
 - The log message of `token_secret_source` is static ("token secret source at startup"); the source is only in the `source` field.
 - POSIX-only tests (FIFO, `chmod 000`) skip on Windows; they were run and pass in the pinned `node:24` Linux image as uid 1000.
 - Gate 3: user asked to fix the two low advisories. Fixed in `34c799f` (token secrets are a frozen class instance with prototype `toJSON` / `toString` / `inspect.custom`; their Buffers redact JSON, inspect and string conversion, so a spread copy stays redacted; new export `redactTokenSecrets`, used by `createSyncServer` to keep a redacted copy of caller-built secrets without changing them; `TokenSecrets` interface unchanged) and `fd1e979` (EACCES/EPERM on open prints the path only after an `lstat` of it succeeds; otherwise the new path-less message `<name> file is not accessible to the server user`; `SecretFileSystem` gained `lstatSync`; startup-errors.md, operator guide and ADR 0023 updated). An explicit `buffer.toString(encoding)` still decodes a secret Buffer (TokenKeyring and tests rely on the bytes). POSIX tests rerun in the local node:24 image as uid 1000: pass. Per the orchestrator, these fix commits carry `Refs: #58` only, no Co-Authored-By trailers.
+- Gate 3 round 2: user asked to fix A1. `c04b1d4` adds `test/token-secret-readers.test.ts`, a static check that only `config/token-secret.ts` and `tokens/token-keys.ts` read `current` / `previous` of the token secrets (by name: `*secrets` / `*Secrets`, property, bracket, destructuring, `Object.values`), and that those two never decode or copy them; `9e4ac10` makes `toString()` / `toLocaleString()` with no encoding return the marker and `subarray` / `slice` return marked views (bytes unchanged; HKDF, HMAC, `timingSafeEqual` and rotation pinned against plain Buffers). Option (a), hiding the bytes inside `TokenKeyring`, was not done: tests and library callers read `secrets.current` (`toString('utf8')`, `equals`, `deriveAppKey`), so it would change the public `TokenSecrets` shape. An explicit `toString(encoding)` and `Buffer.from(buffer)` still give the bytes; the static check covers that. `7b655de` adds the not-accessible message to architecture 5.2; `8997e57` formats the new check. Full server suite: pass, except 4 tests (main, redis-startup, release-files) that timed out under full-suite load on Windows and pass when run alone. Commits carry `Refs: #58` only, per the orchestrator.
