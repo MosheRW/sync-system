@@ -2,7 +2,7 @@
 - Path: fast
 - Phase: architecture
 - Branch: fix/82-ghcr-scope-buildkit-pin
-- PR: none
+- PR: #96
 - Plan approved by user: no
 - Security-sensitive: yes
 - Review rounds: 0
