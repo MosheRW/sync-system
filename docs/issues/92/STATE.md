@@ -1,18 +1,19 @@
 # State: #92 fix(release): release:dry-run cannot run for an already-published version
 - Path: fast
-- Phase: validation
+- Phase: ready-to-merge
 - Branch: fix/92-dry-run-published-version
 - PR: #95
 - Plan approved by user: yes (Gate 2, 2026-11-26)
 - Security-sensitive: yes
 - Review rounds: 1
-- Last updated by: qa
+- Last updated by: orchestrator
 ## Model log
 - pm groom: sonnet (default) → DONE
 - architect plan: opus (NEXT_MODEL) → DONE
 - security plan: opus (rule) → PASS
 - engineer implement: opus (rule/Implementer model) → DONE
 - qa review r1: sonnet (NEXT_MODEL) → PASS
+- security code r1: opus (rule) → PASS (0 findings)
 ## Gate 2 decisions
 - Plan approved.
 - L4 in scope: the registry lookup refuses to run (fixed message) when
