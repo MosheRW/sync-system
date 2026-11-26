@@ -936,9 +936,19 @@ export REF="$(git rev-parse --abbrev-ref HEAD)" M="$(git rev-parse HEAD)" MODE=d
 ```
 
 1. Run the **step 2** block. With `MODE=dry-run` the build container runs
-   `pnpm release:dry-run` (`npm publish <tarball> --dry-run` for each
-   checked tarball, no token, no `.npmrc`) and prints the three integrity
-   lines.
+   `pnpm release:dry-run` (no token, no `.npmrc`) and prints the three
+   integrity lines. For each checked tarball it first asks
+   `https://registry.npmjs.org` whether that exact version is published
+   (#92):
+   - **Not published** (404): `npm publish <tarball> --dry-run`, as before.
+   - **Already published** (for example on the release tag after step 4):
+     no `npm publish`; it compares the tarball's sha512 with the published
+     `dist.integrity` and prints `already on npm, integrity matches`.
+   - A **mismatch** fails the run: the checkout does not reproduce what is
+     on npm. Run it on the released tag, or bump the version.
+   - A **registry error** (network, timeout, any other status, a bad
+     answer) fails the run too; re-run it later. So does
+     `NODE_TLS_REJECT_UNAUTHORIZED=0`. Never treat a failed run as passed.
 2. Run the **step 4** block up to the token prompt, answer `yes` to the
    integrity question, then abort at `npm token:` with Ctrl-D (no token
    involved). `docker ps -a --filter name=sync-release-publish` must then

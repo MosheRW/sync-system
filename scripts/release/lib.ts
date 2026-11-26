@@ -156,9 +156,14 @@ export function tarballName(name: string, version: string): string {
   return `${name.replace(/^@/, '').replace('/', '-')}-${version}.tgz`;
 }
 
+/** `sha512-<base64>` of `bytes`, the format of npm's `dist.integrity` (#92). */
+export function sha512Integrity(bytes: Buffer): string {
+  return `sha512-${createHash('sha512').update(bytes).digest('base64')}`;
+}
+
 /** `<file> sha512-<base64>`, the format of npm's `dist.integrity`. */
 export function integrityLine(file: string, bytes: Buffer): string {
-  return `${file} sha512-${createHash('sha512').update(bytes).digest('base64')}`;
+  return `${file} ${sha512Integrity(bytes)}`;
 }
 
 // ---------------------------------------------------------------------------
