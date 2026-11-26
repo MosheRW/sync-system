@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ConfigError } from '../src/config/config-error.js';
 import { type EnvSource, parseReaderConfig } from '../src/config/schema.js';
+import { READER_VERSION } from '../src/config/version.js';
 import type { LibraryEntry } from '../src/library/types.js';
 import { createClientErrorHandler } from './client-error.js';
 import { createHandler } from './handler.js';
@@ -111,6 +112,7 @@ export async function run(env: EnvSource, io: RunIO = {}): Promise<RunResult> {
       indexHtml,
       libraryOn: config.library === 'on',
       headers,
+      version: READER_VERSION,
     }),
   );
   server.requestTimeout = timeouts.requestMs;

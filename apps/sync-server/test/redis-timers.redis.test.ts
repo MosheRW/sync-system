@@ -1,10 +1,11 @@
-import { afterAll, beforeAll, expect, it } from 'vitest';
+import { afterAll, beforeAll, expect, it, vi } from 'vitest';
 import { GroupLock } from '../src/groups/group-lock.js';
 import { GroupTimers } from '../src/groups/group-timers.js';
 import { createLogger } from '../src/logging/logger.js';
 import type { RedisLink } from '../src/storage/redis/connect.js';
 import { RedisGroupStore } from '../src/storage/redis/group-store.js';
 import { redisContext } from '../src/storage/redis/redis-storage.js';
+import { CLAIM_DUE } from '../src/storage/redis/scripts.js';
 import { RedisTimerBackend } from '../src/storage/redis/timers.js';
 import { RedisWorkSource } from '../src/storage/redis/unit-of-work.js';
 import { record } from './contracts/group-store.js';
@@ -156,4 +157,77 @@ describeRedis('Redis timers (#35 AC7, AC12, ADR 0013, F13)', () => {
     }
     await inspect.flush(prefix);
   });
+  /** `n` group IDs, distinct and of a group ID's length. */
+  const ids = (n: number, from = 0) =>
+    Array.from({ length: n }, (_, i) => String(from + i).padStart(43, '0'));
+
+  /** Seeds expired members of app-a in `live` and `lg:app-a` (end bound before NOW). */
+  async function seedExpired(groupIds: string[]): Promise<void> {
+    for (const [i, id] of groupIds.entries()) {
+      await inspect.client.zAdd(`${prefix}:v1:live`, {
+        score: NOW - 1000 - i,
+        value: `app-a:${id}`,
+      });
+      await inspect.client.zAdd(`${prefix}:v1:lg:app-a`, { score: NOW - 1000 - i, value: id });
+    }
+  }
+
+  it('frees expired live members in bounded batches, whatever their shape (#47 AC2)', async () => {
+    prefix = randomPrefix();
+    const live = `${prefix}:v1:live`;
+    const lg = `${prefix}:v1:lg:app-a`;
+    const expired = ids(5);
+    await seedExpired(expired);
+    // A member without ':' (removed from live only) and one still live.
+    await inspect.client.zAdd(live, { score: NOW - 10, value: 'malformed' });
+    const [kept] = ids(1, 100);
+    await inspect.client.zAdd(live, { score: NOW + 60_000, value: `app-a:${kept}` });
+    await inspect.client.zAdd(lg, { score: NOW + 60_000, value: kept! });
+    const claim = () =>
+      link.script(
+        CLAIM_DUE,
+        [`${prefix}:v1:due`, live],
+        [`${prefix}:v1:t:`, String(NOW), String(NOW + 30_000), '2', `${prefix}:v1:lg:`],
+      );
+    const freed: number[] = [];
+    for (;;) {
+      const before = await inspect.client.zCard(live);
+      const reply = (await claim()) as unknown[];
+      expect(reply).toHaveLength(1);
+      const count = Number(reply[0]);
+      expect(count).toBeLessThanOrEqual(2);
+      expect(await inspect.client.zCard(live)).toBe(before - count);
+      freed.push(count);
+      if (count === 0) break;
+    }
+    expect(freed).toEqual([2, 2, 2, 0]);
+    expect(await inspect.client.zRange(live, 0, -1)).toEqual([`app-a:${kept}`]);
+    expect(await inspect.client.zRange(lg, 0, -1)).toEqual([kept]);
+    await inspect.flush(prefix);
+  });
+
+  for (const [count, calls] of [
+    [2 * 64 + 1, 3],
+    [64, 2],
+  ] as const) {
+    it(`frees a backlog of ${count} expired live members in one runDue (#47 AC2)`, async () => {
+      const { backend } = await setup();
+      const live = `${prefix}:v1:live`;
+      const lg = `${prefix}:v1:lg:app-a`;
+      const liveBefore = await inspect.client.zRange(live, 0, -1);
+      const lgBefore = await inspect.client.zRange(lg, 0, -1);
+      await seedExpired(ids(count));
+      const script = vi.spyOn(link, 'script');
+      try {
+        await backend.runDue();
+        // One call per full batch, then one that frees less than a batch.
+        expect(script.mock.calls.filter(([s]) => s === CLAIM_DUE)).toHaveLength(calls);
+      } finally {
+        script.mockRestore();
+      }
+      expect(await inspect.client.zRange(live, 0, -1)).toEqual(liveBefore);
+      expect(await inspect.client.zRange(lg, 0, -1)).toEqual(lgBefore);
+      await inspect.flush(prefix);
+    });
+  }
 });

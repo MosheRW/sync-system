@@ -16,7 +16,7 @@ import type { GroupTimers } from '../groups/group-timers.js';
 import type { Recipient, Target } from '../groups/recipients.js';
 import type { Session } from '../groups/session.js';
 import { type Logger, groupRef } from '../logging/logger.js';
-import { nextTerm, pickSuccessor } from './succession.js';
+import { nextTerm, pickSuccessor, successorCandidates } from './succession.js';
 
 const MINUTE_MS = 60_000;
 
@@ -37,6 +37,11 @@ export interface LifecycleHost {
   scheduleFrozenEnd(app: AppConfig, record: GroupRecord): Promise<void>;
   /** The participant attached as `pid`, if any. */
   sessionOf(record: GroupRecord, pid: string): Recipient | undefined;
+  /**
+   * `isOpen()` hints for `pids`; a remote cache miss is confirmed in Redis
+   * once (#42, security C12). A hint only: never grants anything by itself.
+   */
+  openOf(record: GroupRecord, pids: readonly string[]): Promise<ReadonlySet<string>>;
   /** A token for `pid` with the record's current claims (term, gct, lat). */
   issueToken(record: GroupRecord, pid: string, role: 'leader' | 'member'): string;
   /** The leader recovery state (#13 D13). */
@@ -317,19 +322,20 @@ export class LifecycleService {
    * group stays paused until the frozen bound, like frozen mode (AC21).
    */
   private async graceEnded(app: AppConfig, record: GroupRecord): Promise<void> {
-    const successor = pickSuccessor(record, (pid) => {
-      const session = this.host.sessionOf(record, pid);
-      return session !== undefined && session.isOpen();
-    });
-    if (record.handoff !== 'auto' || successor === undefined || record.pause === undefined) {
+    const noHandoff = (): void =>
       this.host.logger.info(
         { event: 'grace_ended', namespace: app.namespace, groupRef: groupRef(record.id) },
         'grace period ended without a handoff',
       );
-      return;
-    }
+    if (record.handoff !== 'auto' || record.pause === undefined) return noHandoff();
+    // A member or the old leader on a peer that started after this
+    // instance's last heartbeat is confirmed in Redis, once for the pick and
+    // the handoff together (#42, security R2, R4).
+    const open = await this.host.openOf(record, [...successorCandidates(record), record.leaderId]);
+    const successor = pickSuccessor(record, (pid) => open.has(pid));
+    if (successor === undefined) return noHandoff();
     const reason = record.pause.cause === 'inactive' ? 'handoff_inactivity' : 'handoff_disconnect';
-    await this.handoff(app, record, successor, reason);
+    await this.handoff(app, record, successor, reason, open);
   }
 
   /**
@@ -344,18 +350,26 @@ export class LifecycleService {
    * the new leader gets `leader.granted`, the roster, pending requests; an
    * attached old leader gets `leader.lost` with a member token; everyone
    * else `leader.changed`.
+   *
+   * Whether the old leader is attached comes from `open` (the grace end's
+   * hints) or, for a take-back, one `openOf([old])`: an old leader on a
+   * peer missing from the live cache is confirmed in Redis, so it is told
+   * and keeps its membership (#42, security S4, C12). A hint only.
    */
   async handoff(
     app: AppConfig,
     record: GroupRecord,
     successor: string,
     reason: 'handoff_disconnect' | 'handoff_inactivity' | 'take_back',
+    open?: ReadonlySet<string>,
   ): Promise<{ record: GroupRecord; granted: ServerMessage }> {
     const namespace = app.namespace;
-    const now = this.host.now();
     const old = record.leaderId;
     const oldSession = this.host.sessionOf(record, old);
-    const oldAttached = oldSession !== undefined && oldSession.isOpen();
+    const hints =
+      oldSession === undefined ? undefined : (open ?? (await this.host.openOf(record, [old])));
+    const oldAttached = hints?.has(old) === true;
+    const now = this.host.now();
     const participantIds = oldAttached
       ? record.participantIds
       : record.participantIds.filter((pid) => pid !== old);

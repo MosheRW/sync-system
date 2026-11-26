@@ -124,6 +124,14 @@ curl http://127.0.0.1:8080/health
 `docker compose up --build` with no service name also starts the reading app
 (see the [reading app README](../apps/reader/README.md)).
 
+To host the reading app next to your sync server without building it, use
+its public image (`ghcr.io/mosherw/sync-system-reader`, mirror
+`docker.io/moshewin/sync-system-reader`, its own version and tags): the
+reading app README's [Public image](../apps/reader/README.md#public-image)
+section has the `docker run` command, every setting, how to point it at this
+server, and why its API key is public (give it its own registration in the
+apps file with tight limits, and per-IP limits at the proxy).
+
 `compose.yaml` builds `apps/sync-server/Dockerfile`, mounts
 `config/apps.dev.json` read-only at `/config/apps.json`, sets every ceiling and
 cap to its default, health-checks `/health`, and binds the port to `127.0.0.1`
@@ -350,6 +358,9 @@ are in the Purpose column and below the table.
 | `REDIS_KEY_PREFIX`                            | `sync`               | -     | -        | Key prefix, `[a-z0-9][a-z0-9_-]`, at most 32 characters.                                                                                       |
 | `REDIS_CONNECT_TIMEOUT_SECONDS`               | `10`                 | `1`   | `120`    | Bound for the startup connection and each reconnect attempt.                                                                                   |
 | `REDIS_COMMAND_TIMEOUT_MS`                    | `2000`               | `100` | `30000`  | A Redis command not answered in time counts as unreachable.                                                                                    |
+
+The pub/sub link is probed every 5 s; with `REDIS_COMMAND_TIMEOUT_MS` above
+5000, a stalled link can take up to 5 s plus that timeout to be detected.
 
 `MAX_BUFFERED_BYTES` must be at least `4 x MAX_MESSAGE_SIZE_CEILING`, at least
 45056 (the largest `tokens.result`), and at least the largest roster snapshot
@@ -653,7 +664,17 @@ Raising `MAX_LIVE_GROUPS_PER_APP` raises the sustained rate (up to
 `MAX_GROUP_CREATES_PER_APP_PER_MINUTE`); raising the burst lowers it, and a
 limit just above twice the burst leaves almost no sustained rate. Keep the
 burst well below half the limit (for example at most a quarter): each
-restart that empties the budget state lets one more burst in. Raising
+restart that empties the budget state lets one more burst in. The budget
+state lives no longer than the app's latest group: the Redis key
+`lb:<ns>` ends 1 ms after that group's end bound, so once every group of
+the app has ended, the budget is full again. When the burst is more than
+the sustained rate times the group's life (`burst > rate x
+(maxSessionMinutes + 5 s)`, from a burst above a quarter of the limit or
+from a low `MAX_GROUP_CREATES_PER_APP_PER_MINUTE`), this refills sooner than
+the rate alone would: an app that is idle until its groups end gets its
+full burst back, so the per-minute setting limits creates while an app is
+busy, not across idle periods. Live creates still never pass half the
+limit. Raising
 `MAX_SESSION_MINUTES_CEILING` lowers the sustained rate of apps that use the
 longer sessions. Creates hold at most `MAX_LIVE_GROUPS_PER_APP / 2 / 10^6` of
 the 6-digit group codes: 0.5 % at the default, 5 % at the largest limit
@@ -1174,12 +1195,6 @@ server {
   app gets N times the join-attempt and code-guessing budget. Door codes stay
   bounded by the global rotation and pause. See
   [Several instances](#several-instances).
-- **A just-started instance is not yet a successor** (issue #42): for up to
-  5 seconds after an instance starts, its peers do not count its members when
-  a grace ends. If they hold the only eligible members, the group stays
-  paused until the leader returns or the frozen bound ends it (about 25
-  minutes by default). This is most likely during a rolling deploy: start new
-  instances a few seconds apart.
 - No global connection or request limits across instances; use per-IP limits
   at the reverse proxy.
 - Redis Cluster and Sentinel are not supported: one Redis endpoint.

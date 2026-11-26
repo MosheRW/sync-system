@@ -1,12 +1,12 @@
 # State: #67 fix(release): 12 pnpmfile tests fail in the node:24 CI container
 - Path: fast
-- Phase: validation
+- Phase: merged (PR #68 merged 2026-11-24 as d37f1b3; tagged v1.0.0)
 - Branch: fix/67-pnpmfile-tests-container
 - PR: #68
 - Plan approved by user: yes (2026-11-24)
 - Security-sensitive: yes
 - Review rounds: 1
-- Last updated by: qa
+- Last updated by: engineer (#81)
 ## Model log
 - pm grooming: sonnet (default) → DONE
 - architect plan: opus (NEXT_MODEL, unknown root cause) → DONE

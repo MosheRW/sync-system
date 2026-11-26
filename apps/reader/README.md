@@ -47,7 +47,7 @@ configuration at startup with the same rules; a bad value stops them with
 | `/?src=<url>`        | a text fetched by the browser from an allowed origin            |
 | `/library`           | the list of bundled books (only when `READER_LIBRARY=on`)       |
 | `/`                  | depends on `READER_ENTRY` (library, "No book selected", a book) |
-| `/health`            | `ok` (for health checks)                                        |
+| `/health`            | `{"status":"ok","version":"X.Y.Z"}` (liveness, JSON)            |
 
 Each reading page shows exactly one book and has no link to other books. A
 link with both `book` and `src` (or one of them twice) is an invalid link.
@@ -65,6 +65,82 @@ a LAN address, every text is refused with "This app needs a secure (HTTPS)
 connection". Put the server behind a TLS-terminating reverse proxy, and set
 `Strict-Transport-Security` there (the reader server does not send HSTS
 because it does not terminate TLS).
+
+## Public image
+
+The reader is published as a Docker image with its own version
+([ADR 0023](../../docs/decisions/0023-reader-version-tag-and-image.md)):
+
+| Registry                     | Image                                   |
+| ---------------------------- | --------------------------------------- |
+| GitHub (canonical)           | `ghcr.io/mosherw/sync-system-reader`    |
+| Docker Hub (the same images) | `docker.io/moshewin/sync-system-reader` |
+
+These two are the only official names. Anything else, for example the same
+image name under the `mosherw` namespace on Docker Hub (only GHCR uses
+`mosherw`), is not this project.
+
+**Release status:** the first image, `1.0.0` (git tag `reader-v1.0.0`), is
+published only after #27 and #28 are closed. Until then, build it locally
+with `docker compose up --build reader` (see [Run](#run)).
+
+Tags: `X.Y.Z`, `X.Y`, `X` and `latest`, each for `linux/amd64` and
+`linux/arm64`. The reader's `latest` is the reader's newest release, not the
+sync server's. **In production pin `X.Y.Z` or a digest** and check the
+digest against the GitHub release notes of `reader-vX.Y.Z`; `latest`, `X`
+and `X.Y` move with every release.
+
+To run it (pinned, published on the host's loopback only, behind your TLS
+proxy):
+
+```sh
+docker run -d --name reader --restart unless-stopped \
+  -p 127.0.0.1:8081:8080 \
+  --read-only --cap-drop ALL --security-opt no-new-privileges \
+  -e READER_SYNC_URL=wss://sync.example.org/ws \
+  -e READER_SYNC_API_KEY='<the reader app key from the sync server apps file>' \
+  ghcr.io/mosherw/sync-system-reader:1.0.0
+```
+
+The same from Docker Hub: replace the last line with
+`docker.io/moshewin/sync-system-reader:1.0.0`. Without any `-e` the image
+starts the library of bundled books with groups off.
+
+- **Settings.** Every setting is an environment variable, all optional:
+  the reader variables, `PORT` (default `8080`) and `HOST` (default
+  `0.0.0.0`) in [Configuration](#configuration), and the `READER_SYNC_*`
+  variables in [Sync settings](#sync-settings), each with its default and an
+  example. A bad value stops the container with `Config error: ...` lines.
+- **Pointing at a sync server.** Set `READER_SYNC_URL` to the sync server's
+  public `wss://` address and `READER_SYNC_API_KEY` to the key of the
+  reader's own registration in that server's apps file. The visitor's
+  browser connects to that URL, not the container, so it must be reachable
+  from the browser and use TLS. The reader page itself must be served over
+  HTTPS as well ([HTTPS is required](#https-is-required)): run it behind a
+  TLS-terminating reverse proxy.
+- **No secret in the image or its settings.** The image holds only the
+  built app, its small Node server and its one runtime dependency (zod);
+  no key, token or configuration is baked in, and the configuration comes
+  only from the environment at startup. **Every `READER_*` value is sent to
+  every visitor's browser** (it is injected into the page), so never put a
+  secret there, and never reuse the sync server's or another app's API key.
+- **The API key is public by design.** It ships in every page and identifies
+  the app; it grants nothing on its own. Give the reader its **own** app
+  registration with tight per-app limits (`maxConnections`, join budgets),
+  and put **per-IP connection and message rate limits at the reverse
+  proxy** (see [Sync settings](#sync-settings)).
+- **Keep `?src` off on public deployments.** It is off by default
+  (`READER_SRC_ORIGINS` empty). Turning it on lets any link make visitors'
+  browsers fetch a text from the listed origins, with the risks in
+  [ADR 0006](../../docs/decisions/0006-fetched-content-policy.md) and
+  [Fetched content](#fetched-content-src).
+- **Port and health.** The container listens on `8080` (`PORT`) as the
+  unprivileged `node` user. `/health` is the only health endpoint (liveness;
+  there is no `/ready`): it answers `200` with
+  `{"status":"ok","version":"X.Y.Z"}`, the image's version. The image's
+  `HEALTHCHECK` and the release check both use it. Anyone who reaches it
+  sees the version; deny `/health` at the proxy, except from your
+  monitoring, if that matters to you.
 
 ## Configuration
 

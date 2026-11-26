@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 
 const repoRoot = fileURLToPath(new URL('../../../', import.meta.url));
 
@@ -118,20 +118,46 @@ describe('publishable set (C4, security M3)', () => {
   });
 });
 
+// npm credential keys in an .npmrc, bare or scoped (`//host/:key=`):
+// `_authToken` anywhere (as before), plus the legacy `_auth` and `_password`
+// keys only as a whole key followed by `=`, so `_auth` is matched on its own
+// and not just through `_authToken`.
+const NPMRC_CREDENTIAL = /_authToken|(?:^|[\s:])(?:_auth|_password)\s*=/m;
+
 describe('no credentials or old names in tracked files', () => {
-  it('has no tracked .npmrc with an auth token (L6)', () => {
-    const npmrcs = trackedFiles().filter((path) => /(^|\/)\.npmrc$/.test(path));
-    for (const path of npmrcs) {
-      expect(read(path), path).not.toMatch(/_authToken/);
+  // Read every tracked file once for the three checks below. Scanning the whole
+  // repo per test is slow under the parallel full run (#78). Tests only filter.
+  let tracked: { path: string; text: string }[] = [];
+  // Tracked .npmrc files deleted from disk: the filter below would skip them silently.
+  let missingNpmrcs: string[] = [];
+  beforeAll(() => {
+    const paths = trackedFiles();
+    missingNpmrcs = paths.filter(
+      (path) => /(^|\/)\.npmrc$/.test(path) && !existsSync(join(repoRoot, path)),
+    );
+    tracked = paths
+      .filter((path) => existsSync(join(repoRoot, path)))
+      .map((path) => ({ path, text: read(path) }));
+  }, 60_000);
+
+  it('has no tracked .npmrc with a credential (L6)', () => {
+    expect(
+      missingNpmrcs,
+      `tracked .npmrc missing on disk, cannot check it for credentials: ${missingNpmrcs.join(', ')}`,
+    ).toEqual([]);
+    const npmrcs = tracked.filter(({ path }) => /(^|\/)\.npmrc$/.test(path));
+    for (const { path, text } of npmrcs) {
+      expect(text, `${path} contains an npm credential key`).not.toMatch(NPMRC_CREDENTIAL);
     }
   });
 
   it('has no old placeholder scope left outside history (AC50, Q-C)', () => {
     const oldScope = ['@sync', '-system/'].join('');
     const history = /^(docs\/issues\/|docs\/decisions\/00(0\d|1[0-5])-)/;
-    const hits = trackedFiles()
-      .filter((path) => !history.test(path) && !path.endsWith('.zip'))
-      .filter((path) => existsSync(join(repoRoot, path)) && read(path).includes(oldScope));
+    const hits = tracked
+      .filter(({ path }) => !history.test(path) && !path.endsWith('.zip'))
+      .filter(({ text }) => text.includes(oldScope))
+      .map(({ path }) => path);
     expect(hits).toEqual([]);
   });
 
@@ -140,13 +166,10 @@ describe('no credentials or old names in tracked files', () => {
     const oldMirror = ['docker.io/', 'mosherw'].join('');
     // The mosherw name is right only after `ghcr.io/` or as the npm `@` scope.
     const bareOld = /(?<!ghcr\.io\/|@)mosherw\/sync-system-server/;
-    const hits = trackedFiles()
-      .filter((path) => !path.startsWith('docs/issues/') && !path.endsWith('.zip'))
-      .filter((path) => existsSync(join(repoRoot, path)))
-      .filter((path) => {
-        const text = read(path);
-        return text.includes(oldMirror) || bareOld.test(text);
-      });
+    const hits = tracked
+      .filter(({ path }) => !path.startsWith('docs/issues/') && !path.endsWith('.zip'))
+      .filter(({ text }) => text.includes(oldMirror) || bareOld.test(text))
+      .map(({ path }) => path);
     expect(hits).toEqual([]);
   });
 });
@@ -273,7 +296,9 @@ describe('RELEASING.md load-bearing lines (C1-C5, M6, L1, L5, L8, L9, L11-L13)',
     expect(publishBlock).toContain('find /release -mindepth 1 ! -type f');
     expect(publishBlock).toContain('tar -xOzf');
     expect(publishBlock).toContain('sha512-');
-    expect(publishBlock).toContain('dist.integrity');
+    // #81: the registry check is its own anonymous block, after the revocation
+    expect(publishBlock).not.toContain('dist.integrity');
+    expect(step('5. Revoke the npm token')).toContain('dist.integrity');
     const tokenRead = publishBlock.indexOf('read -rs');
     for (const check of ['find /release', 'tar -xOzf', 'diff "$H/recomputed.txt"']) {
       expect(publishBlock.indexOf(check), check).toBeLessThan(tokenRead);
@@ -389,7 +414,9 @@ describe('RELEASING.md load-bearing lines (C1-C5, M6, L1, L5, L8, L9, L11-L13)',
   it('tags only on the host, from the verified merge commit (C2)', () => {
     const tagStep = step('1. Tag on the host');
     expect(tagStep).toContain('git tag -a');
-    expect(doc.split('git tag -a').length - 1).toBe(1);
+    // One `git tag -a` for the packages, one in the reader's own R1 (ADR 0023).
+    expect(doc.split('git tag -a').length - 1).toBe(2);
+    expect(tagStep.split('git tag -a').length - 1).toBe(1);
     expect(tagStep).toContain('git merge-base --is-ancestor');
     expect(tagStep).toContain('mergeCommit');
     const build = step('2. Build container');
@@ -408,9 +435,173 @@ describe('RELEASING.md load-bearing lines (C1-C5, M6, L1, L5, L8, L9, L11-L13)',
     expect(doc).not.toMatch(/file:\/\/\$\(pwd\)/);
   });
 
-  it('keeps bundles and outputs outside the repo (L11)', () => {
-    expect(doc).toContain('export REL="$(mktemp -d)"');
-    expect(doc).toContain('export IMG="$(mktemp -d)"');
+  it('keeps bundles and outputs outside the repo in a fixed per-version folder (L11, #81)', () => {
+    const setup = shell.slice(shell.indexOf('unset REF MODE SRC_URL M'));
+    for (const line of [
+      'unset REF MODE SRC_URL M',
+      'export REL="$HOME/sync-release-$V"',
+      'export IMG="$REL/image"',
+      '[ ! -L "$REL" ] || { echo "$REL is a symlink"; exit 1; }',
+      'mkdir -p "$REL" && chmod 700 "$REL"',
+    ]) {
+      expect(setup, line).toContain(line);
+    }
+    expect(doc).not.toContain('export IMG="$(mktemp -d)"');
+    expect(doc.replace(/\s+/g, ' ')).toContain('not checked out at `$HOME` itself');
+    // the dry run must not collide with a real release folder of the same V
+    const dryRun = doc.slice(doc.indexOf('## Dry run (QA)'));
+    expect(dryRun).toContain('REL="$(mktemp -d)"');
+    expect(dryRun).toContain('export IMG="$REL/image"');
+    // step 8 removes the folder, guarded
+    const after = step('8. After the release');
+    expect(after).toContain('[[ "${REL:-}" == "$HOME"/sync-release-[0-9]* ]]');
+    expect(after).toContain('rm -rf "$REL"');
+  });
+
+  it('keeps the registry DOCKER_CONFIG a mktemp folder, never under $REL (L9, #81)', () => {
+    const push = step('6. The server image');
+    expect(push).toContain('CFG="$(mktemp -d)"');
+    expect(push).toContain('export DOCKER_CONFIG="$CFG"');
+    expect(shell).not.toMatch(/DOCKER_CONFIG=[^\n]*\$\{?(REL|IMG|H|D)\b/);
+    expect(shell).not.toMatch(/CFG=[^\n]*\$\{?(REL|IMG|H|D)\b/);
+  });
+
+  it('re-clones in the check block and re-checks the clone before the push (#81, L2, L3)', () => {
+    const push = step('6. The server image');
+    const guard =
+      '[ -n "${IMG:-}" ] && [ "$IMG" = "${REL:-}/image" ] || { echo \'set REL and IMG (Phase B setup)\'; exit 1; }';
+    expect(push.split(guard).length - 1).toBe(2);
+    const clone = push.indexOf('git clone');
+    expect(push.indexOf('rm -rf "$D/src"')).toBeLessThan(clone);
+    const statuses = push.split('status --porcelain --ignored').length - 1;
+    expect(statuses).toBe(2);
+    expect(push).not.toMatch(/status --porcelain\)/);
+    const firstLogin = push.indexOf('docker login');
+    const recheck = push.indexOf('run the check block again');
+    expect(recheck).toBeGreaterThan(clone);
+    expect(recheck).toBeLessThan(firstLogin);
+  });
+
+  it('has a resume section that sets M again from the tag (#81, L5)', () => {
+    const resume = step('Resume in another terminal');
+    expect(resume).toContain('export M="$(git rev-parse "refs/tags/v$V^{commit}")"');
+    expect(resume).toContain('[[ "$M" =~ ^[0-9a-f]{40}$ ]]');
+    expect(resume).toContain('git merge-base --is-ancestor "$M" origin/main');
+    expect(resume).toContain('release notes draft');
+    expect(resume).toContain('never run step 1 again');
+    expect(resume).toMatch(/new token/);
+  });
+
+  it('says the blocks are bash and how to run them from PowerShell (#81 AC1, M4, R7)', () => {
+    const before = doc
+      .slice(doc.indexOf('## Before you start'), doc.indexOf('## Phase A'))
+      .replace(/\s+/g, ' ');
+    for (const text of [
+      'never PowerShell or cmd',
+      "ParserError: Missing closing ')'",
+      '& "C:\\Program Files\\Git\\bin\\bash.exe" -l',
+      '& "C:\\Program Files\\Git\\bin\\bash.exe" <file>',
+      '**outside the repo**',
+      'Never write a token into such a file',
+      'Delete the file after the release',
+      'Paste a token only right after its token prompt is visible',
+      '(Get-PSReadLineOption).HistorySavePath',
+      'history -d',
+      'revoke it now',
+    ]) {
+      expect(before, text).toContain(text);
+    }
+  });
+
+  it('verifies the registry anonymously after the revocation, ~5 minutes (#81 AC2, R4, M2, L6)', () => {
+    const verify = step('5. Revoke the npm token');
+    // revocation comes first, then the verify block
+    expect(verify.indexOf('delete `sync-system-release-vX.Y.Z`')).toBeLessThan(
+      verify.indexOf('```sh'),
+    );
+    const code = verify.slice(verify.indexOf('```sh'));
+    const runs = code.split(/\r?\n/).filter((line) => /docker (run|exec)\b/.test(line));
+    expect(runs).toHaveLength(1);
+    const run = runs[0] ?? '';
+    expect(run).toContain(
+      'docker run --rm "$NODE_IMAGE" npm view "$1@$V" dist.integrity --prefer-online',
+    );
+    expect(run).not.toMatch(/\s(-e|-i|-it|-v|--env|--env-file|--volume|--mount)\b/);
+    expect(code).not.toMatch(/DOCKER_CONFIG|read -r|_authToken|NPM_TOKEN|\btrap\b/);
+    expect(code).toContain('$(seq 30)');
+    expect(code).toContain('sleep 10');
+    expect(code).toContain('E404');
+    expect(code).toContain(`awk -v f="$2" '$1 == f { print $2 }' "$H/out/INTEGRITY.txt"`);
+    expect(code).toContain('echo "$2 expected $want"');
+    expect(code).toContain('(not an incident): run this block again in a few minutes');
+    // INCIDENT only on a non-empty, different value, and only once in all shell code
+    expect(shell.split('INCIDENT').length - 1).toBe(1);
+    const incident = code.indexOf('INCIDENT');
+    const nonEmpty = code.indexOf('if [ -n "$got" ]; then');
+    expect(nonEmpty).toBeGreaterThan(code.indexOf('if [ "$got" = "$want" ]'));
+    expect(incident).toBeGreaterThan(nonEmpty);
+    expect(verify.replace(/\s+/g, ' ')).toContain('2-3 minutes');
+    // the publish block keeps its cleanup, and only the "already published" view
+    expect(publishBlock).toContain('docker exec "$C" rm -f /root/.npmrc');
+    expect(publishBlock).toMatch(/npm view "\$1@\$V" version/);
+  });
+
+  it('needs a classic GHCR token and checks its prefix before the login (#81 AC3, R2, R3)', () => {
+    const push = step('6. The server image');
+    const flat = push.replace(/\s+/g, ' ');
+    for (const text of [
+      '**Tokens (classic)**',
+      '**untick `repo`**',
+      'only `write:packages` and `read:packages`',
+      'fine-grained',
+      'The token provided does not match expected scopes',
+      'never "No expiration"',
+    ]) {
+      expect(flat, text).toContain(text);
+    }
+    const check = push.indexOf('case "$T" in ghp_*)');
+    expect(check).toBeGreaterThan(
+      push.indexOf("read -rs -p 'GHCR classic token (write:packages): ' T"),
+    );
+    expect(check).toBeLessThan(push.indexOf('docker login ghcr.io'));
+    expect(push.indexOf('trap ')).toBeLessThan(check);
+    // $T is only matched by `case` or piped by printf into docker login, never printed
+    const usesT = shell.split(/\r?\n/).filter((line) => /\$\{?T\b/.test(line));
+    expect(usesT.length).toBeGreaterThanOrEqual(3);
+    for (const line of usesT) {
+      const piped = /^\s*printf '%s' "\$T" \| docker login \S+ -u \S+ --password-stdin$/.test(line);
+      const matched = /^\s*case "\$T" in ghp_\*\) ;; \*\) echo '[^'$]*'; exit 1 ;; esac$/.test(
+        line,
+      );
+      expect(piped || matched, line).toBe(true);
+    }
+  });
+
+  it('says which PR to release when there is no separate release PR (#81 AC5)', () => {
+    const which = step('Which PR');
+    expect(which).toContain('gh pr list --state merged --base main');
+    expect(which).toContain('mergeCommit');
+    expect(which).toMatch(/no separate release PR/);
+    expect(which).toContain('newest merged PR on `main`');
+  });
+
+  it('treats the shared index.docker.io entry as unprovable and revocation as the control (#81 AC6, R6)', () => {
+    const push = step('6. The server image');
+    const flat = push.replace(/\s+/g, ' ');
+    for (const text of [
+      '**Before the push block**',
+      'Docker Desktop',
+      'https://index.docker.io/v1/',
+      'cannot be told apart from a leftover release login',
+      'proves no logout',
+      '`ghcr.io` must not be listed',
+      'Revoking the Docker Hub token (below) is the control, and it is mandatory.',
+      'This is mandatory whatever the lists show',
+    ]) {
+      expect(flat, text).toContain(text);
+    }
+    expect(push.indexOf('**Before the push block**')).toBeLessThan(push.indexOf('docker login'));
+    expect(flat).not.toMatch(/neither may show `ghcr\.io` or `index\.docker\.io`/);
   });
 
   it('has the first-release ownership checklist and the npm settings (C5, E2)', () => {
@@ -500,6 +691,156 @@ describe('RELEASING.md load-bearing lines (C1-C5, M6, L1, L5, L8, L9, L11-L13)',
   });
 });
 
+describe('RELEASING.md reader image release (#77, ADR 0023, security.md controls 4-9, 11)', () => {
+  const doc = read('RELEASING.md');
+  const start = doc.indexOf('\n## Reader image release\n');
+  const reader = start === -1 ? '' : doc.slice(start, doc.indexOf('\n## ', start + 4));
+  const sub = (heading: string): string => {
+    const at = reader.indexOf(`\n### ${heading}`);
+    expect(at, heading).toBeGreaterThanOrEqual(0);
+    const next = reader.slice(at + 5).search(/\n##+ /);
+    return next === -1 ? reader.slice(at) : reader.slice(at, at + 5 + next);
+  };
+  const tagBlock = sub('R1. Tag on the host');
+  const checkBlock = sub('R3. Check the image');
+  const pushBlock = sub('R4. Push the image');
+  // Built at run time so this file doesn't match itself.
+  const placeholderMirror = ['docker.io/', 'mosherw/'].join('');
+
+  it('is one section between step 8 and the dry run, linked from the intro', () => {
+    expect(start).toBeGreaterThan(doc.indexOf('### 8. After the release'));
+    expect(start).toBeLessThan(doc.indexOf('\n## Dry run (QA)'));
+    expect(doc.slice(0, doc.indexOf('\n## The rule'))).toContain(
+      '[Reader image release](#reader-image-release)',
+    );
+    expect(reader).toContain('reader-v$RV');
+    expect(reader).toMatch(/do not release the reader image until #27 and #28 are closed/i);
+  });
+
+  it('tags only after the blockers are fixed in RM, with no date heuristic (L1)', () => {
+    expect(tagBlock).toContain('BLOCKERS="27 28"');
+    expect(tagBlock).toContain('gh issue view "$n" --json state,stateReason');
+    expect(tagBlock).toContain('CLOSED');
+    expect(tagBlock).toContain('[ "$S" != \'CLOSED COMPLETED\' ]');
+    expect(tagBlock).toContain('closedByPullRequestsReferences');
+    expect(tagBlock).toContain('git merge-base --is-ancestor "$MC" "$RM"');
+    expect(tagBlock).toMatch(/read -r -p "Type yes[^"]*" OK/);
+    expect(tagBlock).not.toMatch(/closedAt|committerdate|%cI|%ct/);
+  });
+
+  it('tags a checked commit of origin/main and pushes only that tag (control 4)', () => {
+    expect(tagBlock).toContain('[[ "$RV" =~ ^[0-9]+\\.[0-9]+\\.[0-9]+$ ]]');
+    expect(tagBlock).toContain('RM="${RM:-$(git rev-parse origin/main)}"');
+    expect(tagBlock).toContain('[[ "$RM" =~ ^[0-9a-f]{40}$ ]]');
+    expect(tagBlock).toContain('git merge-base --is-ancestor "$RM" origin/main');
+    for (const file of [
+      'apps/reader/package.json',
+      'apps/reader/src/config/version.ts',
+      'apps/reader/CHANGELOG.md',
+    ]) {
+      expect(tagBlock, file).toContain(`git show "$RM:${file}"`);
+    }
+    expect(tagBlock).toContain(`grep -q '"private": true'`);
+    expect(tagBlock).toContain('git rev-parse -q --verify "refs/tags/reader-v$RV"');
+    expect(tagBlock).toContain('git ls-remote --exit-code --tags origin "refs/tags/reader-v$RV"');
+    expect(tagBlock).toContain('git tag -a "reader-v$RV" "$RM" -m "reader-v$RV"');
+    const pushes = reader.split(/\r?\n/).filter((line) => /\bgit push\b/.test(line));
+    expect(pushes).toEqual(['  git push origin "refs/tags/reader-v$RV"']);
+  });
+
+  it('checks the image from a fresh clone and marks it checked only at the end (control 5, M1)', () => {
+    expect(checkBlock).toContain('git clone --quiet --branch "$REF" --depth 1 "$SRC_URL" "$D/src"');
+    expect(checkBlock).toContain('[ "$(git -C "$D/src" rev-parse HEAD)" = "$RM" ]');
+    expect(checkBlock).toContain('[ -z "$(git -C "$D/src" status --porcelain)" ]');
+    expect(checkBlock).toContain('rm -rf "$D/src" "$D/checked"');
+    expect(checkBlock).toContain('/health');
+    expect(checkBlock).toContain('\\"version\\":\\"$RV\\"');
+    expect(checkBlock).toContain('id -u');
+    expect(checkBlock).toContain("-name '*.map'");
+    expect(checkBlock).toContain('org.opencontainers.image.revision=$RM');
+    expect(checkBlock).toContain('--platform linux/arm64');
+    // The check container gets no env, no mount and no credential.
+    const run = checkBlock.split(/\r?\n/).find((line) => /docker run\b/.test(line)) ?? '';
+    expect(run).toBe(
+      '  docker run -d --name sync-reader-health "sync-reader-check:$RV" >/dev/null',
+    );
+    const code = checkBlock.slice(checkBlock.indexOf('```sh'), checkBlock.lastIndexOf('```'));
+    const lines = code.split(/\r?\n/).filter((line) => line.trim() !== '' && line !== ')');
+    expect(lines.at(-2)).toBe('  echo "$RM" > "$D/checked"');
+  });
+
+  it('pushes only a checked clone, with the step 6 credential pattern (control 6, M1, C3)', () => {
+    const code = pushBlock.slice(pushBlock.indexOf('```sh'));
+    const guard = code.indexOf('[ "$(tail -n 1 "$D/checked")" = "$RM" ]');
+    const head = code.indexOf('[ "$(git -C "$D/src" rev-parse HEAD)" = "$RM" ]');
+    const clean = code.indexOf('[ -z "$(git -C "$D/src" status --porcelain)" ]');
+    const login = code.indexOf('docker login');
+    for (const at of [guard, head, clean]) {
+      expect(at).toBeGreaterThan(-1);
+      expect(at).toBeLessThan(login);
+    }
+    expect(code).toContain('export DOCKER_CONFIG="$CFG"');
+    const trap = /trap '([^']*docker logout[^']*)' EXIT/.exec(code)?.[1] ?? '';
+    expect(trap).toMatch(/docker logout ghcr\.io[^;]*\|\| true/);
+    expect(trap).toMatch(/docker logout docker\.io[^;]*\|\| true/);
+    expect(trap).toContain('rm -rf "$DOCKER_CONFIG"');
+    expect(code.indexOf("trap 'docker logout ghcr.io")).toBeLessThan(login);
+    expect(code).toContain('read -rs -p');
+    expect(code).toContain(`printf '%s' "$T" | docker login ghcr.io -u mosherw --password-stdin`);
+    expect(code).toContain(
+      `printf '%s' "$T" | docker login docker.io -u moshewin --password-stdin`,
+    );
+    expect(code.split('unset T').length - 1).toBe(2);
+    expect(code).toContain('--platform linux/amd64,linux/arm64 --push');
+    for (const tag of ['$RV', '$MAJOR.$MINOR', '$MAJOR', 'latest']) {
+      expect(code, tag).toContain(`ghcr.io/mosherw/sync-system-reader:${tag}`);
+      expect(code, tag).toContain(`docker.io/moshewin/sync-system-reader:${tag}`);
+    }
+    expect(code).toContain('imagetools inspect "ghcr.io/mosherw/sync-system-reader:$RV"');
+    expect(code).toContain('imagetools inspect "docker.io/moshewin/sync-system-reader:$RV"');
+    expect(pushBlock).toMatch(/revoke\s+both registry tokens/i);
+    expect(pushBlock).toContain('(#6-the-server-image-on-the-host)');
+  });
+
+  it('creates the GHCR token with write:packages only and checks its scopes (control 7, M2)', () => {
+    expect(pushBlock).toContain('https://github.com/settings/tokens/new?scopes=write:packages');
+    expect(pushBlock).toMatch(/if `repo` is ticked,\s+untick it/);
+    expect(pushBlock).toContain('"Read & Write"');
+  });
+
+  it('creates the GitHub release from the existing tag, never as Latest (control 8, L2)', () => {
+    expect(sub('R5. GitHub release')).toContain(
+      'gh release create "reader-v$RV" --verify-tag --latest=false',
+    );
+  });
+
+  it('checks anonymous pulls in a cleaned-up temporary config (control 9, L4)', () => {
+    const after = sub('R6. After the reader release');
+    expect(after).toContain('set the GHCR package `sync-system-reader` public');
+    const code = after.slice(after.indexOf('```sh'));
+    expect(code).toMatch(/^\( set -euo pipefail$/m);
+    expect(code).toContain('export MSYS_NO_PATHCONV=1');
+    expect(code).toContain('CFG="$(cygpath -m "$CFG")"');
+    expect(code).toContain(`trap 'rm -rf "$DOCKER_CONFIG"' EXIT`);
+    expect(code).toContain('docker pull');
+    expect(code).not.toContain('docker login');
+  });
+
+  it('has a reader dry run that never tags, logs in or pushes', () => {
+    const dry = sub('Reader dry run (QA)');
+    expect(dry).toContain('cygpath -m "$(pwd)"');
+    expect(dry).toMatch(/Never run R1, R4 or R5/);
+    expect(dry).not.toMatch(/docker login|git tag|--push/);
+  });
+
+  it('never pushes to the placeholder namespace and keeps the npm bans', () => {
+    expect(reader).not.toContain(placeholderMirror);
+    for (const banned of ['docker login -p', 'set -x', 'echo $T', 'echo "$T"', 'npm publish']) {
+      expect(reader, banned).not.toContain(banned);
+    }
+  });
+});
+
 describe('release candidate 1.0.0 (AC48, AC49)', () => {
   const GROUP_DIRS = [...PUBLISHED_DIRS, 'apps/sync-server'] as const;
 
@@ -510,10 +851,21 @@ describe('release candidate 1.0.0 (AC48, AC49)', () => {
     expect(changelog).toMatch(/^## 1\.0\.0$/m);
   });
 
-  it('keeps the reader private at 0.1.0, outside the group', () => {
-    expect(manifest('apps/reader').version).toBe('0.1.0');
+  it('keeps the reader private at its own 1.0.0, outside the group (ADR 0023 B1)', () => {
+    expect(manifest('apps/reader').version).toBe('1.0.0');
     expect(manifest('apps/reader').private).toBe(true);
-    expect(existsSync(join(repoRoot, 'apps/reader/CHANGELOG.md'))).toBe(false);
+    expect(read('apps/reader/src/config/version.ts')).toMatch(
+      /^export const READER_VERSION = '1\.0\.0';$/m,
+    );
+    const changelog = read('apps/reader/CHANGELOG.md');
+    expect(changelog).toMatch(/^# @mosherw\/sync-system-reader$/m);
+    expect(changelog).toMatch(/^## 1\.0\.0$/m);
+    const config = JSON.parse(read('.changeset/config.json')) as {
+      fixed: string[][];
+      ignore: string[];
+    };
+    expect(config.ignore).toEqual(['@mosherw/sync-system-reader']);
+    expect(config.fixed.flat()).not.toContain('@mosherw/sync-system-reader');
   });
 
   it('states protocol 1 with minimum 1 and the notes for pre-release builds', () => {

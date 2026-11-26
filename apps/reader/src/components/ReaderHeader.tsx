@@ -44,7 +44,11 @@ export function ReaderHeader({
             />
           ) : null}
         </p>
-        <p className={styles.counter}>{format(t.pageCounter, { n: index + 1, total })}</p>
+        {/* pageCounter is numbers and separators only: it is shown in an LTR isolate so
+            "1 / 3" reads in order in an RTL interface. Keep words out of it. */}
+        <p className={styles.counter}>
+          <bdi dir="ltr">{format(t.pageCounter, { n: index + 1, total })}</bdi>
+        </p>
         <div className={styles.slot}>{endSlot}</div>
       </div>
       {below}

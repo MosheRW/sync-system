@@ -118,6 +118,7 @@ import type { ApprovalStore } from '../joins/approval-store.js';
 import type { ParkingRegistry } from '../storage/redis/parking.js';
 import { ParkingLot } from './parking-lot.js';
 import { canSupersede, classifyToken } from './resume.js';
+import { logHintFailure, openHints } from './open-hints.js';
 import { nextTerm } from '../lifecycle/succession.js';
 import { type RefreshPolicy, TokenRefresher } from './token-refresher.js';
 import { type GroupActions, type Membership, type Session, membershipKey } from './session.js';
@@ -372,6 +373,12 @@ export class GroupService implements GroupActions {
       toMembers: (record, message) => this.toMembers(record, message),
       scheduleFrozenEnd: (app, record) => this.scheduleFrozenEnd(app, record),
       sessionOf: (record, pid) => this.sessionOf(record, pid),
+      openOf: (record, pids) =>
+        openHints(
+          pids.map((pid) => [pid, this.recipientOf(record, pid)] as const),
+          deps.cluster === undefined ? undefined : (ids) => deps.cluster!.host.liveOf(ids),
+          logHintFailure(deps.logger),
+        ),
       issueToken: (record, pid, role) =>
         this.issueToken(record.appNamespace, record, pid, role, this.now()),
       leaderState: (record) => this.leaderState(record),
