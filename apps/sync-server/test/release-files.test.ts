@@ -118,6 +118,12 @@ describe('publishable set (C4, security M3)', () => {
   });
 });
 
+// npm credential keys in an .npmrc, bare or scoped (`//host/:key=`):
+// `_authToken` anywhere (as before), plus the legacy `_auth` and `_password`
+// keys only as a whole key followed by `=`, so `_auth` is matched on its own
+// and not just through `_authToken`.
+const NPMRC_CREDENTIAL = /_authToken|(?:^|[\s:])(?:_auth|_password)\s*=/m;
+
 describe('no credentials or old names in tracked files', () => {
   // Read every tracked file once for the three checks below. Scanning the whole
   // repo per test is slow under the parallel full run (#78). Tests only filter.
@@ -134,14 +140,14 @@ describe('no credentials or old names in tracked files', () => {
       .map((path) => ({ path, text: read(path) }));
   }, 60_000);
 
-  it('has no tracked .npmrc with an auth token (L6)', () => {
+  it('has no tracked .npmrc with a credential (L6)', () => {
     expect(
       missingNpmrcs,
-      `tracked .npmrc missing on disk, cannot check it for _authToken: ${missingNpmrcs.join(', ')}`,
+      `tracked .npmrc missing on disk, cannot check it for credentials: ${missingNpmrcs.join(', ')}`,
     ).toEqual([]);
     const npmrcs = tracked.filter(({ path }) => /(^|\/)\.npmrc$/.test(path));
     for (const { path, text } of npmrcs) {
-      expect(text, path).not.toMatch(/_authToken/);
+      expect(text, `${path} contains an npm credential key`).not.toMatch(NPMRC_CREDENTIAL);
     }
   });
 
