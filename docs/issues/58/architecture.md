@@ -114,6 +114,18 @@ read (<code>)` with `<code>` only if it matches `/^E[A-Z0-9]+$/`, else
   `env | file | dev | random`, logged for every start (Q5). No path, no
   value, no length. Existing `token_secret_random`, `dev_token_secret`,
   `token_secret_previous_set` warnings are unchanged.
+- Deviation (Gate 3 round 3, user request): `TokenSecrets` is no longer an
+  interface with `current` / `previous` Buffers. It is an opaque, frozen
+  class: the bytes are copied into private fields, the only public members
+  are `source` and `hasPrevious`, and `toJSON` / `toString` /
+  `inspect.custom` return the fixed marker (C7). The bytes are read only by
+  `tokenSecretBytes()`, which `tokens/token-keys.ts` (`TokenKeyring`) alone
+  imports (static check `test/token-secret-readers.test.ts`, by module
+  structure). Library callers still pass their own Buffers as
+  `TokenSecretsInput` (`{ current, previous?, source }`);
+  `createSyncServer` accepts either and copies the input through
+  `redactTokenSecrets()`. HKDF, HMAC, `timingSafeEqual` and rotation are
+  unchanged. The server package is private, so no public API changes.
 
 ### 3.3 Redis (`redis.ts`)
 
