@@ -6,8 +6,9 @@
 - Plan approved by user: yes
 - Security-sensitive: no
 - Review rounds: 2
-- Last updated by: engineer
+- Last updated by: qa
 ## Model log
+- qa review round 2: opus (rule: round 2) → PASS
 - engineer fix: opus (rule: fix round) → DONE
 - security code: opus (rule) → PASS (L1 closed; 1 low advisory, pre-existing: L6 regex misses legacy _auth=/_password= keys)
 - qa review: sonnet (NEXT_MODEL from engineer) → PASS
