@@ -1,23 +1,26 @@
 # State: #92 fix(release): release:dry-run cannot run for an already-published version
 - Path: fast
-- Phase: implementation
+- Phase: validation
 - Branch: fix/92-dry-run-published-version
 - PR: #95
 - Plan approved by user: yes (Gate 2, 2026-11-26)
 - Security-sensitive: yes
-- Review rounds: 0
-- Last updated by: engineer
+- Review rounds: 1
+- Last updated by: qa
 ## Model log
 - pm groom: sonnet (default) → DONE
 - architect plan: opus (NEXT_MODEL) → DONE
 - security plan: opus (rule) → PASS
 - engineer implement: opus (rule/Implementer model) → DONE
+- qa review r1: sonnet (NEXT_MODEL) → PASS
 ## Gate 2 decisions
 - Plan approved.
 - L4 in scope: the registry lookup refuses to run (fixed message) when
   `NODE_TLS_REJECT_UNAUTHORIZED=0` is set; covered by a test.
 - N1 (reader release R2 wording) out of scope, tracked as #100. RELEASING.md
   R2, step 6 and docs/roadmap.md untouched.
+## QA verdict
+- Round 1: PASS (checks green; AC 4/4 met; manual dry-run against published v1.0.0 passed; release-files L11 failure is pre-existing on origin/main)
 ## Open questions
 - none
 ## Deviations from plan
