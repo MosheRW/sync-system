@@ -356,6 +356,9 @@ are in the Purpose column and below the table.
 | `REDIS_CONNECT_TIMEOUT_SECONDS`               | `10`                 | `1`   | `120`    | Bound for the startup connection and each reconnect attempt.                                                                                   |
 | `REDIS_COMMAND_TIMEOUT_MS`                    | `2000`               | `100` | `30000`  | A Redis command not answered in time counts as unreachable.                                                                                    |
 
+The pub/sub link is probed every 5 s; with `REDIS_COMMAND_TIMEOUT_MS` above
+5000, a stalled link can take up to 5 s plus that timeout to be detected.
+
 `MAX_BUFFERED_BYTES` must be at least `4 x MAX_MESSAGE_SIZE_CEILING`, at least
 45056 (the largest `tokens.result`), and at least the largest roster snapshot
 plus 32 KiB: `256 + (2 x MAX_GROUP_SIZE_CEILING + 2) x 320 + 32768` bytes

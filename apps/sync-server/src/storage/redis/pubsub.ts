@@ -177,6 +177,12 @@ export class RedisPubSub {
   /** Bumped by every new subscription or leave: an older baseline read is ignored. */
   private generation = 0;
   private closed = false;
+  /**
+   * The token of the stall probe in flight (#86): set before its first
+   * await, cleared when it settles (only if still its own) and by
+   * `replace()` / `close()`, so the next link is probed on the next tick.
+   */
+  private probing: object | undefined;
   private waiters: Array<{ seq: number; resolve: () => void }> = [];
   private receiver: RemoteReceiver | undefined;
 
@@ -335,15 +341,38 @@ export class RedisPubSub {
     });
   }
 
-  /** One stall probe (security C15, F20): a failed PING replaces the link. */
+  /**
+   * One stall probe (security C15, F20): a failed PING replaces the link.
+   *
+   * Two rules (#86): one probe is in flight at a time (a tick while one is
+   * pending is skipped, so no PINGs pile up on a stalled link), and a result
+   * for a link that was replaced, dropped or closed meanwhile is ignored (a
+   * late failure of an old link never replaces the new one). A rejected PING
+   * counts as a failed probe of its link.
+   *
+   * Contract: `SubscriberLink.probe()` and `reopen()` must settle within a
+   * bounded time (the command and connect timeouts in `connect.ts`).
+   * Otherwise the in-flight flag stays set and stall detection stops on this
+   * instance.
+   */
   async probe(): Promise<void> {
-    if (this.closed || this.replacing) return;
-    if (this.sub === undefined) {
-      await this.reopen();
-      return;
+    if (this.closed || this.replacing || this.probing !== undefined) return;
+    const token = {};
+    this.probing = token;
+    try {
+      const sub = this.sub;
+      if (sub === undefined) {
+        await this.reopen();
+        return;
+      }
+      if (this.down) return;
+      const ok = await sub.probe().catch(() => false);
+      // A result for a link that was replaced, dropped or closed meanwhile is not this link's.
+      if (sub !== this.sub || this.closed || this.replacing || this.down) return;
+      if (!ok) this.replace('stalled');
+    } finally {
+      if (this.probing === token) this.probing = undefined;
     }
-    if (this.down) return;
-    if (!(await this.sub.probe())) this.replace('stalled');
   }
 
   private onLinkState(sub: SubscriberLink, state: 'down' | 'up'): void {
@@ -367,6 +396,8 @@ export class RedisPubSub {
   private replace(cause: string): void {
     if (this.replacing || this.closed) return;
     this.replacing = true;
+    // A PING still pending on the old link must not hold back probing the new one.
+    this.probing = undefined;
     const old = this.sub;
     this.sub = undefined;
     this.channel = undefined;
@@ -414,6 +445,7 @@ export class RedisPubSub {
 
   async close(): Promise<void> {
     this.closed = true;
+    this.probing = undefined;
     this.release();
     const sub = this.sub;
     this.sub = undefined;
