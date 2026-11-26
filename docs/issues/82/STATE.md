@@ -6,11 +6,12 @@
 - Plan approved by user: no
 - Security-sensitive: yes
 - Review rounds: 0
-- Last updated by: architect
+- Last updated by: security
 ## Model log
 - pm grooming: sonnet (default) → DONE
 - architect plan: opus (rule: security-sensitive) → DONE
+- security plan: opus (rule) → PASS
 ## Open questions
-- none
+- Gate 2: security C5 (M-1), pinned builder vs docs-only, see security.md
 ## Deviations from plan
 - none
