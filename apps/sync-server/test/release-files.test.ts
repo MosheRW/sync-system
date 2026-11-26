@@ -122,13 +122,23 @@ describe('no credentials or old names in tracked files', () => {
   // Read every tracked file once for the three checks below. Scanning the whole
   // repo per test is slow under the parallel full run (#78). Tests only filter.
   let tracked: { path: string; text: string }[] = [];
+  // Tracked .npmrc files deleted from disk: the filter below would skip them silently.
+  let missingNpmrcs: string[] = [];
   beforeAll(() => {
-    tracked = trackedFiles()
+    const paths = trackedFiles();
+    missingNpmrcs = paths.filter(
+      (path) => /(^|\/)\.npmrc$/.test(path) && !existsSync(join(repoRoot, path)),
+    );
+    tracked = paths
       .filter((path) => existsSync(join(repoRoot, path)))
       .map((path) => ({ path, text: read(path) }));
   }, 60_000);
 
   it('has no tracked .npmrc with an auth token (L6)', () => {
+    expect(
+      missingNpmrcs,
+      `tracked .npmrc missing on disk, cannot check it for _authToken: ${missingNpmrcs.join(', ')}`,
+    ).toEqual([]);
     const npmrcs = tracked.filter(({ path }) => /(^|\/)\.npmrc$/.test(path));
     for (const { path, text } of npmrcs) {
       expect(text, path).not.toMatch(/_authToken/);
