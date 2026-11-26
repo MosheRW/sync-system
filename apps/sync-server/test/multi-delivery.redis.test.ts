@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest';
-import { type TestCluster, startCluster } from './helpers/cluster.js';
+import { FAST_TIMINGS, type TestCluster, startCluster } from './helpers/cluster.js';
 import { type TestGroup, codesOf } from './helpers/groups.js';
 import { ManualScheduler } from './helpers/manual-scheduler.js';
 import { describeRedis, inspector } from './helpers/redis.js';
@@ -372,7 +372,14 @@ describeRedis('effects across instances over pub/sub (#35 AC17, architecture 12.
   });
 
   it('a stalled subscriber link is found by its probe and replaced (C15, F20)', async () => {
-    cluster = await startCluster();
+    // Production's ratios (heartbeat : self-fence : liveness = 1 : 2 : 3), so
+    // the probe interval is three times the 500 ms command timeout and at most
+    // one probe is in flight. With the 150 ms heartbeat, stale probe results
+    // replaced the new link again under load (#80).
+    cluster = await startCluster({
+      redisTimings: { ...FAST_TIMINGS, heartbeatMs: 1_500, selfFenceMs: 3_000, livenessMs: 4_500 },
+    });
+    await cluster.converged();
     const [a, b] = cluster.nodes;
     const group = await groupAcross(a!.ts, [b!.ts]);
     // B's second connection is its subscriber link: stall it only.
@@ -390,5 +397,7 @@ describeRedis('effects across instances over pub/sub (#35 AC17, architecture 12.
     await again.next('group.joined');
     group.leader.send({ type: 'position.update', position: { page: 4 } });
     expect(await again.next('position.updated')).toMatchObject({ position: { page: 4 } });
+    // Found once and replaced once: the new link stays.
+    expect(b!.ts.logs.records().filter((r) => r.event === 'pubsub_link_lost')).toHaveLength(1);
   });
 });
