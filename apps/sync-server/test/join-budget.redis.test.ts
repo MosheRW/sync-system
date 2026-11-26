@@ -1,13 +1,21 @@
 import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest';
 import { MemoryJoinBudget } from '../src/joins/join-budget.js';
 import { createLogger } from '../src/logging/logger.js';
-import { StorageReplyError } from '../src/storage/errors.js';
-import type { RedisLink } from '../src/storage/redis/connect.js';
+import { StorageReplyError, StorageUnavailableError } from '../src/storage/errors.js';
+import { parseRedisSettings } from '../src/config/redis.js';
+import { type RedisLink, connectRedis } from '../src/storage/redis/connect.js';
 import { RedisCodeIndex } from '../src/storage/redis/codes.js';
 import { RedisJoinBudget } from '../src/storage/redis/join-budget.js';
 import { redisContext } from '../src/storage/redis/redis-storage.js';
 import { JOIN_BUDGET } from '../src/storage/redis/scripts.js';
-import { describeRedis, inspector, randomPrefix, testLink } from './helpers/redis.js';
+import {
+  TEST_REDIS_URL,
+  describeRedis,
+  inspector,
+  randomPrefix,
+  testLink,
+} from './helpers/redis.js';
+import { TcpProxy } from './helpers/tcp-proxy.js';
 import type { TestClient } from './helpers/test-client.js';
 import {
   KEY_A,
@@ -273,4 +281,119 @@ describeRedis('the per-app join budget across instances (#41)', () => {
     other.send({ type: 'group.joinByCode', reqId: 'o', joinCode: '000000' });
     expect(await other.next('error')).toMatchObject({ reqId: 'o', code: 'CODE_NOT_FOUND' });
   });
+});
+
+/**
+ * ADR 0024 option 1 (#41 AC5, security JB6, JB7): a join whose budget step
+ * cannot reach Redis closes with `1001` like any storage failure, and no
+ * lookup or ticket check runs; a reply error stays INTERNAL_ERROR.
+ */
+describeRedis('a join while the budget step fails (#41 ADR 0024)', () => {
+  let inspect: Awaited<ReturnType<typeof inspector>>;
+  let proxy: TcpProxy;
+  let prefix: string;
+  let link: RedisLink;
+  let ts: TestServer | undefined;
+
+  const CODE = '482913';
+
+  beforeAll(async () => {
+    inspect = await inspector();
+  });
+  afterAll(() => {
+    inspect.close();
+  });
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    proxy.restore();
+    await ts?.close();
+    ts = undefined;
+    await proxy.close();
+    await inspect.flush(prefix);
+  });
+
+  async function start(): Promise<TestServer> {
+    const target = new URL(TEST_REDIS_URL!);
+    proxy = await TcpProxy.start(target.hostname, Number(target.port || 6379));
+    const url = new URL(TEST_REDIS_URL!);
+    url.hostname = '127.0.0.1';
+    url.port = String(proxy.port);
+    prefix = randomPrefix();
+    const connected = await connectRedis(
+      parseRedisSettings({
+        REDIS_URL: url.toString(),
+        REDIS_KEY_PREFIX: prefix,
+        REDIS_COMMAND_TIMEOUT_MS: '300',
+        REDIS_CONNECT_TIMEOUT_SECONDS: '1',
+      })!,
+      { logger: createLogger({ level: 'silent' }), nodeEnv: 'test' },
+    );
+    if (!connected.ok) throw new Error(connected.message);
+    link = connected.link;
+    ts = await startTestServer({ redisPrefix: prefix, redisLink: link });
+    return ts;
+  }
+
+  /** Makes JOIN_BUDGET fail with `error`; every other script runs. */
+  function failBudget(error: () => Error): void {
+    const script = link.script.bind(link);
+    vi.spyOn(link, 'script').mockImplementation((lua, keys, args) =>
+      lua === JOIN_BUDGET ? Promise.reject(error()) : script(lua, keys, args),
+    );
+  }
+
+  function expectClosedLog(server: TestServer, type: string): void {
+    const closed = server.logs
+      .records()
+      .filter((record) => record.event === 'storage_unavailable_closed');
+    expect(closed).toEqual([expect.objectContaining({ type })]);
+    expect(Object.keys(closed[0]!).sort()).toEqual(
+      ['event', 'hostname', 'level', 'msg', 'pid', 'time', 'type'].sort(),
+    );
+    expect(server.logs.text).not.toContain(CODE);
+  }
+
+  it('closes a code join with 1001 and runs no lookup (option 1)', async () => {
+    const server = await start();
+    const lookup = vi.spyOn(RedisCodeIndex.prototype, 'lookup');
+    const client = await server.connectReady();
+    failBudget(() => new StorageUnavailableError());
+    client.send({ type: 'group.joinByCode', reqId: 'j', joinCode: CODE });
+    expect(await client.closed()).toMatchObject({ code: 1001 });
+    expect(lookup).not.toHaveBeenCalled();
+    expectClosedLog(server, 'group.joinByCode');
+  });
+
+  it('closes a QR join with 1001 before the ticket check (option 1)', async () => {
+    const server = await start();
+    const client = await server.connectReady();
+    failBudget(() => new StorageUnavailableError());
+    client.send({ type: 'group.joinByQr', reqId: 'q', ticket: 'not-a-ticket' });
+    expect(await client.closed()).toMatchObject({ code: 1001 });
+    expectClosedLog(server, 'group.joinByQr');
+    expect(server.logs.find('join_rejected')).toBeUndefined();
+  });
+
+  it('answers INTERNAL_ERROR on a reply error and keeps the connection (security C8)', async () => {
+    const server = await start();
+    const lookup = vi.spyOn(RedisCodeIndex.prototype, 'lookup');
+    const client = await server.connectReady();
+    failBudget(() => new StorageReplyError('ERR'));
+    client.send({ type: 'group.joinByCode', reqId: 'j', joinCode: CODE });
+    expect(await client.next('error')).toMatchObject({ reqId: 'j', code: 'INTERNAL_ERROR' });
+    expect(client.isClosed).toBe(false);
+    expect(lookup).not.toHaveBeenCalled();
+    expect(link.state).toBe('connected');
+  });
+
+  it('closes with 1001 when Redis stops answering (a real timeout)', async () => {
+    const server = await start();
+    const lookup = vi.spyOn(RedisCodeIndex.prototype, 'lookup');
+    const client = await server.connectReady();
+    proxy.stall();
+    client.send({ type: 'group.joinByCode', reqId: 'j', joinCode: CODE });
+    expect(await client.closed()).toMatchObject({ code: 1001 });
+    expect(lookup).not.toHaveBeenCalled();
+    expect(server.logs.text).not.toContain(CODE);
+  }, 20_000);
 });
