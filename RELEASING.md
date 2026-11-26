@@ -92,6 +92,22 @@ Bump the gitleaks image the same way, in its own reviewed PR:
 index digest, and the step 0 scan with the new reference still prints
 `no leaks found`.
 
+The `sync-release` builder of [step 6](#6-the-server-image-on-the-host)
+runs a BuildKit image pinned by tag and digest:
+`moby/buildkit:v0.35.1@sha256:baf6138eb8c37644800c7c913fba051e840ebb9ba13eaf92d92ef9a1712d0b4c`.
+When you start each release, check the
+[moby/buildkit security advisories](https://github.com/moby/buildkit/security/advisories):
+if the pinned version is affected, bump it first, in its own PR. Bump it
+only in its own reviewed PR: `docker buildx imagetools inspect moby/buildkit:<vX.Y.Z>`
+on a release tag (never `latest`, `buildx-stable-1`, `master`, `nightly`
+or an rc) must show the new index digest with `attestation-manifest`
+entries, and `--format '{{json .Provenance}}'` must show the build from
+`https://github.com/moby/buildkit.git#refs/tags/<vX.Y.Z>`. Replace the
+reference in every `docker buildx create` line (the release-files test
+requires them identical), record the old and new index digests in the PR,
+and on the host run `docker buildx rm sync-release` before the next
+release.
+
 ## Phase A: the release PR
 
 1. Every user-visible change adds a changeset (`pnpm changeset`) in its PR.
@@ -570,8 +586,16 @@ logouts and the removal of the config run on every exit:
 ```
 
 Record the manifest-list `Digest:` both inspections print (it is the same
-image). If the default builder cannot build two platforms, run
-`docker buildx create --use --name sync-release` once and repeat the block.
+image). If the default builder cannot build two platforms, create the
+release builder once and repeat the block:
+`docker buildx create --use --name sync-release --driver docker-container --driver-opt image=moby/buildkit:v0.35.1@sha256:baf6138eb8c37644800c7c913fba051e840ebb9ba13eaf92d92ef9a1712d0b4c`.
+If buildx says `sync-release` already exists, it may be an older builder on
+an unpinned BuildKit: run `docker buildx rm sync-release` and create it
+again. Then `docker buildx inspect --bootstrap sync-release`, and
+`docker inspect -f '{{.Config.Image}}' buildx_buildkit_sync-release0` must
+print the pinned reference. The default builder (Docker Desktop's `docker`
+driver) uses the BuildKit built into Docker itself, which is updated with
+Docker, not by this pin.
 
 After the block, run the same credential helper `list` and look at
 `~/.docker/config.json` again:
@@ -805,8 +829,10 @@ variable, no mount and no credential.
 ```
 
 The arm64 build runs under emulation and takes several minutes. If the
-default builder cannot build `linux/arm64`, run
-`docker buildx create --use --name sync-release` once and repeat the block.
+default builder cannot build `linux/arm64`, create the pinned release
+builder once (see [step 6](#6-the-server-image-on-the-host)) and repeat the
+block:
+`docker buildx create --use --name sync-release --driver docker-container --driver-opt image=moby/buildkit:v0.35.1@sha256:baf6138eb8c37644800c7c913fba051e840ebb9ba13eaf92d92ef9a1712d0b4c`.
 Optional: if a scanner is installed, run
 `docker scout cves --only-severity critical,high "sync-reader-check:$RV"`
 and keep the result with the release notes draft.
