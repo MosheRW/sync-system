@@ -115,6 +115,7 @@ import {
 import type { ClusterNotifier } from './cluster-notifier.js';
 import type { RemoteEffect } from './remote-effects.js';
 import type { ApprovalStore } from '../joins/approval-store.js';
+import type { JoinBudgetStore } from '../joins/join-budget.js';
 import type { ParkingRegistry } from '../storage/redis/parking.js';
 import { ParkingLot } from './parking-lot.js';
 import { canSupersede, classifyToken } from './resume.js';
@@ -183,6 +184,8 @@ export interface GroupServiceDeps {
   cluster?: ClusterNotifier;
   /** Pending method B requests (Redis, #35 architecture 12.9); defaults to memory. */
   approvals?: ApprovalStore;
+  /** The per-app join-attempt budget shared by every instance (Redis, #41); defaults to memory. */
+  joinBudget?: JoinBudgetStore;
   /** Which instances hold parked members of a missing group (Redis, 12.10). */
   parked?: ParkingRegistry;
   /** Live groups per app and the app's create budget (#12), memory or Redis. */
@@ -305,6 +308,7 @@ export class GroupService implements GroupActions {
         timers: this.timers,
         groupExpiry: (namespace, createdAt) => this.groupExpiry(namespace, createdAt),
         ...(deps.approvals === undefined ? {} : { approvals: deps.approvals }),
+        ...(deps.joinBudget === undefined ? {} : { joinBudget: deps.joinBudget }),
       },
       {
         busy: (session) => this.busy(session),
