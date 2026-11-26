@@ -5,8 +5,8 @@
 - PR: #76
 - Plan approved by user: yes
 - Security-sensitive: yes
-- Review rounds: 2
-- Last updated by: engineer
+- Review rounds: 3
+- Last updated by: qa
 ## Model log
 - pm grooming: sonnet (default) → DONE
 - architect plan: opus (rule: security-sensitive + NEXT_MODEL) → DONE
@@ -18,6 +18,7 @@
 - qa review r2: opus (rule: round 2) → PASS
 - security code r2: opus (rule) → PASS (0 critical/high/medium, 1 low advisory A1)
 - engineer fix r2: opus (rule: fix round) → DONE (interrupted once by an API rate limit while writing the guard test; resumed from the pushed commits)
+- qa review r3: opus (rule) → PASS
 ## Gate 2 decisions (user)
 - ADR 0023 option 1: Accepted; ADR 0015 gains only a "Related: 0023" line; conventions.md row added
 - Q6 narrowing accepted: the path is omitted for "does not exist" (ENOENT/ENOTDIR) and unknown errors; printed (via shownText) only for entries that exist
@@ -25,6 +26,7 @@
 - Gate 1 answers stand: strip one `\n` or `\r\n`; terminator-only file is empty; 4096-byte cap; empty X plus X_FILE is a conflict; `file` logged as token-secret source; no permission check
 - QA verdict (round 1): PASS, 13/13 criteria met; POSIX-only tests not rerun by QA (Docker unavailable)
 - QA verdict (round 2): PASS, 13/13 criteria met; POSIX-only tests run by QA in the node:24 image as uid 1000 (143/143, none skipped); CI paused (#54), checks run locally
+- QA verdict (round 3): PASS, 13/13 criteria met; A1 fix verified (guard test fails on 3 violating probes; HKDF/HMAC/timingSafeEqual/rotation pinned); full Windows suite has the 4 known load timeouts (main, redis-startup, release-files x2), 84/84 when rerun idle; node:24-alpine as uid 1000: 666/667, 0 skipped, the 1 failure needs the openssl CLI missing from alpine; no API break; roadmap untouched
 ## Open questions
 - none
 ## Deviations from plan
