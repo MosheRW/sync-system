@@ -1,17 +1,18 @@
 # State: #48 test(server): cover forgetGroup slot retention and fix limits wording
 - Path: fast
-- Phase: validation
+- Phase: ready-to-merge
 - Branch: test/48-forget-slot-retention
 - PR: #93
 - Plan approved by user: yes
 - Security-sensitive: no
 - Review rounds: 1
-- Last updated by: qa
+- Last updated by: orchestrator
 ## Model log
 - pm groom: sonnet (default) → DONE
 - architect plan: sonnet (NEXT_MODEL from pm) → DONE
 - engineer implement: sonnet (architect Implementer model) → DONE
 - qa round 1: sonnet (NEXT_MODEL from engineer) → PASS
+- security code round 1: opus (rule) → PASS (0 findings)
 ## Open questions
 - none
 ## Deviations from plan
