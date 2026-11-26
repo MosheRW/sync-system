@@ -11,7 +11,7 @@ import type { SyncServer } from '../src/server.js';
 import { LogCapture } from './helpers/log-capture.js';
 import { waitUntil } from './helpers/wait.js';
 import { TEST_REDIS_URL, describeRedis, inspector, randomPrefix } from './helpers/redis.js';
-import { childEnv } from './helpers/child-env.js';
+import { CHILD_START_MS, childEnv } from './helpers/child-env.js';
 
 const TOKEN_SECRET = 'SENTINEL-tok-8f3Kq2Lp9Zx7Vb4Nm1Rt6Yw0Ue5Io3Aa';
 let started: SyncServer | undefined;
@@ -191,7 +191,8 @@ describeRedis('run() with REDIS_URL (#35 AC2, AC4, AC27)', () => {
           NODE_OPTIONS: '--conditions=@mosherw/sync-system-source',
         }),
         encoding: 'utf8',
-        timeout: 30_000,
+        // #87: see CHILD_START_MS.
+        timeout: CHILD_START_MS,
       });
       expect(child.signal).toBeNull();
       expect(child.status).toBe(1);
@@ -201,5 +202,6 @@ describeRedis('run() with REDIS_URL (#35 AC2, AC4, AC27)', () => {
     } finally {
       await user.remove();
     }
-  }, 60_000);
+  // #87: see CHILD_START_MS.
+  }, CHILD_START_MS + 30_000);
 });
