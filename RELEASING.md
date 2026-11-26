@@ -559,8 +559,9 @@ expiry offered (a custom date of the next day; never "No expiration"):
   after the push. The push block refuses a token that does not start with
   `ghp_`, and asks GitHub for the token's scopes (`X-OAuth-Scopes` of
   `https://api.github.com/user`, the token sent on stdin, never as a
-  command argument): it refuses any token whose scopes are not exactly
-  `write:packages` and `read:packages`, and stops if it cannot check them.
+  command argument): it accepts only `write:packages`, alone or with the
+  `read:packages` it implies (GitHub may list either), refuses any other
+  scope set, and stops if it cannot check them.
 - Docker Hub: Account settings, Personal access tokens, "Read & Write" (not
   "Read, Write & Delete").
 
@@ -599,7 +600,7 @@ logouts and the removal of the config run on every exit:
   case "$T" in ghp_*) ;; *) echo 'not a classic GitHub token (ghp_...): GHCR needs a classic token with write:packages'; exit 1 ;; esac
   # the token's scopes, asked with the token on stdin (never in a process argument)
   S="$(printf 'Authorization: token %s\n' "$T" | curl -fsS -D - -H @- https://api.github.com/user | tr -d '\r' | tr '[:upper:]' '[:lower:]' | sed -n 's/^x-oauth-scopes://p' | tr ', ' '\n\n' | sed '/^$/d' | sort | tr '\n' ' ')" || { echo 'cannot check the GHCR token scopes: stop'; exit 1; }
-  [ "$S" = 'read:packages write:packages ' ] || { echo "the GHCR token has the scopes [$S], not only write:packages and read:packages: revoke it"; exit 1; }
+  case "$S" in 'write:packages '|'read:packages write:packages ') ;; *) echo "the GHCR token has the scopes [$S], not only write:packages (and read:packages): revoke it"; exit 1 ;; esac
   printf '%s' "$T" | docker login ghcr.io -u mosherw --password-stdin
   unset T
   read -rs -p 'Docker Hub token: ' T; echo
@@ -911,7 +912,7 @@ config run on every exit:
   read -rs -p 'GHCR token (write:packages only): ' T; echo
   # the token's scopes, asked with the token on stdin (never in a process argument)
   S="$(printf 'Authorization: token %s\n' "$T" | curl -fsS -D - -H @- https://api.github.com/user | tr -d '\r' | tr '[:upper:]' '[:lower:]' | sed -n 's/^x-oauth-scopes://p' | tr ', ' '\n\n' | sed '/^$/d' | sort | tr '\n' ' ')" || { echo 'cannot check the GHCR token scopes: stop'; exit 1; }
-  [ "$S" = 'read:packages write:packages ' ] || { echo "the GHCR token has the scopes [$S], not only write:packages and read:packages: revoke it"; exit 1; }
+  case "$S" in 'write:packages '|'read:packages write:packages ') ;; *) echo "the GHCR token has the scopes [$S], not only write:packages (and read:packages): revoke it"; exit 1 ;; esac
   printf '%s' "$T" | docker login ghcr.io -u mosherw --password-stdin
   unset T
   read -rs -p 'Docker Hub token: ' T; echo

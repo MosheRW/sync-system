@@ -269,21 +269,44 @@ describe('changesets (ADR 0016, AC49, C9)', () => {
 const SCOPE_LINE =
   /^\s*S="\$\(printf 'Authorization: token %s\\n' "\$T" \| curl -fsS -D - -H @- https:\/\/api\.github\.com\/user \|[^"]*\)" \|\| \{ echo '[^'$]*'; exit 1; \}$/;
 
+/**
+ * The refusal: a `case` whose only accepting branch lists literal scope sets
+ * (no glob characters), and whose catch-all branch exits.
+ */
+const SCOPE_CASE =
+  /^\s*case "\$S" in ((?:'[^'*?[\]]*')(?:\|'[^'*?[\]]*')*)\) ;; \*\) echo "[^"]*"; exit 1 ;; esac$/;
+
 /** The push block's scope check and refusal, in order before the GHCR login. */
 function expectScopeCheck(block: string, tokenPrompt: string): void {
   const code = block.slice(block.indexOf('```sh'));
   const lines = code.split(/\r?\n/);
   const scope = lines.findIndex((line) => SCOPE_LINE.test(line));
-  const refuse = lines.findIndex((line) =>
-    line.trim().startsWith(`[ "$S" = 'read:packages write:packages ' ] || {`),
-  );
+  const refuse = lines.findIndex((line) => line.trim().startsWith('case "$S" in '));
   const read = lines.findIndex((line) => line.includes(tokenPrompt));
   const login = lines.findIndex((line) => line.includes('docker login ghcr.io'));
   expect(read, tokenPrompt).toBeGreaterThan(-1);
   expect(scope).toBeGreaterThan(read);
   expect(refuse).toBe(scope + 1);
   expect(login).toBeGreaterThan(refuse);
-  expect(lines[refuse]).toMatch(/exit 1; \}$/);
+  // one accepting branch of literal sets, everything else refused (fails closed)
+  const check = SCOPE_CASE.exec(lines[refuse] ?? '');
+  expect(check, lines[refuse]).not.toBeNull();
+  const accepted = (check?.[1] ?? '').split('|').map((p) => p.slice(1, -1));
+  const accepts = (scopes: string): boolean => accepted.includes(scopes);
+  expect(accepted).toEqual(['write:packages ', 'read:packages write:packages ']);
+  // GitHub may list write:packages alone (read:packages implied) or both
+  expect(accepts('write:packages ')).toBe(true);
+  expect(accepts('read:packages write:packages ')).toBe(true);
+  for (const other of [
+    '',
+    'repo ',
+    'read:packages ',
+    'repo write:packages ',
+    'read:packages repo write:packages ',
+    'delete:packages read:packages write:packages ',
+  ]) {
+    expect(accepts(other), other).toBe(false);
+  }
   expect(lines[scope]).toContain("sed -n 's/^x-oauth-scopes://p'");
   // the token is never a command argument: no header on the command line
   expect(code).not.toMatch(/-H\s+["']?Authorization/i);
