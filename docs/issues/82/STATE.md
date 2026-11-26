@@ -5,13 +5,14 @@
 - PR: #96
 - Plan approved by user: yes
 - Security-sensitive: yes
-- Review rounds: 0
-- Last updated by: engineer
+- Review rounds: 1
+- Last updated by: qa
 ## Model log
 - pm grooming: sonnet (default) → DONE
 - architect plan: opus (rule: security-sensitive) → DONE
 - security plan: opus (rule) → PASS
 - engineer implement: opus (architect Implementer model: opus; security-sensitive) → DONE
+- qa validate: opus (NEXT_MODEL; security-sensitive shell) → FAIL (round 1: scope check accepts only `read:packages write:packages`, may reject a valid `write:packages`-only token; PR body stale)
 ## Open questions
 - none
 ## Deviations from plan
