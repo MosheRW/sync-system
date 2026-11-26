@@ -110,7 +110,10 @@ describe('only TokenKeyring and the secrets module read secret bytes (#58 A1, st
       'Buffer.prototype.toString.call(current)',
       '[...current]',
     ]) {
-      expect(SECRET_DECODE.some((rule) => rule.test(decode)), decode).toBe(true);
+      expect(
+        SECRET_DECODE.some((rule) => rule.test(decode)),
+        decode,
+      ).toBe(true);
     }
     // Not a read: a message naming the field, a field of another object.
     expect(withoutStrings("'(tokenSecrets.current must be a Buffer)'")).not.toMatch(
