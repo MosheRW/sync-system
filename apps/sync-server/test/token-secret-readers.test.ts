@@ -1,22 +1,39 @@
 import { readFileSync, readdirSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 /**
- * Static guard for #58 security advisory A1: a redacted secret Buffer still
- * gives its bytes to an explicit `toString(encoding)`, `Buffer.from()` or a
- * `Buffer.prototype` method called on it, so only the module that builds the
- * secrets and `TokenKeyring` (the HKDF input) may read `current` /
- * `previous` of a `TokenSecrets`, and neither may decode or copy them.
- * The check goes by name (a value named `*secrets` / `*Secrets`, the name
- * every server module uses for them); a read through an alias with another
- * name is left to review.
+ * Static guard for #58 security advisory A1 (Gate 3 round 3). A
+ * `TokenSecrets` keeps its bytes in private fields of the class in
+ * `config/token-secret.ts`; the only way to them is `tokenSecretBytes`,
+ * and only `tokens/token-keys.ts` (the HKDF input) may use it. The check
+ * goes by module structure, not by variable names, so an alias cannot hide
+ * a read:
+ * - no module but `token-keys.ts` names `tokenSecretBytes` at all (import,
+ *   `as` alias, re-export, `mod['tokenSecretBytes']`);
+ * - every other import of the secrets module is a static named import: no
+ *   `import * as`, default import, `export * from`, `export … from`, and no
+ *   dynamic `import()` of it or of a computed specifier;
+ * - the private storage (`#current`, `#previous`, `readSecretBytes`) is
+ *   named only in the secrets module, and `readSecretBytes` is not exported;
+ * - `token-keys.ts` never re-exports the accessor and never decodes or
+ *   copies the bytes.
+ * Test files are held to the same import rules (none may read the bytes).
  */
-const srcDir = fileURLToPath(new URL('../src', import.meta.url));
+const serverDir = fileURLToPath(new URL('..', import.meta.url));
+const srcDir = join(serverDir, 'src');
+const testDir = join(serverDir, 'test');
 
-/** The only modules that may read the secret Buffers. */
-const READERS = ['config/token-secret.ts', 'tokens/token-keys.ts'];
+/** The module that owns the private storage and the accessor. */
+const SECRETS_MODULE = 'src/config/token-secret.ts';
+/** The only module that may use the accessor. */
+const KEYRING_MODULE = 'src/tokens/token-keys.ts';
+/** This file names the accessor in its patterns and probes. */
+const THIS_FILE = 'test/token-secret-readers.test.ts';
+
+const ACCESSOR = 'tokenSecretBytes';
+const PRIVATE_STORAGE = /#current\b|#previous\b|\breadSecretBytes\b/;
 
 function sourceFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -31,41 +48,77 @@ function withoutComments(text: string): string {
   return text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
 }
 
-/**
- * `text` with string literal contents removed (`${...}` expressions of a
- * template literal are kept), so a message that names
- * `tokenSecrets.current` is not a read.
- */
-function withoutStrings(text: string): string {
-  return text
-    .replace(/'(?:[^'\\\n]|\\.)*'/g, "''")
-    .replace(/"(?:[^"\\\n]|\\.)*"/g, '""')
-    .replace(/`(?:[^`\\]|\\.)*`/g, (literal) =>
-      [...literal.matchAll(/\$\{([^}]*)\}/g)].map((m) => `\${${m[1]}}`).join(''),
-    );
+/** Whether `specifier`, imported from `file` (relative to the server dir), is the secrets module. */
+function isSecretsModule(file: string, specifier: string): boolean {
+  if (!specifier.startsWith('.')) return false;
+  const target = relative(serverDir, resolve(serverDir, dirname(file), specifier))
+    .replaceAll('\\', '/')
+    .replace(/\.js$/, '.ts');
+  return target === SECRETS_MODULE || target === SECRETS_MODULE.replace(/\.ts$/, '');
 }
 
-const files = sourceFiles(srcDir).map((path) => {
-  const code = withoutComments(readFileSync(path, 'utf8'));
-  return {
-    name: relative(srcDir, path).replaceAll('\\', '/'),
-    code,
-    bare: withoutStrings(code),
-  };
-});
+/** `import … from '…'` and `export … from '…'`, with the clause and the specifier. */
+const FROM_STATEMENT =
+  /\b(import|export)\s+(?:type\s+)?((?:[\w$]+\s*,\s*)?(?:\*(?:\s+as\s+[\w$]+)?|\{[^}]*\}|[\w$]+))\s*from\s*(['"])([^'"]+)\3/g;
+/** A dynamic `import(…)`; group 1 is a plain string literal specifier, if any. */
+const DYNAMIC_IMPORT = /\bimport\s*\(\s*(?:(['"])([^'"]+)\1\s*\)|(?!['"][^'"]+['"]\s*\)))/g;
 
-/** A property read of a secret: `secrets.current`, `tokenSecrets?.previous`, `x.secrets.current`. */
-const SECRET_FIELD_READ = /\b\w*[sS]ecrets\??\.(?:current|previous)\b/;
-/** The same through brackets: `secrets['current']`. */
-const SECRET_FIELD_INDEX = /\b\w*[sS]ecrets\??\.?\[\s*['"`](?:current|previous)['"`]\s*\]/;
-/** Destructuring a secret: `const { current } = tokenSecrets`. */
-const SECRET_DESTRUCTURE =
-  /\{[^{}]*\b(?:current|previous)\b[^{}]*\}\s*(?::[^=;]*)?=\s*[\w.]*[sS]ecrets\b/;
-/** Every own value of the secrets at once: `Object.values(secrets)`. */
-const SECRET_ALL_VALUES = /\bObject\.(?:values|entries)\(\s*[\w.]*[sS]ecrets\s*\)/;
+/** Every rule `code` (comments removed) of the module `file` breaks; empty when it is clean. */
+function violations(file: string, code: string): string[] {
+  const found: string[] = [];
+  const isOwner = file === SECRETS_MODULE;
+  const isKeyring = file === KEYRING_MODULE;
 
-/** Decoding or copying a secret Buffer in a reader module. */
-const SECRET_DECODE = [
+  if (!isOwner && !isKeyring && code.includes(ACCESSOR)) {
+    found.push(`names ${ACCESSOR}`);
+  }
+  if (!isOwner && PRIVATE_STORAGE.test(code)) found.push('names the private secret storage');
+
+  for (const match of code.matchAll(FROM_STATEMENT)) {
+    const [, keyword, clause, , specifier] = match;
+    if (!isSecretsModule(file, specifier!)) continue;
+    if (keyword === 'export') {
+      found.push('re-exports the secrets module');
+      continue;
+    }
+    if (!/^\{[^}]*\}$/.test(clause!.trim())) {
+      found.push('imports the secrets module other than by named imports');
+      continue;
+    }
+    const imported = clause!
+      .slice(1, -1)
+      .split(',')
+      .map((part) =>
+        part
+          .trim()
+          .replace(/^type\s+/, '')
+          .split(/\s+as\s+/)[0]!
+          .trim(),
+      )
+      .filter((name) => name.length > 0);
+    if (imported.includes(ACCESSOR) && !isKeyring) found.push(`imports ${ACCESSOR}`);
+  }
+
+  for (const match of code.matchAll(DYNAMIC_IMPORT)) {
+    const specifier = match[2];
+    if (specifier === undefined) found.push('has a dynamic import with a computed specifier');
+    else if (isSecretsModule(file, specifier)) found.push('imports the secrets module dynamically');
+  }
+
+  if (isKeyring) {
+    if (/\bexport\b[^;]*\btokenSecretBytes\b/.test(code)) found.push(`re-exports ${ACCESSOR}`);
+    for (const rule of BYTES_DECODE) {
+      if (rule.test(code)) found.push(`decodes or copies the secret bytes (${rule.source})`);
+    }
+  }
+  if (isOwner && /\bexport\b[^;(]*\breadSecretBytes\b/.test(code)) {
+    found.push('exports readSecretBytes');
+  }
+  return found;
+}
+
+/** Decoding or copying a secret Buffer (applied to `token-keys.ts`). */
+const BYTES_DECODE = [
   /\b(?:current|previous)\??\.(?:toString|toLocaleString|toJSON|subarray|slice|values|entries|at|join|map|reduce|forEach)\s*\(/,
   /\bBuffer\.(?:from|concat|copyBytesFrom)\(\s*\[?\s*[\w.]*\b(?:current|previous)\s*[,)\]]/,
   /\bTextDecoder\b/,
@@ -74,70 +127,101 @@ const SECRET_DECODE = [
   /\[\s*\.\.\.\s*[\w.]*\b(?:current|previous)\b/,
 ];
 
-describe('only TokenKeyring and the secrets module read secret bytes (#58 A1, static check)', () => {
-  it('scans the server sources and the reader modules', () => {
-    expect(files.length).toBeGreaterThan(20);
+const files = [...sourceFiles(srcDir), ...sourceFiles(testDir)]
+  .map((path) => ({
+    name: relative(serverDir, path).replaceAll('\\', '/'),
+    code: withoutComments(readFileSync(path, 'utf8')),
+  }))
+  .filter((f) => f.name !== THIS_FILE);
+
+describe('only TokenKeyring reads the token secret bytes (#58 A1, static check)', () => {
+  it('scans the server sources and tests, and the real modules pass', () => {
+    expect(files.filter((f) => f.name.startsWith('src/')).length).toBeGreaterThan(20);
     const names = files.map((f) => f.name);
-    for (const reader of READERS) expect(names).toContain(reader);
-    // The keyring really does read them, so the check is not stale.
-    const keyring = files.find((f) => f.name === 'tokens/token-keys.ts')!;
-    expect(keyring.bare).toMatch(/\btokenSecretBytes\(/);
-  });
-
-  it('matches the read, destructure and decode forms it is meant to catch', () => {
-    for (const read of [
-      'deriveAppKey(tokenSecrets.current, ns)',
-      'options.tokenSecrets?.previous',
-      'this.secrets.current',
-    ]) {
-      expect(read).toMatch(SECRET_FIELD_READ);
-    }
-    expect("secrets['current']").toMatch(SECRET_FIELD_INDEX);
-    expect('tokenSecrets?.["previous"]').toMatch(SECRET_FIELD_INDEX);
-    expect('const { current, previous } = tokenSecrets;').toMatch(SECRET_DESTRUCTURE);
-    expect('const { current }: TokenSecrets = options.tokenSecrets;').toMatch(SECRET_DESTRUCTURE);
-    expect('Object.values(tokenSecrets)').toMatch(SECRET_ALL_VALUES);
-    for (const decode of [
-      'current.toString()',
-      "previous?.toString('hex')",
-      'current.subarray(0)',
-      'current.slice(1)',
-      'Buffer.from(current)',
-      'Buffer.from(this.secrets.previous, 0)',
-      'Buffer.concat([current])',
-      'new TextDecoder().decode(current)',
-      'current.copy(target)',
-      'Buffer.prototype.toString.call(current)',
-      '[...current]',
-    ]) {
-      expect(
-        SECRET_DECODE.some((rule) => rule.test(decode)),
-        decode,
-      ).toBe(true);
-    }
-    // Not a read: a message naming the field, a field of another object.
-    expect(withoutStrings("'(tokenSecrets.current must be a Buffer)'")).not.toMatch(
-      SECRET_FIELD_READ,
+    expect(names).toContain(SECRETS_MODULE);
+    expect(names).toContain(KEYRING_MODULE);
+    // Not stale: the keyring really imports and calls the accessor, and the
+    // secrets module really holds the private storage.
+    const keyring = files.find((f) => f.name === KEYRING_MODULE)!.code;
+    expect(keyring).toMatch(
+      /import\s*\{[^}]*\btokenSecretBytes\b[^}]*\}\s*from\s*'\.\.\/config\/token-secret\.js'/,
     );
-    expect('const { current, previous } = value as Shape;').not.toMatch(SECRET_DESTRUCTURE);
-    expect("Buffer.from(current.value, 'utf8')").not.toMatch(SECRET_DECODE[1]!);
-    expect(withoutStrings('`${tokenSecrets.current}`')).toMatch(SECRET_FIELD_READ);
+    expect(keyring).toMatch(/\btokenSecretBytes\(/);
+    expect(files.find((f) => f.name === SECRETS_MODULE)!.code).toMatch(PRIVATE_STORAGE);
+    // The other modules that use the secrets module are seen as importers.
+    const importers = files.filter((f) =>
+      [...f.code.matchAll(FROM_STATEMENT)].some((m) => isSecretsModule(f.name, m[4]!)),
+    );
+    expect(importers.map((f) => f.name)).toEqual(
+      expect.arrayContaining([
+        'src/config/load.ts',
+        'src/main.ts',
+        'src/server.ts',
+        KEYRING_MODULE,
+      ]),
+    );
   });
 
-  it('reads current/previous of the token secrets only in the reader modules', () => {
-    for (const { name, code, bare } of files) {
-      if (READERS.includes(name)) continue;
-      expect(bare, name).not.toMatch(SECRET_FIELD_READ);
-      expect(code, name).not.toMatch(SECRET_FIELD_INDEX);
-      expect(bare, name).not.toMatch(SECRET_DESTRUCTURE);
-      expect(bare, name).not.toMatch(SECRET_ALL_VALUES);
+  it('flags every way to reach the bytes it is meant to catch', () => {
+    const other = 'src/groups/probe.ts';
+    const probes: Array<[string, string]> = [
+      [other, "import { tokenSecretBytes } from '../config/token-secret.js';"],
+      [other, "import { tokenSecretBytes as open } from '../config/token-secret.js';"],
+      [
+        other,
+        "import {\n  type TokenSecrets,\n  tokenSecretBytes as b,\n} from '../config/token-secret.js';",
+      ],
+      [other, "import * as secretsModule from '../config/token-secret.js';"],
+      [other, "import whole from '../config/token-secret.js';"],
+      [other, "import whole, { parseTokenSecrets } from '../config/token-secret.js';"],
+      [other, "const m = await import('../config/token-secret.js');"],
+      [other, 'const m = await import(path);'],
+      [other, 'const m = await import(`../config/${name}.js`);'],
+      [other, "export * from '../config/token-secret.js';"],
+      [other, "export { parseTokenSecrets as p } from '../config/token-secret.js';"],
+      [other, "const read = mod['tokenSecret' + 'Bytes'] ?? mod['tokenSecretBytes'];"],
+      [other, 'const raw = secrets.#current;'],
+      [other, 'readSecretBytes(secrets);'],
+      ['src/server.ts', "import { tokenSecretBytes as x } from './config/token-secret.js';"],
+      [
+        'test/probe.test.ts',
+        "import { tokenSecretBytes as x } from '../src/config/token-secret.js';",
+      ],
+      [KEYRING_MODULE, "export { tokenSecretBytes } from '../config/token-secret.js';"],
+      [KEYRING_MODULE, 'export { tokenSecretBytes };'],
+      [KEYRING_MODULE, "const text = bytes.current.toString('hex');"],
+      [KEYRING_MODULE, 'const copy = Buffer.from(bytes.previous);'],
+      [KEYRING_MODULE, 'const all = [...bytes.current];'],
+      [SECRETS_MODULE, 'export let readSecretBytes = () => undefined;'],
+    ];
+    for (const [file, code] of probes) {
+      expect(violations(file, code), `${file}: ${code}`).not.toEqual([]);
     }
   });
 
-  it('never decodes or copies a secret Buffer in TokenKeyring', () => {
-    // The secrets module copies the caller's bytes into the handle by design.
-    for (const { name, bare } of files.filter((f) => f.name === 'tokens/token-keys.ts')) {
-      for (const rule of SECRET_DECODE) expect(bare, name).not.toMatch(rule);
+  it('accepts the import forms the server uses', () => {
+    const clean: Array<[string, string]> = [
+      [
+        'src/config/load.ts',
+        "import { type TokenSecrets, collectTokenSecrets } from './token-secret.js';",
+      ],
+      ['src/main.ts', "import type { TokenSecrets } from './config/token-secret.js';"],
+      ['src/main.ts', "const { connectRedis } = await import('./storage/redis/connect.js');"],
+      ['src/server.ts', "import * as path from 'node:path';"],
+      ['src/server.ts', "import { readFile } from './config/token-secrets-other.js';"],
+      ['test/probe.test.ts', "import { redactTokenSecrets } from '../src/config/token-secret.js';"],
+      [
+        KEYRING_MODULE,
+        "import { type TokenSecrets, tokenSecretBytes } from '../config/token-secret.js';",
+      ],
+      [KEYRING_MODULE, 'const bytes = tokenSecretBytes(this.secrets);'],
+    ];
+    for (const [file, code] of clean) {
+      expect(violations(file, code), `${file}: ${code}`).toEqual([]);
     }
+  });
+
+  it('finds no module but TokenKeyring reaching the secret bytes', () => {
+    for (const { name, code } of files) expect(violations(name, code), name).toEqual([]);
   });
 });
