@@ -57,6 +57,35 @@ const REDACTED = '[redacted token secrets]';
 /** Set once by the static block of `TokenSecrets`; reads its private fields. */
 let readSecretBytes: (secrets: TokenSecrets) => TokenSecretBytes;
 
+/** The fixed start of every error about the `tokenSecrets` option (#7 L1). */
+export const TOKEN_SECRETS_REQUIRED =
+  'tokenSecrets is required: pass the secrets from parseTokenSecrets()';
+
+function isSecretBuffer(value: unknown): value is Buffer {
+  return Buffer.isBuffer(value) && value.length >= MIN_TOKEN_SECRET_BYTES;
+}
+
+/**
+ * The problem with caller-supplied secret bytes, or undefined when they are
+ * usable (#7 L1, #58 Gate 3 round 4): `current` and, when set, `previous`
+ * must be Buffers of at least 32 bytes, and `previous` must differ from
+ * `current` (as for TOKEN_SECRET_PREVIOUS). The text is fixed: it names the
+ * field and the rule, never a value or a length.
+ */
+export function tokenSecretsProblem(current: unknown, previous: unknown): string | undefined {
+  if (!isSecretBuffer(current)) {
+    return `${TOKEN_SECRETS_REQUIRED} (tokenSecrets.current must be a Buffer of at least ${MIN_TOKEN_SECRET_BYTES} bytes)`;
+  }
+  if (previous === undefined) return undefined;
+  if (!isSecretBuffer(previous)) {
+    return `${TOKEN_SECRETS_REQUIRED} (tokenSecrets.previous must be a Buffer of at least ${MIN_TOKEN_SECRET_BYTES} bytes)`;
+  }
+  if (previous.equals(current)) {
+    return `${TOKEN_SECRETS_REQUIRED} (tokenSecrets.previous must differ from tokenSecrets.current)`;
+  }
+  return undefined;
+}
+
 /**
  * The token secrets as the server holds them: an opaque, frozen handle (#58
  * security C7, Gate 3 round 3). The bytes live in private fields, copied
@@ -76,8 +105,22 @@ export class TokenSecrets {
     readSecretBytes = (secrets) => ({ current: secrets.#current, previous: secrets.#previous });
   }
 
-  /** Copies `current` and `previous`; the caller's Buffers are never kept or changed. */
+  /**
+   * Whether `value` is a handle this class built (brand check on the private
+   * field), so an `Object.create(TokenSecrets.prototype)` fake is not one.
+   */
+  static isHandle(value: unknown): value is TokenSecrets {
+    return typeof value === 'object' && value !== null && #current in value;
+  }
+
+  /**
+   * Copies `current` and `previous`; the caller's Buffers are never kept or
+   * changed. Throws a ConfigError with a fixed message unless they pass
+   * `tokenSecretsProblem` (#7 L1 also holds for a handle built directly).
+   */
   constructor(current: Buffer, previous: Buffer | undefined, source: TokenSecretSource) {
+    const problem = tokenSecretsProblem(current, previous);
+    if (problem !== undefined) throw new ConfigError(problem);
     this.#current = Buffer.from(current);
     this.#previous = previous === undefined ? undefined : Buffer.from(previous);
     this.source = source;
@@ -115,13 +158,13 @@ export function tokenSecretBytes(secrets: TokenSecrets): TokenSecretBytes {
 
 /**
  * `secrets` as a `TokenSecrets` handle: returned as is when it already is
- * one, otherwise built from a copy of the caller's Buffers (the caller's
+ * a real one (`TokenSecrets.isHandle`), otherwise built from a copy of the caller's Buffers (the caller's
  * object and Buffers are not changed). This is the constructor path for
  * library callers who supply their own secrets; `createSyncServer` passes
  * what it is given through it (#58 security C7).
  */
 export function redactTokenSecrets(secrets: TokenSecrets | TokenSecretsInput): TokenSecrets {
-  if (secrets instanceof TokenSecrets) return secrets;
+  if (TokenSecrets.isHandle(secrets)) return secrets;
   return new TokenSecrets(secrets.current, secrets.previous, secrets.source);
 }
 

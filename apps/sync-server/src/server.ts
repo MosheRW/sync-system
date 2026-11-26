@@ -10,10 +10,11 @@ import { ClusterNotifier } from './groups/cluster-notifier.js';
 import type { ServerEnv } from './config/env.js';
 import { ConfigError } from './config/config-error.js';
 import {
-  MIN_TOKEN_SECRET_BYTES,
+  TOKEN_SECRETS_REQUIRED,
   TokenSecrets,
   type TokenSecretsInput,
   redactTokenSecrets,
+  tokenSecretsProblem,
 } from './config/token-secret.js';
 import { createHttpHandler } from './http/health.js';
 import {
@@ -174,32 +175,25 @@ export interface SyncServer {
 /** How long close() waits for clients to complete the close handshake. */
 const SHUTDOWN_GRACE_MS = 1_000;
 
-const TOKEN_SECRETS_REQUIRED =
-  'tokenSecrets is required: pass the secrets from parseTokenSecrets()';
-
-function isSecretBuffer(value: unknown): boolean {
-  return Buffer.isBuffer(value) && value.length >= MIN_TOKEN_SECRET_BYTES;
-}
-
 /**
- * Runtime check for untyped callers (#7 L1, R1): a `TokenSecrets` handle,
- * or an object whose `current` and, when set, `previous` are Buffers of at
- * least 32 bytes. The message names the field only, never a value.
+ * Runtime check for untyped callers (#7 L1, R1): a real `TokenSecrets`
+ * handle, or an object whose `current` and, when set, `previous` pass
+ * `tokenSecretsProblem` (Buffers of at least 32 bytes, previous ≠ current).
+ * An object that only looks like a handle (`Object.create` of its
+ * prototype) is refused here, before anything is bound (#58 Gate 3 round
+ * 4). The message names the field only, never a value.
  */
 function assertTokenSecrets(value: unknown): asserts value is TokenSecrets | TokenSecretsInput {
-  if (value instanceof TokenSecrets) return;
+  if (TokenSecrets.isHandle(value)) return;
   if (typeof value !== 'object' || value === null) throw new ConfigError(TOKEN_SECRETS_REQUIRED);
+  if (value instanceof TokenSecrets) {
+    throw new ConfigError(
+      `${TOKEN_SECRETS_REQUIRED} (tokenSecrets is not a TokenSecrets handle built by the server)`,
+    );
+  }
   const { current, previous } = value as { current?: unknown; previous?: unknown };
-  if (!isSecretBuffer(current)) {
-    throw new ConfigError(
-      `${TOKEN_SECRETS_REQUIRED} (tokenSecrets.current must be a Buffer of at least ${MIN_TOKEN_SECRET_BYTES} bytes)`,
-    );
-  }
-  if (previous !== undefined && !isSecretBuffer(previous)) {
-    throw new ConfigError(
-      `${TOKEN_SECRETS_REQUIRED} (tokenSecrets.previous must be a Buffer of at least ${MIN_TOKEN_SECRET_BYTES} bytes)`,
-    );
-  }
+  const problem = tokenSecretsProblem(current, previous);
+  if (problem !== undefined) throw new ConfigError(problem);
 }
 
 export function createSyncServer(options: SyncServerOptions): SyncServer {
