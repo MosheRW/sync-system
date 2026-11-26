@@ -2,7 +2,7 @@
 - Path: fast
 - Phase: architecture
 - Branch: fix/86-pubsub-probe-race
-- PR: PENDING
+- PR: #94
 - Plan approved by user: no
 - Security-sensitive: yes
 - Review rounds: 0
