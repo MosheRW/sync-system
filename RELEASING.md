@@ -511,12 +511,13 @@ always be run again:
 Create two tokens right before the push block, each with the shortest
 expiry offered (a custom date of the next day; never "No expiration"):
 
-- GitHub: Settings, Developer settings, Personal access tokens,
-  **Tokens (classic)**, Generate new token (classic). Scope **only**
-  `write:packages` (it adds `read:packages`). GitHub may tick `repo` along
-  with it: **untick `repo`**, and before copying check that the token's
-  scope list shows only `write:packages` and `read:packages`. A
-  fine-grained token (`github_pat_...`) is not an alternative: GHCR refuses
+- GitHub: a **Tokens (classic)** personal access token from
+  `https://github.com/settings/tokens/new?scopes=write:packages` (that link
+  ticks only `write:packages`, which adds `read:packages`). Before you
+  generate it, check the scope list: only `write:packages` and
+  `read:packages` may be ticked. GitHub's form can tick `repo` along with
+  it: if `repo` is ticked, **untick `repo`**. A `repo` token could push
+  code and move tags. A fine-grained token (`github_pat_...`) is not an alternative: GHCR refuses
   it with "The token provided does not match expected scopes". A classic
   token can write every package your account can, so it is revoked right
   after the push. The push block refuses a token that does not start with
