@@ -2,7 +2,7 @@
 - Path: fast
 - Phase: architecture
 - Branch: fix/101-reader-release-folder-test
-- PR: none
+- PR: #104
 - Plan approved by user: no
 - Security-sensitive: no
 - Review rounds: 0
