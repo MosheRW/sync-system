@@ -523,10 +523,11 @@ Requirements:
   cap. The server does not check this; a difference shows up as refused
   tokens or codes, or keys that expire at different times.
 - **The same group creation limits on every instance** (the four
-  `MAX_GROUP_CREATE*` and `MAX_LIVE_GROUPS_PER_APP` variables), like the apps
-  file. If they differ, the shared create budget follows the slowest rate and
-  the smallest burst used while groups created under them can be live, so a
-  difference can only make creation stricter. Each instance checks the
+  group creation variables: `MAX_GROUP_CREATE*` and
+  `MAX_LIVE_GROUPS_PER_APP`), like the apps file. If they differ, the shared
+  create budget follows the slowest rate and the smallest burst used while
+  groups created under them can be live, so a difference can only make
+  creation stricter. Each instance checks the
   live-group limit with its own value: **an instance with a lower
   `MAX_LIVE_GROUPS_PER_APP` can refuse every create with `APP_GROUP_LIMIT`
   while the others still create**, until the count drops. A change to an

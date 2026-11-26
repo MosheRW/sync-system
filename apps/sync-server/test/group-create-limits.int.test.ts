@@ -8,6 +8,7 @@ import { SlidingWindowRateLimiter } from '../src/limits/rate-limiter.js';
 import { createLogger } from '../src/logging/logger.js';
 import { AppRegistry } from '../src/apps/app-registry.js';
 import { parseAppsConfig } from '../src/config/apps-config.js';
+import { GroupService } from '../src/groups/group-service.js';
 import { createSyncServer, groupCreateLimits } from '../src/server.js';
 import { type Storage, memoryStorage } from '../src/storage/storage.js';
 import { realScheduler } from '../src/time/scheduler.js';
@@ -511,5 +512,38 @@ describe('refusal logs (#12 AC5, R9)', () => {
       expect(line).not.toContain(created.groupId);
     }
     expect(text).not.toContain(created.codes.groupCode ?? 'no-group-code');
+  });
+});
+
+/**
+ * #48: the private `forgetGroup` also runs for the cluster `forget` op, so
+ * it must never give the live-group slot back; only `endGroup` does, in the
+ * same commit as the delete (#12 R6). The service is reached through the
+ * class prototype (no test-only export): a call-through spy on `create`
+ * records the instance that serves the server.
+ */
+describe('a group that is only forgotten keeps its slot (#48)', () => {
+  type Forgetter = { forgetGroup(ns: string, gid: string, record: undefined): Promise<void> };
+
+  it('forgetGroup leaves the slot taken; group.end gives it back exactly once', async () => {
+    const created = vi.spyOn(GroupService.prototype, 'create');
+    const { server, storage } = await start();
+    const release = vi.spyOn(storage.liveGroups, 'release');
+    const leader = await server.connectReady();
+    const reply = await create(leader);
+    expect(reply).toMatchObject({ type: 'group.created' });
+    const groupId = (reply as { groupId: string }).groupId;
+    expect(liveCount(storage)).toBe(1);
+
+    const service = created.mock.contexts[0] as Forgetter;
+    await service.forgetGroup('app-a', groupId, undefined);
+    expect(liveCount(storage)).toBe(1);
+    expect(release).not.toHaveBeenCalled();
+
+    leader.send({ type: 'group.end', reqId: 'e' });
+    await leader.next('group.ended');
+    expect(liveCount(storage)).toBe(0);
+    expect(release).toHaveBeenCalledTimes(1);
+    expect(release).toHaveBeenCalledWith('app-a', groupId);
   });
 });
