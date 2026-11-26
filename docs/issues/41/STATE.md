@@ -1,17 +1,18 @@
 # State: #41 fix(server): share join-attempt limits across instances through redis
 - Path: fast
-- Phase: implementation
+- Phase: validation
 - Branch: fix/41-shared-join-limits
 - PR: #97
 - Plan approved by user: yes
 - Security-sensitive: yes
-- Review rounds: 0
-- Last updated by: engineer
+- Review rounds: 1
+- Last updated by: qa
 ## Model log
 - pm grooming: sonnet (default) → DONE
 - architect plan: opus (rule: security-sensitive) → DONE
 - security plan: opus (rule) → PASS
 - engineer implement: opus (architect Implementer model) → DONE
+- qa review: sonnet (NEXT_MODEL) → PASS
 ## Gate 2 decisions (user)
 - ADR 0024: option 1, fail closed with `1001` (as ADR 0014); ADR reworded per security S2 (a timed-out script may still have charged one attempt).
 - Docs scope: fix all stale lines here (the multiplication note, the "Several instances" table row, operator guide line ~496 keeping "token-check" per S5, the "Known limits of 1.0.0" bullet); stay outside PR #93's hunk (lines ~520-530).
