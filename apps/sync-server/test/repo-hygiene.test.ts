@@ -9,6 +9,9 @@ import { DEV_TOKEN_SECRET } from '../src/config/token-secret.js';
 
 const repoRoot = fileURLToPath(new URL('../../../', import.meta.url));
 
+/** The two published images (ADR 0017 server, ADR 0023 reader). */
+const DOCKERFILES = ['apps/sync-server/Dockerfile', 'apps/reader/Dockerfile'];
+
 function read(path: string): string {
   return readFileSync(join(repoRoot, path), 'utf8');
 }
@@ -73,8 +76,8 @@ describe('secrets stay out of git and the image (M1)', () => {
     }
   });
 
-  it('never copies the repo root into the image', () => {
-    const dockerfile = read('apps/sync-server/Dockerfile');
+  it.each(DOCKERFILES)('never copies the repo root into the image (%s)', (path) => {
+    const dockerfile = read(path);
     const copies = dockerfile.split(/\r?\n/).filter((line) => /^COPY\s/.test(line));
     expect(copies.length).toBeGreaterThan(0);
     for (const line of copies) {
@@ -85,8 +88,8 @@ describe('secrets stay out of git and the image (M1)', () => {
   });
 });
 
-describe('image license and labels (#37 C8, ADR 0017)', () => {
-  const dockerfile = read('apps/sync-server/Dockerfile');
+describe.each(DOCKERFILES)('image license and labels (#37 C8, ADR 0017, ADR 0023): %s', (path) => {
+  const dockerfile = read(path);
   const runtime = dockerfile.slice(dockerfile.search(/^FROM\s.*\sAS runtime$/m));
 
   it('copies the single LICENSE file into the runtime stage only', () => {
@@ -119,9 +122,38 @@ describe('image license and labels (#37 C8, ADR 0017)', () => {
   });
 });
 
+describe('reader image contents (#77 security control 2)', () => {
+  const dockerfile = read('apps/reader/Dockerfile');
+  const runtime = dockerfile.slice(dockerfile.search(/^FROM\s.*\sAS runtime$/m));
+
+  it('copies exactly the allow-listed build output and LICENSE into the runtime stage', () => {
+    const copies = runtime.split(/\r?\n/).filter((line) => /^COPY\s/.test(line));
+    expect(copies).toEqual([
+      'COPY --from=build /out/package.json ./',
+      'COPY --from=build /out/node_modules ./node_modules',
+      'COPY --from=build /out/dist ./dist',
+      'COPY --from=build /out/dist-server ./dist-server',
+      'COPY LICENSE ./LICENSE',
+    ]);
+  });
+
+  it('builds without source maps (Vite and the server tsc)', () => {
+    expect(read('apps/reader/vite.config.ts')).toMatch(/^\s+sourcemap: false,$/m);
+    expect(read('apps/reader/tsconfig.server.json')).toMatch(/^\s+"sourceMap": false$/m);
+  });
+
+  it('runs the server as the unprivileged node user, with /health as the HEALTHCHECK', () => {
+    const userAt = runtime.search(/^USER node$/m);
+    expect(userAt).toBeGreaterThan(-1);
+    expect(userAt).toBeLessThan(runtime.search(/^CMD /m));
+    expect(runtime).toMatch(/^HEALTHCHECK .*\n.*\/health'/m);
+    expect(runtime).toMatch(/^CMD \["node", "dist-server\/server\/main\.js"\]$/m);
+  });
+});
+
 describe('pinned supply chain (L8)', () => {
-  it('pins every Dockerfile base image by digest', () => {
-    const froms = read('apps/sync-server/Dockerfile')
+  it.each(DOCKERFILES)('pins every Dockerfile base image by digest (%s)', (path) => {
+    const froms = read(path)
       .split(/\r?\n/)
       .filter((line) => /^FROM\s/.test(line));
     const external = froms.filter((line) => !/^FROM\s+(base|build)\b/.test(line));
@@ -146,8 +178,8 @@ describe('pinned supply chain (L8)', () => {
     expect(runtime).toMatch(/^CMD \["node", "dist\/index\.js"\]$/m);
   });
 
-  it('runs as the unprivileged node user', () => {
-    expect(read('apps/sync-server/Dockerfile')).toMatch(/^USER node$/m);
+  it.each(DOCKERFILES)('runs as the unprivileged node user (%s)', (path) => {
+    expect(read(path)).toMatch(/^USER node$/m);
   });
 
   it('binds compose to loopback and sets NODE_ENV=development for the dev key (M3, M6)', () => {

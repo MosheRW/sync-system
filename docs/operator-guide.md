@@ -124,6 +124,14 @@ curl http://127.0.0.1:8080/health
 `docker compose up --build` with no service name also starts the reading app
 (see the [reading app README](../apps/reader/README.md)).
 
+To host the reading app next to your sync server without building it, use
+its public image (`ghcr.io/mosherw/sync-system-reader`, mirror
+`docker.io/moshewin/sync-system-reader`, its own version and tags): the
+reading app README's [Public image](../apps/reader/README.md#public-image)
+section has the `docker run` command, every setting, how to point it at this
+server, and why its API key is public (give it its own registration in the
+apps file with tight limits, and per-IP limits at the proxy).
+
 `compose.yaml` builds `apps/sync-server/Dockerfile`, mounts
 `config/apps.dev.json` read-only at `/config/apps.json`, sets every ceiling and
 cap to its default, health-checks `/health`, and binds the port to `127.0.0.1`

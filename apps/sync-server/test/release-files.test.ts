@@ -398,7 +398,9 @@ describe('RELEASING.md load-bearing lines (C1-C5, M6, L1, L5, L8, L9, L11-L13)',
   it('tags only on the host, from the verified merge commit (C2)', () => {
     const tagStep = step('1. Tag on the host');
     expect(tagStep).toContain('git tag -a');
-    expect(doc.split('git tag -a').length - 1).toBe(1);
+    // One `git tag -a` for the packages, one in the reader's own R1 (ADR 0023).
+    expect(doc.split('git tag -a').length - 1).toBe(2);
+    expect(tagStep.split('git tag -a').length - 1).toBe(1);
     expect(tagStep).toContain('git merge-base --is-ancestor');
     expect(tagStep).toContain('mergeCommit');
     const build = step('2. Build container');
@@ -673,6 +675,156 @@ describe('RELEASING.md load-bearing lines (C1-C5, M6, L1, L5, L8, L9, L11-L13)',
   });
 });
 
+describe('RELEASING.md reader image release (#77, ADR 0023, security.md controls 4-9, 11)', () => {
+  const doc = read('RELEASING.md');
+  const start = doc.indexOf('\n## Reader image release\n');
+  const reader = start === -1 ? '' : doc.slice(start, doc.indexOf('\n## ', start + 4));
+  const sub = (heading: string): string => {
+    const at = reader.indexOf(`\n### ${heading}`);
+    expect(at, heading).toBeGreaterThanOrEqual(0);
+    const next = reader.slice(at + 5).search(/\n##+ /);
+    return next === -1 ? reader.slice(at) : reader.slice(at, at + 5 + next);
+  };
+  const tagBlock = sub('R1. Tag on the host');
+  const checkBlock = sub('R3. Check the image');
+  const pushBlock = sub('R4. Push the image');
+  // Built at run time so this file doesn't match itself.
+  const placeholderMirror = ['docker.io/', 'mosherw/'].join('');
+
+  it('is one section between step 8 and the dry run, linked from the intro', () => {
+    expect(start).toBeGreaterThan(doc.indexOf('### 8. After the release'));
+    expect(start).toBeLessThan(doc.indexOf('\n## Dry run (QA)'));
+    expect(doc.slice(0, doc.indexOf('\n## The rule'))).toContain(
+      '[Reader image release](#reader-image-release)',
+    );
+    expect(reader).toContain('reader-v$RV');
+    expect(reader).toMatch(/do not release the reader image until #27 and #28 are closed/i);
+  });
+
+  it('tags only after the blockers are fixed in RM, with no date heuristic (L1)', () => {
+    expect(tagBlock).toContain('BLOCKERS="27 28"');
+    expect(tagBlock).toContain('gh issue view "$n" --json state,stateReason');
+    expect(tagBlock).toContain('CLOSED');
+    expect(tagBlock).toContain('[ "$S" != \'CLOSED COMPLETED\' ]');
+    expect(tagBlock).toContain('closedByPullRequestsReferences');
+    expect(tagBlock).toContain('git merge-base --is-ancestor "$MC" "$RM"');
+    expect(tagBlock).toMatch(/read -r -p "Type yes[^"]*" OK/);
+    expect(tagBlock).not.toMatch(/closedAt|committerdate|%cI|%ct/);
+  });
+
+  it('tags a checked commit of origin/main and pushes only that tag (control 4)', () => {
+    expect(tagBlock).toContain('[[ "$RV" =~ ^[0-9]+\\.[0-9]+\\.[0-9]+$ ]]');
+    expect(tagBlock).toContain('RM="${RM:-$(git rev-parse origin/main)}"');
+    expect(tagBlock).toContain('[[ "$RM" =~ ^[0-9a-f]{40}$ ]]');
+    expect(tagBlock).toContain('git merge-base --is-ancestor "$RM" origin/main');
+    for (const file of [
+      'apps/reader/package.json',
+      'apps/reader/src/config/version.ts',
+      'apps/reader/CHANGELOG.md',
+    ]) {
+      expect(tagBlock, file).toContain(`git show "$RM:${file}"`);
+    }
+    expect(tagBlock).toContain(`grep -q '"private": true'`);
+    expect(tagBlock).toContain('git rev-parse -q --verify "refs/tags/reader-v$RV"');
+    expect(tagBlock).toContain('git ls-remote --exit-code --tags origin "refs/tags/reader-v$RV"');
+    expect(tagBlock).toContain('git tag -a "reader-v$RV" "$RM" -m "reader-v$RV"');
+    const pushes = reader.split(/\r?\n/).filter((line) => /\bgit push\b/.test(line));
+    expect(pushes).toEqual(['  git push origin "refs/tags/reader-v$RV"']);
+  });
+
+  it('checks the image from a fresh clone and marks it checked only at the end (control 5, M1)', () => {
+    expect(checkBlock).toContain('git clone --quiet --branch "$REF" --depth 1 "$SRC_URL" "$D/src"');
+    expect(checkBlock).toContain('[ "$(git -C "$D/src" rev-parse HEAD)" = "$RM" ]');
+    expect(checkBlock).toContain('[ -z "$(git -C "$D/src" status --porcelain)" ]');
+    expect(checkBlock).toContain('rm -rf "$D/src" "$D/checked"');
+    expect(checkBlock).toContain('/health');
+    expect(checkBlock).toContain('\\"version\\":\\"$RV\\"');
+    expect(checkBlock).toContain('id -u');
+    expect(checkBlock).toContain("-name '*.map'");
+    expect(checkBlock).toContain('org.opencontainers.image.revision=$RM');
+    expect(checkBlock).toContain('--platform linux/arm64');
+    // The check container gets no env, no mount and no credential.
+    const run = checkBlock.split(/\r?\n/).find((line) => /docker run\b/.test(line)) ?? '';
+    expect(run).toBe(
+      '  docker run -d --name sync-reader-health "sync-reader-check:$RV" >/dev/null',
+    );
+    const code = checkBlock.slice(checkBlock.indexOf('```sh'), checkBlock.lastIndexOf('```'));
+    const lines = code.split(/\r?\n/).filter((line) => line.trim() !== '' && line !== ')');
+    expect(lines.at(-2)).toBe('  echo "$RM" > "$D/checked"');
+  });
+
+  it('pushes only a checked clone, with the step 6 credential pattern (control 6, M1, C3)', () => {
+    const code = pushBlock.slice(pushBlock.indexOf('```sh'));
+    const guard = code.indexOf('[ "$(tail -n 1 "$D/checked")" = "$RM" ]');
+    const head = code.indexOf('[ "$(git -C "$D/src" rev-parse HEAD)" = "$RM" ]');
+    const clean = code.indexOf('[ -z "$(git -C "$D/src" status --porcelain)" ]');
+    const login = code.indexOf('docker login');
+    for (const at of [guard, head, clean]) {
+      expect(at).toBeGreaterThan(-1);
+      expect(at).toBeLessThan(login);
+    }
+    expect(code).toContain('export DOCKER_CONFIG="$CFG"');
+    const trap = /trap '([^']*docker logout[^']*)' EXIT/.exec(code)?.[1] ?? '';
+    expect(trap).toMatch(/docker logout ghcr\.io[^;]*\|\| true/);
+    expect(trap).toMatch(/docker logout docker\.io[^;]*\|\| true/);
+    expect(trap).toContain('rm -rf "$DOCKER_CONFIG"');
+    expect(code.indexOf("trap 'docker logout ghcr.io")).toBeLessThan(login);
+    expect(code).toContain('read -rs -p');
+    expect(code).toContain(`printf '%s' "$T" | docker login ghcr.io -u mosherw --password-stdin`);
+    expect(code).toContain(
+      `printf '%s' "$T" | docker login docker.io -u moshewin --password-stdin`,
+    );
+    expect(code.split('unset T').length - 1).toBe(2);
+    expect(code).toContain('--platform linux/amd64,linux/arm64 --push');
+    for (const tag of ['$RV', '$MAJOR.$MINOR', '$MAJOR', 'latest']) {
+      expect(code, tag).toContain(`ghcr.io/mosherw/sync-system-reader:${tag}`);
+      expect(code, tag).toContain(`docker.io/moshewin/sync-system-reader:${tag}`);
+    }
+    expect(code).toContain('imagetools inspect "ghcr.io/mosherw/sync-system-reader:$RV"');
+    expect(code).toContain('imagetools inspect "docker.io/moshewin/sync-system-reader:$RV"');
+    expect(pushBlock).toMatch(/revoke\s+both registry tokens/i);
+    expect(pushBlock).toContain('(#6-the-server-image-on-the-host)');
+  });
+
+  it('creates the GHCR token with write:packages only and checks its scopes (control 7, M2)', () => {
+    expect(pushBlock).toContain('https://github.com/settings/tokens/new?scopes=write:packages');
+    expect(pushBlock).toMatch(/if `repo` is ticked,\s+untick it/);
+    expect(pushBlock).toContain('"Read & Write"');
+  });
+
+  it('creates the GitHub release from the existing tag, never as Latest (control 8, L2)', () => {
+    expect(sub('R5. GitHub release')).toContain(
+      'gh release create "reader-v$RV" --verify-tag --latest=false',
+    );
+  });
+
+  it('checks anonymous pulls in a cleaned-up temporary config (control 9, L4)', () => {
+    const after = sub('R6. After the reader release');
+    expect(after).toContain('set the GHCR package `sync-system-reader` public');
+    const code = after.slice(after.indexOf('```sh'));
+    expect(code).toMatch(/^\( set -euo pipefail$/m);
+    expect(code).toContain('export MSYS_NO_PATHCONV=1');
+    expect(code).toContain('CFG="$(cygpath -m "$CFG")"');
+    expect(code).toContain(`trap 'rm -rf "$DOCKER_CONFIG"' EXIT`);
+    expect(code).toContain('docker pull');
+    expect(code).not.toContain('docker login');
+  });
+
+  it('has a reader dry run that never tags, logs in or pushes', () => {
+    const dry = sub('Reader dry run (QA)');
+    expect(dry).toContain('cygpath -m "$(pwd)"');
+    expect(dry).toMatch(/Never run R1, R4 or R5/);
+    expect(dry).not.toMatch(/docker login|git tag|--push/);
+  });
+
+  it('never pushes to the placeholder namespace and keeps the npm bans', () => {
+    expect(reader).not.toContain(placeholderMirror);
+    for (const banned of ['docker login -p', 'set -x', 'echo $T', 'echo "$T"', 'npm publish']) {
+      expect(reader, banned).not.toContain(banned);
+    }
+  });
+});
+
 describe('release candidate 1.0.0 (AC48, AC49)', () => {
   const GROUP_DIRS = [...PUBLISHED_DIRS, 'apps/sync-server'] as const;
 
@@ -683,10 +835,21 @@ describe('release candidate 1.0.0 (AC48, AC49)', () => {
     expect(changelog).toMatch(/^## 1\.0\.0$/m);
   });
 
-  it('keeps the reader private at 0.1.0, outside the group', () => {
-    expect(manifest('apps/reader').version).toBe('0.1.0');
+  it('keeps the reader private at its own 1.0.0, outside the group (ADR 0023 B1)', () => {
+    expect(manifest('apps/reader').version).toBe('1.0.0');
     expect(manifest('apps/reader').private).toBe(true);
-    expect(existsSync(join(repoRoot, 'apps/reader/CHANGELOG.md'))).toBe(false);
+    expect(read('apps/reader/src/config/version.ts')).toMatch(
+      /^export const READER_VERSION = '1\.0\.0';$/m,
+    );
+    const changelog = read('apps/reader/CHANGELOG.md');
+    expect(changelog).toMatch(/^# @mosherw\/sync-system-reader$/m);
+    expect(changelog).toMatch(/^## 1\.0\.0$/m);
+    const config = JSON.parse(read('.changeset/config.json')) as {
+      fixed: string[][];
+      ignore: string[];
+    };
+    expect(config.ignore).toEqual(['@mosherw/sync-system-reader']);
+    expect(config.fixed.flat()).not.toContain('@mosherw/sync-system-reader');
   });
 
   it('states protocol 1 with minimum 1 and the notes for pre-release builds', () => {

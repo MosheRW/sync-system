@@ -51,6 +51,7 @@ Scope of items 7-9 is taken from the PRD ("Product 1: the reading app", "Deliver
 - #58 `feat(server): read secrets from files via _FILE variables (follow-up to #51)` (asked for at #51 Gate 2; needs an ADR 0015 amendment): open.
 - #59 `test(server): close remaining gaps in the operator-guide secret check (follow-up to #51)` (security A4, #51 Gate 3): open.
 - #60 `docs: harden the Swarm deployment guidance (follow-up to #51)` (security A5, QA N1): open.
+- #77 `feat(release): publish the reader as a public docker image`: in progress (PR #79): `docs/issues/77/`. The reader gets its own version (`1.0.0`, tag `reader-v1.0.0`, ADR 0023) and a standalone image release in `RELEASING.md`; the image release itself is blocked on #27 and #28.
 
 ## Key accepted decisions
 

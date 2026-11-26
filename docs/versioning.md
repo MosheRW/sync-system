@@ -13,8 +13,8 @@ managed is [ADR 0016](decisions/0016-versioning-and-npm-release.md).
 `ghcr.io/mosherw/sync-system-server`) form one fixed Changesets group: they
 always share one version, and a release bumps all four together. A change
 to one package that is breaking makes the next version a major for all four.
-The reading app (`@mosherw/sync-system-reader`) is private and has no public
-version.
+The reading app has its own version, outside this group (see
+[The reading app](#the-reading-app)).
 
 Each package's changes are in its `CHANGELOG.md`:
 [protocol](../packages/protocol/CHANGELOG.md),
@@ -59,6 +59,42 @@ Each package's changes are in its `CHANGELOG.md`:
   option or hook, a new env variable or apps-file key with a default, a
   looser limit.
 - **Patch:** fixes with no contract change, docs, performance.
+
+## The reading app
+
+The reading app (`@mosherw/sync-system-reader`) has its **own** version,
+independent of the four packages above
+([ADR 0023](decisions/0023-reader-version-tag-and-image.md)); its first
+public version is `1.0.0`.
+
+- It is released on its own, only as the Docker image
+  `ghcr.io/mosherw/sync-system-reader` (mirror
+  `docker.io/moshewin/sync-system-reader`), tags `X.Y.Z`, `X.Y`, `X` and
+  `latest`. It is never published to npm: its `package.json` stays
+  `private: true` and Changesets ignores it.
+- Its git tag is `reader-vX.Y.Z` (the first is `reader-v1.0.0`), so it never
+  collides with the packages' `vX.Y.Z`. The procedure is the "Reader image
+  release" section of `RELEASING.md`.
+- The version is bumped by hand in a reviewed pull request, in three places
+  together: `apps/reader/package.json`, `READER_VERSION` in
+  `apps/reader/src/config/version.ts`, and a new entry in
+  [`apps/reader/CHANGELOG.md`](../apps/reader/CHANGELOG.md). `/health`
+  reports `READER_VERSION`, so it equals the image tag.
+
+Breaking for the reader (major):
+
+- removing or renaming a `READER_*` variable, or refusing a value that
+  started before (a lower maximum, a higher minimum, a narrower set);
+- a changed default that changes behaviour visibly (entry page, library,
+  interface language, `?src`, timeouts and size caps);
+- changes to the image contract: port `8080` (`PORT`), the `node` user,
+  `/health` and its JSON body (`status`, `version`);
+- removing or changing the meaning of a URL (`/?book=`, `/?src=`,
+  `/library`, `/`) or of a bundled book's content ID;
+- dropping support for a sync server major the reader worked with.
+
+New variables with a default, new bundled books and new pages are minor;
+fixes, translations and docs are patch.
 
 ## Protocol versions
 
