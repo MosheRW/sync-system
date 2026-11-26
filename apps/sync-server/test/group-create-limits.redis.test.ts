@@ -122,7 +122,7 @@ describeRedis('group creation limits on Redis (#12)', () => {
     const leader = await ts.connectReady();
     const reply = await create(leader);
     expect(reply).toMatchObject({ type: 'group.created' });
-    const service = created.mock.contexts[0] as unknown as Forgetter;
+    const service = created.mock.contexts[0] as Forgetter;
     return { leader, service, groupId: (reply as { groupId: string }).groupId };
   }
 

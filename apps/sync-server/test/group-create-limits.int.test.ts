@@ -535,7 +535,7 @@ describe('a group that is only forgotten keeps its slot (#48)', () => {
     const groupId = (reply as { groupId: string }).groupId;
     expect(liveCount(storage)).toBe(1);
 
-    const service = created.mock.contexts[0] as unknown as Forgetter;
+    const service = created.mock.contexts[0] as Forgetter;
     await service.forgetGroup('app-a', groupId, undefined);
     expect(liveCount(storage)).toBe(1);
     expect(release).not.toHaveBeenCalled();
