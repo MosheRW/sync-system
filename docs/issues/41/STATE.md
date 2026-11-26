@@ -2,7 +2,7 @@
 - Path: fast
 - Phase: architecture
 - Branch: fix/41-shared-join-limits
-- PR: none (draft PR opened right after this commit)
+- PR: #97
 - Plan approved by user: no
 - Security-sensitive: yes
 - Review rounds: 0
