@@ -5,8 +5,8 @@
 - PR: #94
 - Plan approved by user: yes
 - Security-sensitive: yes
-- Review rounds: 0
-- Last updated by: engineer
+- Review rounds: 1
+- Last updated by: qa
 ## Model log
 - pm grooming: sonnet (default) → DONE
 - architect: opus (default) → DONE
@@ -19,6 +19,7 @@
 - L3: include one line in `docs/operator-guide.md` (`REDIS_COMMAND_TIMEOUT_MS`
   row): stall detection can take up to heartbeat + command timeout when the
   timeout exceeds the 5 s heartbeat. Own `docs(...)` commit.
+- qa review round 1: sonnet (default) → PASS (checks 4/4 local, no CI configured, AC 6/6; main-redis AC4 and release-files L11 also fail on origin/main)
 ## Open questions
 - none
 ## Deviations from plan
