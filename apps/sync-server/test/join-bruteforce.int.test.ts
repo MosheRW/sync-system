@@ -19,6 +19,7 @@ import {
   type TestServer,
   startTestServer,
 } from './helpers/test-server.js';
+import { testSecrets } from './helpers/token-secrets.js';
 
 vi.mock('../src/joins/codes.js', async (importOriginal) => {
   const actual = await importOriginal<typeof codesModule>();
@@ -28,7 +29,9 @@ vi.mock('../src/joins/codes.js', async (importOriginal) => {
 const ALL: JoinMethod[] = ['A', 'B', 'C', 'D'];
 const MINUTE = 60_000;
 const SECRET = Buffer.from('q9Zt2Lx7Vb4Nm1Rt6Yw0Ue5Io3AaKd8Fj2Hs7Gp1Wc=');
-const blobs = new CodesBlobService(new TokenKeyring({ current: SECRET }, CODES_BLOB_INFO_PREFIX));
+const blobs = new CodesBlobService(
+  new TokenKeyring(testSecrets({ current: SECRET }), CODES_BLOB_INFO_PREFIX),
+);
 
 let ts: TestServer | undefined;
 

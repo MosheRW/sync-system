@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, expect, it } from 'vitest';
-import type { TokenSecrets } from '../src/config/token-secret.js';
+import type { TokenSecretsInput } from '../src/config/token-secret.js';
 import { lenientCodes } from '../src/storage/redis/ended.js';
 import { createGroupWithMembers } from './helpers/groups.js';
 import { ManualScheduler } from './helpers/manual-scheduler.js';
@@ -22,7 +22,7 @@ it('reads only well-formed codes from an invalid document (#39, C17)', () => {
 describeRedis('an invalid stored group frees its join codes (#39, security C17)', () => {
   let inspect: Awaited<ReturnType<typeof inspector>>;
   let prefix: string;
-  let secrets: TokenSecrets;
+  let secrets: TokenSecretsInput;
   let scheduler: ManualScheduler;
   const servers: TestServer[] = [];
 

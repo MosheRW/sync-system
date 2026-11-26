@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, expect, it } from 'vitest';
-import type { TokenSecrets } from '../src/config/token-secret.js';
+import type { TokenSecretsInput } from '../src/config/token-secret.js';
 import { createGroupWithMembers, resumeWith } from './helpers/groups.js';
 import { ManualScheduler } from './helpers/manual-scheduler.js';
 import { describeRedis, inspector, randomPrefix } from './helpers/redis.js';
@@ -22,7 +22,7 @@ async function frameOf<T extends 'leader.granted' | 'error'>(client: TestClient,
 describeRedis('restart survival with Redis (#35 AC9-AC15)', () => {
   let inspect: Awaited<ReturnType<typeof inspector>>;
   let prefix: string;
-  let secrets: TokenSecrets;
+  let secrets: TokenSecretsInput;
   let scheduler: ManualScheduler;
   const servers: TestServer[] = [];
 

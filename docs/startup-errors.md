@@ -22,17 +22,18 @@ not listed here fails CI.
 
 Placeholders in the messages below:
 
-| Placeholder | Stands for                                                                         |
-| ----------- | ---------------------------------------------------------------------------------- |
-| `<name>`    | an environment variable name, or a JSON key name in the apps file                  |
-| `<n>`       | a number the server has already parsed and validated                               |
-| `<path>`    | the apps file path (`SYNC_CONFIG_PATH`)                                            |
-| `<where>`   | the apps entry: `apps[<n>]`, or `apps[<n>] (namespace "<value>")` when it is valid |
-| `<field>`   | an apps entry field, such as `maxGroupSize`                                        |
-| `<value>`   | a value the message is allowed to show (see the echo rules)                        |
-| `<code>`    | a system error code, such as `EACCES`                                              |
-| `<reason>`  | one of the reasons listed under the message                                        |
-| `<known>`   | the known variable name closest to the one you set                                 |
+| Placeholder | Stands for                                                                               |
+| ----------- | ---------------------------------------------------------------------------------------- |
+| `<name>`    | an environment variable name, or a JSON key name in the apps file                        |
+| `<n>`       | a number the server has already parsed and validated                                     |
+| `<path>`    | the apps file path (`SYNC_CONFIG_PATH`)                                                  |
+| `<file>`    | a secret file path (`TOKEN_SECRET_FILE`, `TOKEN_SECRET_PREVIOUS_FILE`, `REDIS_URL_FILE`) |
+| `<where>`   | the apps entry: `apps[<n>]`, or `apps[<n>] (namespace "<value>")` when it is valid       |
+| `<field>`   | an apps entry field, such as `maxGroupSize`                                              |
+| `<value>`   | a value the message is allowed to show (see the echo rules)                              |
+| `<code>`    | a system error code, such as `EACCES`                                                    |
+| `<reason>`  | one of the reasons listed under the message                                              |
+| `<known>`   | the known variable name closest to the one you set                                       |
 
 ## What a message may show (echo rules)
 
@@ -45,6 +46,9 @@ The sync server never prints a value it received. A message may show only:
 - namespaces that match the namespace pattern;
 - the apps file path and JSON key names of unknown fields, with control
   characters replaced by `?` and cut at 64 characters plus `...`;
+- the path of a secret file that exists (`TOKEN_SECRET_FILE`,
+  `TOKEN_SECRET_PREVIOUS_FILE`, `REDIS_URL_FILE`), shown the same way; never
+  the path of one that does not exist, and never the file's content;
 - system error codes (`errno`, such as `EACCES`).
 
 It never shows a token secret, any part of `REDIS_URL` (user, password or
@@ -92,31 +96,61 @@ A rule is checked only when every number it compares is valid on its own.
 
 ### Config error: Redis settings
 
-| Message                                                                                                                        | Fix                                                                                                                      |
-| ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
-| `Config error: REDIS_URL must not be empty`                                                                                    | Unset `REDIS_URL` for the memory store, or set a `redis://` or `rediss://` URL.                                          |
-| `Config error: REDIS_URL is not a valid redis:// or rediss:// URL`                                                             | Use `redis://[user:password@]host[:port][/db]` (`rediss://` for TLS); percent-encode special characters in the password. |
-| `Config error: REDIS_URL must not have a query string or fragment`                                                             | Remove everything from `?` or `#`.                                                                                       |
-| `Config error: REDIS_URL port must be between 1 and 65535`                                                                     | Fix the port.                                                                                                            |
-| `Config error: REDIS_URL database must be a number from 0 to 15`                                                               | Fix the database number after the `/`.                                                                                   |
-| `Config error: REDIS_URL uses the public development Redis password; it is only accepted when NODE_ENV is development or test` | Set a real Redis password (and the same on the Redis server).                                                            |
-| `Config error: REDIS_KEY_PREFIX must be 1-32 characters of a-z, 0-9, _ and -, starting with a letter or digit`                 | Fix the prefix, or unset it for the default `sync`.                                                                      |
-| `Config error: REDIS_CONNECT_TIMEOUT_SECONDS must be an integer between 1 and 120`                                             | Set a value in the range, or unset it for the default.                                                                   |
-| `Config error: REDIS_COMMAND_TIMEOUT_MS must be an integer between 100 and 30000`                                              | Set a value in the range, or unset it for the default.                                                                   |
+In the URL rows, `<name>` is `REDIS_URL`, or
+`REDIS_URL (from REDIS_URL_FILE)` when the URL was read from a file.
+
+| Message                                                                                                                     | Fix                                                                                                                      |
+| --------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `Config error: REDIS_URL must not be empty`                                                                                 | Unset `REDIS_URL` for the memory store, or set a `redis://` or `rediss://` URL.                                          |
+| `Config error: <name> is not a valid redis:// or rediss:// URL`                                                             | Use `redis://[user:password@]host[:port][/db]` (`rediss://` for TLS); percent-encode special characters in the password. |
+| `Config error: <name> must not have a query string or fragment`                                                             | Remove everything from `?` or `#`.                                                                                       |
+| `Config error: <name> port must be between 1 and 65535`                                                                     | Fix the port.                                                                                                            |
+| `Config error: <name> database must be a number from 0 to 15`                                                               | Fix the database number after the `/`.                                                                                   |
+| `Config error: <name> uses the public development Redis password; it is only accepted when NODE_ENV is development or test` | Set a real Redis password (and the same on the Redis server).                                                            |
+| `Config error: REDIS_KEY_PREFIX must be 1-32 characters of a-z, 0-9, _ and -, starting with a letter or digit`              | Fix the prefix, or unset it for the default `sync`.                                                                      |
+| `Config error: REDIS_CONNECT_TIMEOUT_SECONDS must be an integer between 1 and 120`                                          | Set a value in the range, or unset it for the default.                                                                   |
+| `Config error: REDIS_COMMAND_TIMEOUT_MS must be an integer between 100 and 30000`                                           | Set a value in the range, or unset it for the default.                                                                   |
 
 ### Config error: token secrets
 
-`<name>` is `TOKEN_SECRET` or `TOKEN_SECRET_PREVIOUS`.
+`<name>` is `TOKEN_SECRET` or `TOKEN_SECRET_PREVIOUS`, or
+`TOKEN_SECRET (from TOKEN_SECRET_FILE)` and
+`TOKEN_SECRET_PREVIOUS (from TOKEN_SECRET_PREVIOUS_FILE)` when the value was
+read from a file. A file value goes through the same rules.
 
-| Message                                                                                     | Fix                                                                                     |
-| ------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| ``Config error: TOKEN_SECRET is required (use `openssl rand -base64 32`)``                  | Set `TOKEN_SECRET`. It may be unset only when `NODE_ENV` is `development` or `test`.    |
-| `Config error: <name> must not start or end with whitespace`                                | Remove the spaces or line breaks around the value (a secret is used exactly as given).  |
-| ``Config error: <name> must be at least 32 bytes (use `openssl rand -base64 32`)``          | Generate a new secret with the command shown.                                           |
-| `` Config error: <name> is an example value from the docs; use `openssl rand -base64 32` `` | Generate a new secret; never use a value printed in the docs.                           |
-| `` Config error: <name> is the public development secret; use `openssl rand -base64 32` ``  | Generate a new secret; the development secret is accepted only in development and test. |
-| `` Config error: <name> looks weak; use `openssl rand -base64 32` ``                        | Generate a new secret with the command shown.                                           |
-| `Config error: TOKEN_SECRET_PREVIOUS must differ from TOKEN_SECRET`                         | Set the new secret in `TOKEN_SECRET` and the old one in `TOKEN_SECRET_PREVIOUS`.        |
+| Message                                                                                     | Fix                                                                                                                                                                                                                                    |
+| ------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ``Config error: TOKEN_SECRET is required (use `openssl rand -base64 32`)``                  | Set `TOKEN_SECRET`. It may be unset only when `NODE_ENV` is `development` or `test`.                                                                                                                                                   |
+| `Config error: <name> must not start or end with whitespace`                                | Remove the spaces or line breaks around the value (a secret is used exactly as given). A secret file may end in one line break (`\n` or `\r\n`); anything else, such as a second line break, a lone `\r` or a byte order mark, counts. |
+| ``Config error: <name> must be at least 32 bytes (use `openssl rand -base64 32`)``          | Generate a new secret with the command shown.                                                                                                                                                                                          |
+| `` Config error: <name> is an example value from the docs; use `openssl rand -base64 32` `` | Generate a new secret; never use a value printed in the docs.                                                                                                                                                                          |
+| `` Config error: <name> is the public development secret; use `openssl rand -base64 32` ``  | Generate a new secret; the development secret is accepted only in development and test.                                                                                                                                                |
+| `` Config error: <name> looks weak; use `openssl rand -base64 32` ``                        | Generate a new secret with the command shown.                                                                                                                                                                                          |
+| `Config error: TOKEN_SECRET_PREVIOUS must differ from TOKEN_SECRET`                         | Set the new secret in `TOKEN_SECRET` and the old one in `TOKEN_SECRET_PREVIOUS`.                                                                                                                                                       |
+
+### Config error: secret files
+
+`<name>` is `TOKEN_SECRET_FILE`, `TOKEN_SECRET_PREVIOUS_FILE` or
+`REDIS_URL_FILE`: the variables that name a file holding a secret
+(see "Passing secrets to the container" in `docs/operator-guide.md`). A
+message never shows the file's content. `<file>` is the path you set, with
+control characters replaced by `?` and cut at 64 characters plus `...`; it
+is shown only when the path is known to exist, so a secret pasted into the
+variable by mistake is never printed.
+
+| Message                                                                 | Fix                                                                                                                                                                                                                                                                                  |
+| ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `Config error: <name> and <name> are both set; set only one`            | Remove one of the two, for example a leftover `TOKEN_SECRET:` line or `sh` wrapper next to `TOKEN_SECRET_FILE`. This is an error even when one of them is set to an empty value.                                                                                                     |
+| `Config error: <name> must not be empty`                                | Unset it, or set it to the path of the secret file (for example `/run/secrets/sync_token_secret`).                                                                                                                                                                                   |
+| `Config error: <name> file does not exist`                              | Check the path inside the container (a relative path starts at the working directory) and that the secret is mounted there. Set the path, never the secret itself.                                                                                                                   |
+| `Config error: <name> file "<file>" is not readable by the server user` | The server runs as uid 1000 (`node`). On the host, `chown 1000:1000` the file and `chmod 400` it (compose `secrets: file:` is a bind mount, so the host owner and mode apply). Do not make it world-readable and do not run the container as root.                                   |
+| `Config error: <name> file is not accessible to the server user`        | A directory on the path cannot be searched by uid 1000 (`node`), so the server cannot tell whether the file exists and does not print the path. Check the path, then give uid 1000 search (`x`) permission on each directory, and fix the file's owner and mode as in the row above. |
+| `Config error: <name> file "<file>" is not a regular file`              | Point the variable at the file itself, not at a directory, pipe or device.                                                                                                                                                                                                           |
+| `Config error: <name> file "<file>" is larger than 4096 bytes`          | The path names the wrong file; a secret file holds one value.                                                                                                                                                                                                                        |
+| `Config error: <name> file "<file>" is empty`                           | Write the secret into the file. A file holding only a newline is empty too.                                                                                                                                                                                                          |
+| `Config error: <name> file "<file>" is not valid UTF-8`                 | Write the secret as UTF-8 text (`openssl rand -base64 32` output is).                                                                                                                                                                                                                |
+| `Config error: <name> file "<file>" contains a NUL character`           | Write the secret as plain text; a NUL byte cannot be in an environment value either.                                                                                                                                                                                                 |
+| `Config error: <name> file cannot be read (<code>)`                     | Another file-system error; check the path and the mount.                                                                                                                                                                                                                             |
 
 ### Config error: unknown variables
 

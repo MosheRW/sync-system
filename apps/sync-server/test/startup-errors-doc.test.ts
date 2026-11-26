@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { ConfigError } from '../src/config/config-error.js';
 import { loadConfig } from '../src/config/load.js';
 import { listenErrorMessage } from '../src/main.js';
+import { SECRET_FILE_MESSAGES } from '../src/config/secret-file.js';
 import { STORAGE_START_MESSAGES } from '../src/storage/errors.js';
 import { STARTUP_MESSAGES } from '../src/storage/redis/connect.js';
 import { VERSION_REASONS, VERSION_STARTUP_PREFIX } from '../src/version.js';
@@ -68,6 +69,16 @@ describe('docs/startup-errors.md lists every server startup error (#36 AC40)', (
   for (const c of ALL_CASES) {
     const { env } = materialize(c);
     for (const problem of problemsOf(env)) printed.set(`Config error: ${problem}`, c.id);
+  }
+
+  // Secret file errors no portable case can trigger (#58): an unreadable file
+  // or directory on its path (root and Windows ignore modes) and any other errno.
+  for (const problem of [
+    SECRET_FILE_MESSAGES.notReadable('TOKEN_SECRET_FILE', '/run/secrets/sync_token_secret'),
+    SECRET_FILE_MESSAGES.notAccessible('TOKEN_SECRET_PREVIOUS_FILE'),
+    SECRET_FILE_MESSAGES.cannotRead('REDIS_URL_FILE', 'EIO'),
+  ]) {
+    printed.set(`Config error: ${problem}`, 'SECRET_FILE_MESSAGES');
   }
 
   it('every Config error printed by the invalid-config cases is listed', () => {

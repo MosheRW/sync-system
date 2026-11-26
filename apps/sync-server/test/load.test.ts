@@ -2,7 +2,8 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { inspect } from 'node:util';
+import { afterAll, describe, expect, it } from 'vitest';
 import { hashApiKey } from '../src/apps/app-registry.js';
 import { collectAppsConfig } from '../src/config/apps-config.js';
 import { ConfigError } from '../src/config/config-error.js';
@@ -11,6 +12,7 @@ import { collectEnv } from '../src/config/env.js';
 import { loadConfig } from '../src/config/load.js';
 import { collectRedisSettings } from '../src/config/redis.js';
 import { collectTokenSecrets } from '../src/config/token-secret.js';
+import { expectNoSentinel, secretFileDir } from './helpers/secret-files.js';
 
 /** Test-only values, never real. */
 const STRONG = 'q9Zt2Lx7Vb4Nm1Rt6Yw0Ue5Io3AaKd8Fj2Hs7Gp1Wc=';
@@ -236,5 +238,36 @@ describe('devKeyProblems and warnDevKeys', () => {
       { event: 'dev_api_key', namespace: 'n0' },
       { event: 'dev_api_key', namespace: 'n2' },
     ]);
+  });
+});
+
+describe('loadConfig with secret files (#58 AC7, security C9)', () => {
+  const files = secretFileDir('sync-load-secret-');
+  afterAll(() => files.cleanup());
+  /** Test-only values, never real. */
+  const SECRET = 'SENTINEL-load-Qm7Zx2Lv9Kd4Rt8Wn3Hb6Jf1Pc0Ys5';
+  const PREVIOUS = 'SENTINEL-load2-Hb6Jf1Pc0Ys5Qm7Zx2Lv9Kd4Rt8Wn';
+  const REDIS_PASSWORD = 'SENTINEL-load-redis-pw';
+
+  it('never renders a secret in JSON or inspect output of the loaded config', () => {
+    const config = loadConfig({
+      SYNC_CONFIG_PATH: devConfigPath,
+      NODE_ENV: 'development',
+      TOKEN_SECRET_FILE: files.file('token', `${SECRET}\n`),
+      TOKEN_SECRET_PREVIOUS_FILE: files.file('previous', `${PREVIOUS}\r\n`),
+      REDIS_URL_FILE: files.file('redis', `redis://:${REDIS_PASSWORD}@redis.internal:6379\n`),
+    });
+    expect(config.tokenSecrets.source).toBe('file');
+    expect(config.redis?.hasPassword).toBe(true);
+    const text = [
+      JSON.stringify(config),
+      inspect(config, { depth: 10 }),
+      inspect(config, { depth: 10, showHidden: true }),
+      JSON.stringify(config.tokenSecrets),
+      inspect(config.tokenSecrets),
+      JSON.stringify(config.redis),
+      inspect(config.redis),
+    ].join('\n');
+    for (const sentinel of [SECRET, PREVIOUS, REDIS_PASSWORD]) expectNoSentinel(text, sentinel);
   });
 });

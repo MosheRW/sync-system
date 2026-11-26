@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { TokenSecrets } from '../src/config/token-secret.js';
+import type { TokenSecretsInput } from '../src/config/token-secret.js';
 import type { GroupRecord } from '../src/groups/group-store.js';
 import { GroupService } from '../src/groups/group-service.js';
 import { InMemoryGroupStore } from '../src/groups/in-memory-group-store.js';
@@ -21,6 +21,7 @@ import {
 } from './helpers/test-server.js';
 import { claimsOf, forge } from './helpers/tokens.js';
 import { waitUntil } from './helpers/wait.js';
+import { testSecrets } from './helpers/token-secrets.js';
 
 const MINUTE = 60_000;
 const WINDOW = 20 * MINUTE + 300_000;
@@ -32,7 +33,7 @@ afterEach(async () => {
   ts = undefined;
 });
 
-function secrets(): TokenSecrets {
+function secrets(): TokenSecretsInput {
   return { current: randomBytes(32), source: 'env' };
 }
 
@@ -352,7 +353,7 @@ describe('secret rotation (#5 AC2)', () => {
     if (reply.type !== 'tokens.result') throw new Error('expected tokens.result');
     const [first, second] = reply.results;
     expect(first?.status).toBe('recoverable');
-    const current = new TokenService(new TokenKeyring({ current: fresh.current }));
+    const current = new TokenService(new TokenKeyring(testSecrets({ current: fresh.current })));
     expect(current.verify(first?.token, 'app-a', scheduler.now()).ok).toBe(true);
     expect(claimsOf(first?.token)).toEqual(claimsOf(usable.leaderToken));
     expect(second).toEqual({ status: 'invalid' });

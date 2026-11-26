@@ -12,6 +12,7 @@ import {
   type ConfigCase,
   ENV_CASES,
   GLOBAL_SENTINELS,
+  SECRET_FILE_CASES,
   STRONG,
   UNKNOWN_CASES,
   VALID_VALUES,
@@ -42,7 +43,7 @@ function freePort(): Promise<number> {
 }
 
 async function runCase(c: ConfigCase) {
-  const { env, path } = materialize(c);
+  const { env, path, files } = materialize(c);
   let stderr = '';
   const logs = new LogCapture();
   const result = await run(
@@ -50,14 +51,14 @@ async function runCase(c: ConfigCase) {
     { stderr: (text) => (stderr += text), destination: logs },
   );
   if (result.ok) started = result.server;
-  return { result, stderr, logs, path };
+  return { result, stderr, logs, path, files };
 }
 
 async function expectCase(c: ConfigCase): Promise<void> {
-  const { result, stderr, logs, path } = await runCase(c);
+  const { result, stderr, logs, path, files } = await runCase(c);
   expect(result, c.id).toEqual({ ok: false, exitCode: 1 });
   expect(stderr, c.id).toBe(
-    expectedProblems(c, path)
+    expectedProblems(c, path, files)
       .map((problem) => `Config error: ${problem}\n`)
       .join(''),
   );
@@ -115,6 +116,33 @@ describe('rules that span fields say what to change (#36 AC38)', () => {
       await expectCase(c);
     });
   }
+});
+
+describe('_FILE secret variables (#58 AC3, AC4, AC7, AC8)', () => {
+  for (const c of SECRET_FILE_CASES) {
+    it(`${c.id}: exit 1, nothing logged, no content echoed`, async () => {
+      await expectCase(c);
+    });
+  }
+
+  it('has a case for every problem kind of a secret file', () => {
+    const lines = SECRET_FILE_CASES.flatMap((c) => c.problems).join('\n');
+    for (const kind of [
+      'are both set',
+      'must not be empty',
+      'does not exist',
+      'is not a regular file',
+      'is empty',
+      'is larger than 4096 bytes',
+      'is not valid UTF-8',
+      'contains a NUL character',
+      '(from TOKEN_SECRET_FILE)',
+      '(from TOKEN_SECRET_PREVIOUS_FILE)',
+      '(from REDIS_URL_FILE)',
+    ]) {
+      expect(lines, kind).toContain(kind);
+    }
+  });
 });
 
 describe('unknown look-alike variables (#36 AC37a)', () => {
@@ -180,7 +208,15 @@ describe('every problem in one run (#36 AC38)', () => {
 
 describe('secret-bearing variables fail closed (#36 security C1)', () => {
   const secretCases = ALL_CASES.filter((c) =>
-    ['TOKEN_SECRET', 'TOKEN_SECRET_PREVIOUS', 'REDIS_URL', 'apiKey'].includes(c.target),
+    [
+      'TOKEN_SECRET',
+      'TOKEN_SECRET_PREVIOUS',
+      'REDIS_URL',
+      'TOKEN_SECRET_FILE',
+      'TOKEN_SECRET_PREVIOUS_FILE',
+      'REDIS_URL_FILE',
+      'apiKey',
+    ].includes(c.target),
   );
 
   it('covers each secret rule', () => {
@@ -212,10 +248,10 @@ describe('valid values keep working (#36 AC41)', () => {
     const { env } = materialize({ id: 'valid', target: 'valid', sentinels: [], problems: [] });
     for (const name of KNOWN_SERVER_VARIABLES) {
       for (const value of VALID_VALUES[name]) {
-        expect(
-          () => loadConfig({ ...env, ...base, [name]: value }),
-          `${name}=${value}`,
-        ).not.toThrow();
+        const source: Record<string, string> = { ...env, ...base, [name]: value };
+        // X and X_FILE together are a conflict (#58): test X_FILE without X.
+        if (name.endsWith('_FILE')) delete source[name.slice(0, -'_FILE'.length)];
+        expect(() => loadConfig(source), `${name}=${value}`).not.toThrow();
       }
     }
     // SYNC_CONFIG_PATH is the materialized path itself.

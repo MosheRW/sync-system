@@ -9,7 +9,13 @@ import { LocalNotifier } from './groups/notifier.js';
 import { ClusterNotifier } from './groups/cluster-notifier.js';
 import type { ServerEnv } from './config/env.js';
 import { ConfigError } from './config/config-error.js';
-import { MIN_TOKEN_SECRET_BYTES, type TokenSecrets } from './config/token-secret.js';
+import {
+  TOKEN_SECRETS_REQUIRED,
+  TokenSecrets,
+  type TokenSecretsInput,
+  redactTokenSecrets,
+  tokenSecretsProblem,
+} from './config/token-secret.js';
 import { createHttpHandler } from './http/health.js';
 import {
   CLOSE_TIMEOUT_MS,
@@ -66,10 +72,13 @@ export interface SyncServerOptions {
   /** Defaults to HANDSHAKE_TIMEOUT_MS; shortened by tests. */
   handshakeTimeoutMs?: number;
   /**
-   * Token signing secrets from `parseTokenSecrets()` (required, #7 L1).
+   * Token signing secrets (required, #7 L1): the handle from
+   * `parseTokenSecrets()`, or Buffers a library caller supplies itself.
    * There is no fallback: a missing or malformed value refuses to start.
+   * Caller Buffers are copied into an opaque `TokenSecrets` handle that
+   * gives no bytes back out (#58 C7); the object passed in is not changed.
    */
-  tokenSecrets: TokenSecrets;
+  tokenSecrets: TokenSecrets | TokenSecretsInput;
   /**
    * Integer source for join code draws (#10). Defaults to `crypto.randomInt`;
    * tests inject one to force code collisions.
@@ -166,37 +175,34 @@ export interface SyncServer {
 /** How long close() waits for clients to complete the close handshake. */
 const SHUTDOWN_GRACE_MS = 1_000;
 
-const TOKEN_SECRETS_REQUIRED =
-  'tokenSecrets is required: pass the secrets from parseTokenSecrets()';
-
-function isSecretBuffer(value: unknown): boolean {
-  return Buffer.isBuffer(value) && value.length >= MIN_TOKEN_SECRET_BYTES;
-}
-
 /**
- * Runtime check for untyped callers (#7 L1, R1): `current` and, when set,
- * `previous` must be Buffers of at least 32 bytes. The message names the
- * field only, never a value.
+ * Runtime check for untyped callers (#7 L1, R1): a real `TokenSecrets`
+ * handle, or an object whose `current` and, when set, `previous` pass
+ * `tokenSecretsProblem` (Buffers of at least 32 bytes, previous ≠ current).
+ * An object that only looks like a handle (`Object.create` of its
+ * prototype) is refused here, before anything is bound (#58 Gate 3 round
+ * 4). The message names the field only, never a value.
  */
-function assertTokenSecrets(value: unknown): asserts value is TokenSecrets {
+function assertTokenSecrets(value: unknown): asserts value is TokenSecrets | TokenSecretsInput {
+  if (TokenSecrets.isHandle(value)) return;
   if (typeof value !== 'object' || value === null) throw new ConfigError(TOKEN_SECRETS_REQUIRED);
+  if (value instanceof TokenSecrets) {
+    throw new ConfigError(
+      `${TOKEN_SECRETS_REQUIRED} (tokenSecrets is not a TokenSecrets handle built by the server)`,
+    );
+  }
   const { current, previous } = value as { current?: unknown; previous?: unknown };
-  if (!isSecretBuffer(current)) {
-    throw new ConfigError(
-      `${TOKEN_SECRETS_REQUIRED} (tokenSecrets.current must be a Buffer of at least ${MIN_TOKEN_SECRET_BYTES} bytes)`,
-    );
-  }
-  if (previous !== undefined && !isSecretBuffer(previous)) {
-    throw new ConfigError(
-      `${TOKEN_SECRETS_REQUIRED} (tokenSecrets.previous must be a Buffer of at least ${MIN_TOKEN_SECRET_BYTES} bytes)`,
-    );
-  }
+  const problem = tokenSecretsProblem(current, previous);
+  if (problem !== undefined) throw new ConfigError(problem);
 }
 
 export function createSyncServer(options: SyncServerOptions): SyncServer {
   // Before anything is created, so a bad config binds no socket (R1).
-  const tokenSecrets: unknown = options.tokenSecrets;
-  assertTokenSecrets(tokenSecrets);
+  const givenSecrets: unknown = options.tokenSecrets;
+  assertTokenSecrets(givenSecrets);
+  // An opaque handle, also when a library caller supplied the Buffers, so
+  // nothing the server holds can log or hand out a secret (#58 C7).
+  const tokenSecrets = redactTokenSecrets(givenSecrets);
   const { env, logger, registry } = options;
   // Read once (#12 R15): the env values, or the checked test-only overrides.
   const createLimits = groupCreateLimits(env, options.groupLimits);

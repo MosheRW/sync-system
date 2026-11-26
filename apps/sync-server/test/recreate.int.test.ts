@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { TokenSecrets } from '../src/config/token-secret.js';
+import type { TokenSecretsInput } from '../src/config/token-secret.js';
 import { InMemoryGroupStore } from '../src/groups/in-memory-group-store.js';
 import { createGroupWithMembers, resumeWith } from './helpers/groups.js';
 import { ManualScheduler } from './helpers/manual-scheduler.js';
@@ -17,7 +17,7 @@ afterEach(async () => {
   ts = undefined;
 });
 
-function secrets(): TokenSecrets {
+function secrets(): TokenSecretsInput {
   return { current: randomBytes(32), source: 'env' };
 }
 

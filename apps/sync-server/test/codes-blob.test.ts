@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { type BlobCodes, CodesBlobService } from '../src/tokens/codes-blob.js';
 import { signCompact } from '../src/tokens/signed-blob.js';
 import { CODES_BLOB_INFO_PREFIX, TokenKeyring, deriveAppKey } from '../src/tokens/token-keys.js';
+import { testSecrets } from './helpers/token-secrets.js';
 
 const SECRET = Buffer.from('q9Zt2Lx7Vb4Nm1Rt6Yw0Ue5Io3AaKd8Fj2Hs7Gp1Wc=');
 const PREVIOUS = Buffer.from('Xr4Tn8Qm2Vk6Bz0Pc9Ls3Hd7Jf1Gw5Ye8Ua2Ii6Oo4=');
@@ -17,7 +18,7 @@ const A_CODES: BlobCodes = {
 
 function service(previous?: Buffer, current = SECRET): CodesBlobService {
   const secrets = previous ? { current, previous } : { current };
-  return new CodesBlobService(new TokenKeyring(secrets, CODES_BLOB_INFO_PREFIX));
+  return new CodesBlobService(new TokenKeyring(testSecrets(secrets), CODES_BLOB_INFO_PREFIX));
 }
 
 function forge(claims: unknown, ns = 'app-a'): string {

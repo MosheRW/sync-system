@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { TokenSecrets } from '../src/config/token-secret.js';
+import type { TokenSecretsInput } from '../src/config/token-secret.js';
 import { InMemoryGroupStore } from '../src/groups/in-memory-group-store.js';
 import { type TestGroup, createGroupWithMembers, resumeWith } from './helpers/groups.js';
 import { ManualScheduler } from './helpers/manual-scheduler.js';
@@ -27,7 +27,7 @@ async function restarted(
   memberCount: number,
   options: { apps?: TestAppInput[]; scheduler?: ManualScheduler } = {},
 ): Promise<{ group: TestGroup; store: InMemoryGroupStore; ts: TestServer }> {
-  const tokenSecrets: TokenSecrets = { current: randomBytes(32), source: 'env' };
+  const tokenSecrets: TokenSecretsInput = { current: randomBytes(32), source: 'env' };
   const extra = {
     tokenSecrets,
     ...(options.apps ? { apps: options.apps } : {}),
@@ -122,7 +122,7 @@ describe('members waiting for their leader (#5 AC25)', () => {
   });
 
   it('sends GROUP_FULL to parked members over the size limit', async () => {
-    const tokenSecrets: TokenSecrets = { current: randomBytes(32), source: 'env' };
+    const tokenSecrets: TokenSecretsInput = { current: randomBytes(32), source: 'env' };
     ts = await startTestServer({ tokenSecrets });
     const group = await createGroupWithMembers(ts, 2);
     await ts.close();

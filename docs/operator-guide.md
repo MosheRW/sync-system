@@ -328,6 +328,8 @@ are in the Purpose column and below the table.
 | `NODE_ENV`                                    | unset                | -     | -        | The public dev API key is refused unless this is `development`/`test`.                                                                         |
 | `TOKEN_SECRET`                                | none                 | -     | -        | Token signing secret; see [Token secret](#token-secret). Never logged.                                                                         |
 | `TOKEN_SECRET_PREVIOUS`                       | unset                | -     | -        | Old secret, verify only, during a rotation.                                                                                                    |
+| `TOKEN_SECRET_FILE`                           | unset                | -     | -        | Path of a file holding `TOKEN_SECRET`; set only one of the two. One trailing newline is removed.                                               |
+| `TOKEN_SECRET_PREVIOUS_FILE`                  | unset                | -     | -        | Path of a file holding `TOKEN_SECRET_PREVIOUS`; set only one of the two. One trailing newline is removed.                                      |
 | `MAX_GROUP_SIZE_CEILING`                      | `100`                | `1`   | none     | Ceiling for `maxGroupSize`.                                                                                                                    |
 | `MAX_LEADER_UPDATE_RATE_CEILING`              | `10`                 | `1`   | none     | Ceiling for `maxLeaderUpdatesPerSecond`.                                                                                                       |
 | `MAX_MESSAGE_SIZE_CEILING`                    | `16384`              | `1`   | none     | Ceiling for `maxMessageBytes` (bytes).                                                                                                         |
@@ -352,6 +354,7 @@ are in the Purpose column and below the table.
 | `MAX_GROUP_CREATES_PER_APP_PER_MINUTE`        | `120`                | `1`   | `60000`  | Upper bound of an app's sustained create rate, which is derived from the cap, the burst and `maxSessionMinutes`. Same value on every instance. |
 | `MAX_LIVE_GROUPS_PER_APP`                     | `10000`              | `3`   | `100000` | Live groups per app, over all instances; > 2 x `MAX_GROUP_CREATE_BURST_PER_APP`. Same value on every instance.                                 |
 | `REDIS_URL`                                   | unset                | -     | -        | Redis storage, `redis://` or `rediss://`; unset: memory. Never logged.                                                                         |
+| `REDIS_URL_FILE`                              | unset                | -     | -        | Path of a file holding the whole `REDIS_URL`; set only one of the two. One trailing newline is removed.                                        |
 | `REDIS_KEY_PREFIX`                            | `sync`               | -     | -        | Key prefix, `[a-z0-9][a-z0-9_-]`, at most 32 characters.                                                                                       |
 | `REDIS_CONNECT_TIMEOUT_SECONDS`               | `10`                 | `1`   | `120`    | Bound for the startup connection and each reconnect attempt.                                                                                   |
 | `REDIS_COMMAND_TIMEOUT_MS`                    | `2000`               | `100` | `30000`  | A Redis command not answered in time counts as unreachable.                                                                                    |
@@ -848,7 +851,8 @@ printed):
 1. Set the new secret as `TOKEN_SECRET` and the old one as
    `TOKEN_SECRET_PREVIOUS`, and restart. Old tokens still verify, and every
    check, resume or refresh hands back a token signed with the new secret.
-   With secret files, mount the old secret as a second file (see
+   With secret files, mount the old secret as a second file and point
+   `TOKEN_SECRET_PREVIOUS_FILE` at it (see
    [Passing secrets to the container](#passing-secrets-to-the-container)).
 2. After `MAX_SESSION_MINUTES_CEILING` + `TOKEN_REFRESH_MAX_SECONDS` (8 h 5 min
    by default) remove `TOKEN_SECRET_PREVIOUS` and restart. Every old token is
@@ -887,13 +891,11 @@ spaces, quotes or `$`, which keeps every method below simple.
   access to it.
 - **Secret file** (compose `secrets:` or a Swarm secret, mounted at
   `/run/secrets/<name>`): keeps the value out of `docker inspect`,
-  `docker compose config` and the container's configuration; only the mount
-  path shows. The server reads environment variables only: `TOKEN_SECRET_FILE`,
-  `REDIS_URL_FILE` and any other unknown `TOKEN_*` or `REDIS_*` name is a
-  `Config error` and stops startup (see
-  [Environment variables](#environment-variables); reading secrets from files
-  natively is planned in issue #58). Until then a short wrapper reads the file
-  and starts the server.
+  `docker compose config`, the container's configuration and the server's
+  process environment; only the mount path shows. Set `TOKEN_SECRET_FILE`,
+  `TOKEN_SECRET_PREVIOUS_FILE` or `REDIS_URL_FILE` to the path and the server
+  reads the value from the file once, at startup (see
+  [Environment variables](#environment-variables)).
 
 With Docker Compose, create the secret file outside any git working tree,
 owned by uid 1000 (the image's `node` user) with mode 400, before writing the
@@ -906,8 +908,9 @@ sudo sh -c 'openssl rand -base64 32 > /etc/sync-server/token_secret'
 ```
 
 Then replace the `TOKEN_SECRET` line of the minimal `compose.yaml` in
-[Install with Docker Compose](#install-with-docker-compose) with the wrapper
-(keep the `healthcheck`):
+[Install with Docker Compose](#install-with-docker-compose) with
+`TOKEN_SECRET_FILE` and the secret (keep the `healthcheck`). The image's `CMD`
+stays as it is:
 
 ```yaml
 services:
@@ -920,13 +923,7 @@ services:
       - ./apps.json:/config/apps.json:ro
     environment:
       SYNC_CONFIG_PATH: /config/apps.json
-    command:
-      - sh
-      - -c
-      - >-
-        TOKEN_SECRET="$$(cat /run/secrets/sync_token_secret)" &&
-        export TOKEN_SECRET &&
-        exec node dist/index.js
+      TOKEN_SECRET_FILE: /run/secrets/sync_token_secret
     secrets:
       - sync_token_secret
 secrets:
@@ -934,18 +931,29 @@ secrets:
     file: /etc/sync-server/token_secret # outside any git working tree
 ```
 
-- `$$` stops compose from expanding `$(...)` itself, and `>-` joins the lines
-  into one command. `exec` keeps node as process 1, so signals and shutdown
-  work as before. Never add `set -x`, `echo` or `printenv` to it: they print
-  the secret.
-- It fails closed and never starts with an empty secret: a missing secret file
-  stops the container from being created; a file the `node` user cannot read,
-  or a secret not listed under the service, makes `cat` fail and the container
-  exits 1; an empty file or one with CRLF line endings is a `Config error`.
+- It fails closed and never starts with a secret you did not intend: a
+  missing secret file stops the container from being created; a path that
+  does not exist, a file the `node` user cannot read, a directory, an empty
+  file, a file larger than 4 KiB, or `TOKEN_SECRET` and `TOKEN_SECRET_FILE`
+  both set (even to an empty value) is a `Config error` and the server exits
+  1 (see [`docs/startup-errors.md`](startup-errors.md)). So a leftover
+  `TOKEN_SECRET:` line, or an `sh` wrapper from an earlier setup that copies
+  the file into `TOKEN_SECRET`, next to `TOKEN_SECRET_FILE` stops startup;
+  remove it.
+- One trailing line break (`\n` or `\r\n`) is removed, so the file written
+  above works, and so does one saved with CRLF line endings. Nothing else is
+  trimmed: leading or trailing spaces, a second line break or a byte order
+  mark make a token secret a `Config error`.
 - A compose `file:` secret is bind-mounted with the host file's owner and
-  mode, so it must be readable by uid 1000, as above. **Never** make it
-  world-readable (`chmod 644` or `o+r`): every host user could then read it.
-  A host account with uid 1000 can read it too.
+  mode (the long syntax's `uid`, `gid` and `mode` apply only in Swarm), so it
+  must be readable by uid 1000, as above. If the server reports the file "is
+  not readable by the server user" (or "is not accessible to the server
+  user", when a directory on the path is not searchable by uid 1000), fix
+  the owner and mode on the host
+  (`sudo chown 1000:1000 FILE` and `sudo chmod 400 FILE`). **Never** make it
+  world-readable (`chmod 644` or `o+r`), and never run the container as root
+  to get around it: every host user could then read it. A host account with
+  uid 1000 can read it too.
 - A Swarm secret (`openssl rand -base64 32 | docker secret create sync_token_secret -`,
   then `external: true` in place of `file:`) is mounted root-owned with mode
   0444 on a tmpfs, which the `node` user can read as is. It needs Swarm mode:
@@ -960,14 +968,19 @@ secrets:
   the same overlay network (the stack's default network is enough), publish
   only the proxy's port, and point it at `http://sync-server:8080` instead of
   `127.0.0.1:8080`.
-- For a rotation, add a second secret and one more pair to the chain, before
-  `exec`: `TOKEN_SECRET_PREVIOUS="$$(cat /run/secrets/sync_token_secret_previous)" && export TOKEN_SECRET_PREVIOUS &&`.
+- For a rotation, add a second secret (`sync_token_secret_previous`) under
+  the service and the top-level `secrets:`, and set
+  `TOKEN_SECRET_PREVIOUS_FILE: /run/secrets/sync_token_secret_previous`.
   Remove both when the rotation window ends (see Routine rotation above).
-  `REDIS_URL` works the same way, with a file holding the whole URL.
-- The wrapper replaces the image's `CMD` (`node dist/index.js`): check it when
-  upgrading (the [upgrade notes](#upgrading) say if the `CMD` changes).
-- The secret is still readable inside the container, in the file and in the
-  server's process environment, by anyone who can `docker exec`.
+- `REDIS_URL_FILE` works the same way, with a file holding the whole URL
+  (`redis://[user]:password@host:6379/0`) on one line, owned by uid 1000 with
+  mode 400. Never type the password on a command line (it lands in shell
+  history and the process list): create the empty file as above, then write
+  the URL with an editor (`sudoedit /etc/sync-server/redis_url`).
+- Keep secret files out of the image, the build context and any git working
+  tree.
+- The secret is still readable inside the container, in the mounted file, by
+  anyone who can `docker exec`.
 
 Whichever way you pass a secret, anyone with access to the Docker daemon (the
 `docker` group or root) can read it: restrict that access.

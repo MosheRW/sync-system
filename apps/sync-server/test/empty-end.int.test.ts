@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { TokenSecrets } from '../src/config/token-secret.js';
+import type { TokenSecretsInput } from '../src/config/token-secret.js';
 import type { GroupRecord } from '../src/groups/group-store.js';
 import { InMemoryGroupStore } from '../src/groups/in-memory-group-store.js';
 import {
@@ -16,6 +16,7 @@ import type { TestClient } from './helpers/test-client.js';
 import { KEY_A, type TestServer, startTestServer } from './helpers/test-server.js';
 import { claimsOf } from './helpers/tokens.js';
 import { sleep, waitUntil } from './helpers/wait.js';
+import { testSecrets } from './helpers/token-secrets.js';
 
 const MINUTE = 60_000;
 /** Default inactivity limit (20 min) plus the default max refresh interval (300 s). */
@@ -28,7 +29,7 @@ afterEach(async () => {
   ts = undefined;
 });
 
-function secrets(): TokenSecrets {
+function secrets(): TokenSecretsInput {
   return { current: randomBytes(32), source: 'env' };
 }
 
@@ -235,7 +236,7 @@ describe('groups recreated after a restart, then emptied (#13 6.9 layer 1)', () 
     ts = await startTestServer({ tokenSecrets, scheduler, store });
     const claims = claimsOf(group.leaderToken);
     // A pre-restart token (iat before this process) whose term is 5 ms ahead.
-    const issuer = new TokenService(new TokenKeyring(tokenSecrets));
+    const issuer = new TokenService(new TokenKeyring(testSecrets(tokenSecrets)));
     const ahead = issuer.issue({
       namespace: 'app-a',
       groupId: claims.gid,

@@ -7,9 +7,10 @@ import { TokenService } from '../src/tokens/token-service.js';
 import { ManualScheduler } from './helpers/manual-scheduler.js';
 import { KEY_B, type TestServer, startTestServer } from './helpers/test-server.js';
 import { claimsOf } from './helpers/tokens.js';
+import { testSecrets } from './helpers/token-secrets.js';
 
 const SECRETS = { current: randomBytes(32), source: 'env' as const };
-const verifier = new TokenService(new TokenKeyring(SECRETS));
+const verifier = new TokenService(new TokenKeyring(testSecrets(SECRETS)));
 
 let ts: TestServer | undefined;
 

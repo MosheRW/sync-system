@@ -8,6 +8,7 @@ import {
   TokenKeyring,
   deriveAppKey,
 } from '../src/tokens/token-keys.js';
+import { testSecrets } from './helpers/token-secrets.js';
 
 const SECRET = Buffer.from('q9Zt2Lx7Vb4Nm1Rt6Yw0Ue5Io3AaKd8Fj2Hs7Gp1Wc=');
 const PREVIOUS = Buffer.from('Xr4Tn8Qm2Vk6Bz0Pc9Ls3Hd7Jf1Gw5Ye8Ua2Ii6Oo4=');
@@ -33,9 +34,9 @@ describe('per-app keys (architecture 1.2, R5)', () => {
     expect(deriveAppKey(SECRET, 'app-a').toString('hex')).toBe(
       '747929d9ff1fc20e6074c41b54dc9f1b6e3e4552ad936eea830ad870cc6a4db7',
     );
-    expect(new TokenKeyring({ current: SECRET }).keysFor('app-a').current.toString('hex')).toBe(
-      '747929d9ff1fc20e6074c41b54dc9f1b6e3e4552ad936eea830ad870cc6a4db7',
-    );
+    expect(
+      new TokenKeyring(testSecrets({ current: SECRET })).keysFor('app-a').current.toString('hex'),
+    ).toBe('747929d9ff1fc20e6074c41b54dc9f1b6e3e4552ad936eea830ad870cc6a4db7');
   });
 
   it('derives separate keys per purpose with the exact HKDF labels (#10 R4, AC26)', () => {
@@ -58,7 +59,10 @@ describe('per-app keys (architecture 1.2, R5)', () => {
     expect(blob.equals(token)).toBe(false);
     expect(qr.equals(blob)).toBe(false);
     expect(qr.equals(deriveAppKey(SECRET, 'app-b', QR_TICKET_INFO_PREFIX))).toBe(false);
-    const qrRing = new TokenKeyring({ current: SECRET, previous: PREVIOUS }, QR_TICKET_INFO_PREFIX);
+    const qrRing = new TokenKeyring(
+      testSecrets({ current: SECRET, previous: PREVIOUS }),
+      QR_TICKET_INFO_PREFIX,
+    );
     expect(qrRing.keysFor('app-a').current.equals(qr)).toBe(true);
     expect(
       qrRing
@@ -68,12 +72,14 @@ describe('per-app keys (architecture 1.2, R5)', () => {
   });
 
   it('caches keys and lists current before previous', () => {
-    const ring = new TokenKeyring({ current: SECRET, previous: PREVIOUS });
+    const ring = new TokenKeyring(testSecrets({ current: SECRET, previous: PREVIOUS }));
     const keys = ring.keysFor('app-a');
     expect(ring.keysFor('app-a')).toBe(keys);
     expect(keys.verify).toHaveLength(2);
     expect(keys.verify[0]).toBe(keys.current);
     expect(keys.verify[1]!.equals(deriveAppKey(PREVIOUS, 'app-a'))).toBe(true);
-    expect(new TokenKeyring({ current: SECRET }).keysFor('app-a').verify).toHaveLength(1);
+    expect(new TokenKeyring(testSecrets({ current: SECRET })).keysFor('app-a').verify).toHaveLength(
+      1,
+    );
   });
 });
