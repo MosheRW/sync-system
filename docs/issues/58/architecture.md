@@ -126,6 +126,18 @@ read (<code>)` with `<code>` only if it matches `/^E[A-Z0-9]+$/`, else
   `createSyncServer` accepts either and copies the input through
   `redactTokenSecrets()`. HKDF, HMAC, `timingSafeEqual` and rotation are
   unchanged. The server package is private, so no public API changes.
+- Deviation (Gate 3 round 4, user request): the `TokenSecrets` constructor
+  runs the #7 L1 check itself (`tokenSecretsProblem`: `current` and, when
+  set, `previous` are Buffers of at least 32 bytes, and `previous` differs
+  from `current`) and throws a `ConfigError` with a fixed message, so a
+  handle built directly cannot hold an empty or short key.
+  `createSyncServer` and `redactTokenSecrets` take a handle only when
+  `TokenSecrets.isHandle()` (brand check on the private field) is true; an
+  `Object.create(TokenSecrets.prototype)` look-alike is refused before
+  anything is bound. The static check scans every workspace (the client
+  and React tests deep-import the server sources), matches the secrets
+  module by package path as well, and flags `require` / `createRequire`
+  access to it.
 
 ### 3.3 Redis (`redis.ts`)
 
