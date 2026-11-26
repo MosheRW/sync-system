@@ -174,34 +174,38 @@ describeRedis('run() with REDIS_URL (#35 AC2, AC4, AC27)', () => {
     }
   });
 
-  it('the process exits 1 after a Redis failure while starting (AC4)', async () => {
-    const prefix = randomPrefix();
-    const user = await userWithoutGet(prefix);
-    try {
-      const child = spawnSync(process.execPath, ['--import', 'tsx', 'src/index.ts'], {
-        cwd: fileURLToPath(new URL('..', import.meta.url)),
-        env: childEnv({
-          PORT: String(await freePort()),
-          HOST: '127.0.0.1',
-          TOKEN_SECRET,
-          SYNC_CONFIG_PATH: config(),
-          REDIS_URL: user.url,
-          REDIS_KEY_PREFIX: prefix,
-          NODE_ENV: 'test',
-          NODE_OPTIONS: '--conditions=@mosherw/sync-system-source',
-        }),
-        encoding: 'utf8',
-        // #87: see CHILD_START_MS.
-        timeout: CHILD_START_MS,
-      });
-      expect(child.signal).toBeNull();
-      expect(child.status).toBe(1);
-      expect(child.stderr).toContain('Startup error: Redis authentication failed (REDIS_URL)');
-      expect(child.stderr).not.toContain(user.password);
-      expect(child.stdout).not.toContain(user.password);
-    } finally {
-      await user.remove();
-    }
-  // #87: see CHILD_START_MS.
-  }, CHILD_START_MS + 30_000);
+  it(
+    'the process exits 1 after a Redis failure while starting (AC4)',
+    async () => {
+      const prefix = randomPrefix();
+      const user = await userWithoutGet(prefix);
+      try {
+        const child = spawnSync(process.execPath, ['--import', 'tsx', 'src/index.ts'], {
+          cwd: fileURLToPath(new URL('..', import.meta.url)),
+          env: childEnv({
+            PORT: String(await freePort()),
+            HOST: '127.0.0.1',
+            TOKEN_SECRET,
+            SYNC_CONFIG_PATH: config(),
+            REDIS_URL: user.url,
+            REDIS_KEY_PREFIX: prefix,
+            NODE_ENV: 'test',
+            NODE_OPTIONS: '--conditions=@mosherw/sync-system-source',
+          }),
+          encoding: 'utf8',
+          // #87: see CHILD_START_MS.
+          timeout: CHILD_START_MS,
+        });
+        expect(child.signal).toBeNull();
+        expect(child.status).toBe(1);
+        expect(child.stderr).toContain('Startup error: Redis authentication failed (REDIS_URL)');
+        expect(child.stderr).not.toContain(user.password);
+        expect(child.stdout).not.toContain(user.password);
+      } finally {
+        await user.remove();
+      }
+      // #87: see CHILD_START_MS.
+    },
+    CHILD_START_MS + 30_000,
+  );
 });
