@@ -1,17 +1,18 @@
 # State: #81 fix: RELEASING.md lessons from the 1.0.0 release
 - Path: fast
-- Phase: implementation
+- Phase: validation
 - Branch: fix/81-releasing-procedure-lessons
 - PR: #84
 - Plan approved by user: yes (Gate 2, 2026-11-25)
 - Security-sensitive: yes
-- Review rounds: 0
-- Last updated by: engineer
+- Review rounds: 1
+- Last updated by: qa
 ## Model log
 - pm grooming: sonnet (default) → DONE
 - architect plan: opus → DONE
 - security plan: opus (rule) → PASS (0 critical, 0 high, 4 medium, 6 low; see security.md)
 - engineer implement: opus (rule: security-sensitive, Implementer model) → DONE
+- qa validate r1: opus (NEXT_MODEL) → PASS (AC1-AC9 met; local Docker CI green; non-blocking: main.test 5 s timeout under load, pre-existing #78/#80)
 ## Gate 2 decisions (2026-11-25)
 1. Implement architecture.md chunks 1-3 and security required controls R1-R8.
 2. Apply medium advisories M1-M4 and low advisories L1-L6 in this PR (M3 only if Docker's documentation confirms the `dckr_pat_` prefix).
