@@ -262,6 +262,34 @@ describe('changesets (ADR 0016, AC49, C9)', () => {
   });
 });
 
+/**
+ * The GHCR scope check (#82, L-1): the token goes to curl as a header on stdin
+ * (`-H @-`), never as an argument, and a failed request stops the block.
+ */
+const SCOPE_LINE =
+  /^\s*S="\$\(printf 'Authorization: token %s\\n' "\$T" \| curl -fsS -D - -H @- https:\/\/api\.github\.com\/user \|[^"]*\)" \|\| \{ echo '[^'$]*'; exit 1; \}$/;
+
+/** The push block's scope check and refusal, in order before the GHCR login. */
+function expectScopeCheck(block: string, tokenPrompt: string): void {
+  const code = block.slice(block.indexOf('```sh'));
+  const lines = code.split(/\r?\n/);
+  const scope = lines.findIndex((line) => SCOPE_LINE.test(line));
+  const refuse = lines.findIndex((line) =>
+    line.trim().startsWith(`[ "$S" = 'read:packages write:packages ' ] || {`),
+  );
+  const read = lines.findIndex((line) => line.includes(tokenPrompt));
+  const login = lines.findIndex((line) => line.includes('docker login ghcr.io'));
+  expect(read, tokenPrompt).toBeGreaterThan(-1);
+  expect(scope).toBeGreaterThan(read);
+  expect(refuse).toBe(scope + 1);
+  expect(login).toBeGreaterThan(refuse);
+  expect(lines[refuse]).toMatch(/exit 1; \}$/);
+  expect(lines[scope]).toContain("sed -n 's/^x-oauth-scopes://p'");
+  // the token is never a command argument: no header on the command line
+  expect(code).not.toMatch(/-H\s+["']?Authorization/i);
+  expect(code).not.toMatch(/curl[^|\n]*\$\{?T\b/);
+}
+
 describe('RELEASING.md load-bearing lines (C1-C5, M6, L1, L5, L8, L9, L11-L13)', () => {
   const doc = read('RELEASING.md');
   /** The shell code blocks only (what the maintainer pastes). */
@@ -565,16 +593,25 @@ describe('RELEASING.md load-bearing lines (C1-C5, M6, L1, L5, L8, L9, L11-L13)',
     );
     expect(check).toBeLessThan(push.indexOf('docker login ghcr.io'));
     expect(push.indexOf('trap ')).toBeLessThan(check);
-    // $T is only matched by `case` or piped by printf into docker login, never printed
+    // $T is only matched by `case`, or piped by printf into docker login or into
+    // the scope check's curl header on stdin (#82), never printed
     const usesT = shell.split(/\r?\n/).filter((line) => /\$\{?T\b/.test(line));
-    expect(usesT.length).toBeGreaterThanOrEqual(3);
+    expect(usesT.length).toBeGreaterThanOrEqual(5);
     for (const line of usesT) {
       const piped = /^\s*printf '%s' "\$T" \| docker login \S+ -u \S+ --password-stdin$/.test(line);
       const matched = /^\s*case "\$T" in ghp_\*\) ;; \*\) echo '[^'$]*'; exit 1 ;; esac$/.test(
         line,
       );
-      expect(piped || matched, line).toBe(true);
+      expect(piped || matched || SCOPE_LINE.test(line), line).toBe(true);
     }
+  });
+
+  it('checks the GHCR token scopes with GitHub before the login, token on stdin (#82, L-1)', () => {
+    const push = step('6. The server image');
+    expectScopeCheck(push, "read -rs -p 'GHCR classic token (write:packages): ' T");
+    // after the prefix check, so a non-classic token never reaches GitHub's API
+    expect(push.indexOf('S="$(printf')).toBeGreaterThan(push.indexOf('case "$T" in ghp_*)'));
+    expect(push.replace(/\s+/g, ' ')).toContain('`X-OAuth-Scopes`');
   });
 
   it('says which PR to release when there is no separate release PR (#81 AC5)', () => {
@@ -806,6 +843,8 @@ describe('RELEASING.md reader image release (#77, ADR 0023, security.md controls
     expect(pushBlock).toContain('https://github.com/settings/tokens/new?scopes=write:packages');
     expect(pushBlock).toMatch(/if `repo` is ticked,\s+untick it/);
     expect(pushBlock).toContain('"Read & Write"');
+    // #82, L-1: the push block checks the scopes with GitHub too
+    expectScopeCheck(pushBlock, "read -rs -p 'GHCR token (write:packages only): ' T");
   });
 
   it('creates the GitHub release from the existing tag, never as Latest (control 8, L2)', () => {
