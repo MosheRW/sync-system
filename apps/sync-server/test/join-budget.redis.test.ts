@@ -1,13 +1,22 @@
-import { afterAll, afterEach, beforeAll, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest';
 import { MemoryJoinBudget } from '../src/joins/join-budget.js';
 import { createLogger } from '../src/logging/logger.js';
 import { StorageReplyError } from '../src/storage/errors.js';
 import type { RedisLink } from '../src/storage/redis/connect.js';
+import { RedisCodeIndex } from '../src/storage/redis/codes.js';
 import { RedisJoinBudget } from '../src/storage/redis/join-budget.js';
 import { redisContext } from '../src/storage/redis/redis-storage.js';
 import { JOIN_BUDGET } from '../src/storage/redis/scripts.js';
 import { describeRedis, inspector, randomPrefix, testLink } from './helpers/redis.js';
-import { TestClock } from './helpers/test-server.js';
+import type { TestClient } from './helpers/test-client.js';
+import {
+  KEY_A,
+  KEY_B,
+  type StartOptions,
+  TestClock,
+  type TestServer,
+  startTestServer,
+} from './helpers/test-server.js';
 
 const WINDOW = 1000;
 const MEMBER = /^[0-9a-f]{16}$/;
@@ -173,5 +182,95 @@ describeRedis('RedisJoinBudget (#41)', () => {
     const { budget } = await instance(Date.now);
     await expect(budget.tryAcquire('app-a', 10_001)).rejects.toThrow(RangeError);
     expect(await inspect.keys(prefix)).toEqual([]);
+  });
+});
+
+/**
+ * Two servers on one prefix (#41 AC1, AC2, AC3): the 600 attempts per app
+ * per minute are spent once over both, whichever instance gets them, for
+ * group.joinByCode and group.joinByQr alike.
+ */
+describeRedis('the per-app join budget across instances (#41)', () => {
+  let inspect: Awaited<ReturnType<typeof inspector>>;
+  let prefix: string;
+  const servers: TestServer[] = [];
+
+  beforeAll(async () => {
+    inspect = await inspector();
+  });
+  afterAll(() => {
+    inspect.close();
+  });
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    for (const ts of servers.splice(0)) await ts.close();
+    await inspect.flush(prefix);
+  });
+
+  async function start(options: StartOptions = {}): Promise<TestServer> {
+    const ts = await startTestServer({
+      redisPrefix: prefix,
+      apps: [
+        { namespace: 'app-a', apiKey: KEY_A, maxConnections: 1000 },
+        { namespace: 'app-b', apiKey: KEY_B },
+      ],
+      env: { MAX_CONNECTIONS: '2000', MAX_APP_CONNECTIONS_CEILING: '1000' },
+      ...options,
+    });
+    servers.push(ts);
+    return ts;
+  }
+
+  /** `count` connections on `ts`, each sending 10 attempts with an unknown code. */
+  async function spend(ts: TestServer, count: number): Promise<TestClient[]> {
+    const clients: TestClient[] = [];
+    for (let c = 0; c < count; c++) {
+      const client = await ts.connectReady();
+      clients.push(client);
+      for (let i = 0; i < 10; i++) client.send({ type: 'group.joinByCode', joinCode: '000000' });
+    }
+    return clients;
+  }
+
+  it('600 attempts over two instances, then both refuse before any lookup (AC1-AC3)', async () => {
+    prefix = randomPrefix();
+    const [a, b] = [await start(), await start()];
+    const lookup = vi.spyOn(RedisCodeIndex.prototype, 'lookup');
+    const clients = [...(await spend(a, 35)), ...(await spend(b, 25))];
+    for (const client of clients) {
+      for (let i = 0; i < 10; i++) {
+        expect(await client.next('error')).toMatchObject({ code: 'CODE_NOT_FOUND' });
+      }
+    }
+    expect(lookup).toHaveBeenCalledTimes(600);
+    expect(await inspect.client.zCard(`${prefix}:v1:lj:app-a`)).toBe(600);
+
+    for (const ts of [a, b]) {
+      const extra = await ts.connectReady();
+      extra.send({ type: 'group.joinByCode', reqId: 'x', joinCode: '000000' });
+      const refused = await extra.next('error');
+      expect(refused).toMatchObject({
+        reqId: 'x',
+        code: 'RATE_LIMITED',
+        message: 'Too many join attempts',
+      });
+      const wait = Number(refused.details?.retryAfterMs);
+      expect(wait).toBeGreaterThan(0);
+      expect(wait).toBeLessThanOrEqual(60_000);
+      expect(
+        ts.logs.records().filter((record) => record.event === 'join_app_budget_exhausted'),
+      ).toEqual([expect.objectContaining({ namespace: 'app-a' })]);
+    }
+    // Both actions share the budget: a QR attempt is refused before the ticket check.
+    const qr = await b.connectReady();
+    qr.send({ type: 'group.joinByQr', reqId: 'q', ticket: 'not-a-ticket' });
+    expect(await qr.next('error')).toMatchObject({ reqId: 'q', code: 'RATE_LIMITED' });
+    expect(lookup).toHaveBeenCalledTimes(600);
+    expect(await inspect.client.zCard(`${prefix}:v1:lj:app-a`)).toBe(600);
+
+    // Another app keeps its own budget.
+    const other = await b.connectReady(KEY_B);
+    other.send({ type: 'group.joinByCode', reqId: 'o', joinCode: '000000' });
+    expect(await other.next('error')).toMatchObject({ reqId: 'o', code: 'CODE_NOT_FOUND' });
   });
 });

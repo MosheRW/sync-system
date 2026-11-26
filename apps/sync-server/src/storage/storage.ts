@@ -12,6 +12,7 @@ import type { EpochSource } from './redis/epoch.js';
 import type { ClusterHost } from '../groups/cluster-notifier.js';
 import type { RemoteReceiver } from './redis/pubsub.js';
 import type { ApprovalStore } from '../joins/approval-store.js';
+import type { JoinBudgetStore } from '../joins/join-budget.js';
 import type { ParkingRegistry } from './redis/parking.js';
 import { type LiveGroupsStore, MemoryLiveGroups } from '../groups/live-groups.js';
 
@@ -68,6 +69,11 @@ export interface Storage {
   readonly leases?: LeaseSource;
   /** Pending method B requests in Redis (#35 architecture 12.9); memory: the service's own. */
   readonly approvals?: ApprovalStore;
+  /**
+   * The per-app join-attempt budget shared by every instance (Redis, #41);
+   * memory leaves it unset and the join service keeps its own.
+   */
+  readonly joinBudget?: JoinBudgetStore;
   /** Which instances hold parked members of a missing group (Redis, 12.10). */
   readonly parked?: ParkingRegistry;
   /**
