@@ -218,7 +218,7 @@ export function collectRedisSettings(env: EnvSource, errors: string[]): RedisSet
       commandMs = parsed;
     }
   }
-  // REDIS_URL or REDIS_URL_FILE (#58, ADR 0023); `invalid` never means the memory store.
+  // REDIS_URL or REDIS_URL_FILE (#58, ADR 0024); `invalid` never means the memory store.
   const url = resolveSecret(env, 'REDIS_URL', errors);
   if (url.kind !== 'set') return undefined;
   const endpoint = parseUrl(url.value, url.label, env.NODE_ENV, errors);

@@ -217,7 +217,7 @@ function checkSecret(
 /**
  * Reads TOKEN_SECRET and TOKEN_SECRET_PREVIOUS (architecture 5.1, R4), each
  * from the environment or from the file named by its `_FILE` twin (#58,
- * ADR 0023):
+ * ADR 0024):
  * - a missing TOKEN_SECRET is allowed only when NODE_ENV is exactly
  *   `development` or `test` (a random per-process secret is used); anywhere
  *   else it is an error (fail closed, Q-A);

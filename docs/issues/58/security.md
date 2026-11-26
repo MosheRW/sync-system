@@ -1,7 +1,7 @@
 # Security review (plan): read secrets from files via `_FILE` variables (#58)
 
 - Mode: plan. Reviewed: [`spec.md`](spec.md), [`architecture.md`](architecture.md),
-  [ADR 0023](../../decisions/0023-secrets-from-files.md) (Proposed), and the
+  [ADR 0024](../../decisions/0024-secrets-from-files.md) (Proposed), and the
   code it touches (`apps/sync-server/src/config/token-secret.ts`, `redis.ts`,
   `load.ts`, `config-error.ts`, `apps-config.ts` `shownText`, `main.ts`,
   `index.ts` `fatal`/`safeErr`), plus `docs/operator-guide.md`
@@ -64,7 +64,7 @@ No critical or high findings.
   look like paths. With 44-character base64 secrets, the 64-character
   `shownText` cut would print the whole value. The cost is a slightly less
   helpful "does not exist" message; the variable name is still printed and the
-  operator can `ls` the path. ADR 0023's "a file path may be printed" line must
+  operator can `ls` the path. ADR 0024's "a file path may be printed" line must
   be updated to the narrowed rule when it is accepted (chunk 1).
 - **REDIS_URL from file keeps the URL parser's lenient whitespace: no
   objection.** WHATWG `URL` dropping leading/trailing C0/space and inner
@@ -73,7 +73,7 @@ No critical or high findings.
   dev-password, query/fragment and scheme checks still run on the parsed
   URL). Parity with env (AC2/AC13) is the safer contract. Keep the existing
   `raw.includes('?' | '#')` check on the raw value.
-- **ADR 0023 route:** no security difference between the options. Option 1 is
+- **ADR 0024 route:** no security difference between the options. Option 1 is
   fine.
 
 ## 5. Required controls (part of the plan)
@@ -164,6 +164,6 @@ C11. **No new dependency** (Node built-ins only); no change to `known-vars`
   fallback after `invalid`; labels; `TokenSecrets` redaction; the new log line.
 - `known-vars.ts`: exactly three names added.
 - Tests for C3, C8, C9 (sentinel forms), FIFO non-blocking, 4096/4097 bounds.
-- Docs: C10 items; ADR 0023 text matches the accepted Q6 rule.
+- Docs: C10 items; ADR 0024 text matches the accepted Q6 rule.
 - Scanners: gitleaks on the PR commits, semgrep on changed files, `npm audit`
   (high/critical).

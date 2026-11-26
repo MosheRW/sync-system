@@ -114,7 +114,7 @@ describe('unknown look-alike variables (#36 AC37a, ADR 0015)', () => {
     ]);
   });
 
-  it('knows only the three _FILE names; other _FILE names in a family are still flagged (#58, ADR 0023)', () => {
+  it('knows only the three _FILE names; other _FILE names in a family are still flagged (#58, ADR 0024)', () => {
     expect(
       problemsOf({
         TOKEN_SECRET_FILE: 'x',

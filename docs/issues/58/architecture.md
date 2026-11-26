@@ -23,9 +23,9 @@ is decided at Gate 2 (see Decisions).
 
 ## 2. Decisions
 
-- **[ADR 0023](../../decisions/0023-secrets-from-files.md) (Proposed):
+- **[ADR 0024](../../decisions/0024-secrets-from-files.md) (Proposed):
   how to record the `_FILE` rules against ADR 0015 (Q8).**
-  Options: (1) new ADR 0023 for the `_FILE` mechanism, ADR 0015 unchanged
+  Options: (1) new ADR 0024 for the `_FILE` mechanism, ADR 0015 unchanged
   except one "Related" link line; (2) amend ADR 0015 in place; (3) a new
   ADR superseding 0015. **Recommendation: option 1.** Trade-off: one more
   record to read vs. not editing an accepted decision and not churning
@@ -277,8 +277,8 @@ changes (docs).
 - `docs/startup-errors.md`: new "Config error: secret files" table (5.2);
   `<name>` note for token secrets and Redis rows also covers
   `X (from X_FILE)` (Redis rows become `<name>` templates).
-- `docs/conventions.md`: one row "Secret files" → ADR 0023 (first chunk).
-- `docs/decisions/0015-...md`: one "Related: 0023" header line (option 1
+- `docs/conventions.md`: one row "Secret files" → ADR 0024 (first chunk).
+- `docs/decisions/0015-...md`: one "Related: 0024" header line (option 1
   only).
 - README: none (no env table).
 
@@ -346,7 +346,7 @@ Security-sensitive: yes
   handling, `secret-file.ts`).
 - Non-leak of secret values in errors and logs (`config-error.ts` contract,
   `warnAboutSecrets`, message builders).
-- Unknown-variable gate (`known-vars.ts`, ADR 0015/0023).
+- Unknown-variable gate (`known-vars.ts`, ADR 0015/0024).
 - No new or upgraded dependency (Node built-ins only), no crypto change, no
   endpoint or message handler change.
 
@@ -359,7 +359,7 @@ non-leak properties must hold on every path.
 
 ## 12. Implementation chunks
 
-1. `docs(adr): accept 0023 secrets-from-files` (status Accepted per the
+1. `docs(adr): accept 0024 secrets-from-files` (status Accepted per the
    user's Gate 2 choice, `docs/conventions.md` row, the "Related" line in
    ADR 0015; or the option-2/3 variant).
 2. `feat(server): add secret file reader for _FILE variables`

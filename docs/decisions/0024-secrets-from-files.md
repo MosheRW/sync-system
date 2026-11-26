@@ -1,4 +1,4 @@
-# 0023. Reading secrets from files (`_FILE` variables)
+# 0024. Reading secrets from files (`_FILE` variables)
 
 - Status: Accepted (Gate 2, 2026-11-25: user chose the recommended option 1,
   with the narrowed path rule below and the security controls C1–C11 of
@@ -55,7 +55,7 @@ prefix means updating this ADR."
 
 ## Options
 
-1. **New ADR 0023 for the `_FILE` mechanism; ADR 0015 unchanged except a
+1. **New ADR 0024 for the `_FILE` mechanism; ADR 0015 unchanged except a
    "Related" link.**
    - Pros: ADR 0015 stays as accepted (the docs-conventions rule: never edit
      an accepted decision); the `_FILE` contract (conflict rule, newline
@@ -71,7 +71,7 @@ prefix means updating this ADR."
      two unrelated decisions (name families vs. reading secret files) in
      one record; the `_FILE` rules are not about unknown names at all.
 3. **New ADR superseding ADR 0015** (restates the family rule plus the
-   `_FILE` rules; 0015 becomes `Superseded by 0023`).
+   `_FILE` rules; 0015 becomes `Superseded by 0024`).
    - Pros: follows the convention strictly; one current record.
    - Cons: rewrites a rule that did not change; the reader also cites 0015
      (`READER_` family) and every link to 0015 in the docs and code comments
@@ -83,7 +83,7 @@ Option 1 (chosen by the user at Gate 2 of #58). The `_FILE`
 behaviour above is the decision recorded here. ADR 0015's rule stays as it
 is; only its known list in `apps/sync-server/src/config/known-vars.ts` grows
 by three names, which 0015 already allows, and 0015 gets one line
-`- Related: [0023](0023-secrets-from-files.md) (secret files, #58)` under its
+`- Related: [0024](0024-secrets-from-files.md) (secret files, #58)` under its
 header. Its Decision and Consequences are not edited.
 
 ## Consequences

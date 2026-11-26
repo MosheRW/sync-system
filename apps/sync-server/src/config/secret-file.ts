@@ -3,7 +3,7 @@ import { shownText } from './apps-config.js';
 import type { EnvSource } from './env.js';
 
 /**
- * Reading a secret from a file named by an `X_FILE` variable (ADR 0023,
+ * Reading a secret from a file named by an `X_FILE` variable (ADR 0024,
  * #58). This module is the only code that opens a secret file (security C1).
  *
  * Messages come from SECRET_FILE_MESSAGES only: they name the variable and,
@@ -217,7 +217,7 @@ export type ResolvedSecret =
 
 /**
  * The value of `variable` from the environment or from the file named by
- * `<variable>_FILE` (ADR 0023). Both set (even to `""`) is a conflict and
+ * `<variable>_FILE` (ADR 0024). Both set (even to `""`) is a conflict and
  * the file is not opened; `X_FILE=""` is an error, not "unset". Problems are
  * pushed to `problems`; the result never carries an error text.
  */

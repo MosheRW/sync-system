@@ -634,7 +634,7 @@ const content = (text: string | Buffer): SecretFileSpec => ({ kind: 'content', c
 /** A secret pasted into `TOKEN_SECRET_FILE` by mistake, shaped like a path (security C9). */
 const PASTED_SECRET = 'SENTINEL/pasted+Qm7Zx2Lv9Kd4/Rt8Wn3Hb6Jf1Pc0Ys5Hb6Jf1=';
 
-/** `_FILE` variables (#58, ADR 0023): conflicts, file problems, rules from a file. */
+/** `_FILE` variables (#58, ADR 0024): conflicts, file problems, rules from a file. */
 export const SECRET_FILE_CASES: readonly ConfigCase[] = [
   {
     id: 'TOKEN_SECRET and TOKEN_SECRET_FILE both set',
