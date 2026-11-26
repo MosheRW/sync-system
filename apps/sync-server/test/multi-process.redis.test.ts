@@ -8,7 +8,7 @@ import { afterAll, afterEach, beforeAll, expect, it } from 'vitest';
 import { codesOf } from './helpers/groups.js';
 import { TEST_REDIS_URL, describeRedis, inspector, randomPrefix } from './helpers/redis.js';
 import { TestClient } from './helpers/test-client.js';
-import { childEnv } from './helpers/child-env.js';
+import { CHILD_START_MS, childEnv } from './helpers/child-env.js';
 
 /** Test-only values, never real ones. */
 const API_KEY = 'multi-process-key-0123456789-0123456789-ab';
@@ -39,7 +39,8 @@ function startProcess(env: Record<string, string>): Promise<ChildProcess> {
     });
     children.push(child);
     let output = '';
-    const timer = setTimeout(() => reject(new Error('server did not start')), 30_000);
+    // #87: see CHILD_START_MS.
+    const timer = setTimeout(() => reject(new Error('server did not start')), CHILD_START_MS);
     child.stdout.on('data', (chunk: Buffer) => {
       output += chunk.toString('utf8');
       if (output.includes('"event":"server_listening"')) {
@@ -80,7 +81,7 @@ describeRedis('two server processes on one Redis (#35 AC21, AC29)', () => {
 
   it(
     "a killed process's clients reconnect through the other and the group goes on",
-    { timeout: 90_000 },
+    { timeout: CHILD_START_MS + 60_000 },
     async () => {
       prefix = randomPrefix();
       dir = mkdtempSync(join(tmpdir(), 'sync-multi-'));

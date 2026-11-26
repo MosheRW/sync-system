@@ -15,3 +15,13 @@ export function childEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv 
   }
   return { ...env, ...extra };
 }
+
+/**
+ * How long a spawned `node --import tsx src/index.ts` may take to start (or
+ * to fail to start) in a test. tsx loads the whole source tree in each child:
+ * 6 to 10 s on a quiet machine, up to 47 s with the sync-server and reader
+ * suites running in parallel (#87). Production runs the compiled build, so
+ * this is a harness bound, not a server startup budget. 120 s is about 2.5
+ * times the worst start measured.
+ */
+export const CHILD_START_MS = 120_000;
