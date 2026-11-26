@@ -262,6 +262,57 @@ describe('changesets (ADR 0016, AC49, C9)', () => {
   });
 });
 
+/**
+ * The GHCR scope check (#82, L-1): the token goes to curl as a header on stdin
+ * (`-H @-`), never as an argument, and a failed request stops the block.
+ */
+const SCOPE_LINE =
+  /^\s*S="\$\(printf 'Authorization: token %s\\n' "\$T" \| curl -fsS -D - -H @- https:\/\/api\.github\.com\/user \|[^"]*\)" \|\| \{ echo '[^'$]*'; exit 1; \}$/;
+
+/**
+ * The refusal: a `case` whose only accepting branch lists literal scope sets
+ * (no glob characters), and whose catch-all branch exits.
+ */
+const SCOPE_CASE =
+  /^\s*case "\$S" in ((?:'[^'*?[\]]*')(?:\|'[^'*?[\]]*')*)\) ;; \*\) echo "[^"]*"; exit 1 ;; esac$/;
+
+/** The push block's scope check and refusal, in order before the GHCR login. */
+function expectScopeCheck(block: string, tokenPrompt: string): void {
+  const code = block.slice(block.indexOf('```sh'));
+  const lines = code.split(/\r?\n/);
+  const scope = lines.findIndex((line) => SCOPE_LINE.test(line));
+  const refuse = lines.findIndex((line) => line.trim().startsWith('case "$S" in '));
+  const read = lines.findIndex((line) => line.includes(tokenPrompt));
+  const login = lines.findIndex((line) => line.includes('docker login ghcr.io'));
+  expect(read, tokenPrompt).toBeGreaterThan(-1);
+  expect(scope).toBeGreaterThan(read);
+  expect(refuse).toBe(scope + 1);
+  expect(login).toBeGreaterThan(refuse);
+  // one accepting branch of literal sets, everything else refused (fails closed)
+  const check = SCOPE_CASE.exec(lines[refuse] ?? '');
+  expect(check, lines[refuse]).not.toBeNull();
+  const accepted = (check?.[1] ?? '').split('|').map((p) => p.slice(1, -1));
+  const accepts = (scopes: string): boolean => accepted.includes(scopes);
+  expect(accepted).toEqual(['write:packages ', 'read:packages write:packages ']);
+  // GitHub may list write:packages alone (read:packages implied) or both
+  expect(accepts('write:packages ')).toBe(true);
+  expect(accepts('read:packages write:packages ')).toBe(true);
+  for (const other of [
+    '',
+    'repo ',
+    'read:packages ',
+    'repo write:packages ',
+    'read:packages repo write:packages ',
+    'delete:packages read:packages write:packages ',
+  ]) {
+    expect(accepts(other), other).toBe(false);
+  }
+  expect(lines[scope]).toContain("sed -n 's/^x-oauth-scopes://p'");
+  // the token is never a command argument: no header on the command line
+  expect(code).not.toMatch(/-H\s+["']?Authorization/i);
+  expect(code).not.toMatch(/curl[^|\n]*\$\{?T\b/);
+}
+
 describe('RELEASING.md load-bearing lines (C1-C5, M6, L1, L5, L8, L9, L11-L13)', () => {
   const doc = read('RELEASING.md');
   /** The shell code blocks only (what the maintainer pastes). */
@@ -565,16 +616,170 @@ describe('RELEASING.md load-bearing lines (C1-C5, M6, L1, L5, L8, L9, L11-L13)',
     );
     expect(check).toBeLessThan(push.indexOf('docker login ghcr.io'));
     expect(push.indexOf('trap ')).toBeLessThan(check);
-    // $T is only matched by `case` or piped by printf into docker login, never printed
+    // $T is only matched by `case`, or piped by printf into docker login or into
+    // the scope check's curl header on stdin (#82), never printed
     const usesT = shell.split(/\r?\n/).filter((line) => /\$\{?T\b/.test(line));
-    expect(usesT.length).toBeGreaterThanOrEqual(3);
+    expect(usesT.length).toBeGreaterThanOrEqual(5);
     for (const line of usesT) {
       const piped = /^\s*printf '%s' "\$T" \| docker login \S+ -u \S+ --password-stdin$/.test(line);
       const matched = /^\s*case "\$T" in ghp_\*\) ;; \*\) echo '[^'$]*'; exit 1 ;; esac$/.test(
         line,
       );
-      expect(piped || matched, line).toBe(true);
+      expect(piped || matched || SCOPE_LINE.test(line), line).toBe(true);
     }
+  });
+
+  it('checks the GHCR token scopes with GitHub before the login, token on stdin (#82, L-1)', () => {
+    const push = step('6. The server image');
+    expectScopeCheck(push, "read -rs -p 'GHCR classic token (write:packages): ' T");
+    // after the prefix check, so a non-classic token never reaches GitHub's API
+    expect(push.indexOf('S="$(printf')).toBeGreaterThan(push.indexOf('case "$T" in ghp_*)'));
+    expect(push.replace(/\s+/g, ' ')).toContain('`X-OAuth-Scopes`');
+  });
+
+  it('creates the step 6 GHCR token from the scoped URL and checks its scopes (#82, M2)', () => {
+    const push = step('6. The server image');
+    const flat = push.replace(/\s+/g, ' ');
+    expect(flat).toMatch(/if `repo` is ticked, \*\*untick `repo`\*\*/);
+    expect(flat).toContain('Before you generate it, check the scope list');
+    expect(flat).toContain('only `write:packages` and `read:packages`');
+    const pushCode = flat.indexOf('export DOCKER_CONFIG="$CFG"');
+    expect(pushCode).toBeGreaterThan(-1);
+    for (const text of [
+      'https://github.com/settings/tokens/new?scopes=write:packages',
+      'Before you generate it',
+      'if `repo` is ticked,',
+    ]) {
+      expect(flat.indexOf(text), text).toBeGreaterThan(-1);
+      expect(flat.indexOf(text), text).toBeLessThan(pushCode);
+    }
+  });
+
+  describe('the pinned BuildKit builder (#82, M3, C2-C5, M-1, L-2, L-3)', () => {
+    const CREATE =
+      /docker buildx create --use --name sync-release --driver docker-container --driver-opt image=(moby\/buildkit:v\d+\.\d+\.\d+@sha256:[0-9a-f]{64})`/;
+    const createLines = doc
+      .split(/\r?\n/)
+      .filter((line) => line.includes('docker buildx create --'));
+    const refs = createLines.map((line) => CREATE.exec(line)?.[1]);
+    const pinned = refs[0] ?? '';
+
+    it('pins BuildKit by tag and digest in every buildx create, identical copies', () => {
+      expect(createLines.length).toBeGreaterThanOrEqual(2);
+      expect(doc.split('docker buildx create --').length - 1).toBe(createLines.length);
+      for (const [i, line] of createLines.entries()) {
+        expect(refs[i], line).toBeDefined();
+        expect(refs[i], line).toBe(pinned);
+      }
+      expect(step('6. The server image')).toContain(`image=${pinned}\``);
+      expect(step('R3. Check the image')).toContain(`image=${pinned}\``);
+      // every moby/buildkit reference is pinned, except the bump note's placeholder
+      for (const match of doc.matchAll(/moby\/buildkit:([^\s`'"]*)/g)) {
+        if (match[1] === '<vX.Y.Z>') continue;
+        expect(match[1], match[0]).toMatch(/^v\d+\.\d+\.\d+@sha256:[0-9a-f]{64}$/);
+      }
+    });
+
+    it('replaces a stale builder and checks the running image (C3)', () => {
+      const push = step('6. The server image');
+      expect(push).toContain('`docker buildx rm sync-release`');
+      expect(push).toContain('`docker buildx inspect --bootstrap sync-release`');
+      expect(push).toContain(
+        "`docker inspect -f '{{.Config.Image}}' buildx_buildkit_sync-release0`",
+      );
+      expect(push.replace(/\s+/g, ' ')).toContain('must print the pinned reference');
+    });
+
+    it.each([
+      ['6. The server image', 'sync-system-server'],
+      ['R4. Push the image', 'sync-system-reader'],
+    ])(
+      'pushes on the pinned builder in %s, logins only in the temp config (C5)',
+      (heading, image) => {
+        const block = step(heading);
+        const start = block.indexOf('```sh', block.indexOf('Then push.'));
+        const code = block.slice(start, block.indexOf('\n```\n', start + 5));
+        const lines = code.split(/\r?\n/).map((line) => line.trim());
+        const at = (text: string): number => lines.findIndex((line) => line.startsWith(text));
+        const hostCfg = at('HOST_CFG="${DOCKER_CONFIG:-$HOME/.docker}";');
+        const bx = at('BX="${BUILDX_CONFIG:-$HOST_CFG/buildx}";');
+        const exportBx = at('export BUILDX_CONFIG="$BX"');
+        const cfg = at('CFG="$(mktemp -d)";');
+        const exportCfg = at('export DOCKER_CONFIG="$CFG"');
+        const trap = at("trap 'docker logout ghcr.io");
+        const inspect = at('docker buildx inspect sync-release ||');
+        const login = at('printf \'%s\' "$T" | docker login ghcr.io');
+        const build = at(
+          'docker buildx build --builder sync-release --platform linux/amd64,linux/arm64 --push',
+        );
+        // BUILDX_CONFIG comes from the host config, exported before the temp DOCKER_CONFIG
+        expect(hostCfg).toBeGreaterThan(-1);
+        expect(lines[hostCfg]).toContain('cygpath -m "$HOST_CFG"');
+        expect(lines[bx]).toContain('cygpath -m "$BX"');
+        expect(hostCfg).toBeLessThan(bx);
+        expect(bx).toBeLessThan(exportBx);
+        expect(exportBx).toBeLessThan(cfg);
+        expect(cfg).toBeLessThan(exportCfg);
+        // never inside the temporary config
+        expect(code).not.toMatch(/BUILDX_CONFIG=[^\n]*\$\{?(CFG|DOCKER_CONFIG)\b/);
+        expect(lines[bx]).not.toMatch(/\$\{?(CFG|DOCKER_CONFIG)\b/);
+        // the builder is printed before the first login, and the push names it
+        expect(exportCfg).toBeLessThan(trap);
+        expect(trap).toBeLessThan(inspect);
+        expect(inspect).toBeLessThan(login);
+        expect(lines[inspect]).toMatch(/exit 1; \}$/);
+        expect(build).toBeGreaterThan(login);
+        expect(code).toContain(`ghcr.io/mosherw/${image}:latest`);
+        // only the context metadata (no credentials, no TLS keys) goes to the temp config
+        expect(code).toContain('cp -R "$HOST_CFG/contexts/meta" "$CFG/contexts/"');
+        expect(code).not.toMatch(/contexts\/tls|config\.json/);
+      },
+    );
+
+    it('never pushes on another builder, and says so (C5, M-1)', () => {
+      const pushes = shell
+        .split(/\r?\n/)
+        .filter((line) => /docker buildx build\b.*--push/.test(line));
+      expect(pushes).toHaveLength(2);
+      for (const line of pushes) expect(line).toContain('--builder sync-release');
+      const push = step('6. The server image');
+      const flat = push.replace(/\s+/g, ' ');
+      expect(flat).toContain('The push runs on the `sync-release` builder');
+      expect(flat).toContain('the push never uses it');
+      expect(push).not.toMatch(/repeat the block/);
+      // the builder is created before the push block
+      expect(push.indexOf('docker buildx create')).toBeLessThan(
+        push.indexOf('export BUILDX_CONFIG="$BX"'),
+      );
+    });
+
+    it('switches the host back from the release builder after the release (L-2)', () => {
+      expect(step('6. The server image')).toContain('`docker buildx use default`');
+      expect(step('R6. After the reader release')).toContain('`docker buildx use default`');
+    });
+
+    it('has a bump note with the advisory check in Before you start (C4, L-3)', () => {
+      const before = doc
+        .slice(doc.indexOf('## Before you start'), doc.indexOf('## Phase A'))
+        .replace(/\s+/g, ' ');
+      for (const text of [
+        pinned,
+        'https://github.com/moby/buildkit/security/advisories',
+        'When you start each release, check the',
+        'if the pinned version is affected, bump it first, in its own PR',
+        'own reviewed PR',
+        'docker buildx imagetools inspect moby/buildkit:<vX.Y.Z>',
+        'never `latest`, `buildx-stable-1`, `master`, `nightly` or an rc',
+        '`attestation-manifest`',
+        "--format '{{json .Provenance}}'",
+        'https://github.com/moby/buildkit.git#refs/tags/<vX.Y.Z>',
+        'every `docker buildx create` line',
+        'old and new index digests',
+        '`docker buildx rm sync-release`',
+      ]) {
+        expect(before, text).toContain(text);
+      }
+    });
   });
 
   it('says which PR to release when there is no separate release PR (#81 AC5)', () => {
@@ -806,6 +1011,8 @@ describe('RELEASING.md reader image release (#77, ADR 0023, security.md controls
     expect(pushBlock).toContain('https://github.com/settings/tokens/new?scopes=write:packages');
     expect(pushBlock).toMatch(/if `repo` is ticked,\s+untick it/);
     expect(pushBlock).toContain('"Read & Write"');
+    // #82, L-1: the push block checks the scopes with GitHub too
+    expectScopeCheck(pushBlock, "read -rs -p 'GHCR token (write:packages only): ' T");
   });
 
   it('creates the GitHub release from the existing tag, never as Latest (control 8, L2)', () => {

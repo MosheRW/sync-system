@@ -92,6 +92,22 @@ Bump the gitleaks image the same way, in its own reviewed PR:
 index digest, and the step 0 scan with the new reference still prints
 `no leaks found`.
 
+The `sync-release` builder of [step 6](#6-the-server-image-on-the-host)
+runs a BuildKit image pinned by tag and digest:
+`moby/buildkit:v0.35.1@sha256:baf6138eb8c37644800c7c913fba051e840ebb9ba13eaf92d92ef9a1712d0b4c`.
+When you start each release, check the
+[moby/buildkit security advisories](https://github.com/moby/buildkit/security/advisories):
+if the pinned version is affected, bump it first, in its own PR. Bump it
+only in its own reviewed PR: `docker buildx imagetools inspect moby/buildkit:<vX.Y.Z>`
+on a release tag (never `latest`, `buildx-stable-1`, `master`, `nightly`
+or an rc) must show the new index digest with `attestation-manifest`
+entries, and `--format '{{json .Provenance}}'` must show the build from
+`https://github.com/moby/buildkit.git#refs/tags/<vX.Y.Z>`. Replace the
+reference in every `docker buildx create` line (the release-files test
+requires them identical), record the old and new index digests in the PR,
+and on the host run `docker buildx rm sync-release` before the next
+release.
+
 ## Phase A: the release PR
 
 1. Every user-visible change adds a changeset (`pnpm changeset`) in its PR.
@@ -508,19 +524,44 @@ always be run again:
 )
 ```
 
+The push runs on the `sync-release` builder, a BuildKit container whose
+image is pinned by tag and digest. Create it on the host (your normal
+Docker config, not the push block's temporary one) before the push block:
+`docker buildx create --use --name sync-release --driver docker-container --driver-opt image=moby/buildkit:v0.35.1@sha256:baf6138eb8c37644800c7c913fba051e840ebb9ba13eaf92d92ef9a1712d0b4c`.
+If buildx says `sync-release` already exists, it may be an older builder on
+an unpinned BuildKit: run `docker buildx rm sync-release` and create it
+again. Then `docker buildx inspect --bootstrap sync-release`, and
+`docker inspect -f '{{.Config.Image}}' buildx_buildkit_sync-release0` must
+print the pinned reference. The push block keeps buildx's builder list in
+your host config (`BUILDX_CONFIG`) while the logins go only to its
+temporary `DOCKER_CONFIG` (into which it copies only your Docker contexts'
+names and endpoints, `contexts/meta`, so buildx can reach the builder's
+engine; no credentials, no TLS keys), prints `docker buildx inspect sync-release`
+before the first login, stops if the builder is missing, and builds with
+`--builder sync-release`. So the pinned BuildKit, and no other builder,
+receives the registry logins and pushes the image. The default builder
+(Docker Desktop's `docker` driver) uses the BuildKit built into Docker
+itself, which is updated with Docker, not by this pin; the push never uses
+it.
+
 Create two tokens right before the push block, each with the shortest
 expiry offered (a custom date of the next day; never "No expiration"):
 
-- GitHub: Settings, Developer settings, Personal access tokens,
-  **Tokens (classic)**, Generate new token (classic). Scope **only**
-  `write:packages` (it adds `read:packages`). GitHub may tick `repo` along
-  with it: **untick `repo`**, and before copying check that the token's
-  scope list shows only `write:packages` and `read:packages`. A
-  fine-grained token (`github_pat_...`) is not an alternative: GHCR refuses
+- GitHub: a **Tokens (classic)** personal access token from
+  `https://github.com/settings/tokens/new?scopes=write:packages` (that link
+  ticks only `write:packages`, which adds `read:packages`). Before you
+  generate it, check the scope list: only `write:packages` and
+  `read:packages` may be ticked. GitHub's form can tick `repo` along with
+  it: if `repo` is ticked, **untick `repo`**. A `repo` token could push
+  code and move tags. A fine-grained token (`github_pat_...`) is not an alternative: GHCR refuses
   it with "The token provided does not match expected scopes". A classic
   token can write every package your account can, so it is revoked right
   after the push. The push block refuses a token that does not start with
-  `ghp_`.
+  `ghp_`, and asks GitHub for the token's scopes (`X-OAuth-Scopes` of
+  `https://api.github.com/user`, the token sent on stdin, never as a
+  command argument): it accepts only `write:packages`, alone or with the
+  `read:packages` it implies (GitHub may list either), refuses any other
+  scope set, and stops if it cannot check them.
 - Docker Hub: Account settings, Personal access tokens, "Read & Write" (not
   "Read, Write & Delete").
 
@@ -545,17 +586,27 @@ logouts and the removal of the config run on every exit:
   D="$IMG"; if command -v cygpath >/dev/null; then D="$(cygpath -m "$IMG")"; fi
   [ "$(git -C "$D/src" rev-parse HEAD)" = "$M" ] || { echo 'the clone is not the release commit: run the check block again'; exit 1; }
   [ -z "$(git -C "$D/src" status --porcelain --ignored)" ] || { echo 'the clone is not clean: run the check block again'; exit 1; }
+  # buildx keeps its builders in the host config; the logins go only to the temporary one
+  HOST_CFG="${DOCKER_CONFIG:-$HOME/.docker}"; if command -v cygpath >/dev/null; then HOST_CFG="$(cygpath -m "$HOST_CFG")"; fi
+  BX="${BUILDX_CONFIG:-$HOST_CFG/buildx}"; if command -v cygpath >/dev/null; then BX="$(cygpath -m "$BX")"; fi
+  export BUILDX_CONFIG="$BX"
   CFG="$(mktemp -d)"; if command -v cygpath >/dev/null; then CFG="$(cygpath -m "$CFG")"; fi
   export DOCKER_CONFIG="$CFG"
   trap 'docker logout ghcr.io >/dev/null 2>&1 || true; docker logout docker.io >/dev/null 2>&1 || true; rm -rf "$DOCKER_CONFIG"' EXIT
+  # the builder's docker context: names and endpoints only, no credentials or TLS keys
+  if [ -d "$HOST_CFG/contexts/meta" ]; then mkdir -p "$CFG/contexts" && cp -R "$HOST_CFG/contexts/meta" "$CFG/contexts/"; fi
+  docker buildx inspect sync-release || { echo 'no sync-release builder: create the pinned builder first'; exit 1; }
   read -rs -p 'GHCR classic token (write:packages): ' T; echo
   case "$T" in ghp_*) ;; *) echo 'not a classic GitHub token (ghp_...): GHCR needs a classic token with write:packages'; exit 1 ;; esac
+  # the token's scopes, asked with the token on stdin (never in a process argument)
+  S="$(printf 'Authorization: token %s\n' "$T" | curl -fsS -D - -H @- https://api.github.com/user | tr -d '\r' | tr '[:upper:]' '[:lower:]' | sed -n 's/^x-oauth-scopes://p' | tr ', ' '\n\n' | sed '/^$/d' | sort | tr '\n' ' ')" || { echo 'cannot check the GHCR token scopes: stop'; exit 1; }
+  case "$S" in 'write:packages '|'read:packages write:packages ') ;; *) echo "the GHCR token has the scopes [$S], not only write:packages (and read:packages): revoke it"; exit 1 ;; esac
   printf '%s' "$T" | docker login ghcr.io -u mosherw --password-stdin
   unset T
   read -rs -p 'Docker Hub token: ' T; echo
   printf '%s' "$T" | docker login docker.io -u moshewin --password-stdin
   unset T
-  docker buildx build --platform linux/amd64,linux/arm64 --push \
+  docker buildx build --builder sync-release --platform linux/amd64,linux/arm64 --push \
     -f "$D/src/apps/sync-server/Dockerfile" \
     --label "org.opencontainers.image.version=$V" --label "org.opencontainers.image.revision=$M" \
     -t "ghcr.io/mosherw/sync-system-server:$V" -t "ghcr.io/mosherw/sync-system-server:$MAJOR.$MINOR" \
@@ -569,8 +620,7 @@ logouts and the removal of the config run on every exit:
 ```
 
 Record the manifest-list `Digest:` both inspections print (it is the same
-image). If the default builder cannot build two platforms, run
-`docker buildx create --use --name sync-release` once and repeat the block.
+image).
 
 After the block, run the same credential helper `list` and look at
 `~/.docker/config.json` again:
@@ -599,6 +649,11 @@ Then **revoke both registry tokens** (GitHub, Settings, Developer settings,
 Personal access tokens, Tokens (classic); Docker Hub, Account settings,
 Personal access tokens). This is mandatory whatever the lists show: it
 makes any copy of a release token useless, wherever it was left.
+
+Finally switch the host back from the release builder, so later builds do
+not keep running on a pinned BuildKit that ages: `docker buildx use default`
+(or the builder you used before, e.g. `desktop-linux`). Keep `sync-release`
+if the reader release follows; `docker buildx rm sync-release` otherwise.
 
 ### 7. GitHub release notes
 
@@ -803,9 +858,11 @@ variable, no mount and no credential.
 )
 ```
 
-The arm64 build runs under emulation and takes several minutes. If the
-default builder cannot build `linux/arm64`, run
-`docker buildx create --use --name sync-release` once and repeat the block.
+The arm64 build runs under emulation and takes several minutes. R4 pushes
+with the pinned `sync-release` builder, so create it before R3 when it does
+not exist yet, and check it as in
+[step 6](#6-the-server-image-on-the-host) (R3 then builds on it too):
+`docker buildx create --use --name sync-release --driver docker-container --driver-opt image=moby/buildkit:v0.35.1@sha256:baf6138eb8c37644800c7c913fba051e840ebb9ba13eaf92d92ef9a1712d0b4c`.
 Optional: if a scanner is installed, run
 `docker scout cves --only-severity critical,high "sync-reader-check:$RV"`
 and keep the result with the release notes draft.
@@ -819,7 +876,9 @@ Create two tokens, each with the shortest expiry offered:
   ticks only `write:packages`). Before you generate it, check the scope
   list: only `write:packages` (and the `read:packages` it implies) may be
   ticked. GitHub's form can tick `repo` along with it; if `repo` is ticked,
-  untick it. A `repo` token could push code and move tags.
+  untick it. A `repo` token could push code and move tags. The push block
+  checks the scopes with GitHub as in
+  [step 6](#6-the-server-image-on-the-host) and refuses anything else.
 - A Docker Hub personal access token with "Read & Write" (not "Read, Write
   & Delete"). Docker Hub tokens are account-wide: this one can also push
   the server image until you revoke it.
@@ -840,16 +899,26 @@ config run on every exit:
   [ -f "$D/checked" ] && [ "$(tail -n 1 "$D/checked")" = "$RM" ] || { echo 'R3 has not passed for RM: run R3 first'; exit 1; }
   [ "$(git -C "$D/src" rev-parse HEAD)" = "$RM" ] || { echo 'the clone is not the reader commit'; exit 1; }
   [ -z "$(git -C "$D/src" status --porcelain)" ] || { echo 'the clone is not clean'; exit 1; }
+  # buildx keeps its builders in the host config; the logins go only to the temporary one
+  HOST_CFG="${DOCKER_CONFIG:-$HOME/.docker}"; if command -v cygpath >/dev/null; then HOST_CFG="$(cygpath -m "$HOST_CFG")"; fi
+  BX="${BUILDX_CONFIG:-$HOST_CFG/buildx}"; if command -v cygpath >/dev/null; then BX="$(cygpath -m "$BX")"; fi
+  export BUILDX_CONFIG="$BX"
   CFG="$(mktemp -d)"; if command -v cygpath >/dev/null; then CFG="$(cygpath -m "$CFG")"; fi
   export DOCKER_CONFIG="$CFG"
   trap 'docker logout ghcr.io >/dev/null 2>&1 || true; docker logout docker.io >/dev/null 2>&1 || true; rm -rf "$DOCKER_CONFIG"' EXIT
+  # the builder's docker context: names and endpoints only, no credentials or TLS keys
+  if [ -d "$HOST_CFG/contexts/meta" ]; then mkdir -p "$CFG/contexts" && cp -R "$HOST_CFG/contexts/meta" "$CFG/contexts/"; fi
+  docker buildx inspect sync-release || { echo 'no sync-release builder: create the pinned builder first'; exit 1; }
   read -rs -p 'GHCR token (write:packages only): ' T; echo
+  # the token's scopes, asked with the token on stdin (never in a process argument)
+  S="$(printf 'Authorization: token %s\n' "$T" | curl -fsS -D - -H @- https://api.github.com/user | tr -d '\r' | tr '[:upper:]' '[:lower:]' | sed -n 's/^x-oauth-scopes://p' | tr ', ' '\n\n' | sed '/^$/d' | sort | tr '\n' ' ')" || { echo 'cannot check the GHCR token scopes: stop'; exit 1; }
+  case "$S" in 'write:packages '|'read:packages write:packages ') ;; *) echo "the GHCR token has the scopes [$S], not only write:packages (and read:packages): revoke it"; exit 1 ;; esac
   printf '%s' "$T" | docker login ghcr.io -u mosherw --password-stdin
   unset T
   read -rs -p 'Docker Hub token: ' T; echo
   printf '%s' "$T" | docker login docker.io -u moshewin --password-stdin
   unset T
-  docker buildx build --platform linux/amd64,linux/arm64 --push \
+  docker buildx build --builder sync-release --platform linux/amd64,linux/arm64 --push \
     -f "$D/src/apps/reader/Dockerfile" \
     --label "org.opencontainers.image.version=$RV" --label "org.opencontainers.image.revision=$RM" \
     -t "ghcr.io/mosherw/sync-system-reader:$RV" -t "ghcr.io/mosherw/sync-system-reader:$MAJOR.$MINOR" \
@@ -907,6 +976,8 @@ packages' release as "Latest".
 - [ ] Both registry tokens revoked; no `ghcr.io` or `index.docker.io` login
       left in the credential helper or `~/.docker/config.json`.
 - [ ] `rm -rf "$IMG" "$REL"`.
+- [ ] Switch the host back from the release builder: `docker buildx use default`
+      (or the builder you used before), or `docker buildx rm sync-release`.
 
 ### Reader dry run (QA)
 
