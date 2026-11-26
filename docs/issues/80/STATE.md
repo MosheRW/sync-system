@@ -1,17 +1,19 @@
 # State: #80 test: make load-sensitive tests stable under machine load (follow-up to #47)
 - Path: fast
-- Phase: validation
+- Phase: ready-to-merge
 - Branch: test/80-load-stable-tests
 - PR: #85
 - Plan approved by user: yes
 - Security-sensitive: no
 - Review rounds: 1
-- Last updated by: qa
+- Last updated by: orchestrator
 ## Model log
 - pm groom: sonnet (default) → DONE
 - architect plan: opus (rule: one tier up from NEXT_MODEL sonnet) → DONE
 - engineer implement: sonnet (Implementer model line) → DONE
 - qa review r1: sonnet (default/NEXT_MODEL) → PASS
+- security code r1: opus (rule: security always opus) → PASS (0 critical/high/medium/low)
+- Gate 3: PR #85 ready to merge (QA PASS, security PASS), 2026-11-26
 ## Open questions
 - Gate 2 decisions: plan approved as written, no ADRs. Follow-up for the RedisPubSub.probe() stale-probe race: #86 (out of scope). Other load-flaky tests (main-redis AC4, multi-process reconnect, and the ones listed under Verification): #87 (out of scope).
 ## Deviations from plan
