@@ -6,13 +6,15 @@
 - Plan approved by user: yes
 - Security-sensitive: yes
 - Review rounds: 1
-- Last updated by: qa
+- Last updated by: engineer
 ## Model log
 - pm grooming: sonnet (default) → DONE
 - architect plan: opus (rule: security-sensitive) → DONE
 - security plan: opus (rule) → PASS
 - engineer implement: opus (architect Implementer model: opus; security-sensitive) → DONE
 - qa validate: opus (NEXT_MODEL; security-sensitive shell) → FAIL (round 1: scope check accepts only `read:packages write:packages`, may reject a valid `write:packages`-only token; PR body stale)
+- security code: opus (rule) → PASS (round 1: low A-1 advisory, left for Gate 3)
+- engineer fix round 1: opus (rule: fix rounds) → DONE
 ## Open questions
 - none
 ## Deviations from plan
@@ -26,6 +28,9 @@
   2. L-1 in scope: both push blocks check the token's `X-OAuth-Scopes`
      (`https://api.github.com/user`, header via `curl -H @-`) and refuse
      anything but exactly `write:packages` + `read:packages`; fail closed.
+     Fix round 1 (QA #1): GitHub may list only `write:packages` (the
+     implied `read:packages` hidden), so the check accepts exactly
+     `write:packages` or `read:packages write:packages`; still fail closed.
   3. L-2 in scope: `docker buildx use default` after the release.
   4. L-3 in scope: the bump note asks to check the moby/buildkit security
      advisories when starting each release.
