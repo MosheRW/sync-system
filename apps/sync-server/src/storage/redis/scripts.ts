@@ -549,3 +549,46 @@ extend_set()
 return {'ok', 1}
 `,
 );
+
+/**
+ * The app's join-attempt budget (#41, security JB1-JB4): a sliding log in
+ * one sorted set, the same semantics as `SlidingWindowRateLimiter`. Prunes
+ * every attempt at or before `now - windowMs` (inclusive, as `time >
+ * cutoff`), refuses when `limit` attempts remain, else records this one.
+ * Only accepted attempts are recorded; every accept sets the TTL to the
+ * window, and a refusal repairs a missing TTL. The wait is clamped to
+ * `[1, windowMs]` (clock skew between instances). `now` is the caller's
+ * clock (server ms, an integer).
+ *
+ * KEYS: lj:<ns>
+ * ARGV: now, limit, windowMs, member (16 hex chars)
+ * Reply: {'ok'} | {'rate', retryAfterMs}
+ */
+export const JOIN_BUDGET = new LuaScript(`
+local key = KEYS[1]
+local now, limit, windowMs, member = tonumber(ARGV[1]), tonumber(ARGV[2]), tonumber(ARGV[3]), ARGV[4]
+local function finite(x) return x ~= nil and x == x and x ~= math.huge and x ~= -math.huge end
+local function posint(x, max) return finite(x) and x >= 1 and x <= max and x == math.floor(x) end
+if not finite(now) or now < 0 or now ~= math.floor(now) then
+  return redis.error_reply('ERR join budget: time')
+end
+if not posint(limit, 10000) then return redis.error_reply('ERR join budget: limit') end
+if not posint(windowMs, 3600000) then return redis.error_reply('ERR join budget: window') end
+if type(member) ~= 'string' or #member ~= 16 or not string.match(member, '^[0-9a-f]+$') then
+  return redis.error_reply('ERR join budget: member')
+end
+local function int(x) return string.format('%.0f', x) end
+redis.call('ZREMRANGEBYSCORE', key, '-inf', int(now - windowMs))
+if redis.call('ZCARD', key) >= limit then
+  local oldest = redis.call('ZRANGE', key, 0, 0, 'WITHSCORES')
+  if redis.call('PTTL', key) == -1 then redis.call('PEXPIRE', key, int(windowMs)) end
+  local wait = windowMs
+  local first = tonumber(oldest[2])
+  if finite(first) then wait = math.ceil(first + windowMs - now) end
+  if wait < 1 then wait = 1 elseif wait > windowMs then wait = windowMs end
+  return {'rate', wait}
+end
+redis.call('ZADD', key, int(now), member)
+redis.call('PEXPIRE', key, int(windowMs))
+return {'ok'}
+`);

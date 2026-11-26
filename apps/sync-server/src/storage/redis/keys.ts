@@ -147,6 +147,15 @@ export class RedisKeys {
     return `${this.base}:lb:${check(NAMESPACE_PATTERN, namespace, 'namespace')}`;
   }
 
+  /**
+   * The app's join-attempt budget (#41): sorted set, member = 16 random hex
+   * chars per accepted attempt, score = its time (server ms); expires a
+   * window after the last accepted attempt.
+   */
+  appJoinBudget(namespace: string): string {
+    return `${this.base}:lj:${check(NAMESPACE_PATTERN, namespace, 'namespace')}`;
+  }
+
   /** An ended group, by hashed ref only. */
   ended(ref: string): string {
     return `${this.base}:e:${check(REF_PATTERN, ref, 'ref')}`;

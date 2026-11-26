@@ -6,6 +6,7 @@ import {
   checkJoinBudget,
 } from '../src/joins/join-budget.js';
 import { SlidingWindowRateLimiter } from '../src/limits/rate-limiter.js';
+import { parseJoinBudgetReply } from '../src/storage/redis/join-budget.js';
 import { TestClock } from './helpers/test-server.js';
 
 /**
@@ -56,5 +57,20 @@ describe('MemoryJoinBudget (#41 AC6)', () => {
       ).rejects.toThrow(RangeError);
     }
     expect(() => checkJoinBudget(MAX_JOIN_BUDGET_LIMIT, MAX_JOIN_BUDGET_WINDOW_MS)).not.toThrow();
+  });
+});
+
+describe('parseJoinBudgetReply (#41 security JB4)', () => {
+  it('accepts only the exact ok reply and clamps the wait to [1, window]', () => {
+    expect(parseJoinBudgetReply(['ok'], 1000)).toEqual({ ok: true });
+    expect(parseJoinBudgetReply(['rate', 250], 1000)).toEqual({ ok: false, retryAfterMs: 250 });
+    expect(parseJoinBudgetReply(['rate', '250'], 1000)).toEqual({ ok: false, retryAfterMs: 250 });
+    expect(parseJoinBudgetReply(['rate', 0], 1000)).toEqual({ ok: false, retryAfterMs: 1 });
+    expect(parseJoinBudgetReply(['rate', 5000], 1000)).toEqual({ ok: false, retryAfterMs: 1000 });
+    expect(parseJoinBudgetReply(['rate', 2.5], 1000)).toEqual({ ok: false, retryAfterMs: 1 });
+    expect(parseJoinBudgetReply(['rate', 'x'], 1000)).toEqual({ ok: false, retryAfterMs: 1 });
+    for (const reply of [null, 'ok', [], ['ok', 1], ['rate'], ['cap'], ['OK'], [1], {}]) {
+      expect(() => parseJoinBudgetReply(reply, 1000)).toThrow('join budget: unexpected reply');
+    }
   });
 });
