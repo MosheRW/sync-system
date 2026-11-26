@@ -534,7 +534,9 @@ again. Then `docker buildx inspect --bootstrap sync-release`, and
 `docker inspect -f '{{.Config.Image}}' buildx_buildkit_sync-release0` must
 print the pinned reference. The push block keeps buildx's builder list in
 your host config (`BUILDX_CONFIG`) while the logins go only to its
-temporary `DOCKER_CONFIG`, prints `docker buildx inspect sync-release`
+temporary `DOCKER_CONFIG` (into which it copies only your Docker contexts'
+names and endpoints, `contexts/meta`, so buildx can reach the builder's
+engine; no credentials, no TLS keys), prints `docker buildx inspect sync-release`
 before the first login, stops if the builder is missing, and builds with
 `--builder sync-release`. So the pinned BuildKit, and no other builder,
 receives the registry logins and pushes the image. The default builder
