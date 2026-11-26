@@ -127,6 +127,9 @@ describeRedis('Redis keys, values and logs (#35 AC5, AC8, AC24, AC25, F13)', () 
     const end = 180 * MINUTE + 5000;
     for (const key of await inspect.keys(prefix)) {
       const ttl = await inspect.client.pTTL(key);
+      // The group's lease is released just after `leader.offline` is sent
+      // (group-lock.ts), so it can vanish between the SCAN and this PTTL (#80).
+      if (ttl === -2 && key.includes(':lock:')) continue;
       expect(ttl, key).toBeGreaterThan(0);
       // Instance metadata holds no group data (#35 architecture 12.3): the
       // liveness key lives 15 s, the instance list 24 h after a registration.

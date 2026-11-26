@@ -115,7 +115,9 @@ describe('heartbeatTick (H2, AC17)', () => {
   });
 });
 
-describe('heartbeat on real sockets', () => {
+// The helper waits of one test add up to more than Vitest's 5 s default, so a
+// slow machine would fail with an anonymous timeout (#80).
+describe('heartbeat on real sockets', { timeout: 15_000 }, () => {
   let ts: TestServer | undefined;
 
   afterEach(async () => {
