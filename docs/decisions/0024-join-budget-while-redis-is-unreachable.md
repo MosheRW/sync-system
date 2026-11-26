@@ -1,6 +1,6 @@
 # 0024. Join-attempt budget while Redis is unreachable
 
-- Status: Proposed
+- Status: Accepted (Gate 2, 2026-11-26: user chose the recommended option 1)
 - Date: 2026-11-26
 - Issue: #41
 
@@ -36,8 +36,10 @@ What exists today:
 
 1. **Fail closed, as ADR 0014 (recommended).** The budget step's
    `StorageUnavailableError` propagates like any other storage failure: the
-   connection closes with `1001`, nothing is looked up, nothing is charged
-   (the script did not run, or ran atomically). No new code path.
+   connection closes with `1001` and nothing is looked up. At most one
+   attempt is charged: the script is atomic, but a timed-out script may
+   still have run and charged the attempt the client never got an answer
+   for (fails conservative). No new code path.
    - Pros: one rule for every storage failure; the guessing bound never
      loosens, whatever an attacker can do to Redis latency; nothing to
      configure; the client already treats `1001` as "reconnect with
@@ -77,7 +79,12 @@ reconnects.
 
 ## Decision
 
-Pending (Gate 2 of #41).
+Accepted: **option 1**. A `StorageUnavailableError` from the join budget
+step propagates like any other storage failure: the connection closes with
+`1001`, no code lookup or QR ticket check runs, and at most one attempt is
+charged (a timed-out script may still have run). A `StorageReplyError`
+stays `INTERNAL_ERROR` to the requester only. No fallback to an in-memory
+budget.
 
 ## Consequences
 
