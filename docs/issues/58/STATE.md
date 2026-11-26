@@ -5,8 +5,8 @@
 - PR: #76
 - Plan approved by user: yes
 - Security-sensitive: yes
-- Review rounds: 4
-- Last updated by: engineer
+- Review rounds: 5
+- Last updated by: qa
 ## Model log
 - pm grooming: sonnet (default) → DONE
 - architect plan: opus (rule: security-sensitive + NEXT_MODEL) → DONE
@@ -24,6 +24,7 @@
 - qa review r4: opus (rule) → PASS
 - security code r4: opus (rule) → PASS (0 critical/high/medium, 2 low advisories)
 - engineer fix r4: opus (rule: fix round) → DONE
+- qa review r5: opus (rule) → PASS (interrupted once by an API rate limit while waiting on checks; resumed)
 ## Gate 2 decisions (user)
 - ADR 0023 option 1: Accepted; ADR 0015 gains only a "Related: 0023" line; conventions.md row added
 - Q6 narrowing accepted: the path is omitted for "does not exist" (ENOENT/ENOTDIR) and unknown errors; printed (via shownText) only for entries that exist
